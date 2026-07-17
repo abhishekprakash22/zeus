@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+msg_file=$1
+
+contains_ai_identity() {
+  case "$1" in
+    *[Cc][Ll][Aa][Uu][Dd][Ee]*|*[Aa][Nn][Tt][Hh][Rr][Oo][Pp][Ii][Cc]*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+while IFS= read -r line || [ -n "$line" ]
+do
+  if contains_ai_identity "$line"; then
+    echo "Refusing commit: AI assistant attribution is not allowed in commit messages." >&2
+    exit 1
+  fi
+done < "$msg_file"

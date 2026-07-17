@@ -1,0 +1,380 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Verifies the active-consumer registry that gates decodeDisplayFrame in
+// ws-client.ts. The contract: hasActiveFrameConsumers() reports whether at
+// least one panadapter / waterfall / filter mini-pan is mounted; ws-client
+// short-circuits the per-frame decode when it returns false.
+
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  _resetFrameConsumerCount,
+  createEmptyDisplaySlice,
+  hasActiveFrameConsumers,
+  registerFrameConsumer,
+  sanitizeDisplayBins,
+  selectDisplaySlice,
+  selectDisplaySliceByRxId,
+  subscribeFrameConsumerPresence,
+  useDisplayStore,
+} from './display-store';
+import type { DecodedFrame } from '../realtime/frame';
+
+afterEach(() => {
+  _resetFrameConsumerCount();
+  useDisplayStore.setState({
+    connected: false,
+    width: 0,
+    centerHz: 0n,
+    hzPerPixel: 0,
+    panDb: null,
+    wfDb: null,
+    panValid: false,
+    wfValid: false,
+    panFloorDb: null,
+    wfFloorDb: null,
+    lastSeq: 0,
+    rx2: createEmptyDisplaySlice(),
+    extra: [],
+  });
+});
+
+describe('payload-less frame rejection (P3 keepalive interleave)', () => {
+  const realFrame = (seq: number): DecodedFrame => ({
+    msgType: 0x01,
+    headerFlags: 0,
+    seq,
+    tsUnixMs: 1_700_000_000_000 + seq,
+    rxId: 0,
+    bodyFlags: 0x03, // pan + wf valid
+    panValid: true,
+    wfValid: true,
+    width: 4096,
+    centerHz: 7_205_000n,
+    hzPerPixel: 46.875,
+    panDb: new Float32Array(4096).fill(-100),
+    wfDb: new Float32Array(4096).fill(-100),
+  });
+  // The empty keepalive P3 interleaves: half width, double hz/px, NO payload.
+  const emptyFrame = (seq: number): DecodedFrame => ({
+    msgType: 0x01,
+    headerFlags: 0,
+    seq,
+    tsUnixMs: 1_700_000_000_000 + seq,
+    rxId: 0,
+    bodyFlags: 0x00, // neither pan nor wf valid
+    panValid: false,
+    wfValid: false,
+    width: 2048,
+    centerHz: 7_205_000n,
+    hzPerPixel: 93.75,
+    panDb: new Float32Array(2048),
+    wfDb: new Float32Array(2048),
+  });
+
+  it('ignores an empty frame so it cannot flip the display geometry', () => {
+    useDisplayStore.getState().pushFrame(realFrame(1));
+    expect(useDisplayStore.getState().width).toBe(4096);
+    expect(useDisplayStore.getState().lastSeq).toBe(1);
+
+    // A payload-less keepalive must NOT change width/seq — otherwise the shared
+    // frame planner would see a width change and reset the waterfall history.
+    useDisplayStore.getState().pushFrame(emptyFrame(2));
+    expect(useDisplayStore.getState().width).toBe(4096); // unchanged, not 2048
+    expect(useDisplayStore.getState().lastSeq).toBe(1); // empty frame dropped
+
+    // Alternating real/empty stream stays pinned to the real geometry.
+    for (let seq = 3; seq <= 12; seq++) {
+      useDisplayStore.getState().pushFrame(seq % 2 === 0 ? emptyFrame(seq) : realFrame(seq));
+    }
+    expect(useDisplayStore.getState().width).toBe(4096);
+    expect(useDisplayStore.getState().lastSeq).toBe(11); // last real (odd) seq
+  });
+
+  it('still accepts frames that carry only one valid payload', () => {
+    const panOnly = { ...realFrame(5), bodyFlags: 0x01, wfValid: false };
+    useDisplayStore.getState().pushFrame(panOnly);
+    expect(useDisplayStore.getState().lastSeq).toBe(5);
+    expect(useDisplayStore.getState().width).toBe(4096);
+  });
+});
+
+describe('frame consumer registry', () => {
+  it('reports no consumers initially', () => {
+    expect(hasActiveFrameConsumers()).toBe(false);
+  });
+
+  it('flips to true while a consumer is registered', () => {
+    const release = registerFrameConsumer();
+    expect(hasActiveFrameConsumers()).toBe(true);
+    release();
+    expect(hasActiveFrameConsumers()).toBe(false);
+  });
+
+  it('stays true while at least one consumer remains', () => {
+    const a = registerFrameConsumer();
+    const b = registerFrameConsumer();
+    expect(hasActiveFrameConsumers()).toBe(true);
+    a();
+    expect(hasActiveFrameConsumers()).toBe(true);
+    b();
+    expect(hasActiveFrameConsumers()).toBe(false);
+  });
+
+  it('release is idempotent', () => {
+    const release = registerFrameConsumer();
+    release();
+    release();
+    expect(hasActiveFrameConsumers()).toBe(false);
+    // A second consumer must still flip the flag back on.
+    const next = registerFrameConsumer();
+    expect(hasActiveFrameConsumers()).toBe(true);
+    next();
+  });
+
+  it('count never goes negative under bad release ordering', () => {
+    const a = registerFrameConsumer();
+    a();
+    a();
+    expect(hasActiveFrameConsumers()).toBe(false);
+    const b = registerFrameConsumer();
+    expect(hasActiveFrameConsumers()).toBe(true);
+    b();
+    expect(hasActiveFrameConsumers()).toBe(false);
+  });
+
+  it('notifies listeners only when consumer presence changes', () => {
+    const events: Array<{ active: boolean; count: number }> = [];
+    const unsubscribe = subscribeFrameConsumerPresence((active, count) => {
+      events.push({ active, count });
+    });
+
+    const a = registerFrameConsumer();
+    const b = registerFrameConsumer();
+    a();
+    b();
+    unsubscribe();
+
+    expect(events).toEqual([
+      { active: true, count: 1 },
+      { active: false, count: 0 },
+    ]);
+  });
+});
+
+describe('display frame bin sanitizer', () => {
+  it('returns the original array when every bin is finite', () => {
+    const bins = new Float32Array([-120, -80, -42.5]);
+
+    expect(sanitizeDisplayBins(bins)).toBe(bins);
+  });
+
+  it('copies and floors non-finite bins without changing finite dB values', () => {
+    const bins = new Float32Array([-120, Number.NaN, -42.5, Infinity, -Infinity]);
+
+    const sanitized = sanitizeDisplayBins(bins);
+
+    expect(sanitized).not.toBe(bins);
+    expect(Array.from(sanitized)).toEqual([-120, -200, -42.5, -200, -200]);
+    expect(Number.isNaN(bins[1])).toBe(true);
+  });
+
+  it('pushFrame stores sanitized bins before publishing state', () => {
+    const panDb = new Float32Array([-88, Number.NaN, -76, Infinity]);
+    const wfDb = new Float32Array([-95, -92, -90, -89]);
+    const frame: DecodedFrame = {
+      msgType: 0x01,
+      headerFlags: 0,
+      seq: 99,
+      tsUnixMs: 1_700_000_000_000,
+      rxId: 0,
+      bodyFlags: 0x03,
+      panValid: true,
+      wfValid: true,
+      width: 4,
+      centerHz: 14_074_000n,
+      hzPerPixel: 46.875,
+      panDb,
+      wfDb,
+    };
+
+    useDisplayStore.getState().pushFrame(frame);
+
+    const state = useDisplayStore.getState();
+    expect(state.lastSeq).toBe(99);
+    expect(state.panDb).not.toBe(panDb);
+    expect(Array.from(state.panDb ?? [])).toEqual([-88, -200, -76, -200]);
+    expect(state.wfDb).toBe(wfDb);
+    expect(state.panFloorDb).toBeNull();
+  });
+
+  it('stores RX2 frames separately without replacing the primary receiver slice', () => {
+    const rx1Pan = new Float32Array([-90, -88, -87, -86]);
+    useDisplayStore.getState().pushFrame({
+      msgType: 0x01,
+      headerFlags: 0,
+      seq: 11,
+      tsUnixMs: 1_700_000_000_000,
+      rxId: 0,
+      bodyFlags: 0x03,
+      panValid: true,
+      wfValid: true,
+      width: 4,
+      centerHz: 14_200_000n,
+      hzPerPixel: 93.75,
+      panDb: rx1Pan,
+      wfDb: rx1Pan,
+    });
+
+    const rx2Pan = new Float32Array([-120, -118, -117, -116]);
+    useDisplayStore.getState().pushFrame({
+      msgType: 0x01,
+      headerFlags: 0,
+      seq: 12,
+      tsUnixMs: 1_700_000_000_001,
+      rxId: 1,
+      bodyFlags: 0x03,
+      panValid: true,
+      wfValid: true,
+      width: 4,
+      centerHz: 7_200_000n,
+      hzPerPixel: 93.75,
+      panDb: rx2Pan,
+      wfDb: rx2Pan,
+    });
+
+    const state = useDisplayStore.getState();
+    expect(state.lastSeq).toBe(11);
+    expect(state.centerHz).toBe(14_200_000n);
+    expect(state.panDb).toBe(rx1Pan);
+    expect(selectDisplaySlice(state, 'B').wfFloorDb).toBeNull();
+    expect(selectDisplaySlice(state, 'B')).toMatchObject({
+      lastSeq: 12,
+      centerHz: 7_200_000n,
+      panDb: rx2Pan,
+    });
+  });
+
+  it('routes RX3+ frames into the extra array without clobbering RX1 or RX2', () => {
+    const rx1Pan = new Float32Array([-90, -88, -87, -86]);
+    useDisplayStore.getState().pushFrame({
+      msgType: 0x01,
+      headerFlags: 0,
+      seq: 21,
+      tsUnixMs: 1_700_000_000_000,
+      rxId: 0,
+      bodyFlags: 0x03,
+      panValid: true,
+      wfValid: true,
+      width: 4,
+      centerHz: 14_200_000n,
+      hzPerPixel: 93.75,
+      panDb: rx1Pan,
+      wfDb: rx1Pan,
+    });
+
+    // RX3 = rxId 2 → extra[0].
+    const rx3Pan = new Float32Array([-130, -128, -127, -126]);
+    useDisplayStore.getState().pushFrame({
+      msgType: 0x01,
+      headerFlags: 0,
+      seq: 22,
+      tsUnixMs: 1_700_000_000_002,
+      rxId: 2,
+      bodyFlags: 0x03,
+      panValid: true,
+      wfValid: true,
+      width: 4,
+      centerHz: 7_100_000n,
+      hzPerPixel: 93.75,
+      panDb: rx3Pan,
+      wfDb: rx3Pan,
+    });
+
+    const state = useDisplayStore.getState();
+    // RX1 primary slice untouched by the RX3 frame.
+    expect(state.lastSeq).toBe(21);
+    expect(state.centerHz).toBe(14_200_000n);
+    expect(state.panDb).toBe(rx1Pan);
+    // RX2 still empty (never fed).
+    expect(selectDisplaySliceByRxId(state, 1).lastSeq).toBe(0);
+    // RX3 lands in extra[0] and is reachable by rxId.
+    expect(state.extra[0]).toMatchObject({
+      lastSeq: 22,
+      centerHz: 7_100_000n,
+      panDb: rx3Pan,
+    });
+    expect(selectDisplaySliceByRxId(state, 2)).toBe(state.extra[0]);
+    // An unseen RX4 returns the shared empty slice, not undefined.
+    expect(selectDisplaySliceByRxId(state, 3).lastSeq).toBe(0);
+    expect(selectDisplaySliceByRxId(state, 3).panDb).toBeNull();
+  });
+
+  it('marks a valid-bit payload invalid when its bin count does not match frame width', () => {
+    const panDb = new Float32Array([-88, -82, -76]);
+    const wfDb = new Float32Array([-95, -92, -90, -89]);
+    const frame: DecodedFrame = {
+      msgType: 0x01,
+      headerFlags: 0,
+      seq: 100,
+      tsUnixMs: 1_700_000_000_001,
+      rxId: 0,
+      bodyFlags: 0x03,
+      panValid: true,
+      wfValid: true,
+      width: 4,
+      centerHz: 14_074_000n,
+      hzPerPixel: 46.875,
+      panDb,
+      wfDb,
+    };
+
+    useDisplayStore.getState().pushFrame(frame);
+
+    const state = useDisplayStore.getState();
+    expect(state.lastSeq).toBe(100);
+    expect(state.width).toBe(4);
+    expect(state.hzPerPixel).toBe(46.875);
+    expect(state.panValid).toBe(false);
+    expect(state.panDb).toBeNull();
+    expect(state.wfValid).toBe(true);
+    expect(state.wfDb).toBe(wfDb);
+  });
+
+  it('fails closed on unusable frame geometry', () => {
+    const panDb = new Float32Array([-88, -82, -76, -74]);
+    const wfDb = new Float32Array([-95, -92, -90, -89]);
+
+    for (const [i, bad] of [
+      { width: 0, hzPerPixel: 46.875 },
+      { width: 4.5, hzPerPixel: 46.875 },
+      { width: 4, hzPerPixel: Number.NaN },
+      { width: 4, hzPerPixel: Infinity },
+      { width: 4, hzPerPixel: 0 },
+    ].entries()) {
+      const frame: DecodedFrame = {
+        msgType: 0x01,
+        headerFlags: 0,
+        seq: 200 + i,
+        tsUnixMs: 1_700_000_000_002,
+        rxId: 0,
+        bodyFlags: 0x03,
+        panValid: true,
+        wfValid: true,
+        centerHz: 14_074_000n,
+        panDb,
+        wfDb,
+        ...bad,
+      };
+
+      useDisplayStore.getState().pushFrame(frame);
+
+      const state = useDisplayStore.getState();
+      expect(state.width).toBe(0);
+      expect(state.hzPerPixel).toBe(0);
+      expect(state.panValid).toBe(false);
+      expect(state.wfValid).toBe(false);
+      expect(state.panDb).toBeNull();
+      expect(state.wfDb).toBeNull();
+    }
+  });
+});

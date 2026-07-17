@@ -1,0 +1,970 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA),
+//                         Christian Suarez (N9WAR), and contributors.
+//
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by the
+// Free Software Foundation, either version 2 of the License, or (at your
+// option) any later version. See the LICENSE file at the root of this
+// repository for the full text, or https://www.gnu.org/licenses/.
+//
+// Zeus is an independent reimplementation in .NET — not a fork. Its
+// Protocol-1 / Protocol-2 framing, WDSP integration, meter pipelines, and
+// TX behaviour were informed by studying the Thetis project
+// (https://github.com/ramdor/Thetis), the authoritative reference
+// implementation in the OpenHPSDR ecosystem. Zeus gratefully acknowledges
+// the Thetis contributors whose work made this possible:
+//
+//   Richard Samphire (MW0LGE), Warren Pratt (NR0V),
+//   Laurence Barker (G8NJJ),   Rick Koch (N1GP),
+//   Bryan Rambo (W4WMT),       Chris Codella (W2PA),
+//   Doug Wigley (W5WC),        FlexRadio Systems,
+//   Richard Allen (W5SD),      Joe Torrey (WD5Y),
+//   Andrew Mansfield (M0YGG),  Reid Campbell (MI0BOT),
+//   Sigi Jetzlsperger (DH1KLM).
+//
+// Thetis itself continues the GPL-governed lineage of FlexRadio PowerSDR
+// and the OpenHPSDR (TAPR/OpenHPSDR) ecosystem; that lineage is preserved
+// here. See ATTRIBUTIONS.md at the repository root for the full provenance
+// statement and per-component attribution.
+//
+// Protocol-2 / PureSignal / Saturn-class behaviour was additionally informed
+// by pihpsdr (https://github.com/dl1ycf/pihpsdr), maintained by Christoph
+// Wüllen (DL1YCF); and by DeskHPSDR
+// (https://github.com/dl1bz/deskhpsdr), maintained by Heiko (DL1BZ).
+// Both are GPL-2.0-or-later.
+//
+// WDSP — loaded by Zeus via P/Invoke — is Copyright (C) Warren Pratt
+// (NR0V), distributed under GPL v2 or later.
+//
+// Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
+// License for details.
+
+using System.Buffers.Binary;
+using Zeus.Contracts;
+using Zeus.Protocol1.Discovery;
+
+namespace Zeus.Protocol1.Tests;
+
+public class ControlFrameTests
+{
+    private static ControlFrame.CcState BaseState() => new(
+        VfoAHz: 14_200_000,
+        Rate: HpsdrSampleRate.Rate48k,
+        PreampOn: false,
+        Atten: HpsdrAtten.Zero,
+        RxAntenna: HpsdrAntenna.Ant1,
+        Mox: false,
+        EnableHl2BandVolts: false,
+        Board: HpsdrBoardKind.HermesLite2);
+
+    [Fact]
+    public void ControlFrame_VfoA_At_14_200_000_EncodesBigEndianFreq()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.RxFreq, BaseState());
+
+        // CC0 = RxFreq wire byte (0x04) with MOX bit 0 clear. Wire encoding is
+        // output_buffer[C0] = 0x04 + (current_rx * 2) — no shift.
+        Assert.Equal(0x04, cc[0]);
+
+        // CC1..CC4 = big-endian 14_200_000 = 0x00D8ACC0
+        Assert.Equal(0x00, cc[1]);
+        Assert.Equal(0xD8, cc[2]);
+        Assert.Equal(0xAC, cc[3]);
+        Assert.Equal(0xC0, cc[4]);
+
+        uint decoded = BinaryPrimitives.ReadUInt32BigEndian(cc[1..5]);
+        Assert.Equal(14_200_000u, decoded);
+    }
+
+    [Fact]
+    public void ControlFrame_SampleRate_192k_SetsC1Bits()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Rate = HpsdrSampleRate.Rate192k };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        // CC0 = Config register wire byte (0x00), MOX off.
+        Assert.Equal(0x00, cc[0]);
+        // C1 low 2 bits = 0b10 for 192k (doc 02 §6)
+        Assert.Equal(0b10, cc[1] & 0b11);
+    }
+
+    [Theory]
+    // CcRegister values are the wire-byte encodings already (pre-shifted
+    // address with bit 0 reserved for MOX). Pinned here to catch any future
+    // drift that reintroduces a spurious shift.
+    [InlineData(ControlFrame.CcRegister.Config, false, 0x00)]
+    [InlineData(ControlFrame.CcRegister.Config, true, 0x01)]
+    [InlineData(ControlFrame.CcRegister.TxFreq, false, 0x02)]
+    [InlineData(ControlFrame.CcRegister.TxFreq, true, 0x03)]
+    [InlineData(ControlFrame.CcRegister.RxFreq, false, 0x04)]
+    [InlineData(ControlFrame.CcRegister.RxFreq, true, 0x05)]
+    [InlineData(ControlFrame.CcRegister.DriveFilter, false, 0x12)]
+    [InlineData(ControlFrame.CcRegister.DriveFilter, true, 0x13)]
+    internal void ControlFrame_Cc0_WireByte_IsAddressPlusMoxBit(
+        ControlFrame.CcRegister register, bool mox, byte expectedCc0)
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Mox = mox };
+        ControlFrame.WriteCcBytes(cc, register, s);
+        Assert.Equal(expectedCc0, cc[0]);
+    }
+
+    [Fact]
+    public void ControlFrame_ConfigPayload_DoesNotSetC3AttenuatorBits()
+    {
+        // The Atlas step attenuator at C3[1:0] is obsolete for every board we
+        // target — RX attenuation is driven exclusively via the dedicated
+        // Attenuator register (C0=0x14). Pinning this keeps future edits from
+        // reintroducing a double-attenuate path.
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Atten = new HpsdrAtten(20) };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+        Assert.Equal(0, cc[3] & 0b11);
+    }
+
+    [Theory]
+    // HL2 (extended firmware gain): C4 = 0x40 | (60 - Db). So Db=0 → 0x7C,
+    // Db=31 → 0x5D, Db=60 clamps to the max, and Db above clamps to 31.
+    [InlineData(0, 0x7C)]
+    [InlineData(1, 0x7B)]
+    [InlineData(10, 0x72)]
+    [InlineData(20, 0x68)]
+    [InlineData(31, 0x5D)]
+    public void ControlFrame_Attenuator_Hl2_WritesExtendedGainByte(int db, byte expectedC4)
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Board = HpsdrBoardKind.HermesLite2, Atten = new HpsdrAtten(db) };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Attenuator, s);
+
+        Assert.Equal(0x14, cc[0]);        // register wire byte, MOX clear
+        Assert.Equal(0, cc[1]);           // C1 reserved
+        Assert.Equal(0, cc[2]);           // C2 reserved
+        Assert.Equal(0, cc[3]);           // C3 reserved
+        Assert.Equal(expectedC4, cc[4]);  // C4 = 0x40 | (60 - db)
+    }
+
+    [Theory]
+    // Bare HPSDR (Hermes/Angelia/Orion/MkII): C4 = 0x20 | (Db & 0x1F).
+    [InlineData(0, 0x20)]
+    [InlineData(1, 0x21)]
+    [InlineData(10, 0x2A)]
+    [InlineData(20, 0x34)]
+    [InlineData(31, 0x3F)]
+    public void ControlFrame_Attenuator_BareHpsdr_WritesExtendedStepByte(int db, byte expectedC4)
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Board = HpsdrBoardKind.Hermes, Atten = new HpsdrAtten(db) };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Attenuator, s);
+
+        Assert.Equal(0x14, cc[0]);
+        Assert.Equal(expectedC4, cc[4]);
+    }
+
+    [Fact]
+    public void HpsdrAtten_ClampsOutOfRangeValues()
+    {
+        Assert.Equal(0, new HpsdrAtten(-5).ClampedDb);
+        Assert.Equal(31, new HpsdrAtten(99).ClampedDb);
+        Assert.Equal(17, new HpsdrAtten(17).ClampedDb);
+    }
+
+    [Fact]
+    public void ControlFrame_Preamp_On_SetsC3Bit2_OnLt2208Board()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        // LT2208 board (Hermes): preamp/gain → C3 bit 2. Verified against ramdor
+        // Thetis networkproto1.c case 0 (`(rx[0].preamp << 2)`) and piHPSDR
+        // old_protocol.c (`LT2208_GAIN_ON = 0x04`). Was previously emitted at
+        // bit 4 (the RANDOM bit) — the move frees bit 4 for the randomizer.
+        var s = BaseState() with { Board = HpsdrBoardKind.Hermes, PreampOn = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal(1 << 2, cc[3] & (1 << 2));     // preamp bit 2 set
+        Assert.Equal(0, cc[3] & (1 << 4));          // RANDOM bit 4 NOT set by preamp
+        Assert.Equal(1 << 2, cc[3]);                // only preamp; antenna ANT1, no dither/random
+    }
+
+    [Fact]
+    public void ControlFrame_Preamp_On_Hl2_SetsNoC3Bit()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        // HL2's AD9866 has no LT2208 preamp; C3 bit 2 is VNA gain and bit 4 is
+        // the FPGA PSU switching clock. The operator's preamp toggle must NOT
+        // touch C3 on HL2 (HL2 RX gain is the LNA register 0x0a). This pins the
+        // fix for the prior bug where preamp-on disabled the HL2 PSU clock.
+        var s = BaseState() with { PreampOn = true }; // BaseState board = HL2
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal(0, cc[3]);
+    }
+
+    [Fact]
+    public void ControlFrame_AdcDither_On_SetsC3Bit3_OnLt2208Board()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        // LT2208 ADC dither → C3 bit 3 (Thetis networkproto1.c case 0
+        // `(adc[0].dither << 3)`; piHPSDR `LT2208_DITHER_ON = 0x08`).
+        var s = BaseState() with { Board = HpsdrBoardKind.Hermes, AdcDitherEnabled = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal(1 << 3, cc[3] & (1 << 3));
+        Assert.Equal(1 << 3, cc[3]); // only dither; no random/preamp/antenna
+    }
+
+    [Fact]
+    public void ControlFrame_AdcRandom_On_SetsC3Bit4_OnLt2208Board()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        // LT2208 ADC randomizer → C3 bit 4 (Thetis `(adc[0].random << 4)`;
+        // piHPSDR `LT2208_RANDOM_ON = 0x10`).
+        var s = BaseState() with { Board = HpsdrBoardKind.Hermes, AdcRandomEnabled = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal(1 << 4, cc[3] & (1 << 4));
+        Assert.Equal(1 << 4, cc[3]); // only random; no dither/preamp/antenna
+    }
+
+    [Fact]
+    public void ControlFrame_AdcDitherRandomAndPreamp_CoexistOnC3()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        // Preamp (bit 2), dither (bit 3) and random (bit 4) are independent
+        // bits and must coexist — this is the regression guard for the old
+        // preamp/random collision at bit 4.
+        var s = BaseState() with
+        {
+            Board = HpsdrBoardKind.Hermes,
+            PreampOn = true,
+            AdcDitherEnabled = true,
+            AdcRandomEnabled = true,
+        };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal((1 << 2) | (1 << 3) | (1 << 4), cc[3]);
+    }
+
+    [Fact]
+    public void ControlFrame_AdcDitherRandom_On_Hl2_DoesNotTouchC3()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        // Defence in depth: even if dither/random are somehow set on an HL2
+        // state, the wire layer must not light C3 bits 3/4 there — bit 3 is
+        // reserved for Band Volts (off here) and HL2 has no LT2208.
+        var s = BaseState() with { AdcDitherEnabled = true, AdcRandomEnabled = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal(0, cc[3]);
+    }
+
+    [Fact]
+    public void ControlFrame_Hl2BandVolts_OffByDefault()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, BaseState());
+        // C3[3] = HL2 Band Volts PWM enable (legacy LT2208 DITHER on bare
+        // HPSDR boards). Off by default; honoured on HL2 only. See
+        // docs/references/protocol-1/hermes-lite2-protocol.md line 39.
+        Assert.Equal(0, cc[3] & (1 << 3));
+    }
+
+    [Fact]
+    public void ControlFrame_Hl2BandVolts_On_Sets_Config_C3_Bit3()
+    {
+        // Positive-path coverage for issue #279 / Band Volts PWM rename.
+        // When the operator flips Band Volts on for an HL2, the Config
+        // frame's C3 must light bit 3. Per
+        // docs/references/protocol-1/hermes-lite2-protocol.md line 39
+        // (`| 0x00 | [11] | Fan or Band Volts PWM (0=Fan, 1=Band Volts) |`),
+        // this enables per-band-tagged PWM voltage on the FAN connector so
+        // an external amp (Xiegu XPA125B etc.) can auto-band-switch.
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { EnableHl2BandVolts = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+
+        Assert.Equal(0x00, cc[0]);                  // Config register, MOX clear
+        Assert.Equal(1 << 3, cc[3] & (1 << 3));     // C3 bit 3 set
+        // Other C3 bits stay clean — antenna ANT1 = 000, preamp off,
+        // duplex / atten bits not in C3.
+        Assert.Equal(1 << 3, cc[3]);
+    }
+
+    [Fact]
+    public void ControlFrame_DuplexBitInC4_AlwaysOne()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, BaseState());
+        // C4[2] = duplex = 1 (required even RX-only, doc 02 §4.1)
+        Assert.Equal(1 << 2, cc[4] & (1 << 2));
+    }
+
+    [Fact]
+    public void ControlFrame_AntennaSelection_Ant2_SetsC3UpperBits()
+    {
+        // RX-antenna C3[7:5] is emitted only on relay-capable boards. BaseState
+        // is HL2 (single jack → clamped to ANT1, see the clamp test below), so
+        // use a relay board (Hermes) to exercise the antenna-select math itself.
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { RxAntenna = HpsdrAntenna.Ant2, Board = HpsdrBoardKind.Hermes };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+        // C3 [7:5] = antenna select; ANT2 = 0b001 → value 0x20.
+        Assert.Equal(0b001 << 5, cc[3] & 0b11100000);
+    }
+
+    [Fact]
+    public void ControlFrame_AntennaSelection_Hl2_ClampedToAnt1()
+    {
+        // External-ports plan — antenna slice (#804): HL2 has a single antenna
+        // jack — C3[5] forwards to the N2ADR antenna pad, not an ANT1/2/3 relay
+        // — so a non-ANT1 RX-antenna selection MUST be clamped to ANT1 at the
+        // wire layer (ControlFrame.EncodeRxAntennaC3Bits).
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { RxAntenna = HpsdrAntenna.Ant3 }; // HL2
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, s);
+        Assert.Equal(0x00, cc[3] & 0b11100000);
+    }
+
+    [Fact]
+    public void BuildDataPacket_Writes1032ByteFrameWithHeaderAndTwoSyncs()
+    {
+        var buf = new byte[1032];
+        ControlFrame.BuildDataPacket(
+            buf,
+            sendSequence: 0x0A0B0C0D,
+            evenRegister: ControlFrame.CcRegister.Config,
+            oddRegister: ControlFrame.CcRegister.RxFreq,
+            state: BaseState());
+
+        // Metis header
+        Assert.Equal(0xEF, buf[0]);
+        Assert.Equal(0xFE, buf[1]);
+        Assert.Equal(0x01, buf[2]);
+        Assert.Equal(0x02, buf[3]); // EP2 = TX/audio endpoint
+        Assert.Equal(0x0A0B0C0Du, BinaryPrimitives.ReadUInt32BigEndian(buf.AsSpan(4, 4)));
+
+        // First USB frame sync + CC0 = Config wire byte 0x00 (MOX off).
+        Assert.Equal(0x7F, buf[8]);
+        Assert.Equal(0x7F, buf[9]);
+        Assert.Equal(0x7F, buf[10]);
+        Assert.Equal(0x00, buf[11]);
+
+        // Second USB frame sync + CC0 = RxFreq wire byte 0x04 (MOX off).
+        int f2 = 8 + 512;
+        Assert.Equal(0x7F, buf[f2 + 0]);
+        Assert.Equal(0x7F, buf[f2 + 1]);
+        Assert.Equal(0x7F, buf[f2 + 2]);
+        Assert.Equal(0x04, buf[f2 + 3]);
+    }
+
+    [Fact]
+    public void Protocol1Client_SetMox_FlipsC0LsbOnEveryRegister()
+    {
+        // End-to-end: after SetMox(true), the client's CcState snapshot feeds
+        // WriteCcBytes and the MOX bit shows up as C0 LSB on every CC0 the TX
+        // loop could emit. Protects the wire-level parity (output_buffer[C0]
+        // |= mox) from silent drift if the setter ever gets rewired to a
+        // separate field.
+        using var client = new Protocol1Client();
+        client.SetMox(true);
+        var state = client.SnapshotState();
+        Assert.True(state.Mox);
+
+        Span<byte> cc = stackalloc byte[5];
+        foreach (var register in new[]
+        {
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            ControlFrame.CcRegister.TxFreq,
+            ControlFrame.CcRegister.DriveFilter,
+            ControlFrame.CcRegister.Attenuator,
+        })
+        {
+            ControlFrame.WriteCcBytes(cc, register, state);
+            Assert.Equal(1, cc[0] & 0x01);
+        }
+
+        client.SetMox(false);
+        state = client.SnapshotState();
+        Assert.False(state.Mox);
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.RxFreq, state);
+        Assert.Equal(0, cc[0] & 0x01);
+    }
+
+    [Theory]
+    // UI percent → raw HPSDR drive byte per Protocol1Client.SnapshotState:
+    // raw = pct * 255 / 100. Pinned so regressions in the mapping are caught.
+    [InlineData(0, 0x00)]
+    [InlineData(50, 127)]      // 50 * 255 / 100 = 127
+    [InlineData(100, 0xFF)]
+    [InlineData(25, 63)]       // 25 * 255 / 100 = 63
+    public void Protocol1Client_SetDrive_EncodesDriveFilterC1(int percent, byte expectedC1)
+    {
+        using var client = new Protocol1Client();
+        client.SetDrive(percent);
+        var state = client.SnapshotState();
+
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.DriveFilter, state);
+
+        // C0 wire byte = 0x12 (MOX off), C1 = drive byte, C2..C4 zero on HL2 MVP path.
+        Assert.Equal(0x12, cc[0]);
+        Assert.Equal(expectedC1, cc[1]);
+        Assert.Equal(0, cc[2]);
+        Assert.Equal(0, cc[3]);
+        Assert.Equal(0, cc[4]);
+    }
+
+    [Theory]
+    [InlineData(-10, 0)]       // clamp low
+    [InlineData(250, 0xFF)]    // clamp high
+    public void Protocol1Client_SetDrive_ClampsOutOfRange(int percent, byte expectedC1)
+    {
+        using var client = new Protocol1Client();
+        client.SetDrive(percent);
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.DriveFilter, client.SnapshotState());
+        Assert.Equal(expectedC1, cc[1]);
+    }
+
+    [Fact]
+    public void Protocol1Client_SetAdcDitherRandom_FlowsToConfigC3_OnLt2208Board()
+    {
+        // Full client plumbing: the setter lands in SnapshotState and the
+        // Config encoder lights C3 bits 3 (dither) and 4 (random) for a
+        // non-HL2 board.
+        using var client = new Protocol1Client();
+        client.SetBoardKind(HpsdrBoardKind.Hermes);
+        client.SetAdcDitherRandom(ditherEnabled: true, randomEnabled: true);
+
+        var state = client.SnapshotState();
+        Assert.True(state.AdcDitherEnabled);
+        Assert.True(state.AdcRandomEnabled);
+
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, state);
+        Assert.Equal((1 << 3) | (1 << 4), cc[3]);
+    }
+
+    [Fact]
+    public void Protocol1Client_AdcDitherRandom_DefaultOff_LeavesConfigC3Clean()
+    {
+        // Default (operator never opted in) → no C3 dither/random bits, on a
+        // non-HL2 board. Guards the "byte-identical until enabled" promise.
+        using var client = new Protocol1Client();
+        client.SetBoardKind(HpsdrBoardKind.Hermes);
+
+        var state = client.SnapshotState();
+        Assert.False(state.AdcDitherEnabled);
+        Assert.False(state.AdcRandomEnabled);
+
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.Config, state);
+        Assert.Equal(0, cc[3]);
+    }
+
+    [Fact]
+    public void DriveFilter_Hl2_MoxOn_SetsC2PaEnableBit()
+    {
+        // On HL2, C2[3] = PA enable. Without this bit the HL2 gateware never
+        // energizes the PA, so `no power out at 100% drive` shows up as silence
+        // on the meter even with MOX + drive set.
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Board = HpsdrBoardKind.HermesLite2, Mox = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.DriveFilter, s);
+        Assert.Equal(0x08, cc[2]);
+    }
+
+    [Fact]
+    public void DriveFilter_Hl2_MoxOff_LeavesC2Zero()
+    {
+        // Don't assert PA enable while RX-only — matches the radio_is_transmitting
+        // gate pattern applied everywhere else in the TX path.
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Board = HpsdrBoardKind.HermesLite2, Mox = false };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.DriveFilter, s);
+        Assert.Equal(0, cc[2]);
+    }
+
+    [Fact]
+    public void DriveFilter_NonHl2_MoxOn_LeavesC2Zero()
+    {
+        // The PA-enable bit we added is HL2-specific; other boards drive their PA
+        // through different bits (Alex T/R, Apollo, etc.) which the MVP doesn't
+        // touch. Keep C2 at zero for non-HL2 so we don't accidentally key unrelated
+        // hardware paths.
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Board = HpsdrBoardKind.Hermes, Mox = true };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.DriveFilter, s);
+        Assert.Equal(0, cc[2]);
+    }
+
+    [Fact]
+    public void PhaseTable_MoxOn_SendsTxFreqInAtLeastHalfTheSlots()
+    {
+        // HL2 needs TxFreq (0x02) written continuously with duplex=1 or its TX
+        // mixer sits at power-on default. Count how many of the 8 CC0 slots in
+        // a full 4-phase cycle carry TxFreq — must be ≥ 4 (half), ensuring QSY
+        // during MOX takes effect within two phase ticks.
+        int txFreqSlots = 0;
+        for (int phase = 0; phase < 4; phase++)
+        {
+            var (first, second) = Protocol1Client.PhaseRegisters(phase, mox: true);
+            if (first == ControlFrame.CcRegister.TxFreq) txFreqSlots++;
+            if (second == ControlFrame.CcRegister.TxFreq) txFreqSlots++;
+        }
+        Assert.True(txFreqSlots >= 4, $"expected ≥ 4 TxFreq slots per 4-phase cycle, got {txFreqSlots}");
+    }
+
+    [Fact]
+    public void PhaseTable_MoxOff_SendsTxFreqAtLeastOncePerCycle()
+    {
+        // Square SDR 2 (HL2 gateware FAN=1,UART=1) emits Kenwood CAT on
+        // io_uart_txd whenever its FPGA TX-NCO register changes, which drives
+        // the rear-panel BVO PWM via the STM32G031 daughter-MCU (issue #361).
+        // The TX-NCO register has to be re-written during RX or the BVO never
+        // follows the dial. Mirrors deskhpsdr old_protocol.c:2837-2846 which
+        // sends C0=0x02 every round-robin pass regardless of MOX. Harmless on
+        // non-extamp boards.
+        int txFreqSlots = 0;
+        for (int phase = 0; phase < 4; phase++)
+        {
+            var (first, second) = Protocol1Client.PhaseRegisters(phase, mox: false);
+            if (first == ControlFrame.CcRegister.TxFreq) txFreqSlots++;
+            if (second == ControlFrame.CcRegister.TxFreq) txFreqSlots++;
+        }
+        Assert.True(txFreqSlots >= 1, $"expected ≥ 1 TxFreq slot per RX cycle, got {txFreqSlots}");
+    }
+
+    [Fact]
+    public void PhaseTable_MoxOff_StillSendsRxFreqEveryTick()
+    {
+        // Adding TxFreq to the RX rotation must not displace RxFreq below
+        // once-per-tick — dial response while receiving has to stay snappy.
+        for (int phase = 0; phase < 4; phase++)
+        {
+            var (first, second) = Protocol1Client.PhaseRegisters(phase, mox: false);
+            Assert.True(
+                first == ControlFrame.CcRegister.RxFreq || second == ControlFrame.CcRegister.RxFreq,
+                $"phase {phase} carries neither RxFreq slot");
+        }
+    }
+
+    [Fact]
+    public void PhaseTable_MoxOff_PsArmed_SendsTxFreqAtLeastOncePerCycle()
+    {
+        // Same extamp/BVO motivation as the non-PS table — PS-armed RX must
+        // also refresh TX-NCO so a Square SDR 2 operator who has PS on still
+        // gets BVO tracking on the dial.
+        int txFreqSlots = 0;
+        for (int phase = 0; phase < 16; phase++)
+        {
+            var (first, second) = Protocol1Client.PhaseRegisters(phase, mox: false, psArmed: true);
+            if (first == ControlFrame.CcRegister.TxFreq) txFreqSlots++;
+            if (second == ControlFrame.CcRegister.TxFreq) txFreqSlots++;
+        }
+        Assert.True(txFreqSlots >= 1, $"expected ≥ 1 TxFreq slot per PS-armed RX cycle, got {txFreqSlots}");
+    }
+
+    [Fact]
+    public void PhaseTable_MoxOn_StillSendsRxFreqEveryCycle()
+    {
+        // In duplex=1 the RX channel keeps decoding while MOX is on, so RxFreq
+        // must still appear at least once per 4-phase cycle. Protects against a
+        // TX-only rewrite that would freeze RX demod at the last RxFreq from
+        // before MOX engaged.
+        bool sawRxFreq = false;
+        for (int phase = 0; phase < 4; phase++)
+        {
+            var (first, second) = Protocol1Client.PhaseRegisters(phase, mox: true);
+            if (first == ControlFrame.CcRegister.RxFreq || second == ControlFrame.CcRegister.RxFreq)
+            {
+                sawRxFreq = true;
+                break;
+            }
+        }
+        Assert.True(sawRxFreq);
+    }
+
+    [Fact]
+    public void PhaseTable_MoxOn_TxFreqPayloadIsVfoA()
+    {
+        // Protocol-1 uses channel_freq(-1) (which resolves to the TX VFO) for
+        // the 0x02 payload. We don't have a split TX VFO yet, so TxFreq should
+        // encode VfoAHz — same VFO used for RxFreq. Pinning this so a future
+        // split-VFO implementation changes the phase-table registers together
+        // with the CcState field.
+        var state = new ControlFrame.CcState(
+            VfoAHz: 7_074_000,
+            Rate: HpsdrSampleRate.Rate48k,
+            PreampOn: false,
+            Atten: HpsdrAtten.Zero,
+            RxAntenna: HpsdrAntenna.Ant1,
+            Mox: true,
+            EnableHl2BandVolts: false,
+            Board: HpsdrBoardKind.HermesLite2);
+
+        Span<byte> cc = stackalloc byte[5];
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.TxFreq, state);
+
+        Assert.Equal(0x03, cc[0]); // TxFreq (0x02) | MOX (0x01)
+        Assert.Equal(7_074_000u, BinaryPrimitives.ReadUInt32BigEndian(cc[1..5]));
+    }
+
+    [Fact]
+    public void BuildStartStop_EncodesStartEp6()
+    {
+        Span<byte> buf = stackalloc byte[64];
+        ControlFrame.BuildStartStop(buf, start: true);
+        Assert.Equal(0xEF, buf[0]);
+        Assert.Equal(0xFE, buf[1]);
+        Assert.Equal(0x04, buf[2]);
+        Assert.Equal(0x01, buf[3]);
+        for (int i = 4; i < 64; i++) Assert.Equal(0, buf[i]);
+    }
+
+    [Fact]
+    public void BuildStartStop_EncodesStop()
+    {
+        Span<byte> buf = stackalloc byte[64];
+        ControlFrame.BuildStartStop(buf, start: false);
+        Assert.Equal(0xEF, buf[0]);
+        Assert.Equal(0xFE, buf[1]);
+        Assert.Equal(0x04, buf[2]);
+        Assert.Equal(0x00, buf[3]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue #294: WriteUsbFrame previously gated IQ-payload writes on
+    // `state.Board == HermesLite2`, so ANAN-class P1 radios (Hermes / ANAN-10E
+    // / Angelia / Orion-MkII / etc.) keyed up but emitted silence — every
+    // EP2 packet went out with the IQ slots cleared. The wire format
+    // (L_audio s16 BE | R_audio s16 BE | I s16 BE | Q s16 BE) is identical
+    // across all Protocol-1 boards; the only HL2-specific behaviour that
+    // must remain conditioned is the DriveFilter C2[3] PA-enable bit (see
+    // DriveFilter_Hl2_MoxOn_SetsC2PaEnableBit above).
+    // ---------------------------------------------------------------------
+
+    private sealed class ConstIqSource : ITxIqSource
+    {
+        private readonly short _i;
+        private readonly short _q;
+        public ConstIqSource(short i, short q) { _i = i; _q = q; }
+        public (short i, short q) Next(double amplitude) => (_i, _q);
+    }
+
+    private static (int peak, int firstI, int firstQ) FirstFrameIqStats(ReadOnlySpan<byte> packet)
+    {
+        // First USB frame payload starts at offset 16 (= 8 Metis header + 3 sync + 5 cc).
+        const int payloadStart = 16;
+        int peak = 0;
+        int firstI = (short)((packet[payloadStart + 4] << 8) | packet[payloadStart + 5]);
+        int firstQ = (short)((packet[payloadStart + 6] << 8) | packet[payloadStart + 7]);
+        for (int s = 0; s < 63; s++)
+        {
+            int off = payloadStart + s * 8;
+            int i = (short)((packet[off + 4] << 8) | packet[off + 5]);
+            int q = (short)((packet[off + 6] << 8) | packet[off + 7]);
+            peak = Math.Max(peak, Math.Max(Math.Abs(i), Math.Abs(q)));
+        }
+        return (peak, firstI, firstQ);
+    }
+
+    private static (int peak, int firstL, int firstR) FirstFrameAudioStats(ReadOnlySpan<byte> packet)
+    {
+        const int payloadStart = 16;
+        int peak = 0;
+        int firstL = (short)((packet[payloadStart + 0] << 8) | packet[payloadStart + 1]);
+        int firstR = (short)((packet[payloadStart + 2] << 8) | packet[payloadStart + 3]);
+        for (int s = 0; s < 63; s++)
+        {
+            int off = payloadStart + s * 8;
+            int l = (short)((packet[off + 0] << 8) | packet[off + 1]);
+            int r = (short)((packet[off + 2] << 8) | packet[off + 3]);
+            peak = Math.Max(peak, Math.Max(Math.Abs(l), Math.Abs(r)));
+        }
+        return (peak, firstL, firstR);
+    }
+
+    // Fills every requested slot with a constant s16, returning the full count —
+    // the steady-state "ring has plenty of audio" case.
+    private sealed class ConstRxAudioSource : IRxAudioSource
+    {
+        private readonly short _v;
+        public ConstRxAudioSource(short v) { _v = v; }
+        public int Read(Span<short> dest) { dest.Fill(_v); return dest.Length; }
+    }
+
+    // Always empty — models a ring that has nothing buffered (feature off / HL2 /
+    // underrun). Must leave the L/R slots zero, byte-identical to legacy behaviour.
+    private sealed class EmptyRxAudioSource : IRxAudioSource
+    {
+        public int Read(Span<short> dest) => 0;
+    }
+
+    [Fact]
+    public void BuildDataPacket_MoxOff_WithRxAudio_FillsLrAndLeavesIqZero()
+    {
+        // RX (not transmitting): demodulated audio rides the EP2 L/R slots so the
+        // radio codec drives its speaker jacks; the I/Q slots carry no carrier.
+        var buf = new byte[1032];
+        var state = BaseState() with { Board = HpsdrBoardKind.Hermes, Mox = false };
+        var rx = new ConstRxAudioSource(0x1234);
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state, iqSource: null, rxAudioSource: rx);
+
+        var (audioPeak, firstL, firstR) = FirstFrameAudioStats(buf);
+        var (iqPeak, _, _) = FirstFrameIqStats(buf);
+        Assert.Equal(0x1234, firstL);
+        Assert.Equal(0x1234, firstR);   // mono duplicated to both channels
+        Assert.Equal(0x1234, audioPeak);
+        Assert.Equal(0, iqPeak);        // no carrier while receiving
+    }
+
+    [Fact]
+    public void BuildDataPacket_MoxOff_EmptyRxAudio_KeepsPayloadZero()
+    {
+        // Empty ring (feature off / HL2 / underrun) → L/R stay zero, byte-identical
+        // to a radio that carries no RX audio at all.
+        var buf = new byte[1032];
+        var state = BaseState() with { Board = HpsdrBoardKind.Hermes, Mox = false };
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state, iqSource: null, rxAudioSource: new EmptyRxAudioSource());
+
+        var (audioPeak, _, _) = FirstFrameAudioStats(buf);
+        Assert.Equal(0, audioPeak);
+    }
+
+    [Fact]
+    public void BuildDataPacket_MoxOn_IgnoresRxAudio_LeavesLrZero()
+    {
+        // While transmitting, the L/R slots stay zero even if an RX-audio source
+        // is plumbed — the radio is keyed, not monitoring, and the I/Q path owns
+        // the frame. Guards against feeding TX-monitor audio to the radio speaker.
+        var buf = new byte[1032];
+        var state = BaseState() with { Board = HpsdrBoardKind.Hermes, Mox = true, DriveLevel = 0x80 };
+        var iq = new ConstIqSource(0x2000, -0x2000);
+        var rx = new ConstRxAudioSource(0x7FFF);
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state, iqSource: iq, rxAudioSource: rx);
+
+        var (audioPeak, _, _) = FirstFrameAudioStats(buf);
+        var (iqPeak, _, _) = FirstFrameIqStats(buf);
+        Assert.Equal(0, audioPeak);   // no RX audio on the wire during TX
+        Assert.True(iqPeak > 0);      // IQ path unchanged
+    }
+
+    [Theory]
+    [InlineData(HpsdrBoardKind.Hermes)]        // ANAN-10E reports here (issue #294)
+    [InlineData(HpsdrBoardKind.HermesII)]      // ANAN-10E w/ HermesII firmware
+    [InlineData(HpsdrBoardKind.Angelia)]       // ANAN-100D
+    [InlineData(HpsdrBoardKind.Orion)]         // ANAN-200D
+    [InlineData(HpsdrBoardKind.OrionMkII)]     // G2 / 7000DLE / 8000DLE / etc.
+    [InlineData(HpsdrBoardKind.HermesLite2)]   // HL2 — daily-driver regression guard
+    public void BuildDataPacket_AllBoards_MoxOn_WritesNonZeroIqWhenDriveSet(HpsdrBoardKind board)
+    {
+        var buf = new byte[1032];
+        var state = BaseState() with
+        {
+            Board = board,
+            Mox = true,
+            DriveLevel = 0x80,
+        };
+        var src = new ConstIqSource(i: 0x2000, q: -0x2000);
+
+        ControlFrame.BuildDataPacket(
+            buf,
+            sendSequence: 1,
+            evenRegister: ControlFrame.CcRegister.Config,
+            oddRegister: ControlFrame.CcRegister.RxFreq,
+            state,
+            src);
+
+        var (peak, firstI, firstQ) = FirstFrameIqStats(buf);
+        Assert.True(peak > 0,
+            $"board={board} mox=on drive=128 produced zero IQ on the wire — issue #294 regression");
+        // 0x2000 with the 0xFE LSB mask = 0x2000 (LSB already 0)
+        Assert.Equal(0x2000, firstI);
+        Assert.Equal(unchecked((short)-0x2000), firstQ);
+    }
+
+    [Fact]
+    public void BuildDataPacket_Hermes_MoxOff_KeepsPayloadZero()
+    {
+        // Never key the radio when MOX is off — applies to every board.
+        var buf = new byte[1032];
+        var state = BaseState() with
+        {
+            Board = HpsdrBoardKind.Hermes,
+            Mox = false,
+            DriveLevel = 0xFF,
+        };
+        var src = new ConstIqSource(0x7FFF, 0x7FFF);
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state, src);
+
+        var (peak, _, _) = FirstFrameIqStats(buf);
+        Assert.Equal(0, peak);
+    }
+
+    [Fact]
+    public void BuildDataPacket_Hermes_DriveZero_KeepsPayloadZero()
+    {
+        // Drive byte 0 means the analog TX chain is off regardless of MOX/IQ.
+        // Zero the payload so the wire is bit-exact silent — guards against an
+        // IQ source dribbling junk through during PTT-without-drive.
+        var buf = new byte[1032];
+        var state = BaseState() with
+        {
+            Board = HpsdrBoardKind.Hermes,
+            Mox = true,
+            DriveLevel = 0,
+        };
+        var src = new ConstIqSource(0x7FFF, 0x7FFF);
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state, src);
+
+        var (peak, _, _) = FirstFrameIqStats(buf);
+        Assert.Equal(0, peak);
+    }
+
+    [Fact]
+    public void BuildDataPacket_NoIqSource_KeepsPayloadZero()
+    {
+        // Legacy / unit-test path: caller omits the IQ source. Must still be
+        // safe — frame stays cleared, no nullref.
+        var buf = new byte[1032];
+        var state = BaseState() with
+        {
+            Board = HpsdrBoardKind.Hermes,
+            Mox = true,
+            DriveLevel = 0xFF,
+        };
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state); // iqSource defaulted to null
+
+        var (peak, _, _) = FirstFrameIqStats(buf);
+        Assert.Equal(0, peak);
+    }
+
+    [Fact]
+    public void BuildDataPacket_IqPayload_MasksLsbAcrossAllBoards()
+    {
+        // Originally an HL2 CWX workaround; left universal because the ≤1 LSB
+        // precision loss is ~96 dB below full-scale and well under any real
+        // radio's noise floor. Pin so a future "remove the mask for non-HL2"
+        // refactor is a deliberate decision, not a silent regression.
+        var buf = new byte[1032];
+        var state = BaseState() with
+        {
+            Board = HpsdrBoardKind.Hermes,
+            Mox = true,
+            DriveLevel = 0x80,
+        };
+        var src = new ConstIqSource(i: 0x2001, q: 0x2001); // LSB=1
+
+        ControlFrame.BuildDataPacket(
+            buf, 1,
+            ControlFrame.CcRegister.Config,
+            ControlFrame.CcRegister.RxFreq,
+            state, src);
+
+        // Wire byte for I-low / Q-low must have LSB cleared.
+        Assert.Equal(0, buf[16 + 5] & 0x01);
+        Assert.Equal(0, buf[16 + 7] & 0x01);
+    }
+
+    // --- CW keyer config (C&C 0x0B / wire 0x16), zeus-bks ----------------
+    // Gateware rtl/cw_openhpsdr.sv:29-34 — speed=C3[5:0], mode=C3[7:6],
+    // weight=C4[6:0], spacing=C4[7], reverse=C2[6].
+
+    [Theory]
+    [InlineData(false, 0x16)]
+    [InlineData(true, 0x17)]
+    public void CwKeyerConfig_Cc0_Is_0x16_PlusMox(bool mox, byte expectedCc0)
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { Mox = mox };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.CwKeyerConfig, s);
+        Assert.Equal(expectedCc0, cc[0]);
+    }
+
+    [Fact]
+    public void CwKeyerConfig_PacksSpeed_IntoC3LowSixBits()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { CwKeyerSpeedWpm = 25, CwKeyerMode = CwKeyerMode.IambicB };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.CwKeyerConfig, s);
+
+        // C3 = cc[3]: [5:0] = speed (25), [7:6] = mode (IambicB = 0b10).
+        Assert.Equal(25, cc[3] & 0x3F);
+        Assert.Equal(0b10, (cc[3] >> 6) & 0x03);
+    }
+
+    [Fact]
+    public void CwKeyerConfig_StraightMode_PacksModeZero()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { CwKeyerSpeedWpm = 22, CwKeyerMode = CwKeyerMode.Straight };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.CwKeyerConfig, s);
+        Assert.Equal(0, (cc[3] >> 6) & 0x03);
+        // Speed is still encoded — the gateware just ignores it in straight
+        // mode. Pinning it documents that we don't zero speed by mode.
+        Assert.Equal(22, cc[3] & 0x3F);
+    }
+
+    [Theory]
+    [InlineData(80, 60)]   // above the 0-60 gateware range → clamped to 60
+    [InlineData(-5, 0)]    // negative → clamped to 0
+    [InlineData(60, 60)]   // boundary
+    public void CwKeyerConfig_ClampsSpeed_To_0_60(int wpm, int expected)
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { CwKeyerSpeedWpm = wpm, CwKeyerMode = CwKeyerMode.IambicA };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.CwKeyerConfig, s);
+        Assert.Equal(expected, cc[3] & 0x3F);
+    }
+
+    [Fact]
+    public void CwKeyerConfig_DefaultWeightSpacingReverse()
+    {
+        Span<byte> cc = stackalloc byte[5];
+        var s = BaseState() with { CwKeyerSpeedWpm = 20, CwKeyerMode = CwKeyerMode.IambicA };
+        ControlFrame.WriteCcBytes(cc, ControlFrame.CcRegister.CwKeyerConfig, s);
+
+        // C4[6:0] = weight 50, C4[7] = spacing off (0).
+        Assert.Equal(50, cc[4] & 0x7F);
+        Assert.Equal(0, (cc[4] >> 7) & 0x01);
+        // C2[6] = reverse off (0). C1 unused.
+        Assert.Equal(0, (cc[2] >> 6) & 0x01);
+        Assert.Equal(0, cc[1]);
+    }
+}

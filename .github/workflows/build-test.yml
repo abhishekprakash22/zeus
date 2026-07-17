@@ -1,0 +1,194 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main, develop, experimental]
+  pull_request:
+    branches: [main, develop, experimental]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build and Test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    # continue-on-error is driven per-leg from the matrix. Legs whose runner
+    # availability for THIS repo is not yet confirmed (native arm64, Intel
+    # macOS) are marked experimental so an infra gap does not turn the whole
+    # required check red. Promote them to hard gates (drop `experimental`)
+    # once a green run on real hardware confirms the runner label resolves.
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      # fail-fast: false so one architecture failing still reports the others.
+      # We want to SEE which arch broke, not have GitHub cancel the siblings.
+      fail-fast: false
+      matrix:
+        include:
+          # ---- Hard-gated legs (required) --------------------------------
+          # x64 across all three OSes. These have always run and stay required.
+          - name: linux-x64
+            os: ubuntu-latest
+            arch: x64
+          - name: windows-x64
+            os: windows-latest
+            arch: x64
+          - name: macos-arm64
+            # macos-latest is Apple Silicon (arm64) as of the macOS 14 image.
+            os: macos-latest
+            arch: arm64
+
+          # ---- arm64 .NET test legs (NEW) --------------------------------
+          # GitHub's native arm64 runners are GA for public repos:
+          #   ubuntu-24.04-arm  -> Linux arm64 (covers Raspberry Pi class ABI)
+          #   windows-11-arm    -> Windows arm64
+          # We run `dotnet test` natively here rather than QEMU so the DSP /
+          # native-load path is exercised on real arm64 silicon. QEMU was
+          # rejected: it cannot validate the WDSP native .so/.dll load reliably
+          # (emulated syscalls + missing arm64 native runtimes) and is far
+          # slower. If a native arm runner label is ever disabled for this repo
+          # these legs will fail to schedule — that is why they are flagged
+          # experimental below until a maintainer confirms a green run.
+          # TODO(maintainer): drop `experimental: true` on these two legs once
+          # a run on the real arm64 runners is confirmed green; then they
+          # become required, satisfying the "green on every arch" rule.
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            arch: arm64
+            experimental: true
+          - name: windows-arm64
+            os: windows-11-arm
+            arch: arm64
+            experimental: true
+
+          # ---- macOS x64 (Intel) coverage — RETIRED ----------------------
+          # The macos-x64 leg ran on `macos-13`, GitHub's last Intel hosted
+          # image. That pool is on GitHub's deprecation track and its hosted
+          # capacity collapsed: jobs sat `queued` for 1h+ and never picked up a
+          # runner, leaving a perpetual "pending" check on every PR (the leg was
+          # already continue-on-error, so it never gated — only added noise and
+          # burned a queue slot). Per the leg's own retirement note, it is now
+          # dropped. Intel macOS is BEST-EFFORT / untested in CI; macos-arm64
+          # remains the required macOS gate. Note: arch-specific native bits
+          # (Intel dylib + FFTW bundling) are no longer exercised here — see
+          # docs/lessons on macOS FFTW bundling before shipping Intel changes.
+          # build-voyeur-engines.yml shows the migration path (cross-build
+          # x86_64 on macos-14) if a hard Intel gate is wanted again later.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The DeepCW ONNX model lives in a git submodule and is a build-time
+      # dependency of the web bundle (decode-worker.ts statically imports
+      # model.onnx?url). Without it the "Build frontend" step fails to resolve
+      # the import. Targeted init avoids pulling the heavy vst3sdk submodule.
+      - name: Init DeepCW model submodule (frontend build dependency)
+        run: git submodule update --init zeus-web/external/deepcw-engine
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: zeus-web/package-lock.json
+
+      - name: Restore .NET dependencies
+        run: dotnet restore Zeus.slnx
+
+      # Warnings-as-errors is enforced globally via Directory.Build.props
+      # (<TreatWarningsAsErrors>true</TreatWarningsAsErrors>), so this build
+      # already fails on any C# warning. We pass `-warnaserror` redundantly as
+      # a belt-and-suspenders guard: if the prop is ever dropped or overridden
+      # by a project, CI still treats warnings as errors. Do NOT add
+      # `-p:TreatWarningsAsErrors=false` or `-warnaserror-` anywhere — that
+      # would silently re-open the warnings gate.
+      - name: Build .NET solution
+        run: dotnet build Zeus.slnx --configuration Release --no-restore -warnaserror
+
+      # Verify the WDSP native library actually loads on THIS OS/arch.
+      # tests/Zeus.Dsp.Tests/WdspNativeLoaderTests.cs probes
+      # WdspDspEngine.NativeLibraryLoadable via a SkippableFact — it does not
+      # hard-fail when the native runtime is absent/stale (common on a feature
+      # branch where committed native binaries may lag the platform set). We run
+      # the Zeus.Dsp.Tests project with detailed console output so the
+      # native-load result (loaded / skipped + reason) is VISIBLE per OS/arch in
+      # the log. This is informational on purpose: a stale committed runtime
+      # should surface as a clear skip message, not a red required check. The
+      # full DSP-correctness gates still run in the "Run .NET tests" step below.
+      - name: Probe WDSP native load (informational, per OS/arch)
+        run: dotnet test tests/Zeus.Dsp.Tests/Zeus.Dsp.Tests.csproj --configuration Release --no-build --logger "console;verbosity=detailed"
+
+      # The "DspModernization" trait covers the WDSP-v2 evidence/validation
+      # tooling suites (bakeoff-report ranking, artifact-manifest scaffolds,
+      # validation triage, manual-tune observer, live-diagnostics scene). They
+      # exercise the experimental evaluation harness, not DSP/protocol
+      # correctness, and the lineage-parity design doc calls for running broad
+      # modernization combinatorics as opt-in diagnostics rather than PR gates.
+      # They run on a schedule via dsp-modernization-tests.yml instead. The
+      # DSP-correctness + channel-lifecycle gates (Zeus.Dsp.Tests, etc.) stay
+      # in the per-PR run below. The diagnostics-conformance tests in
+      # Zeus.Server.Tests are NOT in this category, so this filter runs them.
+      - name: Run .NET tests
+        run: dotnet test Zeus.slnx --configuration Release --no-build --verbosity normal --filter "Category!=DspModernization"
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: zeus-web
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: zeus-web
+
+      - name: Lint frontend
+        run: npm run lint
+        working-directory: zeus-web
+
+      # Type-check is a hard gate. Previously continue-on-error masked real type
+      # regressions ("missing @types in CI"); `npm ci` installs devDependencies
+      # so the types ARE present and a failure here is a genuine type error.
+      - name: Type-check frontend
+        run: npm run typecheck
+        working-directory: zeus-web
+
+      - name: Run frontend tests
+        run: npm test
+        working-directory: zeus-web
+
+      - name: Run frontend E2E tests
+        run: npm run test:e2e
+        working-directory: zeus-web
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: zeus-web
+
+      - name: Verify wwwroot output
+        shell: bash
+        run: |
+          # Vite outputs into Zeus.Server.Hosting/wwwroot since the
+          # Zeus.Server.Hosting library refactor; both Zeus.Server and
+          # Zeus.Desktop pick the assets up via Content propagation.
+          if [ ! -f "Zeus.Server.Hosting/wwwroot/index.html" ]; then
+            echo "Error: Frontend build did not produce Zeus.Server.Hosting/wwwroot/index.html"
+            exit 1
+          fi
+          echo "Frontend build successful"
+
+      - name: Verify Windows installer publish payload
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:VersionPrefix=0.0.0 `
+            -p:VersionSuffix=ci `
+            -p:DebugType=embedded `
+            -p:DebugSymbols=false
+          ./tools/verify-windows-installer-payload.ps1 `
+            -PublishDir "OpenhpsdrZeus/bin/Release/net10.0/win-x64/publish" `
+            -Arch x64

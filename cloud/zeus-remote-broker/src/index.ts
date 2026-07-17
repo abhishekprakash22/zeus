@@ -1,0 +1,330 @@
+import type { Env } from './types';
+import { verifyQrzSessionCached } from './qrz';
+import { mintIceServers } from './turn';
+import {
+  handleAdmin,
+  verifyAdminToken,
+  ensureAdminBootstrap,
+  corsHeaders as adminCorsHeaders,
+} from './admin-api';
+import { validateCrashBody } from './crash-validate';
+import { sanitizeOperatorMeta, cleanCountry } from './presence-meta';
+import { recordManagedUserLogin } from './admin-db';
+import {
+  handleBillingCheckout,
+  handleBillingWebhook,
+  handleUserSession,
+} from './billing-api';
+import { adminRateLimitedResponse } from './admin-rate-limit-response';
+
+export { SignalRoom } from './signal-room';
+export { RateLimiter } from './rate-limiter';
+export { PresenceRoom } from './presence';
+export { CrashStore } from './crash-store';
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/' || url.pathname === '/health') {
+      return new Response('zeus-remote-broker ok', {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      });
+    }
+
+    // /go/<callsign> — the operator's permanent remote address. Redirects to the
+    // web client (Cloudflare Pages), which then signals back here as a client.
+    const go = /^\/go\/([^/]+)$/.exec(url.pathname);
+    if (go) {
+      const callsign = decodeURIComponent(go[1]).toUpperCase();
+      const origin = env.WEB_APP_ORIGIN ?? 'https://openhpsdrzeus.com';
+      return Response.redirect(`${origin}/?remote=${encodeURIComponent(callsign)}`, 302);
+    }
+
+    // Credential-based admin API (login, token mint/revoke, admin CRUD,
+    // presence). Self-contained: handles its own CORS, Bearer auth, and the
+    // idempotent bootstrap/migration on first call. See admin-api.ts.
+    //
+    // Per-IP rate-limited (mirrors /turn and /signal): the unauthenticated
+    // /admin/login surface must not be an unthrottled online password-guess /
+    // PBKDF2 CPU-exhaustion vector. OPTIONS preflights pass through so the
+    // dashboard's CORS check is never throttled. handleLogin adds a second,
+    // per-callsign throttle.
+    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+      if (request.method !== 'OPTIONS' && (await rateLimited(env, clientIp(request)))) {
+        return adminRateLimitedResponse(env, request);
+      }
+      // /admin/crashes lives in index.ts (it reaches the CrashStore DO, not the
+      // D1 admin store), but reuses the SAME credential-based admin auth as the
+      // rest of /admin via verifyAdminToken. Everything else falls through to the
+      // admin-api dispatcher.
+      if (url.pathname === '/admin/crashes') {
+        return handleAdminCrashes(request, env, ctx);
+      }
+      return handleAdmin(request, env, ctx);
+    }
+
+    // Stripe sends these without QRZ headers; authenticity is proven by the
+    // Stripe-Signature HMAC in handleBillingWebhook.
+    if (url.pathname === '/billing/webhook') {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      return handleBillingWebhook(request, env);
+    }
+
+    // Operator presence: the radio's sidecar registers/heartbeats/drops here so a
+    // maintainer can see it as "online" (read back via /admin/presence). Mirrors
+    // the host-signaling QRZ gate in /signal: the verified callsign is the only
+    // identity the broker trusts. Per-IP rate-limited like /turn and /signal.
+    if (url.pathname === '/presence/register'
+        || url.pathname === '/presence/heartbeat'
+        || url.pathname === '/presence/drop') {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      const verified = await verifyOperator(request, env, ctx);
+      if (!verified) return new Response('qrz auth required', { status: 401 });
+      const presenceAction = url.pathname.slice('/presence/'.length); // register | heartbeat | drop
+      // register/heartbeat may carry an untrusted JSON metadata body (platform,
+      // app version, connected radio); sanitise it here and stamp the verified
+      // callsign + edge-observed IP/country before forwarding to the DO so the
+      // operator can never spoof its own callsign/IP.
+      const meta = presenceAction === 'drop' ? null : sanitizeOperatorMeta(await request.text());
+      const upsert = {
+        callsign: verified,
+        ip: clientIp(request),
+        country: clientCountry(request),
+        ...(meta ?? {}),
+      };
+      ctx.waitUntil(recordManagedUserLogin(env.ADMIN_DB, verified).catch(() => undefined));
+      const id = env.PRESENCE.idFromName('global');
+      return env.PRESENCE.get(id).fetch(
+        new Request(`https://presence.internal/${presenceAction}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(upsert),
+        }),
+      );
+    }
+
+    // QRZ-verified user directory heartbeat. This is deliberately separate from
+    // support presence: every signed-in Zeus instance can populate the durable
+    // admin user ledger without implying the operator opted into live diagnostics.
+    if (url.pathname === '/users/heartbeat' || url.pathname === '/users/seen') {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      const verified = await verifyOperator(request, env, ctx);
+      if (!verified) return new Response('qrz auth required', { status: 401 });
+      await recordManagedUserLogin(env.ADMIN_DB, verified);
+      return Response.json({ ok: true, callsign: verified });
+    }
+
+    // QRZ-verified user-management snapshot consumed by the Zeus app. This is
+    // the central gate: app access, plugin pricing, and per-plugin entitlements
+    // stream from the admin D1 ledger into /api/users/session locally.
+    if (url.pathname === '/users/session') {
+      if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      const verified = await verifyOperator(request, env, ctx);
+      if (!verified) return new Response('qrz auth required', { status: 401 });
+      return handleUserSession(verified, env);
+    }
+
+    // QRZ-verified billing checkout. The app asks here for a paid plugin; the
+    // broker either opens a new Stripe subscription or adds the plugin's price
+    // to the operator's existing subscription.
+    if (url.pathname === '/billing/checkout') {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      const verified = await verifyOperator(request, env, ctx);
+      if (!verified) return new Response('qrz auth required', { status: 401 });
+      return handleBillingCheckout(request, env, verified);
+    }
+
+    // Crash auto-share upload: the sidecar POSTs a (already-redacted)
+    // SupportCrashRecord here after an unexpected backend death, ONLY when the
+    // operator pre-authorised auto-share. QRZ-gated as the operator; size-capped.
+    if (url.pathname === '/crash') {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      const verified = await verifyOperator(request, env, ctx);
+      if (!verified) return new Response('qrz auth required', { status: 401 });
+
+      const body = await request.text();
+      const verdict = validateCrashBody(body);
+      if (!verdict.ok) return new Response(verdict.message, { status: verdict.status });
+
+      const id = env.CRASH_STORE.idFromName('global');
+      const ip = clientIp(request);
+      const country = clientCountry(request);
+      const putUrl =
+        `https://crash.internal/put?callsign=${encodeURIComponent(verified)}` +
+        `&ip=${encodeURIComponent(ip)}` +
+        (country ? `&country=${encodeURIComponent(country)}` : '');
+      return env.CRASH_STORE.get(id).fetch(
+        new Request(putUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        }),
+      );
+    }
+
+    // Mint short-lived TURN credentials (clients call this before connecting).
+    // The web client fetches this cross-origin (app.openhpsdrzeus.com → broker),
+    // so EVERY response carries CORS headers — including the 503 fallback, so the
+    // browser can read it and fall back to STUN instead of throwing a CORS error.
+    if (url.pathname === '/turn') {
+      const cors = corsHeaders(env);
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405, headers: cors });
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429, headers: cors });
+      try {
+        return Response.json(await mintIceServers(env), { headers: cors });
+      } catch {
+        return new Response('turn unavailable', { status: 503, headers: cors });
+      }
+    }
+
+    // WebSocket signaling. Host (radio) is QRZ-gated; client (browser) is open
+    // (the radio's session password is the real gate — the broker only relays).
+    if (url.pathname === '/signal') {
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      if (request.headers.get('Upgrade') !== 'websocket') {
+        return new Response('expected websocket upgrade', { status: 426 });
+      }
+
+      const roleParam = url.searchParams.get('role');
+      const role = roleParam === 'host' ? 'host' : roleParam === 'support' ? 'support' : 'client';
+      let callsign = (url.searchParams.get('callsign') ?? '').trim().toUpperCase();
+      const headers = new Headers(request.headers);
+
+      if (role === 'host') {
+        const verify = (env.QRZ_VERIFY ?? 'on').toLowerCase() !== 'off';
+        const verified = (request.headers.get('X-QRZ-Callsign') ?? '').trim().toUpperCase();
+        if (verify) {
+          const sessionKey = request.headers.get('X-QRZ-Session') ?? '';
+          if (!sessionKey || !verified) return new Response('qrz auth required', { status: 401 });
+          if (!(await verifyQrzSessionCached(sessionKey, verified, ctx))) {
+            return new Response('qrz session invalid or not logged in', { status: 403 });
+          }
+        }
+        callsign = verified || callsign;
+        headers.set('X-Operator-Callsign', callsign);
+      }
+      // role=support is NOT QRZ-gated here: the admin already proved authorisation
+      // to /admin/request, which issued the single-use ticket carried on this WS.
+      // The SignalRoom DO redeems + validates that ticket before joining the room,
+      // so an unauthorised peer can never become a support connection. `callsign`
+      // is the TARGET operator's room (supplied by the dashboard).
+
+      if (!callsign) return new Response('callsign required', { status: 400 });
+
+      const id = env.SIGNAL_ROOM.idFromName(callsign);
+      return env.SIGNAL_ROOM.get(id).fetch(new Request(request, { headers }));
+    }
+
+    return new Response('not found', { status: 404 });
+  },
+} satisfies ExportedHandler<Env>;
+
+function clientIp(request: Request): string {
+  return request.headers.get('cf-connecting-ip') ?? 'unknown';
+}
+
+/**
+ * Edge-observed 2-letter country for the request (Cloudflare's geo-IP), or null.
+ * Used to annotate presence/crash rows in the maintainer dashboard. Never an
+ * identity signal — purely informational triage context.
+ */
+function clientCountry(request: Request): string | null {
+  const cf = (request as Request & { cf?: { country?: string } }).cf;
+  return cleanCountry(cf?.country);
+}
+
+/**
+ * QRZ-gate an operator-authenticated request (presence/crash), returning the
+ * verified upper-cased callsign or null. Identical model to the host side of
+ * /signal: when QRZ_VERIFY is on (default), the X-QRZ-Session must validate the
+ * X-QRZ-Callsign via the cached QRZ lookup; with QRZ_VERIFY off (local dev) the
+ * asserted callsign is trusted as-is. Fails closed on any missing field.
+ */
+async function verifyOperator(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<string | null> {
+  const callsign = (request.headers.get('X-QRZ-Callsign') ?? '').trim().toUpperCase();
+  if (!callsign) return null;
+  const verify = (env.QRZ_VERIFY ?? 'on').toLowerCase() !== 'off';
+  if (!verify) return callsign;
+  const sessionKey = request.headers.get('X-QRZ-Session') ?? '';
+  if (!sessionKey) return null;
+  if (!(await verifyQrzSessionCached(sessionKey, callsign, ctx))) return null;
+  return callsign;
+}
+
+/**
+ * GET /admin/crashes?callsign=<cs> — maintainer view of a consented operator's
+ * auto-shared crash records. DELETE /admin/crashes clears all retained crash logs;
+ * DELETE with callsign clears that operator only. Admin-only: same Bearer-token
+ * credential auth as the rest of /admin (reused via verifyAdminToken), NOT the
+ * operator's QRZ identity. The operator opted in by enabling auto-share; the admin
+ * store proves the caller is authorised to read or clear it.
+ */
+async function handleAdminCrashes(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  // Reuse the SAME origin-allowlist CORS as the rest of /admin (admin-api), which
+  // echoes the matching ADMIN_ORIGINS origin (the dashboard runs at the apex, NOT
+  // WEB_APP_ORIGIN). Using a WEB_APP_ORIGIN-pinned header here blocked the
+  // dashboard's /admin/crashes fetch with a CORS preflight failure.
+  const cors = adminCorsHeaders(env, request);
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  if (request.method !== 'GET' && request.method !== 'DELETE') {
+    return Response.json({ error: 'method not allowed' }, { status: 405, headers: cors });
+  }
+
+  // Match handleAdmin's contract: bootstrap the admin store, then Bearer-gate.
+  await ensureAdminBootstrap(env);
+  const auth = await verifyAdminToken(request, env);
+  if (!auth) return Response.json({ error: 'unauthorized' }, { status: 401, headers: cors });
+
+  const callsign = (new URL(request.url).searchParams.get('callsign') ?? '').trim().toUpperCase();
+
+  void ctx; // reserved (audit logging could go here as the admin-api routes do)
+  const id = env.CRASH_STORE.idFromName('global');
+  // No callsign → the crash-bearing-operator index (overview); with a callsign →
+  // that operator's records. DELETE mirrors the shape but clears instead.
+  const internalUrl = request.method === 'DELETE'
+    ? callsign
+      ? `https://crash.internal/clear?callsign=${encodeURIComponent(callsign)}`
+      : 'https://crash.internal/clear'
+    : callsign
+      ? `https://crash.internal/list?callsign=${encodeURIComponent(callsign)}`
+      : 'https://crash.internal/index';
+  const res = await env.CRASH_STORE.get(id).fetch(new Request(internalUrl, { method: request.method }));
+  const body = await res.json<unknown>();
+  return Response.json(body, { status: res.status, headers: cors });
+}
+
+// CORS for the browser web client's cross-origin /turn fetch. Allow exactly the
+// configured web-app origin (the SPA on Cloudflare Pages); fall back to '*' only
+// if WEB_APP_ORIGIN is unset. /turn returns short-lived TURN creds, no cookies,
+// so no Allow-Credentials.
+function corsHeaders(env: Env): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': env.WEB_APP_ORIGIN ?? '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'content-type',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
+}
+
+async function rateLimited(env: Env, ip: string): Promise<boolean> {
+  const limiter = env.RATE_DO.get(env.RATE_DO.idFromName(ip));
+  const res = await limiter.fetch('https://rl.internal/check');
+  return res.status === 429;
+}

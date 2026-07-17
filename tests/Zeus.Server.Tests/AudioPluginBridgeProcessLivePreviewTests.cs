@@ -1,0 +1,453 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Zeus.Plugins.Contracts.Audio;
+using Zeus.Plugins.Contracts.Extensions;
+using Zeus.Plugins.Host.Audio;
+using Zeus.Server;
+
+namespace Zeus.Server.Tests;
+
+/// <summary>
+/// Gate-logic regression for <see cref="AudioPluginBridge.ProcessLivePreview"/>.
+/// The realtime preview tap must short-circuit when:
+///   1. The preview flag is off (no plugins / non-Wdsp engine).
+///   2. MOX is on (the WDSP TX path is the canonical chain runner).
+///   3. TX monitor is on (TX path runs the chain via ProcessTxBlock).
+/// When the gate passes, the bridge must invoke each slotted plugin's
+/// Process once with <c>ctx.Mox == false</c> so downstream plugins can
+/// distinguish "preview meter update" from "on-air audio".
+/// </summary>
+public class AudioPluginBridgeProcessLivePreviewTests
+{
+    [Fact]
+    public void Preview_Disabled_Does_Not_Invoke_Plugin()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            previewEnabled: false,
+            engineIsWdsp: true);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(0, spy.ProcessCallCount);
+    }
+
+    [Fact]
+    public void Mox_On_Short_Circuits_Preview()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,            // <- MOX engaged
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(0, spy.ProcessCallCount);
+    }
+
+    [Fact]
+    public void Monitor_On_Short_Circuits_Preview()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => true,        // <- preview mode
+            log: NullLogger<AudioPluginBridge>.Instance);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(0, spy.ProcessCallCount);
+    }
+
+    [Fact]
+    public void Gate_Pass_Invokes_Plugin_With_Mox_False()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(1, spy.ProcessCallCount);
+        Assert.False(spy.LastCtxMox);
+        Assert.Equal(48_000, spy.LastSampleRate);
+        Assert.Equal(1, spy.LastChannels);
+        Assert.Equal(256, spy.LastFrames);
+    }
+
+    [Fact]
+    public void Empty_Chain_Gate_Pass_Does_Not_Throw()
+    {
+        // No plugins attached. The bridge should still complete the
+        // ProcessLivePreview call without throwing — the underlying
+        // AudioChain just pass-throughs.
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance);
+        // Note: Chain.MasterBypassed defaults to false; with zero slots it
+        // is a no-op pass-through inside AudioChain.Process (all slots null).
+
+        var ex = Record.Exception(() => RunPreview(bridge, 256));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Preview_Mirrors_Live_Mic_Block_Size()
+    {
+        // Mic capture delivers 960-sample blocks (20 ms @ 48 kHz). The
+        // preview path stack-allocates buffers sized to the mic block.
+        // Verify the plugin sees the same frame count regardless of
+        // the declared BlockSize hint in AudioPluginRequirements.
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 960);
+
+        Assert.Equal(1, spy.ProcessCallCount);
+        Assert.Equal(960, spy.LastFrames);
+        Assert.False(spy.LastCtxMox);
+    }
+
+    // -- Full-chain preview split -------------------------------------
+
+    [Fact]
+    public void Preview_DoesNotPublish_PluginOnlyOutput_ToPreviewSink()
+    {
+        // Audio Suite Preview now uses the WDSP TX-monitor path. The
+        // live-preview tap still runs plugins for meters, but it must not
+        // publish plugin-only audio to the legacy local sink.
+        var spy = new SpyPlugin();
+        var sink = new SpyPreviewSink(enabledInitial: true);
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            preview: sink);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(1, spy.ProcessCallCount);
+        Assert.Equal(0, sink.PublishCallCount);
+    }
+
+    [Fact]
+    public void Preview_SinkDisabled_StillUpdatesMeters()
+    {
+        // Meter-only path — the chain still runs (plugins see Process), but
+        // audible monitoring is owned by TX Monitor, not this local sink.
+        var spy = new SpyPlugin();
+        var sink = new SpyPreviewSink(enabledInitial: false);
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            preview: sink);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(1, spy.ProcessCallCount);     // chain still ran (meters animated)
+        Assert.Equal(0, sink.PublishCallCount);    // but preview was not published
+    }
+
+    [Fact]
+    public void Preview_Skipped_When_Mox_On_Even_If_SinkEnabled()
+    {
+        // Existing MOX gate wins: even with preview turned on, the
+        // preview path short-circuits on MOX and the preview sink
+        // sees nothing for the duration of TX.
+        var spy = new SpyPlugin();
+        var sink = new SpyPreviewSink(enabledInitial: true);
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            preview: sink);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 256);
+
+        Assert.Equal(0, spy.ProcessCallCount);
+        Assert.Equal(0, sink.PublishCallCount);
+    }
+
+    [Fact]
+    public void Preview_DirtyPluginOutput_DoesNotReachPreviewSink()
+    {
+        var sink = new SpyPreviewSink(enabledInitial: true);
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            preview: sink);
+        bridge.Chain.SetSlot(0, new DirtyOutputPlugin());
+        bridge.Chain.MasterBypassed = false;
+
+        RunPreview(bridge, 6);
+
+        Assert.Equal(0, sink.PublishCallCount);
+    }
+
+    [Fact]
+    public void TciRemoteTxActive_Bypasses_InsertChain_In_TxPath()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            isTciTxAudioActive: () => true);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunTxProcess(bridge, 256);
+
+        Assert.Equal(0, spy.ProcessCallCount); // fully bypassed for remote source
+    }
+
+    [Fact]
+    public void TxPath_MasterBypass_Sanitizes_Input_Before_Wdsp()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = true;
+
+        var output = RunDirtyTxProcess(bridge);
+
+        Assert.Equal<float>(new float[] { 0f, 0f, 0f, 1f, -1f, 0.25f }, output);
+        Assert.Equal(0, spy.ProcessCallCount);
+    }
+
+    [Fact]
+    public void TxPath_TciBypass_Sanitizes_Input_Before_Wdsp()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            isTciTxAudioActive: () => true);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        var output = RunDirtyTxProcess(bridge);
+
+        Assert.Equal<float>(new float[] { 0f, 0f, 0f, 1f, -1f, 0.25f }, output);
+        Assert.Equal(0, spy.ProcessCallCount);
+    }
+
+    [Fact]
+    public void TxPath_VstMasterBypass_Sanitizes_Input_Before_Wdsp()
+    {
+        var controller = ActiveControllerWithoutBridge();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            vstEngine: controller);
+        bridge.Chain.MasterBypassed = true;
+
+        var output = RunDirtyTxProcess(bridge);
+
+        Assert.Equal<float>(new float[] { 0f, 0f, 0f, 1f, -1f, 0.25f }, output);
+    }
+
+    [Fact]
+    public void TciRemoteTxInactive_Runs_InsertChain_In_TxPath()
+    {
+        var spy = new SpyPlugin();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            isTciTxAudioActive: () => false);
+        bridge.Chain.SetSlot(0, spy);
+        bridge.Chain.MasterBypassed = false;
+
+        RunTxProcess(bridge, 256);
+
+        Assert.Equal(1, spy.ProcessCallCount);
+        Assert.True(spy.LastCtxMox);
+        Assert.Equal(48000, spy.LastSampleRate);
+    }
+
+    [Fact]
+    public void TxPath_Sanitizes_InsertChain_Output_Before_Wdsp()
+    {
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance);
+        bridge.Chain.SetSlot(0, new DirtyOutputPlugin());
+        bridge.Chain.MasterBypassed = false;
+
+        Span<float> input = stackalloc float[6];
+        Span<float> output = stackalloc float[6];
+
+        bridge.ProcessTxForTest(input, output, frames: 6);
+
+        Assert.Equal<float>(new float[] { 0f, 0f, 0f, 1f, -1f, 0.25f }, output.ToArray());
+    }
+
+    [Fact]
+    public void VstPreview_PassthroughDegrade_DoesNotOverwrite_LastEngineMeters()
+    {
+        var controller = ActiveControllerWithoutBridge();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => false,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            vstEngine: controller);
+        SetPrivateField(bridge, "_engineInPeak", 0.1f);
+        SetPrivateField(bridge, "_engineOutPeak", 0.8f);
+
+        RunPreview(bridge, 256);
+
+        var meters = bridge.ChainMeters;
+        Assert.Equal(0.1f, meters.In, precision: 6);
+        Assert.Equal(0.8f, meters.Out, precision: 6);
+    }
+
+    [Fact]
+    public void VstTx_PassthroughDegrade_StillRecords_OnAirMeters()
+    {
+        var controller = ActiveControllerWithoutBridge();
+        var bridge = new AudioPluginBridge(
+            isMoxOn: () => true,
+            isMonitorOn: () => false,
+            log: NullLogger<AudioPluginBridge>.Instance,
+            vstEngine: controller);
+        SetPrivateField(bridge, "_engineInPeak", 0.1f);
+        SetPrivateField(bridge, "_engineOutPeak", 0.8f);
+
+        RunTxProcess(bridge, 256);
+
+        var meters = bridge.ChainMeters;
+        Assert.Equal(0.5f, meters.In, precision: 6);
+        Assert.Equal(0.5f, meters.Out, precision: 6);
+    }
+
+    private static void RunPreview(AudioPluginBridge bridge, int frames)
+    {
+        Span<float> mic = stackalloc float[frames];
+        for (int i = 0; i < frames; i++) mic[i] = 0.5f * MathF.Sin(i * 0.01f);
+        bridge.ProcessLivePreview(mic, sampleRate: 48_000);
+    }
+
+    private static void RunTxProcess(AudioPluginBridge bridge, int frames)
+    {
+        Span<float> input = stackalloc float[frames];
+        Span<float> output = stackalloc float[frames];
+        for (int i = 0; i < frames; i++) input[i] = 0.5f;
+        bridge.ProcessTxForTest(input, output, frames);
+    }
+
+    private static float[] RunDirtyTxProcess(AudioPluginBridge bridge)
+    {
+        var input = new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity, 1.5f, -2f, 0.25f };
+        var output = new float[input.Length];
+        bridge.ProcessTxForTest(input, output, frames: input.Length);
+        return output;
+    }
+
+    private static VstEngineController ActiveControllerWithoutBridge()
+    {
+        var controller = new VstEngineController();
+        SetPrivateField(controller, "_active", true);
+        return controller;
+    }
+
+    private static void SetPrivateField(object target, string fieldName, object value)
+    {
+        var field = target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(target, value);
+    }
+
+    private sealed class SpyPreviewSink : IPreviewAudioSink
+    {
+        public int PublishCallCount;
+        public int LastPublishLength;
+        public int LastSampleRate;
+        public float[] LastSamples = Array.Empty<float>();
+        public SpyPreviewSink(bool enabledInitial) { IsEnabled = enabledInitial; }
+        public bool IsEnabled { get; private set; }
+        public void SetEnabled(bool enabled) { IsEnabled = enabled; }
+        public void PublishPreview(ReadOnlySpan<float> monoSamples, int sampleRate)
+        {
+            PublishCallCount++;
+            LastPublishLength = monoSamples.Length;
+            LastSampleRate = sampleRate;
+            LastSamples = monoSamples.ToArray();
+        }
+    }
+
+    private sealed class SpyPlugin : IAudioPlugin
+    {
+        public int ProcessCallCount;
+        public bool LastCtxMox;
+        public int LastSampleRate;
+        public int LastChannels;
+        public int LastFrames;
+
+        public string DisplayName => "spy";
+        public AudioPluginRequirements Requirements => new(48000, 1, 256);
+        public Task InitializeAudioAsync(IAudioHost host, CancellationToken ct) => Task.CompletedTask;
+        public Task ShutdownAudioAsync(CancellationToken ct) => Task.CompletedTask;
+        public void Process(ReadOnlySpan<float> input, Span<float> output, AudioBlockContext ctx)
+        {
+            ProcessCallCount++;
+            LastCtxMox = ctx.Mox;
+            LastSampleRate = ctx.SampleRate;
+            LastChannels = ctx.Channels;
+            LastFrames = ctx.Frames;
+            input.CopyTo(output);
+        }
+    }
+
+    private sealed class DirtyOutputPlugin : IAudioPlugin
+    {
+        public string DisplayName => "dirty";
+        public AudioPluginRequirements Requirements => new(48000, 1, 256);
+        public Task InitializeAudioAsync(IAudioHost host, CancellationToken ct) => Task.CompletedTask;
+        public Task ShutdownAudioAsync(CancellationToken ct) => Task.CompletedTask;
+        public void Process(ReadOnlySpan<float> input, Span<float> output, AudioBlockContext ctx)
+        {
+            output[0] = float.NaN;
+            output[1] = float.PositiveInfinity;
+            output[2] = float.NegativeInfinity;
+            output[3] = 1.5f;
+            output[4] = -2f;
+            output[5] = 0.25f;
+        }
+    }
+}

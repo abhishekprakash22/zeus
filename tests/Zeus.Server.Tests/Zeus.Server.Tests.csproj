@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Default a bare `dotnet test` to SKIP the heavy opt-in DSP-modernization
+         evaluation suites (Category=DspModernization, ~20 min) so local runs stay
+         fast. This is the VSTestTestCaseFilter MSBuild property — the `dotnet
+         test` filter argument is the CLI alias for it and REPLACES this value
+         (it does NOT get ANDed, unlike a runsettings TestCaseFilter). So both CI
+         workflows override it cleanly: the PR gate selects "Category!=DspModernization"
+         and the scheduled dsp-modernization-tests.yml selects "Category=DspModernization". -->
+    <VSTestTestCaseFilter>Category!=DspModernization</VSTestTestCaseFilter>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\OpenhpsdrZeus\OpenhpsdrZeus.csproj" />
+    <ProjectReference Include="..\..\Zeus.Protocol1\Zeus.Protocol1.csproj" />
+    <ProjectReference Include="..\..\Zeus.Contracts\Zeus.Contracts.csproj" />
+    <ProjectReference Include="..\..\Zeus.Dsp\Zeus.Dsp.csproj" />
+
+    <!-- Live Diagnostics API v2 — Layer 2: source generator emits one named
+         xUnit test class per IDiagnosticsProvider. Analyzer reference only; its
+         assembly is not part of the test project's runtime closure. -->
+    <ProjectReference Include="..\..\Zeus.Diagnostics.TestGen\Zeus.Diagnostics.TestGen.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

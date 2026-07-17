@@ -1,0 +1,389 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA),
+//                         Christian Suarez (N9WAR), and contributors.
+//
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by the
+// Free Software Foundation, either version 2 of the License, or (at your
+// option) any later version. See the LICENSE file at the root of this
+// repository for the full text, or https://www.gnu.org/licenses/.
+//
+// Zeus is an independent reimplementation in .NET — not a fork. Its
+// Protocol-1 / Protocol-2 framing, WDSP integration, meter pipelines, and
+// TX behaviour were informed by studying the Thetis project
+// (https://github.com/ramdor/Thetis), the authoritative reference
+// implementation in the OpenHPSDR ecosystem. Zeus gratefully acknowledges
+// the Thetis contributors whose work made this possible:
+//
+//   Richard Samphire (MW0LGE), Warren Pratt (NR0V),
+//   Laurence Barker (G8NJJ),   Rick Koch (N1GP),
+//   Bryan Rambo (W4WMT),       Chris Codella (W2PA),
+//   Doug Wigley (W5WC),        FlexRadio Systems,
+//   Richard Allen (W5SD),      Joe Torrey (WD5Y),
+//   Andrew Mansfield (M0YGG),  Reid Campbell (MI0BOT),
+//   Sigi Jetzlsperger (DH1KLM).
+//
+// Thetis itself continues the GPL-governed lineage of FlexRadio PowerSDR
+// and the OpenHPSDR (TAPR/OpenHPSDR) ecosystem; that lineage is preserved
+// here. See ATTRIBUTIONS.md at the repository root for the full provenance
+// statement and per-component attribution.
+//
+// Protocol-2 / PureSignal / Saturn-class behaviour was additionally informed
+// by pihpsdr (https://github.com/dl1ycf/pihpsdr), maintained by Christoph
+// Wüllen (DL1YCF); and by DeskHPSDR
+// (https://github.com/dl1bz/deskhpsdr), maintained by Heiko (DL1BZ).
+// Both are GPL-2.0-or-later.
+//
+// WDSP — loaded by Zeus via P/Invoke — is Copyright (C) Warren Pratt
+// (NR0V), distributed under GPL v2 or later.
+//
+// Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
+// License for details.
+
+import { create } from 'zustand';
+import { msSinceOptimisticTuneFor } from './view-center';
+import {
+  AGC_CONFIG_DEFAULT,
+  NR_CONFIG_DEFAULT,
+  SQUELCH_CONFIG_DEFAULT,
+  TX_LEVELING_CONFIG_DEFAULT,
+  TX_PHASE_ROTATOR_CONFIG_DEFAULT,
+  type AgcConfigDto,
+  type BandpassWindow,
+  type ConnectionStatus,
+  type NrConfigDto,
+  type RadioStateDto,
+  type RxMode,
+  type SquelchConfigDto,
+  type TxVfo,
+  type TxLevelingConfigDto,
+  type TxPhaseRotatorConfigDto,
+  type ZoomLevel,
+  type ReceiverDto,
+} from '../api/client';
+
+export type ConnectedProtocol = 'P1' | 'P2' | 'P3' | null;
+
+// WDSP wisdom bootstrap phase, mirroring the server's WisdomPhase enum.
+// 'idle' = initializer hasn't started yet (first ms after boot),
+// 'building' = WDSPwisdom is running (up to ~2 min on a fresh machine),
+// 'ready' = FFTW plans are cached and /api/connect is accepting. The
+// ConnectPanel disables + pulses Connect while !== 'ready'.
+export type WisdomPhase = 'idle' | 'building' | 'ready';
+
+export type ConnectionState = {
+  status: ConnectionStatus;
+  endpoint: string | null;
+  vfoHz: number;
+  // RX2+ per-receiver state (VFO/mode/filter/AF) lives in `receivers[]` (RX2 =
+  // index 1), not flat *B fields. RX1 keeps its flat primary fields below.
+  rx2Enabled: boolean;
+  txVfo: TxVfo;
+  // Authoritative TX target as a receiver index (0=RX1, 1=RX2, >=2 extra DDC);
+  // txVfo stays the legacy A/B projection. Driven by the VFO panel TX-select.
+  txReceiverIndex: number;
+  rxFocus: TxVfo;
+  // Which exposed receiver the operator is working in the multi-DDC panels
+  // (0=RX1..). Drives the VFO-lane / hero highlight across all DDCs; rxFocus
+  // stays the A/B stitched-view focus and mirrors this for indices 0/1.
+  focusedRxIndex: number;
+  // Receivers the operator has multi-selected for ganged control. Toolbar
+  // actions (mode/filter/band/AF) apply to EVERY index here; focusedRxIndex is
+  // the primary whose values the controls display, and is always a member.
+  // Plain focus selects a single receiver; Ctrl/Cmd-click toggles membership.
+  selectedRxIndices: number[];
+  mode: RxMode;
+  filterLowHz: number;
+  filterHighHz: number;
+  filterPresetName: string | null;
+  filterAdvancedPaneOpen: boolean;
+  txFilterLowHz: number;
+  txFilterHighHz: number;
+  // SSB bandpass "rectangularity" (#871). Independent RX/TX selectors.
+  rxFilterWindow: BandpassWindow;
+  txFilterWindow: BandpassWindow;
+  sampleRate: number;
+  agcTopDb: number;
+  agc: AgcConfigDto;
+  squelch: SquelchConfigDto;
+  txLeveling: TxLevelingConfigDto;
+  txPhaseRotator: TxPhaseRotatorConfigDto;
+  autoAgcEnabled: boolean;
+  agcOffsetDb: number;
+  rxAfGainDb: number;
+  attenDb: number;
+  autoAttEnabled: boolean;
+  attOffsetDb: number;
+  adcOverloadWarning: boolean;
+  // Multi-DDC receivers (wire v2). Server-projected per-receiver list: index
+  // 0 = RX1, 1 = RX2, >= 2 = extra hardware DDCs. Empty until the first state
+  // frame. The RECEIVERS settings panel reads this to render per-DDC controls.
+  receivers: ReceiverDto[];
+  // Active hardware DDC / receiver ceiling for this connection. P2 G2 reports
+  // 6; P3-capable G2 firmware can report all 10.
+  maxReceivers: number;
+  // Board kind only known from the discovery list at connect time — StateDto
+  // doesn't echo it. Null after a page reload while already connected; the
+  // preamp guard treats null as "show", which is the safe default (an HL2
+  // preamp toggle does nothing harmful, just nothing useful).
+  boardId: string | null;
+  // Connected protocol — 'P1', 'P2', or 'P3', or null when disconnected. Set by
+  // ConnectPanel on a successful connect call so
+  // protocol-gated features can disable their controls cleanly without
+  // round-tripping the discovery list.
+  connectedProtocol: ConnectedProtocol;
+  preampOn: boolean;
+  // CTUN (click-tune / centred tuning). When true, a panadapter click tunes
+  // the dial off-centre with the hardware NCO frozen; the pan-tune gesture
+  // reads this to skip the view-centre nudge so the dial marker roams instead
+  // of recentring. Server-authoritative; toggled via the CTUN transport button.
+  ctunEnabled: boolean;
+  // Hardware NCO / panadapter centre. The frequency-axis ruler drag moves this
+  // without touching vfoHz so the operator can pan to off-screen spectrum.
+  radioLoHz: number;
+  cwPitchHz: number;
+  nr: NrConfigDto;
+  // NR3 (RNNoise): native availability (libwdsp RNNR exports) + the active model
+  // name (operator file, bundled-default display name, or null). NR3 appears in
+  // the NR cycle when available AND a model is active. nr3UsingBundledDefault is
+  // true when running on the shipped default (no operator model installed).
+  wdspNr3RnnrAvailable: boolean;
+  nr3ModelName: string | null;
+  nr3UsingBundledDefault: boolean;
+  zoomLevel: ZoomLevel;
+  // Workspace UI zoom (whole-percent cell-pitch scale; 100 = authored size).
+  // Server-persisted; FlexWorkspace reads this to scale the panel grid.
+  workspaceZoomPct: number;
+  inflight: boolean;
+  // Endpoint of the most recently successful /api/connect. Survives a
+  // disconnect so ConnectPanel can float it to the top of the next scan.
+  // Intentionally in-memory only — no localStorage yet.
+  lastConnectedEndpoint: string | null;
+  wisdomPhase: WisdomPhase;
+  // Live WDSP wisdom_get_status() text streamed by the server while
+  // wisdomPhase === 'building'. Empty otherwise.
+  wisdomStatus: string;
+  /** Apply a server StateDto. `opts.trustVfo` (default true) marks the
+   *  caller as an explicit command echo whose VFO values must always apply
+   *  (drag release, keyboard flush, zoom/mode/band responses — clamps and
+   *  server-side corrections included). The 1 Hz App.tsx poll passes
+   *  trustVfo:false: a poll response generated just before the operator's
+   *  latest tune would otherwise rewind the dial mid-gesture (issue #597
+   *  rubber-band). Suppression is time-boxed to the optimistic-tune window
+   *  so a quiet dial always reconverges to server truth. */
+  applyState: (s: RadioStateDto, opts?: { trustVfo?: boolean }) => void;
+  setInflight: (v: boolean) => void;
+  setBoardId: (id: string | null) => void;
+  setConnectedProtocol: (p: ConnectedProtocol) => void;
+  setPreampOn: (on: boolean) => void;
+  setNr: (nr: NrConfigDto) => void;
+  setAgc: (agc: AgcConfigDto) => void;
+  setSquelch: (squelch: SquelchConfigDto) => void;
+  setTxLeveling: (txLeveling: TxLevelingConfigDto) => void;
+  setTxPhaseRotator: (txPhaseRotator: TxPhaseRotatorConfigDto) => void;
+  setRxFocus: (rxFocus: TxVfo) => void;
+  setFocusedRxIndex: (index: number) => void;
+  setSelectedRxIndices: (indices: number[]) => void;
+  toggleRxSelection: (index: number) => void;
+  setZoomLevel: (level: ZoomLevel) => void;
+  setWorkspaceZoomPct: (pct: number) => void;
+  setLastConnectedEndpoint: (ep: string | null) => void;
+  setWisdomPhase: (phase: WisdomPhase) => void;
+  setWisdomStatus: (status: string) => void;
+};
+
+// Merge the server's receivers[] into the previous list, applying the
+// optimistic-tune poll guard for every SECONDARY receiver (RX2 = index 1, RX3+).
+// For each such server entry, while the operator is mid-tune (poll response
+// predates the gesture: !trustVfo and a recent optimistic stamp), keep the
+// PREVIOUS entry's vfoHz but adopt every other server field. RX1 (index 0) is
+// read via the flat vfoHz field, which keeps its own dedicated guard above.
+function mergeReceivers(
+  prev: ReceiverDto[],
+  next: ReceiverDto[] | undefined,
+  trustVfo: boolean,
+): ReceiverDto[] {
+  if (!next) return prev;
+  if (trustVfo) return next;
+  return next.map((r) => {
+    if (r.index < 1 || msSinceOptimisticTuneFor(r.index) >= 1500) return r;
+    const prevEntry = prev.find((p) => p.index === r.index);
+    return prevEntry ? { ...r, vfoHz: prevEntry.vfoHz } : r;
+  });
+}
+
+export const useConnectionStore = create<ConnectionState>((set) => ({
+  status: 'Disconnected',
+  endpoint: null,
+  vfoHz: 14_200_000,
+  rx2Enabled: false,
+  receivers: [],
+  maxReceivers: 10,
+  txVfo: 'A',
+  txReceiverIndex: 0,
+  rxFocus: 'A',
+  focusedRxIndex: 0,
+  selectedRxIndices: [0],
+  mode: 'USB',
+  filterLowHz: 150,
+  filterHighHz: 2850,
+  filterPresetName: 'VAR1',
+  filterAdvancedPaneOpen: false,
+  txFilterLowHz: 150,
+  txFilterHighHz: 2850,
+  rxFilterWindow: 'Normal',
+  txFilterWindow: 'Normal',
+  sampleRate: 192_000,
+  agcTopDb: 45,
+  agc: { ...AGC_CONFIG_DEFAULT },
+  squelch: { ...SQUELCH_CONFIG_DEFAULT },
+  txLeveling: { ...TX_LEVELING_CONFIG_DEFAULT },
+  txPhaseRotator: { ...TX_PHASE_ROTATOR_CONFIG_DEFAULT },
+  autoAgcEnabled: false,
+  agcOffsetDb: 0,
+  rxAfGainDb: 0,
+  attenDb: 0,
+  autoAttEnabled: true,
+  attOffsetDb: 0,
+  adcOverloadWarning: false,
+  boardId: null,
+  connectedProtocol: null,
+  preampOn: false,
+  ctunEnabled: false,
+  radioLoHz: 14_200_000,
+  cwPitchHz: 600,
+  nr: { ...NR_CONFIG_DEFAULT },
+  wdspNr3RnnrAvailable: false,
+  nr3ModelName: null,
+  nr3UsingBundledDefault: false,
+  zoomLevel: 1,
+  workspaceZoomPct: 100,
+  inflight: false,
+  lastConnectedEndpoint: null,
+  // Default to 'ready' so a page-load before the WS attach doesn't show the
+  // pulse spuriously. The server overrides on attach with the real phase.
+  wisdomPhase: 'ready',
+  wisdomStatus: '',
+  applyState: (s, opts) =>
+    set((prev) => {
+      const trustVfo = opts?.trustVfo ?? true;
+      return {
+        status: s.status,
+        endpoint: s.endpoint,
+        vfoHz:
+          trustVfo || msSinceOptimisticTuneFor('A') >= 1500
+            ? s.vfoHz
+            : prev.vfoHz,
+        rx2Enabled: s.rx2Enabled,
+        // Secondary-receiver poll-guard: RX2 (index 1) and RX3+ live in the
+        // receivers[] array. While the operator is mid-tune, a 1 Hz /api/state
+        // poll generated just before the gesture would rubber-band that
+        // receiver's vfoHz; mergeReceivers keeps the previous entry's vfoHz (but
+        // adopts all other server fields) until the optimistic window expires.
+        receivers: mergeReceivers(prev.receivers, s.receivers, trustVfo),
+        maxReceivers: s.maxReceivers ?? prev.maxReceivers,
+        connectedProtocol:
+          s.connectedProtocol !== undefined
+            ? s.connectedProtocol
+            : s.status === 'Disconnected'
+            ? null
+            : prev.connectedProtocol,
+        txVfo: s.txVfo,
+        txReceiverIndex: s.txReceiverIndex ?? prev.txReceiverIndex,
+        rxFocus: s.rx2Enabled ? prev.rxFocus : 'A',
+        // UI-only focus + selection — preserved across server state reconciles.
+        focusedRxIndex: prev.focusedRxIndex,
+        selectedRxIndices: prev.selectedRxIndices,
+        mode: s.mode,
+        filterLowHz: s.filterLowHz,
+        filterHighHz: s.filterHighHz,
+        filterPresetName: s.filterPresetName,
+        filterAdvancedPaneOpen: s.filterAdvancedPaneOpen,
+        txFilterLowHz: s.txFilterLowHz,
+        txFilterHighHz: s.txFilterHighHz,
+        rxFilterWindow: s.rxFilterWindow,
+        txFilterWindow: s.txFilterWindow,
+        sampleRate: s.sampleRate,
+        agcTopDb: s.agcTopDb,
+        agc: s.agc,
+        squelch: s.squelch,
+        txLeveling: s.txLeveling,
+        txPhaseRotator: s.txPhaseRotator,
+        autoAgcEnabled: s.autoAgcEnabled,
+        agcOffsetDb: s.agcOffsetDb,
+        rxAfGainDb: s.rxAfGainDb,
+        attenDb: s.attenDb,
+        autoAttEnabled: s.autoAttEnabled,
+        attOffsetDb: s.attOffsetDb,
+        adcOverloadWarning: s.adcOverloadWarning,
+        preampOn: s.preampOn,
+        ctunEnabled: s.ctunEnabled,
+        radioLoHz: s.radioLoHz,
+        cwPitchHz: s.cwPitchHz,
+        nr: s.nr,
+        wdspNr3RnnrAvailable: s.wdspNr3RnnrAvailable,
+        nr3ModelName: s.nr3ModelName,
+        nr3UsingBundledDefault: s.nr3UsingBundledDefault,
+        zoomLevel: s.zoomLevel,
+        workspaceZoomPct: s.workspaceZoomPct,
+      };
+    }),
+  setInflight: (inflight) => set({ inflight }),
+  setBoardId: (boardId) => set({ boardId }),
+  setConnectedProtocol: (connectedProtocol) => set({ connectedProtocol }),
+  setPreampOn: (preampOn) => set({ preampOn }),
+  setNr: (nr) => set({ nr }),
+  setAgc: (agc) => set({ agc }),
+  setSquelch: (squelch) => set({ squelch }),
+  setTxLeveling: (txLeveling) => set({ txLeveling }),
+  setTxPhaseRotator: (txPhaseRotator) => set({ txPhaseRotator }),
+  setRxFocus: (rxFocus) => set({ rxFocus }),
+  // Focus a receiver in the multi-DDC panels. Plain focus collapses the
+  // selection to just this receiver. Mirror into rxFocus for the RX1/RX2
+  // stitched view so the existing A/B focus stays consistent (rxFocus is
+  // retired in a later phase of the numeric-receiver migration).
+  setFocusedRxIndex: (focusedRxIndex) =>
+    set(
+      focusedRxIndex <= 1
+        ? { focusedRxIndex, selectedRxIndices: [focusedRxIndex], rxFocus: focusedRxIndex === 1 ? 'B' : 'A' }
+        : { focusedRxIndex, selectedRxIndices: [focusedRxIndex] },
+    ),
+  // Replace the multi-selection wholesale. Keeps focus on the same receiver if
+  // it survives, else focuses the lowest selected; never leaves it empty.
+  setSelectedRxIndices: (indices) =>
+    set((s) => {
+      const selectedRxIndices = indices.length ? [...indices].sort((a, b) => a - b) : [0];
+      const focusedRxIndex = selectedRxIndices.includes(s.focusedRxIndex)
+        ? s.focusedRxIndex
+        : selectedRxIndices[0] ?? 0;
+      return focusedRxIndex <= 1
+        ? { selectedRxIndices, focusedRxIndex, rxFocus: focusedRxIndex === 1 ? 'B' : 'A' }
+        : { selectedRxIndices, focusedRxIndex };
+    }),
+  // Ctrl/Cmd-click toggle: add (and focus) or remove a receiver from the
+  // selection. Removing the last one is a no-op — the control target is never
+  // empty. Removing the focused one moves focus to the lowest remaining.
+  toggleRxSelection: (index) =>
+    set((s) => {
+      const has = s.selectedRxIndices.includes(index);
+      if (has && s.selectedRxIndices.length === 1) return s;
+      const selectedRxIndices = has
+        ? s.selectedRxIndices.filter((i) => i !== index)
+        : [...s.selectedRxIndices, index].sort((a, b) => a - b);
+      const focusedRxIndex = has
+        ? (index === s.focusedRxIndex ? selectedRxIndices[0] ?? 0 : s.focusedRxIndex)
+        : index;
+      return focusedRxIndex <= 1
+        ? { selectedRxIndices, focusedRxIndex, rxFocus: focusedRxIndex === 1 ? 'B' : 'A' }
+        : { selectedRxIndices, focusedRxIndex };
+    }),
+  setZoomLevel: (zoomLevel) => set({ zoomLevel }),
+  setWorkspaceZoomPct: (workspaceZoomPct) => set({ workspaceZoomPct }),
+  setLastConnectedEndpoint: (lastConnectedEndpoint) =>
+    set({ lastConnectedEndpoint }),
+  setWisdomPhase: (wisdomPhase) => set({ wisdomPhase }),
+  setWisdomStatus: (wisdomStatus) => set({ wisdomStatus }),
+}));

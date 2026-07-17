@@ -1,0 +1,464 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA),
+//                         Christian Suarez (N9WAR), and contributors.
+//
+// Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
+// License for details.
+
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Hosting;
+using Zeus.Contracts;
+using Zeus.Midi;
+
+namespace Zeus.Server.Midi;
+
+/// <summary>
+/// Owns the MIDI + Stream Deck input pipeline: it loads the persisted bindings,
+/// opens both engines (real on a desktop, Null on headless/CI), routes every
+/// inbound control event through <see cref="MidiCommandDispatcher"/> to the
+/// verified radio seams, handles hot-plug, and — only while the settings panel
+/// is in Learn mode — forwards raw control events to the UI as
+/// <see cref="MidiLearnFrame"/> hub pushes.
+///
+/// Safety: MIDI is an input-only path. Buttons act on the key-DOWN edge only
+/// (so a toggle command flips exactly once per press), TX keying flows through
+/// <see cref="MoxSource.Midi"/>, and PureSignal arm is not in the command
+/// surface at all. Engines never throw on absent hardware — the server starts
+/// regardless of whether any controller is attached.
+/// </summary>
+public sealed class MidiService : IHostedService, IDisposable
+{
+    private const byte MidiLearnMsgType = (byte)MsgType.MidiLearn;
+    private static readonly TimeSpan LearnTimeout = TimeSpan.FromSeconds(120);
+
+    // Learn frames are decoded by the same frontend that consumes the REST
+    // endpoints, so they must match those options: camelCase properties + string
+    // enums (the HTTP pipeline's JsonStringEnumConverter). The default options
+    // would emit PascalCase + numeric enums and the panel would mis-read them.
+    private static readonly JsonSerializerOptions LearnJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
+
+    private readonly IMidiEngine _midi;
+    private readonly IStreamDeckEngine _streamDeck;
+    private readonly MidiConfigStore _store;
+    private readonly MidiCommandDispatcher _dispatcher;
+    private readonly StreamingHub _hub;
+    private readonly ILogger<MidiService> _log;
+    private readonly TimeProvider _time;
+
+    private readonly object _sync = new();
+    private Dictionary<(string Device, string ControlId), MidiMappingDto> _midiMap = new();
+    private Dictionary<(string Serial, int Button), ZeusMidiCommand> _sdMap = new();
+    private MidiBindingsDoc _bindings = MidiBindingsDoc.Empty;
+    private volatile bool _enabled;
+    private volatile bool _learning;
+    private long _learnExpiresAtTimestamp;
+    private int _learnExpiryCleanupQueued;
+    private bool _started;
+    private bool _disposed;
+
+    public MidiService(
+        IMidiEngine midi,
+        IStreamDeckEngine streamDeck,
+        MidiConfigStore store,
+        RadioService radio,
+        TxService tx,
+        StreamingHub hub,
+        ILoggerFactory loggerFactory)
+        : this(midi, streamDeck, store, radio, tx, hub, loggerFactory, TimeProvider.System)
+    {
+    }
+
+    public MidiService(
+        IMidiEngine midi,
+        IStreamDeckEngine streamDeck,
+        MidiConfigStore store,
+        RadioService radio,
+        TxService tx,
+        StreamingHub hub,
+        ILoggerFactory loggerFactory,
+        TimeProvider timeProvider)
+    {
+        _midi = midi;
+        _streamDeck = streamDeck;
+        _store = store;
+        _hub = hub;
+        _log = loggerFactory.CreateLogger<MidiService>();
+        _time = timeProvider;
+
+        var dispatchState = new MidiDispatchState(radio.Snapshot);
+        _dispatcher = new MidiCommandDispatcher(
+            radio, tx, dispatchState, loggerFactory.CreateLogger<MidiCommandDispatcher>());
+
+        _midi.MessageReceived += OnMidiMessage;
+        _midi.DevicesChanged += OnMidiDevicesChanged;
+        _streamDeck.InputReceived += OnStreamDeckInput;
+        _streamDeck.DevicesChanged += OnStreamDeckDevicesChanged;
+    }
+
+    // ---- IHostedService -----------------------------------------------------
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            _enabled = _store.GetEnabled();
+            // Reconcile on load so a binding that predates the catalogue-fix
+            // (e.g. a jog wheel stored as KnobOrSlider before issue #1231's
+            // fix) routes correctly on the very first inbound event, before
+            // the operator visits the settings panel to re-save.
+            _bindings = Normalize(_store.GetBindings());
+            RebuildMapsLocked();
+            _started = true;
+            if (_enabled) StartEnginesLocked();
+        }
+        _log.LogInformation(
+            "midi.service.start enabled={Enabled} midiAvail={M} streamDeckAvail={S} mappings={Maps} sdMappings={SdMaps}",
+            _enabled, _midi.IsAvailable, _streamDeck.IsAvailable, _midiMap.Count, _sdMap.Count);
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            _learning = false;
+            Volatile.Write(ref _learnExpiresAtTimestamp, 0);
+            StopEnginesLocked();
+            _started = false;
+        }
+        return Task.CompletedTask;
+    }
+
+    // ---- Public API for the REST endpoints ---------------------------------
+
+    public MidiStatusDto GetStatus()
+    {
+        var learning = IsLearningEffective();
+        return new MidiStatusDto(
+            Enabled: _enabled,
+            MidiEngineAvailable: _midi.IsAvailable,
+            StreamDeckEngineAvailable: _streamDeck.IsAvailable,
+            MidiDevices: _midi.EnumerateDevices(),
+            StreamDeckDevices: _streamDeck.EnumerateDevices(),
+            Learning: learning);
+    }
+
+    public MidiConfigDto GetConfig()
+    {
+        lock (_sync) return new MidiConfigDto(_enabled, _bindings);
+    }
+
+    public MidiStatusDto SetConfig(MidiConfigDto config)
+    {
+        var bindings = Normalize(config.Bindings);
+        lock (_sync)
+        {
+            bool wasEnabled = _enabled;
+            _enabled = config.Enabled;
+            _bindings = bindings;
+            RebuildMapsLocked();
+            try { _store.Set(_enabled, _bindings); }
+            catch (Exception ex) { _log.LogWarning(ex, "midi.config.persist failed"); }
+
+            if (_started)
+            {
+                if (_enabled && !wasEnabled) StartEnginesLocked();
+                else if (!_enabled && wasEnabled) StopEnginesLocked();
+            }
+        }
+        _log.LogInformation("midi.config.updated enabled={Enabled} mappings={Maps} sdMappings={SdMaps}",
+            _enabled, _midiMap.Count, _sdMap.Count);
+        return GetStatus();
+    }
+
+    /// <summary>Enter Learn mode: inbound control events are forwarded to the UI
+    /// and NOT dispatched to the radio. Starts the engines if they were idle so
+    /// the operator can learn controls even with MIDI globally disabled.</summary>
+    public MidiStatusDto StartLearn()
+    {
+        lock (_sync)
+        {
+            RefreshLearnDeadlineLocked();
+            _learning = true;
+            if (_started && !_enabled) StartEnginesLocked();
+        }
+        _log.LogInformation("midi.learn.start");
+        return GetStatus();
+    }
+
+    public MidiStatusDto KeepLearnAlive()
+    {
+        lock (_sync)
+        {
+            if (IsLearningEffectiveLocked()) RefreshLearnDeadlineLocked();
+        }
+        return GetStatus();
+    }
+
+    public MidiStatusDto StopLearn()
+    {
+        lock (_sync)
+        {
+            _learning = false;
+            Volatile.Write(ref _learnExpiresAtTimestamp, 0);
+            // If MIDI is globally disabled, the engines were only running for
+            // learn — idle them again.
+            if (_started && !_enabled) StopEnginesLocked();
+        }
+        _log.LogInformation("midi.learn.stop");
+        return GetStatus();
+    }
+
+    public IReadOnlyList<StreamDeckDeviceDto> GetStreamDeckDevices() => _streamDeck.EnumerateDevices();
+
+    // ---- Engine lifecycle (under _sync) ------------------------------------
+
+    private void StartEnginesLocked()
+    {
+        try { _midi.Start(); } catch (Exception ex) { _log.LogDebug(ex, "midi.engine.start threw"); }
+        try { _streamDeck.Start(); } catch (Exception ex) { _log.LogDebug(ex, "streamdeck.engine.start threw"); }
+    }
+
+    private void StopEnginesLocked()
+    {
+        try { _midi.Stop(); } catch (Exception ex) { _log.LogDebug(ex, "midi.engine.stop threw"); }
+        try { _streamDeck.Stop(); } catch (Exception ex) { _log.LogDebug(ex, "streamdeck.engine.stop threw"); }
+    }
+
+    private bool IsLearningEffective()
+    {
+        lock (_sync) return IsLearningEffectiveLocked();
+    }
+
+    private bool IsLearningEffectiveLocked()
+    {
+        if (!_learning) return false;
+        if (NowTimestamp() < Volatile.Read(ref _learnExpiresAtTimestamp)) return true;
+
+        _learning = false;
+        Volatile.Write(ref _learnExpiresAtTimestamp, 0);
+        _log.LogInformation("midi.learn.expired");
+        QueueLearnExpiryCleanup();
+        return false;
+    }
+
+    private bool IsLearningEffectiveForEvent()
+    {
+        if (!_learning) return false;
+        if (NowTimestamp() < Volatile.Read(ref _learnExpiresAtTimestamp)) return true;
+
+        QueueLearnExpiryCleanup();
+        return false;
+    }
+
+    // Monotonic timestamps (TimeProvider.GetTimestamp), not wall-clock: an NTP
+    // step while Learn is armed must not stretch or shrink the 120 s window.
+    private void RefreshLearnDeadlineLocked()
+        => Volatile.Write(ref _learnExpiresAtTimestamp,
+            _time.GetTimestamp() + (long)(LearnTimeout.TotalSeconds * _time.TimestampFrequency));
+
+    private long NowTimestamp() => _time.GetTimestamp();
+
+    private void QueueLearnExpiryCleanup()
+    {
+        if (Interlocked.Exchange(ref _learnExpiryCleanupQueued, 1) == 1) return;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                lock (_sync)
+                {
+                    Interlocked.Exchange(ref _learnExpiryCleanupQueued, 0);
+                    if (_learning)
+                    {
+                        if (NowTimestamp() < Volatile.Read(ref _learnExpiresAtTimestamp)) return;
+                        _learning = false;
+                        Volatile.Write(ref _learnExpiresAtTimestamp, 0);
+                        _log.LogInformation("midi.learn.expired");
+                    }
+
+                    if (_started && !_enabled && !_learning) StopEnginesLocked();
+                }
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Exchange(ref _learnExpiryCleanupQueued, 0);
+                _log.LogDebug(ex, "midi.learn.expiry cleanup failed");
+            }
+        });
+    }
+
+    private void RebuildMapsLocked()
+    {
+        var midiMap = new Dictionary<(string, string), MidiMappingDto>();
+        foreach (var m in _bindings.Mappings)
+            midiMap[(m.DeviceName, m.ControlId)] = m;
+        _midiMap = midiMap;
+
+        var sdMap = new Dictionary<(string, int), ZeusMidiCommand>();
+        foreach (var m in _bindings.StreamDeckMappings)
+            sdMap[(m.Serial, m.ButtonIndex)] = m.Command;
+        _sdMap = sdMap;
+    }
+
+    // Reconcile every mapping's ControlType against the command catalogue's
+    // expected type. A raw MIDI CC event carries no distinction between an
+    // absolute fader and a relative jog encoder, so the engine classifies
+    // every CC as KnobOrSlider; a jog-wheel binding to a Wheel-only command
+    // (ChangeFreqVfoA, FilterBandwidth, RIT, XIT, FilterShift, …) would
+    // otherwise route through the delta==0 no-op branch and appear dead in
+    // the panel while looking correctly bound (issue #1231). Snapping the
+    // stored type to the command's catalogued type is a silent, one-way
+    // repair — new bindings from the fixed panel are unaffected because
+    // they already match.
+    private static MidiBindingsDoc Normalize(MidiBindingsDoc? doc)
+    {
+        if (doc is null) return MidiBindingsDoc.Empty;
+        var mappings = doc.Mappings ?? new List<MidiMappingDto>();
+        var reconciled = new List<MidiMappingDto>(mappings.Count);
+        var catalog = new Dictionary<ZeusMidiCommand, MidiControlType>(MidiCommandCatalog.All.Count);
+        foreach (var info in MidiCommandCatalog.All) catalog[info.Command] = info.ControlType;
+        foreach (var m in mappings)
+        {
+            var target = catalog.TryGetValue(m.Command, out var t) ? t : m.ControlType;
+            reconciled.Add(m.ControlType == target ? m : m with { ControlType = target });
+        }
+        return new MidiBindingsDoc(
+            MidiBindingsDoc.CurrentVersion,
+            reconciled,
+            doc.StreamDeckMappings ?? new List<StreamDeckMappingDto>());
+    }
+
+    // ---- Event routing ------------------------------------------------------
+
+    private void OnMidiMessage(MidiInputMessage msg)
+    {
+        if (IsLearningEffectiveForEvent())
+        {
+            PublishLearnFrame(new MidiLearnFrame(
+                msg.DeviceName, msg.ControlId, msg.ControlType, msg.Value, msg.Delta));
+            return;
+        }
+        if (!_enabled) return;
+
+        MidiMappingDto map;
+        var local = _midiMap;
+        if (!local.TryGetValue((msg.DeviceName, msg.ControlId), out map!)) return;
+
+        switch (map.ControlType)
+        {
+            case MidiControlType.Button:
+                // Act on key-down only — a toggle command flips exactly once per
+                // press; a momentary command's own `value > 0` guard still holds.
+                if (msg.Value <= 0) return;
+                _dispatcher.Dispatch(map.Command, value: msg.Value, delta: 0);
+                break;
+
+            case MidiControlType.KnobOrSlider:
+            {
+                // A continuous control must never key the transmitter — every
+                // tick would toggle MOX/TUN/2-Tone. Ignore such a binding.
+                if (MidiCommandCatalog.IsTxKeying(map.Command)) return;
+                // Remap the control's usable [Min,Max] travel onto the full
+                // 0..127 the dispatch scalers expect, so a partial-throw fader
+                // still reaches both extremes.
+                int v = RemapToMidi(msg.Value, map.Min, map.Max);
+                _dispatcher.Dispatch(map.Command, value: v, delta: 0);
+                break;
+            }
+
+            case MidiControlType.Wheel:
+                if (msg.Delta == 0) return;
+                if (MidiCommandCatalog.IsTxKeying(map.Command)) return;
+                _dispatcher.Dispatch(map.Command, value: 0, delta: msg.Delta);
+                break;
+        }
+    }
+
+    private void OnStreamDeckInput(StreamDeckInput input)
+    {
+        if (IsLearningEffectiveForEvent())
+        {
+            PublishLearnFrame(new MidiLearnFrame(
+                input.DeviceName, $"sd:{input.Serial}:{input.ButtonIndex}",
+                MidiControlType.Button, input.Pressed ? 127 : 0, 0));
+            return;
+        }
+        if (!_enabled) return;
+        if (!input.Pressed) return; // act on key-down
+
+        var local = _sdMap;
+        if (local.TryGetValue((input.Serial, input.ButtonIndex), out var cmd))
+            _dispatcher.Dispatch(cmd, value: 127, delta: 0);
+    }
+
+    private void OnMidiDevicesChanged()
+    {
+        lock (_sync)
+        {
+            // Re-open to pick up the (un)plugged device. Only while engines
+            // should be live (enabled or learning).
+            var learning = IsLearningEffectiveLocked();
+            if (_started && (_enabled || learning))
+                try { _midi.Start(); } catch (Exception ex) { _log.LogDebug(ex, "midi.reopen threw"); }
+        }
+    }
+
+    private void OnStreamDeckDevicesChanged()
+    {
+        lock (_sync)
+        {
+            var learning = IsLearningEffectiveLocked();
+            if (_started && (_enabled || learning))
+                try { _streamDeck.Start(); } catch (Exception ex) { _log.LogDebug(ex, "streamdeck.reopen threw"); }
+        }
+    }
+
+    private void PublishLearnFrame(MidiLearnFrame frame)
+    {
+        try
+        {
+            var json = JsonSerializer.SerializeToUtf8Bytes(frame, LearnJsonOptions);
+            var payload = new byte[json.Length + 1];
+            payload[0] = MidiLearnMsgType;
+            Buffer.BlockCopy(json, 0, payload, 1, json.Length);
+            _hub.BroadcastMidiLearn(payload);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "midi.learn.publish failed");
+        }
+    }
+
+    /// <summary>Linearly remap a 0..127 reading from its calibrated [min,max]
+    /// window onto the full 0..127 range. Identity when min=0,max=127.</summary>
+    internal static int RemapToMidi(int value, int min, int max)
+    {
+        if (max <= min) return Math.Clamp(value, 0, 127);
+        int v = Math.Clamp(value, min, max);
+        double scaled = (v - min) * 127.0 / (max - min);
+        return (int)Math.Round(Math.Clamp(scaled, 0, 127));
+    }
+
+    // ---- Dispose ------------------------------------------------------------
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _midi.MessageReceived -= OnMidiMessage;
+        _midi.DevicesChanged -= OnMidiDevicesChanged;
+        _streamDeck.InputReceived -= OnStreamDeckInput;
+        _streamDeck.DevicesChanged -= OnStreamDeckDevicesChanged;
+        try { _midi.Dispose(); } catch { /* ignore */ }
+        try { _streamDeck.Dispose(); } catch { /* ignore */ }
+    }
+}

@@ -1,0 +1,317 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA),
+//                         Christian Suarez (N9WAR), and contributors.
+//
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by the
+// Free Software Foundation, either version 2 of the License, or (at your
+// option) any later version. See the LICENSE file at the root of this
+// repository for the full text, or https://www.gnu.org/licenses/.
+//
+// See ATTRIBUTIONS.md at the repository root for the full provenance
+// statement and per-component attribution.
+//
+// Persistence coverage for issue #478 — panadapter dB scale now survives a
+// backend restart. Verifies that all eight dB range fields round-trip through
+// LiteDB and that a fresh (or legacy) row returns null so the frontend knows
+// to fall back to its built-in defaults and push the localStorage value up.
+
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Zeus.Server.Tests;
+
+public class DisplaySettingsPersistenceTests : IDisposable
+{
+    private readonly string _dbPath =
+        Path.Combine(Path.GetTempPath(), $"zeus-prefs-display-{Guid.NewGuid():N}.db");
+
+    public void Dispose()
+    {
+        try { if (File.Exists(_dbPath)) File.Delete(_dbPath); } catch { }
+    }
+
+    private DisplaySettingsStore BuildStore() =>
+        new(NullLogger<DisplaySettingsStore>.Instance, _dbPath);
+
+    [Fact]
+    public void FreshDb_ReturnsNullForAllDbRangeFields()
+    {
+        using var store = BuildStore();
+        var dto = store.Get();
+
+        Assert.Null(dto.DbMin);
+        Assert.Null(dto.DbMax);
+        Assert.Null(dto.TxDbMin);
+        Assert.Null(dto.TxDbMax);
+        Assert.Null(dto.WfDbMin);
+        Assert.Null(dto.WfDbMax);
+        Assert.Null(dto.WfTxDbMin);
+        Assert.Null(dto.WfTxDbMax);
+        Assert.False(dto.WidebandDisplayEnabled);
+        Assert.Equal(DisplayPerformanceOptions.DefaultFrameRateHz, dto.DisplayMaxFrameRateHz);
+        Assert.Equal(DisplayPerformanceOptions.DefaultDisplayDecimation, dto.DisplayDecimation);
+        Assert.Equal(DisplayPerformanceOptions.DefaultWaterfallUpdatePeriod, dto.WaterfallUpdatePeriod);
+    }
+
+    [Fact]
+    public void SaveMode_WithDbRanges_PersistsAllFields()
+    {
+        using (var store = BuildStore())
+        {
+            store.SaveMode("basic", "fill", "#FFA028",
+                dbMin: -130, dbMax: -60,
+                txDbMin: -75, txDbMax: 15,
+                wfDbMin: -125, wfDbMax: -55,
+                wfTxDbMin: -70, wfTxDbMax: 10);
+        }
+
+        // Reopen to prove the values survived the LiteDB file round-trip.
+        using var fresh = BuildStore();
+        var dto = fresh.Get();
+
+        Assert.Equal(-130, dto.DbMin);
+        Assert.Equal(-60, dto.DbMax);
+        Assert.Equal(-75, dto.TxDbMin);
+        Assert.Equal(15, dto.TxDbMax);
+        Assert.Equal(-125, dto.WfDbMin);
+        Assert.Equal(-55, dto.WfDbMax);
+        Assert.Equal(-70, dto.WfTxDbMin);
+        Assert.Equal(10, dto.WfTxDbMax);
+    }
+
+    [Fact]
+    public void SaveMode_StaleLowTxWaterfallRange_RepairsToThetisDefaults()
+    {
+        using var store = BuildStore();
+        store.SaveMode("basic", "fill", "#FFA028",
+            wfTxDbMin: -164.8, wfTxDbMax: -97.3);
+
+        var dto = store.Get();
+        Assert.Equal(-70, dto.WfTxDbMin);
+        Assert.Equal(30, dto.WfTxDbMax);
+    }
+
+    [Fact]
+    public void Get_ExistingStaleLowTxWaterfallRange_ReturnsThetisDefaults()
+    {
+        using (var store = BuildStore())
+        {
+            store.SaveMode("basic", "fill", "#FFA028",
+                wfTxDbMin: -70, wfTxDbMax: 30);
+        }
+
+        // Simulate a row poisoned by an older frontend before the server-side
+        // guard existed.
+        using (var db = Zeus.Data.SharedLiteDatabase.Acquire(_dbPath))
+        {
+            var coll = db.Database.GetCollection<DisplaySettingsEntry>("display_settings");
+            var entry = coll.FindAll().First();
+            entry.WfTxDbMin = -164.8;
+            entry.WfTxDbMax = -97.3;
+            coll.Update(entry);
+        }
+
+        using var fresh = BuildStore();
+        var dto = fresh.Get();
+        Assert.Equal(-70, dto.WfTxDbMin);
+        Assert.Equal(30, dto.WfTxDbMax);
+    }
+
+    [Fact]
+    public void SaveMode_NullDbRanges_DoNotOverwriteExistingValues()
+    {
+        // Write concrete dB values first.
+        using (var store = BuildStore())
+        {
+            store.SaveMode("basic", "fill", "#FFA028",
+                dbMin: -130, dbMax: -60,
+                txDbMin: -75, txDbMax: 15,
+                wfDbMin: -125, wfDbMax: -55,
+                wfTxDbMin: -70, wfTxDbMax: 10);
+        }
+
+        // Update mode/fit/color only — no dB range args (default null).
+        using (var update = BuildStore())
+        {
+            update.SaveMode("beam-map", "fill", "#FF8800");
+        }
+
+        // dB values must still be the originals.
+        using var check = BuildStore();
+        var dto = check.Get();
+
+        Assert.Equal("beam-map", dto.Mode);
+        Assert.Equal(-130, dto.DbMin);
+        Assert.Equal(-60, dto.DbMax);
+        Assert.Equal(-75, dto.TxDbMin);
+        Assert.Equal(15, dto.TxDbMax);
+    }
+
+    [Fact]
+    public void SaveMode_UpdateDbRanges_OverwritesExistingValues()
+    {
+        using var store = BuildStore();
+        store.SaveMode("basic", "fill", "#FFA028",
+            dbMin: -140, dbMax: -50);
+        store.SaveMode("basic", "fill", "#FFA028",
+            dbMin: -120, dbMax: -40);
+
+        var dto = store.Get();
+        Assert.Equal(-120, dto.DbMin);
+        Assert.Equal(-40, dto.DbMax);
+    }
+
+    [Fact]
+    public void SaveMode_WidebandDisplayEnabled_PersistsAndNullPreserves()
+    {
+        using (var store = BuildStore())
+        {
+            store.SaveMode("basic", "fill", "#FFA028", widebandDisplayEnabled: true);
+        }
+
+        using (var update = BuildStore())
+        {
+            update.SaveMode("beam-map", "fit", "#FF8800");
+        }
+
+        using var check = BuildStore();
+        var dto = check.Get();
+        Assert.True(dto.WidebandDisplayEnabled);
+        Assert.Equal("beam-map", dto.Mode);
+        Assert.Equal("fit", dto.Fit);
+    }
+
+    [Fact]
+    public void SaveMode_DisplayMaxFrameRateHz_PersistsAndNullPreserves()
+    {
+        using (var store = BuildStore())
+        {
+            store.SaveMode("basic", "fill", "#FFA028", displayMaxFrameRateHz: 15);
+        }
+
+        using (var update = BuildStore())
+        {
+            update.SaveMode("beam-map", "fit", "#FF8800");
+        }
+
+        using var check = BuildStore();
+        var dto = check.Get();
+        Assert.Equal(15, dto.DisplayMaxFrameRateHz);
+        Assert.Equal("beam-map", dto.Mode);
+        Assert.Equal("fit", dto.Fit);
+    }
+
+    [Theory]
+    [InlineData(0, DisplayPerformanceOptions.MinFrameRateHz)]
+    [InlineData(60, 60)]
+    [InlineData(1000, DisplayPerformanceOptions.MaxFrameRateHz)]
+    public void SaveMode_DisplayMaxFrameRateHz_ClampsToSupportedRange(double raw, double expected)
+    {
+        using var store = BuildStore();
+
+        store.SaveMode("basic", "fill", "#FFA028", displayMaxFrameRateHz: raw);
+
+        Assert.Equal(expected, store.Get().DisplayMaxFrameRateHz);
+    }
+
+    [Fact]
+    public void SaveMode_DisplayPerformanceKnobs_PersistAndNullPreserves()
+    {
+        using (var store = BuildStore())
+        {
+            store.SaveMode(
+                "basic",
+                "fill",
+                "#FFA028",
+                displayMaxFrameRateHz: 120,
+                displayDecimation: 4,
+                waterfallUpdatePeriod: 3);
+        }
+
+        using (var update = BuildStore())
+        {
+            update.SaveMode("beam-map", "fit", "#FF8800");
+        }
+
+        using var check = BuildStore();
+        var dto = check.Get();
+        Assert.Equal(120, dto.DisplayMaxFrameRateHz);
+        Assert.Equal(4, dto.DisplayDecimation);
+        Assert.Equal(3, dto.WaterfallUpdatePeriod);
+        Assert.Equal("beam-map", dto.Mode);
+        Assert.Equal("fit", dto.Fit);
+    }
+
+    [Theory]
+    [InlineData(0, DisplayPerformanceOptions.MinDisplayDecimation, 0, DisplayPerformanceOptions.MinWaterfallUpdatePeriod)]
+    [InlineData(99, DisplayPerformanceOptions.MaxDisplayDecimation, 5000, DisplayPerformanceOptions.MaxWaterfallUpdatePeriod)]
+    public void SaveMode_DisplayPerformanceKnobs_ClampToSupportedRanges(
+        int rawDecimation,
+        int expectedDecimation,
+        int rawWaterfallUpdatePeriod,
+        int expectedWaterfallUpdatePeriod)
+    {
+        using var store = BuildStore();
+
+        store.SaveMode(
+            "basic",
+            "fill",
+            "#FFA028",
+            displayDecimation: rawDecimation,
+            waterfallUpdatePeriod: rawWaterfallUpdatePeriod);
+
+        var dto = store.Get();
+        Assert.Equal(expectedDecimation, dto.DisplayDecimation);
+        Assert.Equal(expectedWaterfallUpdatePeriod, dto.WaterfallUpdatePeriod);
+    }
+
+    // Regression for the "white waterfall" symptom: dragging the waterfall dB
+    // scale far enough used to push both endpoints to the same ±DB_ABS_LIMIT
+    // wall, persisting min == max. Next page load mapped the entire colormap
+    // input to one colour. The store now drops degenerate writes so a buggy
+    // client (or a stray API call) can't leave the DB in that state.
+    [Theory]
+    [InlineData(-200, -200)] // both at -DbAbsLimit (the original symptom)
+    [InlineData(-50, -50)]   // min == max anywhere
+    [InlineData(-60, -50)]   // span (10) below MinSpanDb (20)
+    [InlineData(-50, -60)]   // inverted
+    [InlineData(-300, -50)]  // min outside abs limit
+    [InlineData(-50, 300)]   // max outside abs limit
+    public void SaveMode_DegenerateWfRange_IsRejectedAndPriorValueKept(double badMin, double badMax)
+    {
+        using var store = BuildStore();
+        store.SaveMode("basic", "fill", "#FFA028",
+            wfDbMin: -125, wfDbMax: -55);
+
+        store.SaveMode("basic", "fill", "#FFA028",
+            wfDbMin: badMin, wfDbMax: badMax);
+
+        var dto = store.Get();
+        Assert.Equal(-125, dto.WfDbMin);
+        Assert.Equal(-55, dto.WfDbMax);
+    }
+
+    [Fact]
+    public void SaveMode_PartialDegenerateRange_OnlyAffectedPairIsRejected()
+    {
+        using var store = BuildStore();
+        store.SaveMode("basic", "fill", "#FFA028",
+            dbMin: -130, dbMax: -60,
+            wfDbMin: -125, wfDbMax: -55);
+
+        // Valid pan update, but degenerate wf update in the same call.
+        store.SaveMode("basic", "fill", "#FFA028",
+            dbMin: -120, dbMax: -50,
+            wfDbMin: -200, wfDbMax: -200);
+
+        var dto = store.Get();
+        Assert.Equal(-120, dto.DbMin);
+        Assert.Equal(-50, dto.DbMax);
+        Assert.Equal(-125, dto.WfDbMin);
+        Assert.Equal(-55, dto.WfDbMax);
+    }
+}

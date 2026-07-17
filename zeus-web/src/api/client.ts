@@ -1,0 +1,7621 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA),
+//                         Christian Suarez (N9WAR), and contributors.
+//
+// This program is free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by the
+// Free Software Foundation, either version 2 of the License, or (at your
+// option) any later version. See the LICENSE file at the root of this
+// repository for the full text, or https://www.gnu.org/licenses/.
+//
+// Zeus is an independent reimplementation in .NET — not a fork. Its
+// Protocol-1 / Protocol-2 framing, WDSP integration, meter pipelines, and
+// TX behaviour were informed by studying the Thetis project
+// (https://github.com/ramdor/Thetis), the authoritative reference
+// implementation in the OpenHPSDR ecosystem. Zeus gratefully acknowledges
+// the Thetis contributors whose work made this possible:
+//
+//   Richard Samphire (MW0LGE), Warren Pratt (NR0V),
+//   Laurence Barker (G8NJJ),   Rick Koch (N1GP),
+//   Bryan Rambo (W4WMT),       Chris Codella (W2PA),
+//   Doug Wigley (W5WC),        FlexRadio Systems,
+//   Richard Allen (W5SD),      Joe Torrey (WD5Y),
+//   Andrew Mansfield (M0YGG),  Reid Campbell (MI0BOT),
+//   Sigi Jetzlsperger (DH1KLM).
+//
+// Thetis itself continues the GPL-governed lineage of FlexRadio PowerSDR
+// and the OpenHPSDR (TAPR/OpenHPSDR) ecosystem; that lineage is preserved
+// here. See ATTRIBUTIONS.md at the repository root for the full provenance
+// statement and per-component attribution.
+//
+// Protocol-2 / PureSignal / Saturn-class behaviour was additionally informed
+// by pihpsdr (https://github.com/dl1ycf/pihpsdr), maintained by Christoph
+// Wüllen (DL1YCF); and by DeskHPSDR
+// (https://github.com/dl1bz/deskhpsdr), maintained by Heiko (DL1BZ).
+// Both are GPL-2.0-or-later.
+//
+// WDSP — loaded by Zeus via P/Invoke — is Copyright (C) Warren Pratt
+// (NR0V), distributed under GPL v2 or later.
+//
+// Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
+// License for details.
+
+import { useVfoLockStore as vfoLockStore } from '../state/vfo-lock-store';
+import {
+  parseBoardCapabilities,
+  type BoardCapabilities,
+} from './board-capabilities';
+import { FREEDV_PLUGIN_BASE } from './freedv-plugin';
+
+export type ConnectionStatus =
+  | 'Disconnected'
+  | 'Connecting'
+  | 'Connected'
+  | 'Error';
+
+export type RxMode =
+  | 'LSB'
+  | 'USB'
+  | 'CWL'
+  | 'CWU'
+  | 'AM'
+  | 'FM'
+  | 'SAM'
+  | 'DSB'
+  | 'DIGL'
+  | 'DIGU'
+  | 'FREEDV';
+
+export type TxVfo = 'A' | 'B';
+
+export type NrMode = 'Off' | 'Anr' | 'Emnr' | 'Sbnr' | 'Rnnr';
+export type NbMode = 'Off' | 'Nb1' | 'Nb2';
+
+// SSB bandpass "rectangularity" (issue #871). 'Soft' = WDSP fir.c
+// Blackman-Harris 4-term (gentler shoulder, Yaesu-like); 'Sharp' = BH 7-term
+// (steeper shoulder, Icom-like). RX and TX selectors are independent. Match
+// the Zeus.Contracts.BandpassWindow enum (server serialises as the string
+// name via JsonStringEnumConverter).
+export type BandpassWindow = 'Soft' | 'Normal' | 'Sharp';
+
+// RXA AGC mode. PascalCase strings match the server's JsonStringEnumConverter
+// (AgcMode enum). Custom unlocks the per-param controls; Fixed unlocks the
+// fixed-gain field. Med is the Thetis (and Zeus) default.
+export type AgcMode = 'Fixed' | 'Long' | 'Slow' | 'Med' | 'Fast' | 'Custom';
+
+// AGC mode + custom/fixed params. Null params = "use the canned preset" — only
+// consulted in Custom mode (and fixedGainDb only in Fixed mode). The AGC
+// max-gain ("top") is NOT here — it lives on RadioStateDto.agcTopDb with its
+// own /api/agcGain path. Mirrors Zeus.Contracts AgcConfig.
+export type AgcConfigDto = {
+  mode: AgcMode;
+  slope?: number | null;
+  decayMs?: number | null;
+  hangMs?: number | null;
+  hangThreshold?: number | null;
+  fixedGainDb?: number | null;
+};
+
+export const AGC_CONFIG_DEFAULT: AgcConfigDto = {
+  mode: 'Med',
+};
+
+// RX squelch — a single mode-aware control (Thetis parity §5). The server
+// routes run + threshold to the WDSP squelch stage matching the current RX
+// mode (SSB/CW → SSQL, AM/SAM → AMSQ, FM → FMSQ). `adaptive` enables the
+// server-side noise-floor gate; false keeps the fixed WDSP squelch stages.
+// `level` is a unitless 0..100 where higher = tighter squelch.
+// `fixedSensitivity` is 0..100 and only shapes fixed-mode SQL. Mirrors
+// Zeus.Contracts SquelchConfig.
+export type SquelchConfigDto = {
+  enabled: boolean;
+  level: number;
+  adaptive: boolean;
+  fixedSensitivity: number;
+};
+
+export const SQUELCH_CONFIG_DEFAULT: SquelchConfigDto = {
+  enabled: false,
+  level: 0,
+  adaptive: true,
+  fixedSensitivity: 70,
+};
+
+// TX leveling — ALC (max-gain + decay), Leveler (on/off + decay), Compressor
+// (on/off + gain). Mirrors Zeus.Contracts TxLevelingConfig. The ALC run state
+// is NOT exposed (always on); the Leveler MAX-GAIN ("top") lives separately on
+// RadioStateDto.levelerMaxGainDb with its own /api/tx/leveler-max-gain path.
+// Ranges/defaults mirror Thetis: alcMaxGainDb 0..120 (3), alcDecayMs 1..50
+// (10), levelerEnabled default true, levelerDecayMs 1..5000 (100),
+// compressorEnabled default false, compressorGainDb 0..20 (0).
+export type TxLevelingConfigDto = {
+  alcMaxGainDb: number;
+  alcDecayMs: number;
+  levelerEnabled: boolean;
+  levelerDecayMs: number;
+  compressorEnabled: boolean;
+  compressorGainDb: number;
+};
+
+export const TX_LEVELING_CONFIG_DEFAULT: TxLevelingConfigDto = {
+  alcMaxGainDb: 3,
+  alcDecayMs: 10,
+  levelerEnabled: true,
+  levelerDecayMs: 100,
+  compressorEnabled: false,
+  compressorGainDb: 0,
+};
+
+// TX phase rotator — WDSP all-pass speech phase redistribution plus explicit
+// microphone polarity reverse. Mirrors Zeus.Contracts.TxPhaseRotatorConfig.
+// Thetis voice defaults are 338 Hz / 8 stages; fresh global state stays disabled
+// until an operator profile or Auto Tune enables it. Reverse is never guessed.
+export type TxPhaseRotatorConfigDto = {
+  enabled: boolean;
+  cornerHz: number;
+  stages: number;
+  reverse: boolean;
+};
+
+export const TX_PHASE_ROTATOR_CONFIG_DEFAULT: TxPhaseRotatorConfigDto = {
+  enabled: false,
+  cornerHz: 338,
+  stages: 8,
+  reverse: false,
+};
+
+export const TX_PHASE_ROTATOR_VOICE_DEFAULT: TxPhaseRotatorConfigDto = {
+  enabled: true,
+  cornerHz: 338,
+  stages: 8,
+  reverse: false,
+};
+
+export type NrConfigDto = {
+  nrMode: NrMode;
+  anfEnabled: boolean;
+  snbEnabled: boolean;
+  nbpNotchesEnabled: boolean;
+  nbMode: NbMode;
+  nbThreshold: number;
+  // NR2 (EMNR) post2 comfort-noise tunables — null means "use engine default".
+  emnrPost2Run?: boolean | null;
+  emnrPost2Factor?: number | null;
+  emnrPost2Nlevel?: number | null;
+  emnrPost2Rate?: number | null;
+  emnrPost2Taper?: number | null;
+  // NR2 (EMNR) core algorithm selectors + Trained-method tuning.
+  //   gainMethod: 0=Linear 1=Log 2=Gamma 3=Trained
+  //   npeMethod : 0=OSMS   1=MMSE 2=NSTAT
+  // T1/T2 only consulted by WDSP when gainMethod=3.
+  emnrGainMethod?: number | null;
+  emnrNpeMethod?: number | null;
+  emnrAeRun?: boolean | null;
+  emnrTrainT1?: number | null;
+  emnrTrainT2?: number | null;
+  // NR4 (SBNR / libspecbleach) tunables — null means "use engine default".
+  nr4ReductionAmount?: number | null;
+  nr4SmoothingFactor?: number | null;
+  nr4WhiteningFactor?: number | null;
+  nr4NoiseRescale?: number | null;
+  nr4PostFilterThreshold?: number | null;
+  nr4NoiseScalingType?: number | null;
+  nr4Position?: number | null;
+};
+
+export const NR_CONFIG_DEFAULT: NrConfigDto = {
+  nrMode: 'Off',
+  anfEnabled: false,
+  snbEnabled: false,
+  nbpNotchesEnabled: false,
+  nbMode: 'Off',
+  nbThreshold: 20,
+};
+
+// Engine-side defaults for the popover. Sourced from
+// WdspDspEngine.NrDefaults / Thetis radio.cs:2103/2122/2160. Factor/nlevel
+// are the Thetis NumericUpDown raw values (0..100); WDSP itself divides
+// by 100 internally at emnr.c:1035/1042. Rate has no /100 in WDSP.
+export const NR2_POST2_DEFAULTS = {
+  run: true,
+  factor: 15,
+  nlevel: 15,
+  rate: 5.0,
+  taper: 12,
+} as const;
+
+// EMNR core defaults — Thetis Setup → DSP factory state. Mirrors
+// WdspDspEngine.NrDefaults so a "reset" reproduces what create_emnr() would
+// give on a fresh channel. T1/T2 only matter when gainMethod=3 but the
+// Defaults button still resets them so a Trained → revert → Trained cycle
+// returns to factory.
+export const NR2_CORE_DEFAULTS = {
+  gainMethod: 2 as 0 | 1 | 2 | 3,    // Gamma
+  npeMethod: 0 as 0 | 1 | 2,         // OSMS
+  aeRun: true,
+  trainT1: -0.5,
+  trainT2: 0.2, // Thetis udDSPNR2trainT2 NUD default (range 0.02..0.3)
+} as const;
+
+export const GAIN_METHOD_LABELS = ['Linear', 'Log', 'Gamma', 'Trained'] as const;
+export const NPE_METHOD_LABELS = ['OSMS', 'MMSE', 'NSTAT'] as const;
+
+export const NR4_DEFAULTS = {
+  reductionAmount: 10.0,
+  smoothingFactor: 0.0,
+  whiteningFactor: 0.0,
+  noiseRescale: 2.0,
+  // -10 matches Thetis's UI default + WDSP's create_sbnr seed (sbnr.c:84) — see
+  // WdspDspEngine.NrDefaults.Nr4PostFilterThreshold for the full reasoning.
+  postFilterThreshold: -10.0,
+  noiseScalingType: 0,
+  position: 1,
+} as const;
+
+export const NR4_ALGO_LABELS = ['Algo 1', 'Algo 2', 'Algo 3'] as const;
+
+// Integer 1..32. Matches the backend cap (SyntheticDspEngine.MaxZoomLevel).
+// At 32× the WDSP analyzer's centre-clipped bin count drops below typical
+// pan pixel widths, softening the trace — usable for narrow-signal (CW)
+// hunting even if not pixel-sharp.
+export type ZoomLevel = number;
+export const ZOOM_MIN: ZoomLevel = 1;
+export const ZOOM_MAX: ZoomLevel = 32;
+
+// Workspace UI zoom as a whole-percent scale of the panel-grid cell pitch.
+// 100 = authored size. Distinct from the spectral ZoomLevel above. Range +
+// step mirror the backend clamp (RadioService.Min/MaxWorkspaceZoomPct).
+export const WORKSPACE_ZOOM_MIN = 50;
+export const WORKSPACE_ZOOM_MAX = 200;
+export const WORKSPACE_ZOOM_STEP = 10;
+export const WORKSPACE_ZOOM_DEFAULT = 100;
+
+export type AdcProtectionConfigDto = {
+  enabled: boolean;
+  attackMs: number;
+  releaseMs: number;
+  attackStepDb: number;
+  releaseStepDb: number;
+  maxOffsetDb: number;
+  warningThreshold: number;
+  magnitudeSoftLimit: number;
+  releaseHoldMs: number;
+};
+
+export const ADC_PROTECTION_CONFIG_DEFAULT: AdcProtectionConfigDto = {
+  enabled: true,
+  attackMs: 100,
+  releaseMs: 100,
+  attackStepDb: 1,
+  releaseStepDb: 1,
+  maxOffsetDb: 31,
+  warningThreshold: 3,
+  magnitudeSoftLimit: 0,
+  releaseHoldMs: 2000,
+};
+
+export type AdcProtectionStatusDto = {
+  config: AdcProtectionConfigDto;
+  attenDb: number;
+  offsetDb: number;
+  effectiveDb: number;
+  warning: boolean;
+  overloadLevel: number;
+  lastOverloadBits: number;
+  adc0MaxMagnitude: number | null;
+  adc1MaxMagnitude: number | null;
+  adc0MaxMagnitudeAtOverload: number;
+  adc1MaxMagnitudeAtOverload: number;
+  lastTelemetryUtc: string | null;
+};
+
+export type AdcProtectionSetRequest = Partial<AdcProtectionConfigDto>;
+
+export type RadioStateDto = {
+  status: ConnectionStatus;
+  endpoint: string | null;
+  vfoHz: number;
+  // RX2+ per-receiver state (VFO/mode/filter/AF) is read from `receivers[]`
+  // (RX2 = index 1); the client no longer carries the flat *B fields. The server
+  // still accepts the legacy A/B write endpoints (setVfoB/setMode?receiver=B/…).
+  rx2Enabled: boolean;
+  txVfo: TxVfo;
+  // Authoritative TX target as a receiver index (0=RX1/VFO A, 1=RX2/VFO B,
+  // >=2 extra DDC). txVfo stays the legacy A/B projection. Optional until a v2
+  // server reports it.
+  txReceiverIndex?: number;
+  mode: RxMode;
+  filterLowHz: number;
+  filterHighHz: number;
+  // Null after a drag edit without a named-slot context (PRD §4.1).
+  filterPresetName: string | null;
+  // Advanced-filter ribbon visibility; persisted server-side.
+  filterAdvancedPaneOpen: boolean;
+  // TX bandpass (signed, per-sideband). Per-mode family memory on the server.
+  txFilterLowHz: number;
+  txFilterHighHz: number;
+  // SSB bandpass "rectangularity" — operator-selectable WDSP FIR window
+  // (issue #871). RX and TX are independent.
+  rxFilterWindow: BandpassWindow;
+  txFilterWindow: BandpassWindow;
+  sampleRate: number;
+  agcTopDb: number;
+  // AGC mode + custom/fixed params (separate from agcTopDb max-gain).
+  agc: AgcConfigDto;
+  // RX squelch (mode-aware single control).
+  squelch: SquelchConfigDto;
+  // TX leveling (ALC + Leveler + Compressor). Leveler max-gain stays separate.
+  txLeveling: TxLevelingConfigDto;
+  // TX phase rotator (Thetis DSP->CFC->PhaseRot parity).
+  txPhaseRotator: TxPhaseRotatorConfigDto;
+  autoAgcEnabled: boolean;
+  agcOffsetDb: number;
+  rxAfGainDb: number;
+  // TX mic gain in dB ([-40, +10]) and TX Leveler max-gain ceiling in dB
+  // ([0, 15]). Server is authoritative; hydrated into tx-store on every fresh
+  // RadioStateDto. Previously localStorage-only and reverted on every restart
+  // when the desktop webview wiped its storage.
+  micGainDb: number;
+  levelerMaxGainDb: number;
+  attenDb: number;
+  autoAttEnabled: boolean;
+  attOffsetDb: number;
+  adcOverloadWarning: boolean;
+  preampOn: boolean;
+  nr: NrConfigDto;
+  // NR3 (RNNoise): native availability (libwdsp RNNR exports present) plus the
+  // active model name (operator-installed file name, the bundled-default display
+  // name, or null when neither is available). NR3 is revealed in the NR cycle
+  // when available AND a model is active. Zeus ships a bundled default so NR3
+  // works out of the box; the operator can override it via the DSP menu.
+  wdspNr3RnnrAvailable: boolean;
+  nr3ModelName: string | null;
+  // True when the active model is the shipped default (no operator model). The
+  // UI labels the source and gates "Remove" (remove reverts to the default).
+  nr3UsingBundledDefault: boolean;
+  zoomLevel: ZoomLevel;
+  // Workspace UI zoom (whole-percent cell-pitch scale; 100 = authored size).
+  // Server-persisted so it follows the radio across clients.
+  workspaceZoomPct: number;
+  // PureSignal persisted settings — server is the source of truth, hydrated
+  // into tx-store on connect so a fresh browser (no localStorage) sees the
+  // operator's last dial-in. PsEnabled is the persisted standing arm
+  // preference; PsSingle and TwoToneEnabled remain session-only.
+  psEnabled: boolean;
+  psAuto: boolean;
+  psPtol: boolean;
+  psAutoAttenuate: boolean;
+  psMoxDelaySec: number;
+  psLoopDelaySec: number;
+  psAmpDelayNs: number;
+  // psHwPeak is the live operator-tunable HW-peak; psHwPeakDefault is the
+  // per-board factory default frozen by RadioService at connect time. UI
+  // shows a "differs from default" hint when they don't match.
+  // mi0bot ref: PSForm.cs:830 `pbWarningSetPk.Visible = _PShwpeak !=
+  // HardwareSpecific.PSDefaultPeak;`.
+  psHwPeak: number;
+  psHwPeakDefault: number;
+  // Live PS TX feedback attenuation (dB) and the per-board floor (HL2 -28,
+  // others 0; max 31). Operator can set it directly as a manual alternative
+  // to AutoAttenuate; restored on connect.
+  psTxFeedbackAttenuationDb: number;
+  psTxFeedbackAttenuationDbMin: number;
+  // Server raises this when calcc is alive (PS armed + keyed) for >5 s with
+  // CalibrationAttempts pinned at 0 — almost always means hw_peak is set
+  // higher than the actual TX envelope peak. Drives the HW-peak warning
+  // banner in the PURESIGNAL panel.
+  psCalibrationStalled?: boolean;
+  psIntsSpiPreset: string;
+  psFeedbackSource: 'internal' | 'external';
+  txMonitorEnabled: boolean;
+  // Drive slider state — server is authoritative, hydrated into tx-store on
+  // every fresh RadioStateDto so a relaunch picks up the operator's last
+  // value instead of the localStorage default clobbering the server's
+  // persisted value on connect.
+  drivePercent: number;
+  tunePercent: number;
+  // TX pre-key (MOX) delay in ms (issue #630). Withholds RF after a UI MOX/TUNE
+  // key-down so an external amp's T/R relay settles before RF. Server-clamped
+  // below the PS MOX hold-off; hydrated on connect like the drive sliders.
+  txMoxPreKeyDelayMs: number;
+  // TX tail (MOX hang) delay in ms (issue #1294). After a UI PTT release, holds
+  // the wire MOX bit asserted so audio still in the browser→WDSP→IQ pipeline
+  // finishes clocking out before the radio drops off the air. Legacy servers
+  // without this field fall back to 0 in normalizeState.
+  txMoxTailDelayMs: number;
+  // Old-school end-of-over roger beep. Default off on older servers.
+  rogerBeepEnabled: boolean;
+  // TX timeout in seconds (issue #1270). Maximum single-transmission length
+  // before the PA-protection guard fires. 0 = disabled (no guard); otherwise
+  // server-clamped to [30, 600]. Legacy servers without this field fall back to
+  // 120 in normalizeState.
+  txTimeoutSec: number;
+  twoToneFreq1: number;
+  twoToneFreq2: number;
+  twoToneMag: number;
+  // CFC (Continuous Frequency Compressor) — issue #123. Always present
+  // after normalisation; falls back to CFC_CONFIG_DEFAULT when the server
+  // omits it (legacy state frames).
+  cfc: CfcConfigDto;
+  // Hardware NCO. Independent of vfoHz — the panadapter centres on radioLoHz
+  // and WDSP's shift stage relocates the operator's tuned signal so it still
+  // demodulates. Moves only on explicit retune (/api/radio/lo, band change,
+  // external CAT). The legacy CTUN toggle was removed in the pure-pan rework
+  // (PRD: docs/prd/panfall_behavior.md); this is now the only tuning model.
+  radioLoHz: number;
+  // CW sidetone pitch in Hz. Today a baked-in constant (600); exposed so
+  // the frontend doesn't duplicate it. Will become configurable later.
+  cwPitchHz: number;
+  // CTUN (click-tune / centred tuning). When true, a panadapter click tunes
+  // the dial off-centre and leaves radioLoHz frozen (the gesture skips the
+  // view-centre nudge so the dial marker roams); when false, a click recentres
+  // the display on the tuned frequency. Toggled via setCtun → POST
+  // /api/radio/ctun. See docs/prd/panfall_behavior.md.
+  ctunEnabled: boolean;
+  // ---- Multi-DDC receivers array (wire v2) ----
+  // Canonical per-receiver list: index 0 = RX1, 1 = RX2, >= 2 = extra DDCs.
+  // Optional until the frontend migrates off the flat RX1/RX2 fields; the
+  // server projects these from the flat fields so [0]/[1] always mirror them.
+  receivers?: ReceiverDto[];
+  // Wire contract version (WireContract.Version). v2 = receivers[] present.
+  wireVersion?: number;
+  // Active hardware DDC / receiver ceiling for this connection.
+  maxReceivers?: number;
+  // Active backend wire protocol for the current connection. Present on v2+
+  // servers so reloads can recover protocol-gated Settings panels.
+  connectedProtocol?: 'P1' | 'P2' | 'P3' | null;
+};
+
+// Mirrors Zeus.Contracts.ReceiverDto — per-receiver (per-DDC) state. Index 0 is
+// RX1, index 1 is RX2, indices >= 2 are additional DDCs. The multi-DDC UI reads
+// this array; the flat RX1/RX2 fields above remain the source for indices 0/1
+// until that migration completes.
+export type ReceiverDto = {
+  index: number;
+  enabled: boolean;
+  // Operator-facing display name. Hardware DDCs leave this null and fall back to
+  // an "RX{n}" label; the reserved KiwiSDR slice receiver carries "Kiwi". See
+  // receiverLabel().
+  name?: string | null;
+  // Which phase-synchronous 16-bit ADC feeds this DDC (0 or 1).
+  adcSource: number;
+  vfoHz: number;
+  mode: RxMode;
+  filterLowHz: number;
+  filterHighHz: number;
+  filterPresetName: string | null;
+  afGainDb: number;
+  sampleRateHz: number;
+  // Per-receiver audio mute (Thetis chkMUT/chkRX2Mute). The hero mixer + VFO
+  // panel drive this via POST /api/receivers/{index}/mute.
+  muted: boolean;
+};
+
+// Mirrors Zeus.Contracts.KiwiConfigDto — status of the KiwiSDR slice receiver.
+// `hasPassword` avoids ever shipping the stored secret to the client; `status`
+// is one of "disabled" | "connecting" | "connected" | "error" | "closed".
+export type KiwiConfigDto = {
+  enabled: boolean;
+  url: string | null;
+  hasPassword: boolean;
+  status: string;
+  statusDetail: string | null;
+};
+
+// Mirrors Zeus.Server.KiwiDirectoryEntry — one public KiwiSDR for the map
+// picker. `url` is the address to store/connect; `lat`/`lon` place the marker.
+export type KiwiDirectoryEntry = {
+  name: string;
+  url: string;
+  lat: number;
+  lon: number;
+  users: number;
+  usersMax: number;
+  online: boolean;
+  location: string | null;
+  snr: string | null;
+};
+
+// CFC mirrors Zeus.Contracts.CfcConfig. Bands array is fixed at 10 entries
+// — the panel layout depends on it; the server validates the same.
+export type CfcBandDto = {
+  freqHz: number;
+  compLevelDb: number;
+  postGainDb: number;
+};
+export type CfcConfigDto = {
+  enabled: boolean;
+  postEqEnabled: boolean;
+  preCompDb: number;
+  prePeqDb: number;
+  bands: CfcBandDto[];
+};
+
+export type CfcPresetDto = {
+  name: string;
+  config: CfcConfigDto;
+  createdUtc: string;
+  updatedUtc: string;
+};
+
+// Legacy station-profile shape. The endpoints are retired (superseded by the
+// unified TX Audio Profile system); this type is retained only as the in-tree
+// seed-catalog shape used by tx-station-profile.ts (CFC starter constants +
+// spectral-density transform consumed by CfcSettingsPanel and the profile seeds).
+export type TxStationProfileDto = {
+  id: string;
+  label: string;
+  summary: string;
+  applyTitle: string;
+  audioSuiteRoute: 'native' | 'vst';
+  audioSuiteBypassed: boolean;
+  audioSuiteProfileName?: string | null;
+  micGainDb: number;
+  levelerMaxGainDb: number;
+  txLeveling: TxLevelingConfigDto;
+  cfcConfig: CfcConfigDto;
+  lowCutHz: number;
+  highCutHz: number;
+  spectralDensity: number;
+};
+
+// Unified, operator-named "TX Audio Profile". A single macro that captures the
+// ENTIRE TX audio-shaping state — mic/leveler scalars, the whole TxLeveling and
+// CFC configs, the TX bandpass, the Audio Suite chain (processing mode + order +
+// parked + master bypass) and EVERY plugin's settings (VST opaque blobs + native
+// per-plugin LiteDB dumps), plus the fidelity-policy spectral-density target.
+// Mirrors Zeus.Contracts.TxAudioProfileDto. REPLACES the old fixed-3 station
+// profiles and the TX audio-suite named profiles.
+export type TxAudioProfileDto = {
+  id: string;
+  name: string;
+  micGainDb: number;
+  levelerMaxGainDb: number;
+  txLeveling: TxLevelingConfigDto;
+  cfcConfig: CfcConfigDto;
+  txPhaseRotator: TxPhaseRotatorConfigDto;
+  lowCutHz: number;
+  highCutHz: number;
+  processingMode: 'native' | 'vst';
+  masterBypass: boolean;
+  chainOrder: string[];
+  chainParked: string[];
+  vstPluginStates: Record<string, string>;
+  nativePluginStates: Record<string, Record<string, string>>;
+  targetSpectralDensity: number;
+  createdUtc: string;
+  updatedUtc: string;
+};
+
+export type TxAudioProfilesResponseDto = {
+  profiles: TxAudioProfileDto[];
+};
+
+// The persisted "last loaded profile" pointer the dropdown shows as selected.
+// The BACKEND applies this at startup — the frontend never applies it.
+export type LastLoadedTxAudioProfileDto = {
+  id: string | null;
+};
+
+// Response from POST /api/tx-audio-profiles/{id}/apply: the applied profile plus
+// a full live StateDto so the UI snaps without a second round-trip.
+export type ApplyTxAudioProfileResultDto = {
+  profile: TxAudioProfileDto;
+  state: RadioStateDto;
+  pluginIds: string[];
+  parked: string[];
+  processingMode: 'native' | 'vst';
+  engineActive: boolean;
+  engineAvailable: boolean;
+  masterBypass: boolean;
+};
+
+export type TxFidelityPolicyDto = {
+  profileId: string;
+  targetSpectralDensity: number;
+};
+
+export const TX_FIDELITY_POLICY_DEFAULT: TxFidelityPolicyDto = {
+  profileId: 'studio-ssb',
+  targetSpectralDensity: 55,
+};
+
+// Pihpsdr classic-mode default — voice-band split the operator recognises
+// from PowerSDR. Master OFF + zeroed comp/post means a fresh enable is
+// audibly transparent. Mirrors CfcConfig.Default on the server.
+export const CFC_CONFIG_DEFAULT: CfcConfigDto = {
+  enabled: false,
+  postEqEnabled: false,
+  preCompDb: 0,
+  prePeqDb: 0,
+  bands: [
+    { freqHz: 50,   compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 100,  compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 200,  compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 500,  compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 1000, compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 1500, compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 2000, compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 2500, compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 3000, compLevelDb: 0, postGainDb: 0 },
+    { freqHz: 5000, compLevelDb: 0, postGainDb: 0 },
+  ],
+};
+
+export type FilterPresetDto = {
+  slotName: string;
+  label: string;
+  lowHz: number;
+  highHz: number;
+  isVar: boolean;
+};
+
+export type RadioInfoDto = {
+  macAddress: string;
+  ipAddress: string;
+  boardId: string;
+  firmwareVersion: string;
+  busy: boolean;
+  details: Record<string, string> | null;
+};
+
+export type Protocol3PresenceDto = {
+  available: boolean;
+  port: number | null;
+  maxRxStreams: number | null;
+  maxTxStreams: number | null;
+  capabilityFlags: string | null;
+  firmwareVersion: number | null;
+  gatewareVersion: number | null;
+};
+
+export type Protocol3SidecarStatusDto = {
+  configured: boolean;
+  running: boolean;
+  diagnosticsUrl: string | null;
+  sidecarOutput: string | null;
+};
+
+export type HardwareDiagnosticItemDto = {
+  field: string;
+  source?: string;
+  status: string;
+  notes: string;
+};
+
+export type HardwareFeatureSurfaceDto = {
+  id: string;
+  title: string;
+  category: string;
+  implementationStatus: string;
+  userConfigurable: boolean;
+  source: string;
+  telemetryPaths: string[];
+  candidateControls: string[];
+  safetyClass: string;
+  notes: string;
+};
+
+export type HardwareDisplayBufferDiagnosticsDto = {
+  valid: boolean;
+  ageMs: number | null;
+  validBins: number;
+  minDb: number | null;
+  maxDb: number | null;
+  meanDb: number | null;
+  dynamicRangeDb: number | null;
+};
+
+export type HardwareDisplayDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  clientCount: number;
+  framesBroadcast: number;
+  lastSeq: number;
+  lastFrameAgeMs: number | null;
+  lastFrameUnixMs: number | null;
+  panValid: boolean;
+  waterfallValid: boolean;
+  panSource: string;
+  waterfallSource: string;
+  keyed: boolean;
+  psMonitorRequested: boolean;
+  psFeedbackCorrecting: boolean;
+  width: number;
+  centerHz: number | null;
+  hzPerPixel: number | null;
+  pan: HardwareDisplayBufferDiagnosticsDto;
+  waterfall: HardwareDisplayBufferDiagnosticsDto;
+  diagnosticRecommendation: string | null;
+};
+
+export type HardwareRxDspDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  mode: string;
+  filterLowHz: number;
+  filterHighHz: number;
+  filterPresetName: string | null;
+  agcMode: string;
+  agcTopDb: number;
+  autoAgcEnabled: boolean;
+  agcOffsetDb: number;
+  effectiveAgcTopDb: number;
+  squelchEnabled: boolean;
+  squelchAdaptive: boolean;
+  squelchLevel: number;
+  requestedNrMode: string;
+  effectiveNrMode: string;
+  anfEnabled: boolean;
+  snbEnabled: boolean;
+  nbpNotchesEnabled: boolean;
+  effectiveNbpNotchesRun: boolean;
+  nbMode: string;
+  nbThreshold: number;
+  manualNotchCount: number;
+  activeManualNotchCount: number;
+  wdspActive: boolean;
+  wdspNativeLoadable: boolean;
+  wdspEmnrPost2Available: boolean;
+  wdspNr4SbnrAvailable: boolean;
+  nr4Readiness: string;
+  appliedNrMatchesRequested: boolean;
+  appliedAgcMatchesRequested: boolean;
+  appliedSquelchMatchesRequested: boolean;
+  activeFeatures: string[];
+  qualityReasons: string[];
+  diagnosticRecommendation: string | null;
+};
+
+export type HardwareRxMetersDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  source: string;
+  fresh: boolean;
+  stale: boolean;
+  ageMs: number | null;
+  channelId: number;
+  rxDbm: number | null;
+  signalPkDbm: number | null;
+  signalAvDbm: number | null;
+  adcPkDbfs: number | null;
+  adcAvDbfs: number | null;
+  adcHeadroomDb: number | null;
+  agcGainDb: number | null;
+  agcEnvPkDbm: number | null;
+  agcEnvAvDbm: number | null;
+  signalUsable: boolean;
+  adcUsable: boolean;
+  agcEnvelopeUsable: boolean;
+  diagnosticRecommendation: string | null;
+};
+
+export type HardwareRxDynamicRangeActionDto = {
+  id: string;
+  label: string;
+  status: string;
+  notes: string;
+};
+
+export type HardwareRxDynamicRangeDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  tone: string;
+  fresh: boolean;
+  stale: boolean;
+  ageMs: number | null;
+  source: string;
+  sampleRateHz: number;
+  attenDb: number;
+  attOffsetDb: number;
+  effectiveAttenDb: number;
+  preampOn: boolean;
+  autoAttEnabled: boolean;
+  adcProtectionEnabled: boolean;
+  adcOverloadWarning: boolean;
+  adcOverloadLevel: number;
+  targetHeadroomMinDb: number;
+  targetHeadroomMaxDb: number;
+  rxDbm: number | null;
+  signalPkDbm: number | null;
+  adcPkDbfs: number | null;
+  adcHeadroomDb: number | null;
+  agcGainDb: number | null;
+  headroomOptimal: boolean;
+  overloadRisk: boolean;
+  weakSignalOpportunity: boolean;
+  frontEndUnderused: boolean;
+  reasons: string[];
+  actions: HardwareRxDynamicRangeActionDto[];
+  diagnosticRecommendation: string | null;
+};
+
+export type HardwareAudioDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  source: string;
+  fresh: boolean;
+  stale: boolean;
+  ageMs: number | null;
+  framesBroadcast: number;
+  lastSeq: number;
+  sampleRateHz: number;
+  sampleCount: number;
+  rmsLinear: number | null;
+  peakLinear: number | null;
+  rmsDbfs: number | null;
+  peakDbfs: number | null;
+  txMonitorRequested: boolean;
+  squelchEnabled: boolean;
+  squelchOpen: boolean;
+  squelchTailActive: boolean;
+  squelchGateGain: number | null;
+  squelchMode: string;
+  squelchGateSource: string;
+  squelchOpenKnown: boolean;
+  monitorBacklogSamples: number;
+  audioSinkCount: number;
+  diagnosticRecommendation: string | null;
+};
+
+export type HardwareRxListenabilityDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  tone: string;
+  signalPresent: boolean;
+  audioRecovered: boolean;
+  blocker: string;
+  recommendation: string | null;
+};
+
+export type HardwareDspFilterActiveDto = {
+  mode: string;
+  filterLowHz: number;
+  filterHighHz: number;
+  filterPresetName: string | null;
+  inputBufferSize: number;
+  dspBufferSize: number;
+  outputBufferSize?: number;
+  filterWindowId: number;
+  filterWindow: string;
+  filterType: string;
+  filterTaps: number | null;
+  cfirCompensation?: boolean;
+  status: string;
+};
+
+export type HardwareDspFilterMatrixRowDto = {
+  modeFamily: string;
+  direction: string;
+  iqBufferSize: number | null;
+  filterTaps: number | null;
+  filterType: string;
+  filterWindow: string;
+  status: string;
+};
+
+export type HardwareDspFilterImpulseCacheDto = {
+  fftwWisdomPhase: string;
+  fftwWisdomStatus: string;
+  fftwWisdomCache: boolean;
+  filterImpulseCache: boolean;
+  saveRestoreImpulseCacheFile: boolean;
+  status: string;
+  notes: string;
+};
+
+export type HardwareDspHighResolutionFilterDisplayDto = {
+  enabled: boolean;
+  status: string;
+  notes: string;
+};
+
+export type HardwareDspSampleRateOptionDto = {
+  sampleRateHz: number;
+  label: string;
+  boardSupported: boolean;
+  protocol2Required: boolean;
+  active: boolean;
+  status: string;
+};
+
+export type HardwareDspHardwareLimitsDto = {
+  rxAdcCount: number;
+  maxRxSampleRateHz: number;
+  activeSampleRateHz: number;
+  sampleRates: HardwareDspSampleRateOptionDto[];
+};
+
+export type HardwareDspFilterWindowOptionDto = {
+  id: number;
+  label: string;
+  notes: string;
+};
+
+export type HardwareDspFilterOptionCatalogDto = {
+  iqBufferSizes: number[];
+  filterTapSizes: number[];
+  filterTypes: string[];
+  filterWindows: HardwareDspFilterWindowOptionDto[];
+  slowModeChangeWarning: string;
+  source: string;
+};
+
+export type HardwareDspDdcSlotDto = {
+  slot: number;
+  purpose: string;
+  status: string;
+  notes: string;
+};
+
+export type HardwareDspReceiverBandwidthDto = {
+  schemaVersion: number;
+  status: string;
+  tone: string;
+  connected: boolean;
+  protocol2Active: boolean;
+  p2WidebandCapable: boolean;
+  widebandActive: boolean;
+  activeSampleRateHz: number;
+  maxSampleRateHz: number;
+  activeNyquistHz: number;
+  maxNyquistHz: number;
+  utilizationPct: number;
+  unusedSampleRateHz: number;
+  unusedNyquistHz: number;
+  activeSoftwareReceivers: number;
+  manualReceiverCapacity: number;
+  unexposedReceiverCount: number;
+  activeUserDdcIndex: number | null;
+  activeSlots: HardwareDspDdcSlotDto[];
+  reservedSlots: HardwareDspDdcSlotDto[];
+  source: string;
+  diagnosticRecommendation: string;
+};
+
+export type HardwareDspRuntimeSampleRateControlDto = {
+  status: string;
+  writable: boolean;
+  requiresReconnect: boolean;
+  activeSampleRateHz: number;
+  maxBoardSampleRateHz: number;
+  maxWritableSampleRateHz: number;
+  protocol2Active: boolean;
+  widebandWritable: boolean;
+  settingsSurface: string;
+  apiRoute: string;
+  diagnosticRecommendation: string;
+};
+
+export type HardwareDspFilterGeometryDto = {
+  schemaVersion: number;
+  status: string;
+  operatorConfigurable: boolean;
+  hardwareLimits: HardwareDspHardwareLimitsDto;
+  runtimeSampleRateControl: HardwareDspRuntimeSampleRateControlDto;
+  optionCatalog: HardwareDspFilterOptionCatalogDto;
+  activeRx: HardwareDspFilterActiveDto;
+  activeTx: HardwareDspFilterActiveDto;
+  receiverBandwidth: HardwareDspReceiverBandwidthDto;
+  thetisMatrix: HardwareDspFilterMatrixRowDto[];
+  impulseCache: HardwareDspFilterImpulseCacheDto;
+  highResolutionFilterDisplay: HardwareDspHighResolutionFilterDisplayDto;
+  diagnosticRecommendation: string;
+  source: string;
+};
+
+export type HardwareDspDiagnosticsDto = {
+  schemaVersion: number;
+  engine: string;
+  engineKind: string;
+  wdspActive: boolean;
+  synthetic: boolean;
+  wdspNativeLoadable: boolean;
+  wdspEmnrPost2Available: boolean;
+  wdspNr4SbnrAvailable: boolean;
+  nr4Readiness: string;
+  requestedNrMode: string;
+  effectiveNrMode: string;
+  channelId: number;
+  sampleRateHz: number;
+  displayWidth: number;
+  tickRateHz: number;
+  audioOutputRateHz: number;
+  txBlockSamples: number;
+  txOutputSamples: number;
+  txMonitorRequested: boolean;
+  rxSinkAttached: boolean;
+  audioSinkCount: number;
+  monitorBacklogSamples: number;
+  rxDsp: HardwareRxDspDiagnosticsDto;
+  rxMeters: HardwareRxMetersDiagnosticsDto;
+  rxDynamicRange: HardwareRxDynamicRangeDiagnosticsDto;
+  audio: HardwareAudioDiagnosticsDto;
+  listenability: HardwareRxListenabilityDiagnosticsDto;
+  display: HardwareDisplayDiagnosticsDto;
+  filterGeometry: HardwareDspFilterGeometryDto;
+  wdspWisdomPhase: string;
+  wdspWisdomStatus: string;
+  readiness: string;
+};
+
+export type HardwarePureSignalDiagnosticsDto = {
+  schemaVersion: number;
+  enabled: boolean;
+  monitorEnabled: boolean;
+  auto: boolean;
+  single: boolean;
+  autoAttenuate: boolean;
+  feedbackSource: 'internal' | 'external';
+  externalFeedback: boolean;
+  externalFeedbackPathSupported: boolean;
+  rfBypassRequired: boolean;
+  rfBypassSelected: boolean;
+  feedbackLevelRaw: number;
+  feedbackLevelPct: number;
+  feedbackTargetRaw: number;
+  feedbackUsableMinRaw: number;
+  feedbackUsableMaxRaw: number;
+  feedbackCenteredMinRaw: number;
+  feedbackCenteredMaxRaw: number;
+  txFeedbackAttenuationDb: number;
+  txFeedbackAttenuationDbMin: number;
+  hwPeak: number;
+  hwPeakDefault: number;
+  calState: number;
+  correcting: boolean;
+  calibrationStalled: boolean;
+  healthStatus: string;
+  manualReference: string;
+  diagnosticRecommendation: string | null;
+};
+
+export type FrontendDspSceneDiagnosticsDto = {
+  schemaVersion: number;
+  available: boolean;
+  ageMs: number | null;
+  status: string;
+  fresh: boolean;
+  stale: boolean;
+  diagnosticRecommendation: string | null;
+  atUtc: string | null;
+  sourceAtUtc: string | null;
+  sourceAgeMs: number | null;
+  sourceClockSkewMs: number | null;
+  sourceClientId: string | null;
+  mode: RxMode | null;
+  signalProfile: string | null;
+  signalReason: string | null;
+  smartNrProfile: string | null;
+  smartNrReason: string | null;
+  smartNrRecommendation: string | null;
+  smartNrHeldByRxChain: boolean | null;
+  smartNrRxChainLabel: string | null;
+  smartNrRxChainRecommendation: string | null;
+  smartNrRxChainTone: string | null;
+  smartNrRxChainScore: number | null;
+  maxSnrDb: number | null;
+  coherentMaxSnrDb: number | null;
+  occupiedPct: number | null;
+  coherentOccupiedPct: number | null;
+  impulsivePct: number | null;
+  peakCount: number | null;
+  coherentPeakCount: number | null;
+  coherentSubthresholdSignal: boolean | null;
+  topPeaks: FrontendDspSceneTopPeakDto[];
+  adjacentNoiseUsable: boolean | null;
+  adjacentNoiseBins: number | null;
+  adjacentNoiseLeftBins: number | null;
+  adjacentNoiseRightBins: number | null;
+  adjacentNoiseFloorDb: number | null;
+  adjacentNoiseP10Db: number | null;
+  adjacentNoiseP50Db: number | null;
+  adjacentNoiseP90Db: number | null;
+  adjacentNoiseLeftFloorDb: number | null;
+  adjacentNoiseRightFloorDb: number | null;
+  adjacentNoiseSlopeDbPerKhz: number | null;
+  adjacentNoiseRejectedPct: number | null;
+};
+
+export type FrontendDspSceneTopPeakDto = {
+  frequencyHz: number;
+  offsetHz: number;
+  snrDb: number;
+  dbfs: number;
+  confidence: number | null;
+  coherent: boolean;
+};
+
+export type FrontendDspSceneDiagnosticsPayload = {
+  sourceAtUtc?: string | null;
+  sourceClientId?: string | null;
+  mode?: RxMode | null;
+  signalProfile?: string | null;
+  signalReason?: string | null;
+  smartNrProfile?: string | null;
+  smartNrReason?: string | null;
+  smartNrRecommendation?: string | null;
+  smartNrHeldByRxChain?: boolean | null;
+  smartNrRxChainLabel?: string | null;
+  smartNrRxChainRecommendation?: string | null;
+  smartNrRxChainTone?: string | null;
+  smartNrRxChainScore?: number | null;
+  maxSnrDb?: number | null;
+  coherentMaxSnrDb?: number | null;
+  occupiedPct?: number | null;
+  coherentOccupiedPct?: number | null;
+  impulsivePct?: number | null;
+  peakCount?: number | null;
+  coherentPeakCount?: number | null;
+  coherentSubthresholdSignal?: boolean | null;
+  topPeaks?: FrontendDspSceneTopPeakDto[] | null;
+  adjacentNoiseUsable?: boolean | null;
+  adjacentNoiseBins?: number | null;
+  adjacentNoiseLeftBins?: number | null;
+  adjacentNoiseRightBins?: number | null;
+  adjacentNoiseFloorDb?: number | null;
+  adjacentNoiseP10Db?: number | null;
+  adjacentNoiseP50Db?: number | null;
+  adjacentNoiseP90Db?: number | null;
+  adjacentNoiseLeftFloorDb?: number | null;
+  adjacentNoiseRightFloorDb?: number | null;
+  adjacentNoiseSlopeDbPerKhz?: number | null;
+  adjacentNoiseRejectedPct?: number | null;
+};
+
+export type FrontendAudioPlaybackDiagnosticsDto = {
+  schemaVersion: number;
+  available: boolean;
+  ageMs: number | null;
+  sourceAgeMs: number | null;
+  sourceClockSkewMs: number | null;
+  status: string;
+  fresh: boolean;
+  stale: boolean;
+  diagnosticRecommendation: string | null;
+  atUtc: string | null;
+  sourceAtUtc: string | null;
+  sourceClientId: string | null;
+  playbackState: string | null;
+  contextState: string | null;
+  bufferedSamples: number;
+  bufferedMs: number | null;
+  sampleRateHz: number;
+  contextSampleRateHz: number;
+  baseLatencyMs: number | null;
+  outputLatencyMs: number | null;
+  underrunCount: number;
+  droppedSamples: number;
+  latePushCount: number;
+  latenessVsScheduleCount: number;
+  pendingSources: number;
+  bufferTargetMs: number | null;
+  bufferMaxMs: number | null;
+  errorMessage: string | null;
+};
+
+export type FrontendAudioPlaybackDiagnosticsPayload = {
+  sourceAtUtc?: string | null;
+  sourceClientId?: string | null;
+  playbackState?: string | null;
+  contextState?: string | null;
+  bufferedSamples?: number | null;
+  bufferedMs?: number | null;
+  sampleRateHz?: number | null;
+  contextSampleRateHz?: number | null;
+  baseLatencyMs?: number | null;
+  outputLatencyMs?: number | null;
+  underrunCount?: number | null;
+  droppedSamples?: number | null;
+  latePushCount?: number | null;
+  latenessVsScheduleCount?: number | null;
+  pendingSources?: number | null;
+  bufferTargetMs?: number | null;
+  bufferMaxMs?: number | null;
+  errorMessage?: string | null;
+};
+
+export type SmartNrConditionDto = {
+  schemaVersion: number;
+  available: boolean;
+  status: string;
+  fresh: boolean;
+  stale: boolean;
+  ageMs: number | null;
+  atUtc: string | null;
+  sourceAtUtc: string | null;
+  sourceAgeMs: number | null;
+  sourceClockSkewMs: number | null;
+  sourceClientId: string | null;
+  mode: RxMode | null;
+  profile: string | null;
+  reason: string | null;
+  recommendation: string | null;
+  heldByRxChain: boolean | null;
+  rxChainLabel: string | null;
+  rxChainRecommendation: string | null;
+  rxChainTone: string | null;
+  rxChainScore: number | null;
+  maxSnrDb: number | null;
+  coherentMaxSnrDb: number | null;
+  occupiedPct: number | null;
+  coherentOccupiedPct: number | null;
+  impulsivePct: number | null;
+  peakCount: number | null;
+  coherentPeakCount: number | null;
+  coherentSubthresholdSignal: boolean | null;
+  adjacentNoiseUsable: boolean | null;
+  adjacentNoiseBins: number | null;
+  adjacentNoiseLeftBins: number | null;
+  adjacentNoiseRightBins: number | null;
+  adjacentNoiseFloorDb: number | null;
+  adjacentNoiseP10Db: number | null;
+  adjacentNoiseP50Db: number | null;
+  adjacentNoiseP90Db: number | null;
+  adjacentNoiseLeftFloorDb: number | null;
+  adjacentNoiseRightFloorDb: number | null;
+  adjacentNoiseSlopeDbPerKhz: number | null;
+  adjacentNoiseRejectedPct: number | null;
+  wdspActive: boolean;
+  wdspNativeLoadable: boolean;
+  wdspEmnrPost2Available: boolean;
+  wdspNr4SbnrAvailable: boolean;
+  nr4Readiness: string;
+  requestedNrMode: string;
+  effectiveNrMode: string;
+  expectedNrMode: string | null;
+  runtimeAligned: boolean | null;
+  runtimeAlignmentStatus: string;
+  runtimeAlignmentRecommendation: string;
+  rxChain: SmartNrRxChainRuntimeDto;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type DspExternalEngineCandidateDto = {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  family: string;
+  integrationPoint: string;
+  defaultState: string;
+  rolloutPolicy: string;
+  license: string;
+  packagingStatus: string;
+  runtimeRisk: string;
+  latencyRisk: string;
+  radioSafetyRisk: string;
+  strengths: string[];
+  requiredBenchmarks: string[];
+  requiredEvidence: string[];
+  blockers: string[];
+  referenceUrls: string[];
+};
+
+export type DspLiveDiagnosticsDto = {
+  schemaVersion: number;
+  generatedUtc: string;
+  status: string;
+  qualityTone: string;
+  readinessScore: number;
+  readyForLiveBenchmark: boolean;
+  readyForExternalEngineBakeoff: boolean;
+  externalEngineBakeoffStatus: string;
+  externalEngineBakeoffConstraints: string[];
+  rolloutGate: string;
+  wdspActive: boolean;
+  wdspNativeLoadable: boolean;
+  wdspEmnrPost2Available: boolean;
+  wdspNr4SbnrAvailable: boolean;
+  nr4Readiness: string;
+  frontendSceneAvailable: boolean;
+  frontendSceneStatus: string;
+  frontendSceneFresh: boolean;
+  frontendSceneStale: boolean;
+  frontendSceneAgeMs: number | null;
+  frontendAdjacentNoiseUsable: boolean | null;
+  frontendAdjacentNoiseBins: number | null;
+  frontendAdjacentNoiseLeftBins: number | null;
+  frontendAdjacentNoiseRightBins: number | null;
+  frontendAdjacentNoiseFloorDb: number | null;
+  frontendAdjacentNoiseP10Db: number | null;
+  frontendAdjacentNoiseP50Db: number | null;
+  frontendAdjacentNoiseP90Db: number | null;
+  frontendAdjacentNoiseLeftFloorDb: number | null;
+  frontendAdjacentNoiseRightFloorDb: number | null;
+  frontendAdjacentNoiseSlopeDbPerKhz: number | null;
+  frontendAdjacentNoiseRejectedPct: number | null;
+  smartNrProfile: string | null;
+  expectedNrMode: string | null;
+  runtimeAligned: boolean | null;
+  runtimeAlignmentStatus: string;
+  requestedNrMode: string;
+  effectiveNrMode: string;
+  heldByRxChain: boolean | null;
+  rxChainScore: number | null;
+  rxChainTone: string | null;
+  rxChainLabel: string | null;
+  rxChainFilterLowHz: number | null;
+  rxChainFilterHighHz: number | null;
+  rxChainFilterWidthHz: number | null;
+  rxChainFilterPresetName: string | null;
+  evidence: string[];
+  constraints: string[];
+  recommendedActions: string[];
+  candidateTools: string[];
+  benchmarkPlanEndpoint: string;
+  benchmarkScenarioCount: number;
+  nextBenchmarkScenarios: string[];
+  benchmarkAcceptanceGates: string[];
+  externalEngineCandidates: DspExternalEngineCandidateDto[];
+  diagnosticRecommendation: string | null;
+};
+
+export type SmartNrRxChainRuntimeDto = {
+  schemaVersion: number;
+  source: string;
+  filterLowHz: number;
+  filterHighHz: number;
+  filterWidthHz: number;
+  filterPresetName: string | null;
+  autoAgcEnabled: boolean;
+  agcMode: string;
+  agcTopDb: number;
+  agcOffsetDb: number;
+  effectiveAgcTopDb: number;
+  autoAttEnabled: boolean;
+  adcProtectionEnabled: boolean;
+  attenDb: number;
+  attOffsetDb: number;
+  effectiveAttenDb: number;
+  adcOverloadWarning: boolean;
+  adcOverloadLevel: number;
+  lastOverloadBits: number;
+  adc0MaxMagnitude: number | null;
+  adc1MaxMagnitude: number | null;
+  adc0MaxMagnitudeAtOverload: number;
+  adc1MaxMagnitudeAtOverload: number;
+  lastAdcTelemetryUtc: string | null;
+  squelchEnabled: boolean;
+  squelchAdaptive: boolean;
+  squelchLevel: number;
+  preampOn: boolean;
+};
+
+export type ExternalPttStatusDto = {
+  schemaVersion: number;
+  available: boolean;
+  protocol: string;
+  hardwarePtt: boolean | null;
+  cwKeyDown: boolean | null;
+  ownedMox: boolean;
+  hangTimeMs: number;
+  moxOn: boolean;
+  tunOn: boolean;
+  twoToneOn: boolean;
+  moxOwner: string | null;
+  cwMode: boolean;
+  sidetoneAvailable: boolean;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type HardwareKeyingStatusDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  p1Packets: number;
+  p1LastUpdatedUtc: string | null;
+  p1HardwarePtt: boolean | null;
+  p1CwKeyDown: boolean | null;
+  p2Packets: number;
+  p2LastUpdatedUtc: string | null;
+  p2PttIn: boolean | null;
+  p2DotIn: boolean | null;
+  p2DashIn: boolean | null;
+  p2SidetoneActive: boolean | null;
+  externalPtt: ExternalPttStatusDto;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type RadioPowerReadingDto = {
+  packets: number;
+  lastUpdatedUtc: string | null;
+  exciterAdc: number | null;
+  fwdAdc: number | null;
+  revAdc: number | null;
+  fwdWatts: number | null;
+  refWatts: number | null;
+  swr: number | null;
+};
+
+export type RadioPowerCalibrationDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  calibrationBoard: string;
+  bridgeVolt: number;
+  refVoltage: number;
+  adcCalOffset: number;
+  calibrationMaxWatts: number;
+  calibrationFallbackApplied: boolean;
+  capabilityMaxPowerWatts: number;
+  p1: RadioPowerReadingDto;
+  p2: RadioPowerReadingDto;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type RadioSupplyReadingDto = {
+  packets: number;
+  lastUpdatedUtc: string | null;
+  supplyVoltsAdc: number | null;
+  supplyVolts: number | null;
+  rawScaledSupplyVolts: number | null;
+  supplyVoltsTrusted: boolean;
+  scaleStatus: string;
+};
+
+export type RadioSupplyAlarmsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  supportsSupplyTelemetry: boolean;
+  adcSupplyMv: number;
+  activeThresholdsConfigured: boolean;
+  alarmActive: boolean;
+  alarmStatus: string;
+  p1: RadioSupplyReadingDto;
+  p2: RadioSupplyReadingDto;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type RadioPaThermalDiagnosticsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  supportsTemperatureTelemetry: boolean;
+  temperatureDecoded: boolean;
+  temperatureAvailable: boolean;
+  source: string;
+  status: string;
+  tempC: number | null;
+  rawAdc: number | null;
+  ageMs: number | null;
+  lastUpdatedUtc: string | null;
+  warningTempC: number;
+  criticalTempC: number;
+  manualReference: string | null;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type RadioNetworkCountersDto = {
+  attached: boolean;
+  totalFrames: number;
+  droppedFrames: number;
+  dropRatioPct: number;
+  hiPriorityPackets: number | null;
+  psPairedPackets: number | null;
+};
+
+export type RadioNetworkProfileDto = {
+  schemaVersion: number;
+  connectionStatus: string;
+  endpoint: string | null;
+  activeProtocol: 'P1' | 'P2' | null;
+  sampleRateHz: number;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  transport: string;
+  p1: RadioNetworkCountersDto;
+  p2: RadioNetworkCountersDto;
+  healthStatus: string;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type UserIoLineDto = {
+  id: string;
+  kind: string;
+  label: string;
+  rawAdc: number | null;
+  normalizedPct: number | null;
+  digitalState: boolean | null;
+};
+
+export type UserIoLabelsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  p2Attached: boolean;
+  p2Packets: number;
+  p2LastUpdatedUtc: string | null;
+  lines: UserIoLineDto[];
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type UserIoActionsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  p2Attached: boolean;
+  p2Packets: number;
+  p2LastUpdatedUtc: string | null;
+  actionBindingsConfigured: boolean;
+  lines: UserIoLineDto[];
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type RadioDigInDiagnosticsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  p2Attached: boolean;
+  p2Packets: number;
+  p2LastUpdatedUtc: string | null;
+  userDigitalIn: number | null;
+  txDisableLineId: string;
+  txDisableLineName: string;
+  txDisableBit: number;
+  txDisableRawHigh: boolean | null;
+  txDisableActive: boolean | null;
+  txDisablePolarity: string;
+  txDisableMappingStatus: string;
+  txInhibitBehaviorArmed: boolean;
+  cwKeyTipSource: string;
+  cwKeyTipDown: boolean | null;
+  cwDashInputDown: boolean | null;
+  manualReference: string | null;
+  diagnosticRecommendation: string | null;
+  generatedUtc: string;
+};
+
+export type TxRingDiagnosticsDto = {
+  totalWritten: number;
+  totalRead: number;
+  count: number;
+  dropped: number;
+  capacity: number;
+  recentMag: number;
+};
+
+export type TxIngestDiagnosticsDto = {
+  totalMicSamples: number;
+  totalTxBlocks: number;
+  droppedFrames: number;
+};
+
+export type TxAudioPathHealthDto = {
+  schemaVersion: number;
+  status: string;
+  hostTxActive: boolean;
+  p2Attached: boolean;
+  p2DucLive: boolean;
+  p2WaitingForTx: boolean;
+  p2LastActivityAgeMs: number | null;
+  p2InputComplexSamples: number;
+  p2PacketsSent: number;
+  p2QueuedPackets: number | null;
+  requiresMicUplink: boolean;
+  micUplinkStatus: string;
+  micUplinkLastFrameAgeMs: number | null;
+  micUplinkFrames: number;
+  micUplinkSamples: number;
+  micUplinkInvalidFrames: number;
+  micUplinkOversizeMessages: number;
+  totalMicSamples: number;
+  totalTxBlocks: number;
+  droppedFrames: number;
+  ringTotalWritten: number;
+  ringTotalRead: number;
+  ringCount: number;
+  ringCapacity: number;
+  ringFillPct: number;
+  ringDropped: number;
+  ringDropRatioPct: number;
+  ringRecentMag: number;
+  diagnosticRecommendation: string | null;
+};
+
+export type Protocol2TxIqDiagnosticsDto = {
+  inputComplexSamples: number;
+  packetsQueued: number;
+  packetsSent: number;
+  queuedPackets: number;
+  queueWriteFailures: number;
+  sendFailures: number;
+  resetDrainedPackets: number;
+  scratchComplexSamples: number;
+  nextSequence: number;
+  lastPacketsPerSecond: number;
+  lastFifoModelSamples: number;
+  lastRateTimestampUtc: string | null;
+  senderRunning: boolean;
+};
+
+export type TxMicUplinkDiagnosticsDto = {
+  schemaVersion: number;
+  status: string;
+  subscriberAttached: boolean;
+  clientCount: number;
+  expectedFrameSamples: number;
+  expectedFrameBytes: number;
+  totalFrames: number;
+  totalSamples: number;
+  totalBytes: number;
+  lastFrameBytes: number;
+  lastFrameSamples: number;
+  lastFrameAgeMs: number | null;
+  lastFrameUtc: string | null;
+  invalidFrames: number;
+  oversizeMessages: number;
+  unknownFrames: number;
+  diagnosticRecommendation: string | null;
+};
+
+export type TxEgressHealthDto = {
+  schemaVersion: number;
+  generatedUtc: string;
+  activeTransport: string;
+  healthStatus: string;
+  p2Attached: boolean;
+  p2Live: boolean;
+  p2LastActivityAgeMs: number | null;
+  p1RingDropRatioPct: number;
+  hostMoxOn: boolean;
+  hostTunOn: boolean;
+  hostTwoToneOn: boolean;
+  hostTxActive: boolean;
+  hardwarePtt: boolean | null;
+  forwardWatts: number | null;
+  rfDetected: boolean;
+  rfEvidenceStatus: string;
+  qualityScore: number;
+  qualityTone: string;
+  p2PacketRateStatus: string;
+  p2LastPacketsPerSecond: number | null;
+  p2FifoModelSamples: number | null;
+  p2QueuedPackets: number | null;
+  p2TransportFailures: number;
+  qualityReasons: string[];
+  txDutyProfile: string;
+  continuousDutyRecommendedMaxWatts: number | null;
+  continuousDutyLimitExceeded: boolean;
+  continuousDutyManualReference: string | null;
+  diagnosticRecommendation: string | null;
+};
+
+export type TxPluginDiagnosticsDto = {
+  masterBypassed: boolean;
+  bypassedForRemoteTx: boolean;
+};
+
+export type VstEngineDiagnosticsDto = {
+  active: boolean;
+  degradedBlocks: number;
+};
+
+export type RxVstEngineDiagnosticsDto = {
+  active: boolean;
+  available: boolean;
+  activePlugins: number;
+  degradedBlocks: number;
+};
+
+export type TxStageDiagnosticsDto = {
+  schemaVersion: number;
+  source: string;
+  status: string;
+  hostTxActive: boolean;
+  micPkDbfs: number | null;
+  micAvDbfs: number | null;
+  eqPkDbfs: number | null;
+  eqAvDbfs: number | null;
+  lvlrPkDbfs: number | null;
+  lvlrAvDbfs: number | null;
+  lvlrGrDb: number;
+  cfcPkDbfs: number | null;
+  cfcAvDbfs: number | null;
+  cfcGrDb: number;
+  compPkDbfs: number | null;
+  compAvDbfs: number | null;
+  alcPkDbfs: number | null;
+  alcAvDbfs: number | null;
+  alcGrDb: number;
+  outPkDbfs: number | null;
+  outAvDbfs: number | null;
+  outputHeadroomDb: number | null;
+  outputCrestFactorDb: number | null;
+  densityStatus: string;
+  densityTone: string;
+  densityRecommendation: string | null;
+  diagnosticRecommendation: string | null;
+};
+
+export type TxDiagnosticsDto = {
+  generatedUtc: string;
+  iqSourceType: string | null;
+  iqSourceIsRing: boolean;
+  ring: TxRingDiagnosticsDto;
+  ingest: TxIngestDiagnosticsDto;
+  protocol2: Protocol2TxIqDiagnosticsDto | null;
+  micUplink: TxMicUplinkDiagnosticsDto;
+  audioPath: TxAudioPathHealthDto;
+  stage: TxStageDiagnosticsDto;
+  egress: TxEgressHealthDto;
+  txPlugins: TxPluginDiagnosticsDto | null;
+  vstEngine: VstEngineDiagnosticsDto | null;
+  rxVstEngine: RxVstEngineDiagnosticsDto | null;
+};
+
+export type HardwareP1DiagnosticsDto = {
+  packets: number;
+  lastUpdatedUtc: string | null;
+  lastC0Address: number | null;
+  lastAin0: number | null;
+  lastAin1: number | null;
+  exciterAdc: number | null;
+  fwdAdc: number | null;
+  revAdc: number | null;
+  userAdc0: number | null;
+  userAdc1: number | null;
+  supplyVoltsAdc: number | null;
+  adcOverloadBits: number;
+  hardwarePtt: boolean | null;
+  cwKeyDown: boolean | null;
+};
+
+export type HardwareP2DiagnosticsDto = {
+  packets: number;
+  lastUpdatedUtc: string | null;
+  pttIn: boolean | null;
+  dotIn: boolean | null;
+  dashIn: boolean | null;
+  pllLocked: boolean | null;
+  sidetoneActive: boolean | null;
+  adcOverloadBits: number | null;
+  exciterAdc: number | null;
+  fwdAdc: number | null;
+  revAdc: number | null;
+  adc0MaxMagnitude: number | null;
+  adc1MaxMagnitude: number | null;
+  adc0MaxMagnitudeAtOverload: number;
+  adc1MaxMagnitudeAtOverload: number;
+  supplyVoltsAdc: number | null;
+  userAdc0: number | null;
+  userAdc1: number | null;
+  userAdc2: number | null;
+  userAdc3: number | null;
+  userDigitalIn: number | null;
+  hardwareLeds: number | null;
+};
+
+export type HardwareMapByteDto = {
+  offset: number;
+  hexOffset: string;
+  known: string | null;
+  first: number;
+  last: number;
+  min: number;
+  max: number;
+  changedMask: number;
+  changedMaskHex: string;
+  changeCount: number;
+  bitSetCounts: number[];
+  bitChangeCounts: number[];
+};
+
+export type HardwareMapWordDto = {
+  offset: number;
+  hexOffset: string;
+  known: string | null;
+  first: number;
+  last: number;
+  min: number;
+  max: number;
+  changeCount: number;
+};
+
+export type HardwareByteStreamMapDto = {
+  stream: string;
+  source: string;
+  samples: number;
+  startedUtc: string | null;
+  lastUpdatedUtc: string | null;
+  length: number;
+  lastHex: string;
+  changedByteCount: number;
+  changedWordCount: number;
+  bytes: HardwareMapByteDto[];
+  words: HardwareMapWordDto[];
+};
+
+export type HardwareP1AddressMapDto = {
+  c0Address: number;
+  hexAddress: string;
+  samples: number;
+  lastRawC0: number;
+  lastRawC0Hex: string;
+  firstAin0: number;
+  firstAin1: number;
+  lastAin0: number;
+  lastAin1: number;
+  minAin0: number;
+  maxAin0: number;
+  minAin1: number;
+  maxAin1: number;
+  ain0ChangeCount: number;
+  ain1ChangeCount: number;
+  knownAin0: string | null;
+  knownAin1: string | null;
+  notes: string;
+};
+
+export type HardwareP1MapDto = {
+  stream: string;
+  source: string;
+  samples: number;
+  startedUtc: string | null;
+  lastUpdatedUtc: string | null;
+  addresses: HardwareP1AddressMapDto[];
+  rawGap: string;
+};
+
+export type HardwareP1MarkerDeltaDto = {
+  c0Address: number;
+  hexAddress: string;
+  knownAin0: string | null;
+  knownAin1: string | null;
+  previousAin0: number | null;
+  currentAin0: number | null;
+  previousAin1: number | null;
+  currentAin1: number | null;
+  ain0Delta: number | null;
+  ain1Delta: number | null;
+  ain0ChangeCountDelta: number;
+  ain1ChangeCountDelta: number;
+};
+
+export type HardwareByteMarkerDeltaDto = {
+  offset: number;
+  hexOffset: string;
+  known: string | null;
+  previous: number | null;
+  current: number | null;
+  previousHex: string;
+  currentHex: string;
+  xorMask: number;
+  xorMaskHex: string;
+  intervalChangeCount: number;
+  intervalChangedBits: number[];
+};
+
+export type HardwareWordMarkerDeltaDto = {
+  offset: number;
+  hexOffset: string;
+  known: string | null;
+  previous: number | null;
+  current: number | null;
+  previousHex: string;
+  currentHex: string;
+  valueDelta: number | null;
+  intervalChangeCount: number;
+};
+
+export type HardwareMappingMarkerDeltaDto = {
+  previousId: number | null;
+  previousLabel: string | null;
+  baseline: boolean;
+  p1SampleDelta: number;
+  p2SampleDelta: number;
+  p1ChangedAddresses: HardwareP1MarkerDeltaDto[];
+  p2ChangedBytes: HardwareByteMarkerDeltaDto[];
+  p2ChangedWords: HardwareWordMarkerDeltaDto[];
+};
+
+export type HardwareMappingMarkerDto = {
+  id: number;
+  label: string;
+  notes: string | null;
+  createdUtc: string;
+  activeProtocol: 'P1' | 'P2' | null;
+  endpoint: string | null;
+  p1Packets: number;
+  p2Packets: number;
+  p1Samples: number;
+  p2Samples: number;
+  p1LastUpdatedUtc: string | null;
+  p2LastUpdatedUtc: string | null;
+  sincePrevious: HardwareMappingMarkerDeltaDto;
+};
+
+export type HardwareMappingDto = {
+  schemaVersion: number;
+  p1: HardwareP1MapDto;
+  p2HiPriority: HardwareByteStreamMapDto;
+  markers: HardwareMappingMarkerDto[];
+};
+
+export type HardwareSampleRateCapabilityDto = {
+  rateHz: number;
+  label: string;
+  supportedByBoard: boolean;
+  supportedByActiveProtocol: boolean;
+  currentlySelected: boolean;
+  status: string;
+  notes: string;
+};
+
+export type HardwarePotentialItemDto = {
+  id: string;
+  title: string;
+  category: string;
+  manualCapability: string;
+  currentExposure: string;
+  implementationStatus: string;
+  safetyClass: string;
+  userConfigurable: boolean;
+  telemetryPaths: string[];
+  currentControls: string[];
+  blockers: string[];
+  nextStep: string;
+};
+
+export type HardwarePotentialDto = {
+  schemaVersion: number;
+  generatedUtc: string;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  g2Class: boolean;
+  activeProtocol: 'P1' | 'P2' | 'none' | string;
+  currentSampleRateHz: number;
+  maxRxSampleRateHz: number;
+  fullRxSampleRateLadderHz: number[];
+  sampleRates: HardwareSampleRateCapabilityDto[];
+  items: HardwarePotentialItemDto[];
+  ditherRandomAudit: string[];
+  filterAndWindowAudit: string[];
+  diagnosticRecommendation: string | null;
+};
+
+export type G2MappedSensorDto = {
+  id: string;
+  label: string;
+  telemetryPath: string;
+  source: string;
+  rawValue: number | null;
+  status: string;
+  notes: string;
+};
+
+export type G2UnmappedManualSensorDto = {
+  id: string;
+  label: string;
+  manualEvidence: string;
+  currentTelemetryStatus: string;
+  requiredCapture: string;
+  safetyClass: string;
+};
+
+export type G2CandidateTelemetryWordDto = {
+  offset: number;
+  hexOffset: string;
+  known: string | null;
+  last: number;
+  min: number;
+  max: number;
+  changeCount: number;
+  status: string;
+  mappingHint: string;
+};
+
+export type G2SensorMappingDiagnosticsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  g2Class: boolean;
+  p2Attached: boolean;
+  p2Packets: number;
+  p2LastUpdatedUtc: string | null;
+  status: string;
+  mappedSensors: G2MappedSensorDto[];
+  unmappedManualSensors: G2UnmappedManualSensorDto[];
+  candidateWords: G2CandidateTelemetryWordDto[];
+  manualReference: string;
+  diagnosticRecommendation: string;
+  generatedUtc: string;
+};
+
+export type G2FirmwareOptionDto = {
+  id: string;
+  label: string;
+  enabled: boolean | null;
+  thetisDefaultEnabled: boolean;
+  status: string;
+  source: string;
+  notes: string;
+};
+
+export type G2FirmwareOptionsDiagnosticsDto = {
+  schemaVersion: number;
+  activeProtocol: 'P1' | 'P2' | null;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  g2Class: boolean;
+  maxRxFrequencyMhz: number;
+  maxRxFrequencyStatus: string;
+  rx1AttenuatorDb: number;
+  rx1AttenuatorStatus: string;
+  rx1AttenuatorSupported: boolean;
+  options: G2FirmwareOptionDto[];
+  missingControlSurface: string;
+  manualReference: string;
+  diagnosticRecommendation: string;
+  generatedUtc: string;
+};
+
+export type HardwareDiagnosticsDto = {
+  hardwareDiagnosticsApiVersion: number;
+  generatedUtc: string;
+  connectionStatus: ConnectionStatus;
+  endpoint: string | null;
+  vfoHz: number;
+  sampleRate: number;
+  mode: RxMode;
+  connectedBoard: string;
+  effectiveBoard: string;
+  orionMkIIVariant: string;
+  capabilities: BoardCapabilities;
+  dsp: HardwareDspDiagnosticsDto;
+  frontendDspScene: FrontendDspSceneDiagnosticsDto;
+  frontendAudioPlayback: FrontendAudioPlaybackDiagnosticsDto;
+  pureSignal: HardwarePureSignalDiagnosticsDto;
+  digIn: RadioDigInDiagnosticsDto;
+  g2Sensors: G2SensorMappingDiagnosticsDto;
+  g2FirmwareOptions: G2FirmwareOptionsDiagnosticsDto;
+  activeProtocol: 'P1' | 'P2' | null;
+  p1: HardwareP1DiagnosticsDto;
+  p2: HardwareP2DiagnosticsDto;
+  mapping: HardwareMappingDto;
+  referenceMap: HardwareDiagnosticItemDto[];
+  hardwarePotential: HardwarePotentialDto;
+  candidateSettings: HardwareDiagnosticItemDto[];
+  featureSurfaces: HardwareFeatureSurfaceDto[];
+};
+
+export type ConnectRequest = {
+  endpoint: string;
+  sampleRate: number;
+  preampOn?: boolean;
+  // Server accepts 0..3 (→ 0/10/20/30 dB attenuation).
+  atten?: number;
+  // Raw HPSDR board byte from discovery's details.rawBoardId. Passed to
+  // /api/connect/p2 so the server knows the real board kind instead of
+  // defaulting to OrionMkII for every P2 connection (issue #171 — Brick2
+  // identifies as Hermes/0x01 on P2). Omit for manual connects where the
+  // board is unknown.
+  boardId?: number;
+  // Take over a radio another controller is already driving. /api/connect/p2
+  // refuses to become a second master on a Busy radio (relay-chatter / brown-out
+  // guard); the Reclaim-then-connect takeover flow sets this so the post-reclaim
+  // re-connect isn't re-blocked while the radio is still settling.
+  force?: boolean;
+};
+
+// System.Text.Json can serialize enums as either numbers (default) or strings
+// (with JsonStringEnumConverter). Accept both so the client stays robust to
+// server config drift.
+const STATUS_ORDER: readonly ConnectionStatus[] = [
+  'Disconnected',
+  'Connecting',
+  'Connected',
+  'Error',
+];
+
+const MODE_ORDER: readonly RxMode[] = [
+  'LSB',
+  'USB',
+  'CWL',
+  'CWU',
+  'AM',
+  'FM',
+  'SAM',
+  'DSB',
+  'DIGL',
+  'DIGU',
+  'FREEDV',
+];
+
+const NR_MODE_ORDER: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Sbnr', 'Rnnr'];
+const NB_MODE_ORDER: readonly NbMode[] = ['Off', 'Nb1', 'Nb2'];
+
+export function normalizeStatus(v: unknown): ConnectionStatus {
+  if (typeof v === 'string') {
+    return (STATUS_ORDER as readonly string[]).includes(v)
+      ? (v as ConnectionStatus)
+      : 'Error';
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return STATUS_ORDER[v] ?? 'Error';
+  }
+  return 'Error';
+}
+
+function modeFromWire(v: unknown): RxMode | null {
+  if (typeof v === 'string') {
+    // The server serialises RxMode by its C# enum NAME. Every name is all-caps
+    // (USB, CWL, …) EXCEPT FreeDv (PascalCase), while our RxMode literals are
+    // all-caps ('FREEDV'). Match case-insensitively so "FreeDv" resolves to
+    // 'FREEDV' instead of falling through to the 'USB' default in normalizeMode
+    // — that miss is what made FreeDV mode silently revert to USB on the next
+    // state round-trip.
+    const upper = v.toUpperCase();
+    return (MODE_ORDER as readonly string[]).includes(upper)
+      ? (upper as RxMode)
+      : null;
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return MODE_ORDER[v] ?? null;
+  }
+  return null;
+}
+
+export function normalizeMode(v: unknown): RxMode {
+  return modeFromWire(v) ?? 'USB';
+}
+
+export function normalizeTxVfo(v: unknown): TxVfo {
+  if (typeof v === 'string') {
+    const upper = v.toUpperCase();
+    return upper === 'B' ? 'B' : 'A';
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return v === 1 ? 'B' : 'A';
+  }
+  return 'A';
+}
+
+export function normalizeNrMode(v: unknown): NrMode {
+  if (typeof v === 'string') {
+    return (NR_MODE_ORDER as readonly string[]).includes(v)
+      ? (v as NrMode)
+      : 'Off';
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return NR_MODE_ORDER[v] ?? 'Off';
+  }
+  return 'Off';
+}
+
+export function normalizeNbMode(v: unknown): NbMode {
+  if (typeof v === 'string') {
+    return (NB_MODE_ORDER as readonly string[]).includes(v)
+      ? (v as NbMode)
+      : 'Off';
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return NB_MODE_ORDER[v] ?? 'Off';
+  }
+  return 'Off';
+}
+
+// AGC mode wire order matches the AgcMode enum values (Fixed=0..Custom=5), so a
+// numeric payload maps by index. Strings are validated against the union.
+const AGC_MODE_ORDER: readonly AgcMode[] = [
+  'Fixed',
+  'Long',
+  'Slow',
+  'Med',
+  'Fast',
+  'Custom',
+];
+
+export function normalizeAgcMode(v: unknown): AgcMode {
+  if (typeof v === 'string') {
+    return (AGC_MODE_ORDER as readonly string[]).includes(v)
+      ? (v as AgcMode)
+      : 'Med';
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return AGC_MODE_ORDER[v] ?? 'Med';
+  }
+  return 'Med';
+}
+
+export function normalizeAgc(raw: unknown): AgcConfigDto {
+  if (!raw || typeof raw !== 'object') return { ...AGC_CONFIG_DEFAULT };
+  const r = raw as Record<string, unknown>;
+  return {
+    mode: normalizeAgcMode(r.mode),
+    slope: nullableInt(r.slope),
+    decayMs: nullableInt(r.decayMs),
+    hangMs: nullableInt(r.hangMs),
+    hangThreshold: nullableInt(r.hangThreshold),
+    fixedGainDb: nullableNumber(r.fixedGainDb),
+  };
+}
+
+// RX squelch normaliser. A null/garbage payload (older server, missing field)
+// collapses to the off default. `level` is clamped to 0..100 so a malformed
+// server value can never push the slider out of range.
+export function normalizeSquelch(raw: unknown): SquelchConfigDto {
+  if (!raw || typeof raw !== 'object') return { ...SQUELCH_CONFIG_DEFAULT };
+  const r = raw as Record<string, unknown>;
+  const level =
+    typeof r.level === 'number' && Number.isFinite(r.level)
+      ? Math.max(0, Math.min(100, Math.round(r.level)))
+      : 0;
+  const fixedSensitivity =
+    typeof r.fixedSensitivity === 'number' && Number.isFinite(r.fixedSensitivity)
+      ? Math.max(0, Math.min(100, Math.round(r.fixedSensitivity)))
+      : SQUELCH_CONFIG_DEFAULT.fixedSensitivity;
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : false,
+    level,
+    adaptive: typeof r.adaptive === 'boolean' ? r.adaptive : true,
+    fixedSensitivity,
+  };
+}
+
+// TX leveling normaliser. A null/garbage payload (older server, missing field)
+// collapses to the defaults. Each numeric field is clamped to its Thetis range
+// and the booleans coerce strictly so a malformed server value can never push a
+// control out of range. Mirrors normalizeSquelch's defensive shape.
+export function normalizeTxLeveling(raw: unknown): TxLevelingConfigDto {
+  if (!raw || typeof raw !== 'object')
+    return { ...TX_LEVELING_CONFIG_DEFAULT };
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown, fallback: number, min: number, max: number) =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? Math.max(min, Math.min(max, v))
+      : fallback;
+  const int = (v: unknown, fallback: number, min: number, max: number) =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? Math.max(min, Math.min(max, Math.round(v)))
+      : fallback;
+  return {
+    alcMaxGainDb: num(r.alcMaxGainDb, TX_LEVELING_CONFIG_DEFAULT.alcMaxGainDb, 0, 120),
+    alcDecayMs: int(r.alcDecayMs, TX_LEVELING_CONFIG_DEFAULT.alcDecayMs, 1, 50),
+    levelerEnabled:
+      typeof r.levelerEnabled === 'boolean'
+        ? r.levelerEnabled
+        : TX_LEVELING_CONFIG_DEFAULT.levelerEnabled,
+    levelerDecayMs: int(r.levelerDecayMs, TX_LEVELING_CONFIG_DEFAULT.levelerDecayMs, 1, 5000),
+    compressorEnabled:
+      typeof r.compressorEnabled === 'boolean'
+        ? r.compressorEnabled
+        : TX_LEVELING_CONFIG_DEFAULT.compressorEnabled,
+    compressorGainDb: num(r.compressorGainDb, TX_LEVELING_CONFIG_DEFAULT.compressorGainDb, 0, 20),
+  };
+}
+
+export function normalizeTxPhaseRotator(raw: unknown): TxPhaseRotatorConfigDto {
+  if (!raw || typeof raw !== 'object')
+    return { ...TX_PHASE_ROTATOR_CONFIG_DEFAULT };
+  const r = raw as Record<string, unknown>;
+  const int = (v: unknown, fallback: number, min: number, max: number) =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? Math.max(min, Math.min(max, Math.round(v)))
+      : fallback;
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : TX_PHASE_ROTATOR_CONFIG_DEFAULT.enabled,
+    cornerHz: int(r.cornerHz, TX_PHASE_ROTATOR_CONFIG_DEFAULT.cornerHz, 20, 2000),
+    stages: int(r.stages, TX_PHASE_ROTATOR_CONFIG_DEFAULT.stages, 1, 16),
+    reverse: typeof r.reverse === 'boolean' ? r.reverse : TX_PHASE_ROTATOR_CONFIG_DEFAULT.reverse,
+  };
+}
+
+// `null` means "no operator override yet — use engine default" and round-
+// trips that signal back to the server. Anything else (number/bool) is
+// preserved; missing keys collapse to null so an older server payload
+// doesn't accidentally invent a value.
+function nullableNumber(v: unknown): number | null {
+  return typeof v === 'number' ? v : null;
+}
+function nullableBool(v: unknown): boolean | null {
+  return typeof v === 'boolean' ? v : null;
+}
+function nullableInt(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) ? v : null;
+}
+
+export function normalizeNr(raw: unknown): NrConfigDto {
+  if (!raw || typeof raw !== 'object') return { ...NR_CONFIG_DEFAULT };
+  const r = raw as Record<string, unknown>;
+  return {
+    nrMode: normalizeNrMode(r.nrMode),
+    anfEnabled: Boolean(r.anfEnabled),
+    snbEnabled: Boolean(r.snbEnabled),
+    nbpNotchesEnabled: Boolean(r.nbpNotchesEnabled),
+    nbMode: normalizeNbMode(r.nbMode),
+    nbThreshold:
+      typeof r.nbThreshold === 'number'
+        ? r.nbThreshold
+        : NR_CONFIG_DEFAULT.nbThreshold,
+    emnrPost2Run: nullableBool(r.emnrPost2Run),
+    emnrPost2Factor: nullableNumber(r.emnrPost2Factor),
+    emnrPost2Nlevel: nullableNumber(r.emnrPost2Nlevel),
+    emnrPost2Rate: nullableNumber(r.emnrPost2Rate),
+    emnrPost2Taper: nullableInt(r.emnrPost2Taper),
+    emnrGainMethod: nullableInt(r.emnrGainMethod),
+    emnrNpeMethod: nullableInt(r.emnrNpeMethod),
+    emnrAeRun: nullableBool(r.emnrAeRun),
+    emnrTrainT1: nullableNumber(r.emnrTrainT1),
+    emnrTrainT2: nullableNumber(r.emnrTrainT2),
+    nr4ReductionAmount: nullableNumber(r.nr4ReductionAmount),
+    nr4SmoothingFactor: nullableNumber(r.nr4SmoothingFactor),
+    nr4WhiteningFactor: nullableNumber(r.nr4WhiteningFactor),
+    nr4NoiseRescale: nullableNumber(r.nr4NoiseRescale),
+    nr4PostFilterThreshold: nullableNumber(r.nr4PostFilterThreshold),
+    nr4NoiseScalingType: nullableInt(r.nr4NoiseScalingType),
+    nr4Position: nullableInt(r.nr4Position),
+  };
+}
+
+function normalizeAdcProtectionConfig(raw: unknown): AdcProtectionConfigDto {
+  if (!raw || typeof raw !== 'object') return { ...ADC_PROTECTION_CONFIG_DEFAULT };
+  const r = raw as Record<string, unknown>;
+  return {
+    enabled:
+      typeof r.enabled === 'boolean'
+        ? r.enabled
+        : ADC_PROTECTION_CONFIG_DEFAULT.enabled,
+    attackMs:
+      typeof r.attackMs === 'number'
+        ? r.attackMs
+        : ADC_PROTECTION_CONFIG_DEFAULT.attackMs,
+    releaseMs:
+      typeof r.releaseMs === 'number'
+        ? r.releaseMs
+        : ADC_PROTECTION_CONFIG_DEFAULT.releaseMs,
+    attackStepDb:
+      typeof r.attackStepDb === 'number'
+        ? r.attackStepDb
+        : ADC_PROTECTION_CONFIG_DEFAULT.attackStepDb,
+    releaseStepDb:
+      typeof r.releaseStepDb === 'number'
+        ? r.releaseStepDb
+        : ADC_PROTECTION_CONFIG_DEFAULT.releaseStepDb,
+    maxOffsetDb:
+      typeof r.maxOffsetDb === 'number'
+        ? r.maxOffsetDb
+        : ADC_PROTECTION_CONFIG_DEFAULT.maxOffsetDb,
+    warningThreshold:
+      typeof r.warningThreshold === 'number'
+        ? r.warningThreshold
+        : ADC_PROTECTION_CONFIG_DEFAULT.warningThreshold,
+    magnitudeSoftLimit:
+      typeof r.magnitudeSoftLimit === 'number'
+        ? r.magnitudeSoftLimit
+        : ADC_PROTECTION_CONFIG_DEFAULT.magnitudeSoftLimit,
+    releaseHoldMs:
+      typeof r.releaseHoldMs === 'number'
+        ? r.releaseHoldMs
+        : ADC_PROTECTION_CONFIG_DEFAULT.releaseHoldMs,
+  };
+}
+
+export function normalizeAdcProtectionStatus(raw: unknown): AdcProtectionStatusDto {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    config: normalizeAdcProtectionConfig(r.config),
+    attenDb: typeof r.attenDb === 'number' ? r.attenDb : 0,
+    offsetDb: typeof r.offsetDb === 'number' ? r.offsetDb : 0,
+    effectiveDb: typeof r.effectiveDb === 'number' ? r.effectiveDb : 0,
+    warning: typeof r.warning === 'boolean' ? r.warning : false,
+    overloadLevel: typeof r.overloadLevel === 'number' ? r.overloadLevel : 0,
+    lastOverloadBits:
+      typeof r.lastOverloadBits === 'number' ? r.lastOverloadBits : 0,
+    adc0MaxMagnitude:
+      typeof r.adc0MaxMagnitude === 'number' ? r.adc0MaxMagnitude : null,
+    adc1MaxMagnitude:
+      typeof r.adc1MaxMagnitude === 'number' ? r.adc1MaxMagnitude : null,
+    adc0MaxMagnitudeAtOverload:
+      typeof r.adc0MaxMagnitudeAtOverload === 'number'
+        ? r.adc0MaxMagnitudeAtOverload
+        : 0,
+    adc1MaxMagnitudeAtOverload:
+      typeof r.adc1MaxMagnitudeAtOverload === 'number'
+        ? r.adc1MaxMagnitudeAtOverload
+        : 0,
+    lastTelemetryUtc:
+      typeof r.lastTelemetryUtc === 'string' ? r.lastTelemetryUtc : null,
+  };
+}
+
+// Normalise one wire ReceiverDto (mirrors Zeus.Contracts.ReceiverDto). A
+// malformed entry falls back to safe defaults rather than dropping the whole
+// array, so a single bad receiver can't blank the multi-DDC UI.
+function normalizeReceiver(raw: unknown, fallbackIndex: number): ReceiverDto {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    index: typeof r.index === 'number' ? r.index : fallbackIndex,
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : false,
+    name: typeof r.name === 'string' ? r.name : null,
+    adcSource: typeof r.adcSource === 'number' ? r.adcSource : 0,
+    vfoHz: typeof r.vfoHz === 'number' ? r.vfoHz : 0,
+    mode: normalizeMode(r.mode),
+    filterLowHz: typeof r.filterLowHz === 'number' ? r.filterLowHz : 0,
+    filterHighHz: typeof r.filterHighHz === 'number' ? r.filterHighHz : 0,
+    filterPresetName: typeof r.filterPresetName === 'string' ? r.filterPresetName : null,
+    afGainDb: typeof r.afGainDb === 'number' ? r.afGainDb : 0,
+    sampleRateHz: typeof r.sampleRateHz === 'number' ? r.sampleRateHz : 0,
+    muted: typeof r.muted === 'boolean' ? r.muted : false,
+  };
+}
+
+function normalizeConnectedProtocol(raw: unknown): 'P1' | 'P2' | 'P3' | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  return raw === 'P1' || raw === 'P2' || raw === 'P3' ? raw : null;
+}
+
+export function normalizeState(raw: unknown): RadioStateDto {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    status: normalizeStatus(r.status),
+    endpoint: typeof r.endpoint === 'string' ? r.endpoint : null,
+    vfoHz: typeof r.vfoHz === 'number' ? r.vfoHz : 0,
+    // RX2 (and RX3+) state comes from the receivers[] array below — the flat *B
+    // fields the server may still send are ignored.
+    rx2Enabled: typeof r.rx2Enabled === 'boolean' ? r.rx2Enabled : false,
+    txVfo: normalizeTxVfo(r.txVfo),
+    txReceiverIndex:
+      typeof r.txReceiverIndex === 'number' ? r.txReceiverIndex : undefined,
+    mode: normalizeMode(r.mode),
+    filterLowHz: typeof r.filterLowHz === 'number' ? r.filterLowHz : 0,
+    filterHighHz: typeof r.filterHighHz === 'number' ? r.filterHighHz : 0,
+    filterPresetName: typeof r.filterPresetName === 'string' ? r.filterPresetName : null,
+    filterAdvancedPaneOpen: typeof r.filterAdvancedPaneOpen === 'boolean' ? r.filterAdvancedPaneOpen : false,
+    txFilterLowHz: typeof r.txFilterLowHz === 'number' ? r.txFilterLowHz : 150,
+    txFilterHighHz: typeof r.txFilterHighHz === 'number' ? r.txFilterHighHz : 2850,
+    // Normal = today's default tap count; older servers without the field
+    // hydrate to Normal so first-connect behaviour is unchanged (#871). Any
+    // unrecognised value also falls back to Normal.
+    rxFilterWindow:
+      r.rxFilterWindow === 'Soft' || r.rxFilterWindow === 'Sharp' ? r.rxFilterWindow : 'Normal',
+    txFilterWindow:
+      r.txFilterWindow === 'Soft' || r.txFilterWindow === 'Sharp' ? r.txFilterWindow : 'Normal',
+    sampleRate: typeof r.sampleRate === 'number' ? r.sampleRate : 0,
+    // Default 80 matches WdspDspEngine.ApplyAgcDefaults and the Thetis
+    // AGC_MEDIUM preset. Missing from older servers — tolerate absence.
+    agcTopDb: typeof r.agcTopDb === 'number' ? r.agcTopDb : 80,
+    // StateDto.Agc is nullable on the server (older clients) — fall back to the
+    // Med default so the UI always has a mode to render.
+    agc: normalizeAgc(r.agc),
+    squelch: normalizeSquelch(r.squelch),
+    txLeveling: normalizeTxLeveling(r.txLeveling),
+    txPhaseRotator: normalizeTxPhaseRotator(r.txPhaseRotator),
+    autoAgcEnabled: typeof r.autoAgcEnabled === 'boolean' ? r.autoAgcEnabled : false,
+    agcOffsetDb: typeof r.agcOffsetDb === 'number' ? r.agcOffsetDb : 0,
+    rxAfGainDb: typeof r.rxAfGainDb === 'number' ? r.rxAfGainDb : 0,
+    // 0 dB = unity panel-gain (WDSP TXA open-time default).
+    micGainDb: typeof r.micGainDb === 'number' ? r.micGainDb : 0,
+    // 8 dB matches WdspDspEngine.DefaultLevelerMaxGainDb so older servers
+    // without the field hydrate to the same ceiling the engine opens with.
+    levelerMaxGainDb:
+      typeof r.levelerMaxGainDb === 'number' ? r.levelerMaxGainDb : 8,
+    // Attenuator value in dB, range 0..31 (HpsdrAtten.MaxDb). 4-button UI
+    // sends 0/10/20/30 today; #23 will unlock the full fine-grained range.
+    attenDb: typeof r.attenDb === 'number' ? r.attenDb : 0,
+    // Auto-ATT control loop (server default ON); offset added to attenDb on
+    // the hardware. adcOverloadWarning is OR'd across both ADCs with a small
+    // hysteresis — flips back false on its own when the loop backs off.
+    autoAttEnabled: typeof r.autoAttEnabled === 'boolean' ? r.autoAttEnabled : true,
+    attOffsetDb: typeof r.attOffsetDb === 'number' ? r.attOffsetDb : 0,
+    adcOverloadWarning:
+      typeof r.adcOverloadWarning === 'boolean' ? r.adcOverloadWarning : false,
+    preampOn: typeof r.preampOn === 'boolean' ? r.preampOn : false,
+    // StateDto.Nr is nullable on the server (older clients) — fall back to
+    // the engine's declared defaults so the UI has something to render.
+    nr: normalizeNr(r.nr),
+    wdspNr3RnnrAvailable: Boolean(r.wdspNr3RnnrAvailable),
+    nr3ModelName: typeof r.nr3ModelName === 'string' ? r.nr3ModelName : null,
+    nr3UsingBundledDefault: Boolean(r.nr3UsingBundledDefault),
+    zoomLevel: normalizeZoomLevel(r.zoomLevel),
+    workspaceZoomPct: normalizeWorkspaceZoomPct(r.workspaceZoomPct),
+    // PureSignal persisted settings. Defaults match RadioService.cs init and
+    // PsSettingsEntry — older servers without the fields fall back cleanly.
+    psEnabled: typeof r.psEnabled === 'boolean' ? r.psEnabled : false,
+    psAuto: typeof r.psAuto === 'boolean' ? r.psAuto : true,
+    psPtol: typeof r.psPtol === 'boolean' ? r.psPtol : false,
+    psAutoAttenuate: typeof r.psAutoAttenuate === 'boolean' ? r.psAutoAttenuate : true,
+    psMoxDelaySec: typeof r.psMoxDelaySec === 'number' ? r.psMoxDelaySec : 0.2,
+    psLoopDelaySec: typeof r.psLoopDelaySec === 'number' ? r.psLoopDelaySec : 0,
+    psAmpDelayNs: typeof r.psAmpDelayNs === 'number' ? r.psAmpDelayNs : 150,
+    // mi0bot ref: PSForm.cs:830 / clsHardwareSpecific.cs:303-328 — server
+    // freezes psHwPeakDefault at connect via ResolvePsHwPeak; psHwPeak is the
+    // operator-tunable live value. UI compares them for the warning hint.
+    psHwPeak: typeof r.psHwPeak === 'number' ? r.psHwPeak : 0.4072,
+    psHwPeakDefault:
+      typeof r.psHwPeakDefault === 'number' ? r.psHwPeakDefault : 0.4072,
+    psTxFeedbackAttenuationDb:
+      typeof r.psTxFeedbackAttenuationDb === 'number' ? r.psTxFeedbackAttenuationDb : 0,
+    psTxFeedbackAttenuationDbMin:
+      typeof r.psTxFeedbackAttenuationDbMin === 'number' ? r.psTxFeedbackAttenuationDbMin : 0,
+    psCalibrationStalled:
+      typeof r.psCalibrationStalled === 'boolean' ? r.psCalibrationStalled : false,
+    psIntsSpiPreset: typeof r.psIntsSpiPreset === 'string' ? r.psIntsSpiPreset : '16/256',
+    psFeedbackSource:
+      r.psFeedbackSource === 'External' || r.psFeedbackSource === 'external' ? 'external' : 'internal',
+    txMonitorEnabled:
+      typeof r.txMonitorEnabled === 'boolean' ? r.txMonitorEnabled : false,
+    // Drive sliders — server is authoritative. Defaults mirror RadioService
+    // private-field seeds (_drivePct=0, _tunePct=10) so a state frame from an
+    // older server (no DrivePct/TunePct fields) deserialises cleanly.
+    drivePercent: typeof r.drivePct === 'number' ? r.drivePct : 0,
+    tunePercent: typeof r.tunePct === 'number' ? r.tunePct : 10,
+    txMoxPreKeyDelayMs:
+      typeof r.txMoxPreKeyDelayMs === 'number' ? r.txMoxPreKeyDelayMs : 0,
+    txMoxTailDelayMs:
+      typeof r.txMoxTailDelayMs === 'number' ? r.txMoxTailDelayMs : 0,
+    rogerBeepEnabled:
+      typeof r.rogerBeepEnabled === 'boolean' ? r.rogerBeepEnabled : false,
+    // 0 = disabled must be preserved (>=0), not coerced back to the 120 default.
+    txTimeoutSec:
+      typeof r.txTimeoutSec === 'number' && r.txTimeoutSec >= 0
+        ? Math.round(r.txTimeoutSec)
+        : 120,
+    twoToneFreq1: typeof r.twoToneFreq1 === 'number' ? r.twoToneFreq1 : 700,
+    twoToneFreq2: typeof r.twoToneFreq2 === 'number' ? r.twoToneFreq2 : 1900,
+    twoToneMag: typeof r.twoToneMag === 'number' ? r.twoToneMag : 0.49,
+    cfc: normalizeCfc(r.cfc),
+    // Hardware NCO. Legacy server without the field → fall back to vfoHz so
+    // the panadapter centre stays sensible during a rolling deploy. Any
+    // stale ctunEnabled field from an old payload is ignored.
+    radioLoHz:
+      typeof r.radioLoHz === 'number' && r.radioLoHz > 0
+        ? r.radioLoHz
+        : typeof r.vfoHz === 'number'
+        ? r.vfoHz
+        : 0,
+    cwPitchHz: typeof r.cwPitchHz === 'number' ? r.cwPitchHz : 600,
+    // Legacy server without the field → CTUN off (classic recenter-on-click).
+    ctunEnabled: typeof r.ctunEnabled === 'boolean' ? r.ctunEnabled : false,
+    // ---- Multi-DDC receivers array (wire v2) ----
+    // A v1 server omits these. Leave them undefined (not []/0) so applyState's
+    // `s.receivers ?? prev.receivers` keeps the store's prior values instead of
+    // collapsing the exposed-receiver control back to RX1. A v2 server projects
+    // RX1/RX2 into [0]/[1] and appends the contiguous extra DDCs, so the array
+    // is authoritative whenever present. (Without this the receivers menu and
+    // the multi-DDC panels never see RX2+.)
+    receivers: Array.isArray(r.receivers)
+      ? (r.receivers as unknown[]).map((entry, i) => normalizeReceiver(entry, i))
+      : undefined,
+    wireVersion: typeof r.wireVersion === 'number' ? r.wireVersion : undefined,
+    maxReceivers: typeof r.maxReceivers === 'number' ? r.maxReceivers : undefined,
+    connectedProtocol: normalizeConnectedProtocol(r.connectedProtocol),
+  };
+}
+
+// Normalise the wire CFC config. Missing or malformed payload falls back to
+// CFC_CONFIG_DEFAULT so a legacy server (no `cfc` field) still gives the
+// settings panel something to render. Bands are clamped to length 10 by
+// padding with the matching default-band slot if the server somehow returns
+// fewer; extras are truncated. The server validates length on POST.
+export function normalizeCfc(raw: unknown): CfcConfigDto {
+  if (!raw || typeof raw !== 'object') return cloneCfc(CFC_CONFIG_DEFAULT);
+  const r = raw as Record<string, unknown>;
+  const rawBands = Array.isArray(r.bands) ? (r.bands as unknown[]) : [];
+  const bands: CfcBandDto[] = [];
+  for (let i = 0; i < 10; i++) {
+    const b = (rawBands[i] ?? {}) as Record<string, unknown>;
+    // CFC_CONFIG_DEFAULT.bands has exactly 10 entries (frozen at module
+    // init), so the indexed lookup is always defined — but tsc's
+    // noUncheckedIndexedAccess can't see that, so fall through with a
+    // zeroed band as a belt-and-braces guard.
+    const fallback =
+      CFC_CONFIG_DEFAULT.bands[i] ?? { freqHz: 0, compLevelDb: 0, postGainDb: 0 };
+    bands.push({
+      freqHz: typeof b.freqHz === 'number' ? b.freqHz : fallback.freqHz,
+      compLevelDb: typeof b.compLevelDb === 'number' ? b.compLevelDb : fallback.compLevelDb,
+      postGainDb: typeof b.postGainDb === 'number' ? b.postGainDb : fallback.postGainDb,
+    });
+  }
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : false,
+    postEqEnabled: typeof r.postEqEnabled === 'boolean' ? r.postEqEnabled : false,
+    preCompDb: typeof r.preCompDb === 'number' ? r.preCompDb : 0,
+    prePeqDb: typeof r.prePeqDb === 'number' ? r.prePeqDb : 0,
+    bands,
+  };
+}
+
+function normalizeCfcPreset(raw: unknown): CfcPresetDto | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const name = typeof r.name === 'string' ? r.name.trim() : '';
+  if (!name) return null;
+  return {
+    name,
+    config: normalizeCfc(r.config),
+    createdUtc: typeof r.createdUtc === 'string' ? r.createdUtc : '',
+    updatedUtc: typeof r.updatedUtc === 'string' ? r.updatedUtc : '',
+  };
+}
+
+function normalizeCfcPresetsResponse(raw: unknown): CfcPresetDto[] {
+  const r = raw as { presets?: unknown };
+  const presets = Array.isArray(r?.presets) ? r.presets : [];
+  return presets
+    .map(normalizeCfcPreset)
+    .filter((preset): preset is CfcPresetDto => preset !== null);
+}
+
+function normalizeStringRecord(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'string') out[k] = v;
+    }
+  }
+  return out;
+}
+
+function normalizeTxAudioProfile(raw: unknown): TxAudioProfileDto | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id.trim().toLowerCase() : '';
+  if (!id) return null;
+  const nativeStates: Record<string, Record<string, string>> = {};
+  if (r.nativePluginStates && typeof r.nativePluginStates === 'object') {
+    for (const [pid, snap] of Object.entries(r.nativePluginStates as Record<string, unknown>)) {
+      nativeStates[pid] = normalizeStringRecord(snap);
+    }
+  }
+  return {
+    id,
+    name: typeof r.name === 'string' && r.name.trim() ? r.name : id,
+    micGainDb: clampInt(r.micGainDb, -40, 10, 0),
+    levelerMaxGainDb: typeof r.levelerMaxGainDb === 'number' ? r.levelerMaxGainDb : 8,
+    txLeveling: normalizeTxLeveling(r.txLeveling),
+    cfcConfig: normalizeCfc(r.cfcConfig),
+    txPhaseRotator: normalizeTxPhaseRotator(r.txPhaseRotator),
+    lowCutHz: clampInt(r.lowCutHz, 0, 10000, 150),
+    highCutHz: clampInt(r.highCutHz, 0, 10000, 2900),
+    processingMode: r.processingMode === 'vst' ? 'vst' : 'native',
+    masterBypass: typeof r.masterBypass === 'boolean' ? r.masterBypass : false,
+    chainOrder: Array.isArray(r.chainOrder)
+      ? r.chainOrder.filter((s): s is string => typeof s === 'string')
+      : [],
+    chainParked: Array.isArray(r.chainParked)
+      ? r.chainParked.filter((s): s is string => typeof s === 'string')
+      : [],
+    vstPluginStates: normalizeStringRecord(r.vstPluginStates),
+    nativePluginStates: nativeStates,
+    targetSpectralDensity: clampInt(r.targetSpectralDensity, 0, 100, 55),
+    createdUtc: typeof r.createdUtc === 'string' ? r.createdUtc : '',
+    updatedUtc: typeof r.updatedUtc === 'string' ? r.updatedUtc : '',
+  };
+}
+
+function normalizeTxAudioProfilesResponse(raw: unknown): TxAudioProfileDto[] {
+  const r = raw as { profiles?: unknown };
+  const profiles = Array.isArray(r?.profiles) ? r.profiles : [];
+  return profiles
+    .map(normalizeTxAudioProfile)
+    .filter((p): p is TxAudioProfileDto => p !== null);
+}
+
+function normalizeLastLoadedTxAudioProfile(raw: unknown): LastLoadedTxAudioProfileDto {
+  if (!raw || typeof raw !== 'object') return { id: null };
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim().toLowerCase() : null;
+  return { id };
+}
+
+function normalizeTxFidelityPolicy(raw: unknown): TxFidelityPolicyDto {
+  if (!raw || typeof raw !== 'object') return TX_FIDELITY_POLICY_DEFAULT;
+  const r = raw as Record<string, unknown>;
+  const profileId = typeof r.profileId === 'string'
+    ? r.profileId.trim().toLowerCase()
+    : TX_FIDELITY_POLICY_DEFAULT.profileId;
+  return {
+    profileId: profileId || TX_FIDELITY_POLICY_DEFAULT.profileId,
+    targetSpectralDensity: clampInt(
+      r.targetSpectralDensity,
+      0,
+      100,
+      TX_FIDELITY_POLICY_DEFAULT.targetSpectralDensity,
+    ),
+  };
+}
+
+function cloneCfc(c: CfcConfigDto): CfcConfigDto {
+  return {
+    enabled: c.enabled,
+    postEqEnabled: c.postEqEnabled,
+    preCompDb: c.preCompDb,
+    prePeqDb: c.prePeqDb,
+    bands: c.bands.map((b) => ({ ...b })),
+  };
+}
+
+function normalizeZoomLevel(v: unknown): ZoomLevel {
+  if (typeof v === 'number' && Number.isInteger(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) {
+    return v;
+  }
+  return ZOOM_MIN;
+}
+
+// Clamp the server's workspace zoom percent into range, falling back to 100
+// for a missing/garbage field so a v1 server (no field) renders at authored
+// size rather than collapsing the grid.
+function normalizeWorkspaceZoomPct(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return Math.min(WORKSPACE_ZOOM_MAX, Math.max(WORKSPACE_ZOOM_MIN, Math.round(v)));
+  }
+  return WORKSPACE_ZOOM_DEFAULT;
+}
+
+function normalizeRadios(raw: unknown): RadioInfoDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = (entry ?? {}) as Record<string, unknown>;
+    const details = r.details;
+    return {
+      macAddress: typeof r.macAddress === 'string' ? r.macAddress : '',
+      ipAddress: typeof r.ipAddress === 'string' ? r.ipAddress : '',
+      boardId: typeof r.boardId === 'string' ? r.boardId : '',
+      firmwareVersion:
+        typeof r.firmwareVersion === 'string' ? r.firmwareVersion : '',
+      busy: Boolean(r.busy),
+      details:
+        details && typeof details === 'object'
+          ? (details as Record<string, string>)
+          : null,
+    };
+  });
+}
+
+function normalizeProtocol3Presence(raw: unknown): Protocol3PresenceDto {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    available: Boolean(r.available),
+    port: typeof r.port === 'number' ? r.port : null,
+    maxRxStreams: typeof r.maxRxStreams === 'number' ? r.maxRxStreams : null,
+    maxTxStreams: typeof r.maxTxStreams === 'number' ? r.maxTxStreams : null,
+    capabilityFlags: typeof r.capabilityFlags === 'string' ? r.capabilityFlags : null,
+    firmwareVersion: typeof r.firmwareVersion === 'number' ? r.firmwareVersion : null,
+    gatewareVersion: typeof r.gatewareVersion === 'number' ? r.gatewareVersion : null,
+  };
+}
+
+function normalizeProtocol3SidecarStatus(raw: unknown): Protocol3SidecarStatusDto {
+  const root = (raw ?? {}) as Record<string, unknown>;
+  const bridge =
+    root.bridge && typeof root.bridge === 'object'
+      ? (root.bridge as Record<string, unknown>)
+      : root;
+  return {
+    configured: Boolean(bridge.configured),
+    running: Boolean(bridge.running),
+    diagnosticsUrl: typeof bridge.diagnosticsUrl === 'string' ? bridge.diagnosticsUrl : null,
+    sidecarOutput: typeof bridge.sidecarOutput === 'string' ? bridge.sidecarOutput : null,
+  };
+}
+
+function asDiagRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+}
+
+function diagNumber(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function diagBool(v: unknown): boolean | null {
+  return typeof v === 'boolean' ? v : null;
+}
+
+function diagString(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
+}
+
+function normalizeDiagnosticItems(raw: unknown): HardwareDiagnosticItemDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      field: typeof r.field === 'string' ? r.field : '',
+      source: typeof r.source === 'string' ? r.source : undefined,
+      status: typeof r.status === 'string' ? r.status : '',
+      notes: typeof r.notes === 'string' ? r.notes : '',
+    };
+  });
+}
+
+function diagStringArray(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === 'string');
+}
+
+function normalizeFrontendDspSceneTopPeaks(raw: unknown): FrontendDspSceneTopPeakDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const r = asDiagRecord(entry);
+    const frequencyHz = diagNumber(r.frequencyHz);
+    const offsetHz = diagNumber(r.offsetHz);
+    const snrDb = diagNumber(r.snrDb);
+    const dbfs = diagNumber(r.dbfs);
+    if (
+      frequencyHz === null ||
+      offsetHz === null ||
+      snrDb === null ||
+      dbfs === null
+    ) {
+      return [];
+    }
+
+    return [{
+      frequencyHz,
+      offsetHz,
+      snrDb,
+      dbfs,
+      confidence: diagNumber(r.confidence),
+      coherent: Boolean(r.coherent),
+    }];
+  });
+}
+
+function normalizeFeatureSurfaces(raw: unknown): HardwareFeatureSurfaceDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      id: diagString(r.id) ?? '',
+      title: diagString(r.title) ?? '',
+      category: diagString(r.category) ?? '',
+      implementationStatus: diagString(r.implementationStatus) ?? '',
+      userConfigurable: Boolean(r.userConfigurable),
+      source: diagString(r.source) ?? '',
+      telemetryPaths: diagStringArray(r.telemetryPaths),
+      candidateControls: diagStringArray(r.candidateControls),
+      safetyClass: diagString(r.safetyClass) ?? '',
+      notes: diagString(r.notes) ?? '',
+    };
+  });
+}
+
+function normalizeDspFilterActive(raw: unknown): HardwareDspFilterActiveDto {
+  const r = asDiagRecord(raw);
+  return {
+    mode: diagString(r.mode) ?? 'Unknown',
+    filterLowHz: diagNumber(r.filterLowHz) ?? 0,
+    filterHighHz: diagNumber(r.filterHighHz) ?? 0,
+    filterPresetName: diagString(r.filterPresetName),
+    inputBufferSize: diagNumber(r.inputBufferSize) ?? 0,
+    dspBufferSize: diagNumber(r.dspBufferSize) ?? 0,
+    outputBufferSize: diagNumber(r.outputBufferSize) ?? undefined,
+    filterWindowId: diagNumber(r.filterWindowId) ?? 0,
+    filterWindow: diagString(r.filterWindow) ?? 'unknown',
+    filterType: diagString(r.filterType) ?? 'unknown',
+    filterTaps: diagNumber(r.filterTaps),
+    cfirCompensation: typeof r.cfirCompensation === 'boolean' ? r.cfirCompensation : undefined,
+    status: diagString(r.status) ?? 'unknown',
+  };
+}
+
+function normalizeDspFilterMatrix(raw: unknown): HardwareDspFilterMatrixRowDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      modeFamily: diagString(r.modeFamily) ?? '',
+      direction: diagString(r.direction) ?? '',
+      iqBufferSize: diagNumber(r.iqBufferSize),
+      filterTaps: diagNumber(r.filterTaps),
+      filterType: diagString(r.filterType) ?? '',
+      filterWindow: diagString(r.filterWindow) ?? '',
+      status: diagString(r.status) ?? 'unknown',
+    };
+  });
+}
+
+function normalizeDspHardwareLimits(raw: unknown): HardwareDspHardwareLimitsDto {
+  const r = asDiagRecord(raw);
+  const sampleRates = Array.isArray(r.sampleRates)
+    ? r.sampleRates.map((entry) => {
+      const item = asDiagRecord(entry);
+      const sampleRateHz = diagNumber(item.sampleRateHz) ?? 0;
+      return {
+        sampleRateHz,
+        label: diagString(item.label) ?? (sampleRateHz > 0 ? `${sampleRateHz / 1000} kHz` : ''),
+        boardSupported: Boolean(item.boardSupported),
+        protocol2Required: Boolean(item.protocol2Required),
+        active: Boolean(item.active),
+        status: diagString(item.status) ?? 'unknown',
+      };
+    })
+    : [48_000, 96_000, 192_000, 384_000, 768_000, 1_536_000].map((sampleRateHz) => ({
+      sampleRateHz,
+      label: `${sampleRateHz / 1000} kHz`,
+      boardSupported: sampleRateHz <= 384_000,
+      protocol2Required: sampleRateHz > 384_000,
+      active: false,
+      status: sampleRateHz <= 384_000 ? 'hardware-supported' : 'unknown-board-capability',
+    }));
+  return {
+    rxAdcCount: diagNumber(r.rxAdcCount) ?? 0,
+    maxRxSampleRateHz: diagNumber(r.maxRxSampleRateHz) ?? 384_000,
+    activeSampleRateHz: diagNumber(r.activeSampleRateHz) ?? 0,
+    sampleRates,
+  };
+}
+
+function normalizeDspFilterOptionCatalog(raw: unknown): HardwareDspFilterOptionCatalogDto {
+  const r = asDiagRecord(raw);
+  const numberArray = (value: unknown, fallback: number[]) =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is number => typeof entry === 'number' && Number.isFinite(entry))
+      : fallback;
+  const stringArray = (value: unknown, fallback: string[]) =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string')
+      : fallback;
+  const windows = Array.isArray(r.filterWindows)
+    ? r.filterWindows.map((entry) => {
+      const item = asDiagRecord(entry);
+      return {
+        id: diagNumber(item.id) ?? 0,
+        label: diagString(item.label) ?? '',
+        notes: diagString(item.notes) ?? '',
+      };
+    })
+    : [
+      { id: 0, label: 'BH-4', notes: 'Thetis default; sharper transition.' },
+      { id: 1, label: 'BH-7', notes: 'Deeper cutoff.' },
+    ];
+  return {
+    iqBufferSizes: numberArray(r.iqBufferSizes, [64, 128, 256, 512, 1024]),
+    filterTapSizes: numberArray(
+      r.filterTapSizes,
+      [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144],
+    ),
+    filterTypes: stringArray(r.filterTypes, ['Linear Phase', 'Low Latency']),
+    filterWindows: windows,
+    slowModeChangeWarning: diagString(r.slowModeChangeWarning) ?? '',
+    source: diagString(r.source) ?? '',
+  };
+}
+
+function normalizeDspDdcSlots(raw: unknown): HardwareDspDdcSlotDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      slot: diagNumber(r.slot) ?? 0,
+      purpose: diagString(r.purpose) ?? '',
+      status: diagString(r.status) ?? '',
+      notes: diagString(r.notes) ?? '',
+    };
+  });
+}
+
+function normalizeDspReceiverBandwidth(raw: unknown): HardwareDspReceiverBandwidthDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unavailable',
+    tone: diagString(r.tone) ?? 'verify',
+    connected: Boolean(r.connected),
+    protocol2Active: Boolean(r.protocol2Active),
+    p2WidebandCapable: Boolean(r.p2WidebandCapable),
+    widebandActive: Boolean(r.widebandActive),
+    activeSampleRateHz: diagNumber(r.activeSampleRateHz) ?? 0,
+    maxSampleRateHz: diagNumber(r.maxSampleRateHz) ?? 384_000,
+    activeNyquistHz: diagNumber(r.activeNyquistHz) ?? 0,
+    maxNyquistHz: diagNumber(r.maxNyquistHz) ?? 192_000,
+    utilizationPct: diagNumber(r.utilizationPct) ?? 0,
+    unusedSampleRateHz: diagNumber(r.unusedSampleRateHz) ?? 0,
+    unusedNyquistHz: diagNumber(r.unusedNyquistHz) ?? 0,
+    activeSoftwareReceivers: diagNumber(r.activeSoftwareReceivers) ?? 0,
+    manualReceiverCapacity: diagNumber(r.manualReceiverCapacity) ?? 1,
+    unexposedReceiverCount: diagNumber(r.unexposedReceiverCount) ?? 0,
+    activeUserDdcIndex: diagNumber(r.activeUserDdcIndex),
+    activeSlots: normalizeDspDdcSlots(r.activeSlots),
+    reservedSlots: normalizeDspDdcSlots(r.reservedSlots),
+    source: diagString(r.source) ?? '',
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation)
+      ?? 'Receiver bandwidth utilization diagnostics are not available from this backend yet.',
+  };
+}
+
+function normalizeDspRuntimeSampleRateControl(raw: unknown): HardwareDspRuntimeSampleRateControlDto {
+  const r = asDiagRecord(raw);
+  return {
+    status: diagString(r.status) ?? 'unavailable',
+    writable: Boolean(r.writable),
+    requiresReconnect: Boolean(r.requiresReconnect),
+    activeSampleRateHz: diagNumber(r.activeSampleRateHz) ?? 0,
+    maxBoardSampleRateHz: diagNumber(r.maxBoardSampleRateHz) ?? 384_000,
+    maxWritableSampleRateHz: diagNumber(r.maxWritableSampleRateHz) ?? 384_000,
+    protocol2Active: Boolean(r.protocol2Active),
+    widebandWritable: Boolean(r.widebandWritable),
+    settingsSurface: diagString(r.settingsSurface) ?? 'Settings > DSP > Bandwidth',
+    apiRoute: diagString(r.apiRoute) ?? '/api/sampleRate',
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation)
+      ?? 'Runtime DDC sample-rate diagnostics are not available from this backend yet.',
+  };
+}
+
+function normalizeDspFilterGeometry(raw: unknown): HardwareDspFilterGeometryDto {
+  const r = asDiagRecord(raw);
+  const impulse = asDiagRecord(r.impulseCache);
+  const highRes = asDiagRecord(r.highResolutionFilterDisplay);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unavailable',
+    operatorConfigurable: Boolean(r.operatorConfigurable),
+    hardwareLimits: normalizeDspHardwareLimits(r.hardwareLimits),
+    runtimeSampleRateControl: normalizeDspRuntimeSampleRateControl(r.runtimeSampleRateControl),
+    optionCatalog: normalizeDspFilterOptionCatalog(r.optionCatalog),
+    activeRx: normalizeDspFilterActive(r.activeRx),
+    activeTx: normalizeDspFilterActive(r.activeTx),
+    receiverBandwidth: normalizeDspReceiverBandwidth(r.receiverBandwidth),
+    thetisMatrix: normalizeDspFilterMatrix(r.thetisMatrix),
+    impulseCache: {
+      fftwWisdomPhase: diagString(impulse.fftwWisdomPhase) ?? 'Unknown',
+      fftwWisdomStatus: diagString(impulse.fftwWisdomStatus) ?? '',
+      fftwWisdomCache: Boolean(impulse.fftwWisdomCache),
+      filterImpulseCache: Boolean(impulse.filterImpulseCache),
+      saveRestoreImpulseCacheFile: Boolean(impulse.saveRestoreImpulseCacheFile),
+      status: diagString(impulse.status) ?? 'unknown',
+      notes: diagString(impulse.notes) ?? '',
+    },
+    highResolutionFilterDisplay: {
+      enabled: Boolean(highRes.enabled),
+      status: diagString(highRes.status) ?? 'unknown',
+      notes: diagString(highRes.notes) ?? '',
+    },
+    diagnosticRecommendation:
+      diagString(r.diagnosticRecommendation)
+      ?? 'WDSP filter-architecture diagnostics are not available from this backend yet.',
+    source: diagString(r.source) ?? '',
+  };
+}
+
+function normalizeDspDiagnostics(raw: unknown): HardwareDspDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    engine: diagString(r.engine) ?? 'Unknown',
+    engineKind: diagString(r.engineKind) ?? 'Unknown',
+    wdspActive: Boolean(r.wdspActive),
+    synthetic: Boolean(r.synthetic),
+    wdspNativeLoadable: Boolean(r.wdspNativeLoadable),
+    wdspEmnrPost2Available: Boolean(r.wdspEmnrPost2Available),
+    wdspNr4SbnrAvailable: Boolean(r.wdspNr4SbnrAvailable),
+    nr4Readiness: diagString(r.nr4Readiness) ?? 'unknown',
+    requestedNrMode: diagString(r.requestedNrMode) ?? 'Off',
+    effectiveNrMode: diagString(r.effectiveNrMode) ?? 'Off',
+    channelId: diagNumber(r.channelId) ?? 0,
+    sampleRateHz: diagNumber(r.sampleRateHz) ?? 0,
+    displayWidth: diagNumber(r.displayWidth) ?? 0,
+    tickRateHz: diagNumber(r.tickRateHz) ?? 0,
+    audioOutputRateHz: diagNumber(r.audioOutputRateHz) ?? 0,
+    txBlockSamples: diagNumber(r.txBlockSamples) ?? 0,
+    txOutputSamples: diagNumber(r.txOutputSamples) ?? 0,
+    txMonitorRequested: Boolean(r.txMonitorRequested),
+    rxSinkAttached: Boolean(r.rxSinkAttached),
+    audioSinkCount: diagNumber(r.audioSinkCount) ?? 0,
+    monitorBacklogSamples: diagNumber(r.monitorBacklogSamples) ?? 0,
+    rxDsp: normalizeHardwareRxDspDiagnostics(r.rxDsp),
+    rxMeters: normalizeHardwareRxMetersDiagnostics(r.rxMeters),
+    rxDynamicRange: normalizeHardwareRxDynamicRangeDiagnostics(r.rxDynamicRange),
+    audio: normalizeHardwareAudioDiagnostics(r.audio),
+    listenability: normalizeHardwareRxListenabilityDiagnostics(r.listenability),
+    display: normalizeHardwareDisplayDiagnostics(r.display),
+    filterGeometry: normalizeDspFilterGeometry(r.filterGeometry),
+    wdspWisdomPhase: diagString(r.wdspWisdomPhase) ?? 'Unknown',
+    wdspWisdomStatus: diagString(r.wdspWisdomStatus) ?? '',
+    readiness: diagString(r.readiness) ?? 'unknown',
+  };
+}
+
+function normalizeHardwareRxListenabilityDiagnostics(raw: unknown): HardwareRxListenabilityDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      tone: 'verify',
+      signalPresent: false,
+      audioRecovered: false,
+      blocker: 'diagnostics',
+      recommendation: 'RX listenability diagnostics are not available from this backend yet; restart OpenhpsdrZeus after updating to correlate RX meters, audio, and squelch evidence.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    tone: diagString(r.tone) ?? 'verify',
+    signalPresent: Boolean(r.signalPresent),
+    audioRecovered: Boolean(r.audioRecovered),
+    blocker: diagString(r.blocker) ?? 'unknown',
+    recommendation: diagString(r.recommendation),
+  };
+}
+
+function normalizeHardwareRxDspDiagnostics(raw: unknown): HardwareRxDspDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      mode: 'unknown',
+      filterLowHz: 0,
+      filterHighHz: 0,
+      filterPresetName: null,
+      agcMode: 'unknown',
+      agcTopDb: 0,
+      autoAgcEnabled: false,
+      agcOffsetDb: 0,
+      effectiveAgcTopDb: 0,
+      squelchEnabled: false,
+      squelchAdaptive: true,
+      squelchLevel: 0,
+      requestedNrMode: 'Off',
+      effectiveNrMode: 'Off',
+      anfEnabled: false,
+      snbEnabled: false,
+      nbpNotchesEnabled: false,
+      effectiveNbpNotchesRun: false,
+      nbMode: 'Off',
+      nbThreshold: 20,
+      manualNotchCount: 0,
+      activeManualNotchCount: 0,
+      wdspActive: false,
+      wdspNativeLoadable: false,
+      wdspEmnrPost2Available: false,
+      wdspNr4SbnrAvailable: false,
+      nr4Readiness: 'unknown',
+      appliedNrMatchesRequested: true,
+      appliedAgcMatchesRequested: true,
+      appliedSquelchMatchesRequested: true,
+      activeFeatures: [],
+      qualityReasons: ['rx-dsp-chain-unavailable'],
+      diagnosticRecommendation: 'RX DSP chain diagnostics are not available from this backend yet; restart OpenhpsdrZeus after updating to expose NR/NB/ANF/notch runtime state.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    mode: diagString(r.mode) ?? 'unknown',
+    filterLowHz: diagNumber(r.filterLowHz) ?? 0,
+    filterHighHz: diagNumber(r.filterHighHz) ?? 0,
+    filterPresetName: diagString(r.filterPresetName),
+    agcMode: diagString(r.agcMode) ?? 'unknown',
+    agcTopDb: diagNumber(r.agcTopDb) ?? 0,
+    autoAgcEnabled: Boolean(r.autoAgcEnabled),
+    agcOffsetDb: diagNumber(r.agcOffsetDb) ?? 0,
+    effectiveAgcTopDb: diagNumber(r.effectiveAgcTopDb) ?? 0,
+    squelchEnabled: Boolean(r.squelchEnabled),
+    squelchAdaptive: r.squelchAdaptive === undefined ? true : Boolean(r.squelchAdaptive),
+    squelchLevel: diagNumber(r.squelchLevel) ?? 0,
+    requestedNrMode: diagString(r.requestedNrMode) ?? 'Off',
+    effectiveNrMode: diagString(r.effectiveNrMode) ?? 'Off',
+    anfEnabled: Boolean(r.anfEnabled),
+    snbEnabled: Boolean(r.snbEnabled),
+    nbpNotchesEnabled: Boolean(r.nbpNotchesEnabled),
+    effectiveNbpNotchesRun: Boolean(r.effectiveNbpNotchesRun),
+    nbMode: diagString(r.nbMode) ?? 'Off',
+    nbThreshold: diagNumber(r.nbThreshold) ?? 20,
+    manualNotchCount: diagNumber(r.manualNotchCount) ?? 0,
+    activeManualNotchCount: diagNumber(r.activeManualNotchCount) ?? 0,
+    wdspActive: Boolean(r.wdspActive),
+    wdspNativeLoadable: Boolean(r.wdspNativeLoadable),
+    wdspEmnrPost2Available: Boolean(r.wdspEmnrPost2Available),
+    wdspNr4SbnrAvailable: Boolean(r.wdspNr4SbnrAvailable),
+    nr4Readiness: diagString(r.nr4Readiness) ?? 'unknown',
+    appliedNrMatchesRequested: r.appliedNrMatchesRequested === undefined ? true : Boolean(r.appliedNrMatchesRequested),
+    appliedAgcMatchesRequested: r.appliedAgcMatchesRequested === undefined ? true : Boolean(r.appliedAgcMatchesRequested),
+    appliedSquelchMatchesRequested: r.appliedSquelchMatchesRequested === undefined ? true : Boolean(r.appliedSquelchMatchesRequested),
+    activeFeatures: diagStringArray(r.activeFeatures),
+    qualityReasons: diagStringArray(r.qualityReasons),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeHardwareRxMetersDiagnostics(raw: unknown): HardwareRxMetersDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      source: 'unknown',
+      fresh: false,
+      stale: true,
+      ageMs: null,
+      channelId: 0,
+      rxDbm: null,
+      signalPkDbm: null,
+      signalAvDbm: null,
+      adcPkDbfs: null,
+      adcAvDbfs: null,
+      adcHeadroomDb: null,
+      agcGainDb: null,
+      agcEnvPkDbm: null,
+      agcEnvAvDbm: null,
+      signalUsable: false,
+      adcUsable: false,
+      agcEnvelopeUsable: false,
+      diagnosticRecommendation: 'RXA stage-meter diagnostics are not available from this backend yet; restart OpenhpsdrZeus after updating to expose signal/ADC/AGC stage evidence.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    source: diagString(r.source) ?? 'unknown',
+    fresh: Boolean(r.fresh),
+    stale: Boolean(r.stale),
+    ageMs: diagNumber(r.ageMs),
+    channelId: diagNumber(r.channelId) ?? 0,
+    rxDbm: diagNumber(r.rxDbm),
+    signalPkDbm: diagNumber(r.signalPkDbm),
+    signalAvDbm: diagNumber(r.signalAvDbm),
+    adcPkDbfs: diagNumber(r.adcPkDbfs),
+    adcAvDbfs: diagNumber(r.adcAvDbfs),
+    adcHeadroomDb: diagNumber(r.adcHeadroomDb),
+    agcGainDb: diagNumber(r.agcGainDb),
+    agcEnvPkDbm: diagNumber(r.agcEnvPkDbm),
+    agcEnvAvDbm: diagNumber(r.agcEnvAvDbm),
+    signalUsable: Boolean(r.signalUsable),
+    adcUsable: Boolean(r.adcUsable),
+    agcEnvelopeUsable: Boolean(r.agcEnvelopeUsable),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeHardwareRxDynamicRangeDiagnostics(raw: unknown): HardwareRxDynamicRangeDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      tone: 'verify',
+      fresh: false,
+      stale: true,
+      ageMs: null,
+      source: 'unknown',
+      sampleRateHz: 0,
+      attenDb: 0,
+      attOffsetDb: 0,
+      effectiveAttenDb: 0,
+      preampOn: false,
+      autoAttEnabled: false,
+      adcProtectionEnabled: false,
+      adcOverloadWarning: false,
+      adcOverloadLevel: 0,
+      targetHeadroomMinDb: 6,
+      targetHeadroomMaxDb: 30,
+      rxDbm: null,
+      signalPkDbm: null,
+      adcPkDbfs: null,
+      adcHeadroomDb: null,
+      agcGainDb: null,
+      headroomOptimal: false,
+      overloadRisk: false,
+      weakSignalOpportunity: false,
+      frontEndUnderused: false,
+      reasons: ['rx-dynamic-range-unavailable'],
+      actions: [],
+      diagnosticRecommendation: 'RX dynamic-range advisor diagnostics are not available from this backend yet; restart OpenhpsdrZeus after updating to correlate ADC headroom, AGC gain, attenuation, and preamp state.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  const actions = Array.isArray(r.actions)
+    ? r.actions.map((entry) => {
+      const item = asDiagRecord(entry);
+      return {
+        id: diagString(item.id) ?? '',
+        label: diagString(item.label) ?? '',
+        status: diagString(item.status) ?? '',
+        notes: diagString(item.notes) ?? '',
+      };
+    })
+    : [];
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    tone: diagString(r.tone) ?? 'verify',
+    fresh: Boolean(r.fresh),
+    stale: Boolean(r.stale),
+    ageMs: diagNumber(r.ageMs),
+    source: diagString(r.source) ?? 'unknown',
+    sampleRateHz: diagNumber(r.sampleRateHz) ?? 0,
+    attenDb: diagNumber(r.attenDb) ?? 0,
+    attOffsetDb: diagNumber(r.attOffsetDb) ?? 0,
+    effectiveAttenDb: diagNumber(r.effectiveAttenDb) ?? 0,
+    preampOn: Boolean(r.preampOn),
+    autoAttEnabled: Boolean(r.autoAttEnabled),
+    adcProtectionEnabled: Boolean(r.adcProtectionEnabled),
+    adcOverloadWarning: Boolean(r.adcOverloadWarning),
+    adcOverloadLevel: diagNumber(r.adcOverloadLevel) ?? 0,
+    targetHeadroomMinDb: diagNumber(r.targetHeadroomMinDb) ?? 6,
+    targetHeadroomMaxDb: diagNumber(r.targetHeadroomMaxDb) ?? 30,
+    rxDbm: diagNumber(r.rxDbm),
+    signalPkDbm: diagNumber(r.signalPkDbm),
+    adcPkDbfs: diagNumber(r.adcPkDbfs),
+    adcHeadroomDb: diagNumber(r.adcHeadroomDb),
+    agcGainDb: diagNumber(r.agcGainDb),
+    headroomOptimal: Boolean(r.headroomOptimal),
+    overloadRisk: Boolean(r.overloadRisk),
+    weakSignalOpportunity: Boolean(r.weakSignalOpportunity),
+    frontEndUnderused: Boolean(r.frontEndUnderused),
+    reasons: diagStringArray(r.reasons),
+    actions,
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeHardwareAudioDiagnostics(raw: unknown): HardwareAudioDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      source: 'unknown',
+      fresh: false,
+      stale: true,
+      ageMs: null,
+      framesBroadcast: 0,
+      lastSeq: 0,
+      sampleRateHz: 0,
+      sampleCount: 0,
+      rmsLinear: null,
+      peakLinear: null,
+      rmsDbfs: null,
+      peakDbfs: null,
+      txMonitorRequested: false,
+      squelchEnabled: false,
+      squelchOpen: false,
+      squelchTailActive: false,
+      squelchGateGain: null,
+      squelchMode: 'unknown',
+      squelchGateSource: 'unknown',
+      squelchOpenKnown: false,
+      monitorBacklogSamples: 0,
+      audioSinkCount: 0,
+      diagnosticRecommendation: 'RX audio-path diagnostics are not available from this backend yet; restart OpenhpsdrZeus after updating to expose final audio-frame freshness, RMS, peak, squelch, and TX-monitor evidence.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    source: diagString(r.source) ?? 'unknown',
+    fresh: Boolean(r.fresh),
+    stale: Boolean(r.stale),
+    ageMs: diagNumber(r.ageMs),
+    framesBroadcast: diagNumber(r.framesBroadcast) ?? 0,
+    lastSeq: diagNumber(r.lastSeq) ?? 0,
+    sampleRateHz: diagNumber(r.sampleRateHz) ?? 0,
+    sampleCount: diagNumber(r.sampleCount) ?? 0,
+    rmsLinear: diagNumber(r.rmsLinear),
+    peakLinear: diagNumber(r.peakLinear),
+    rmsDbfs: diagNumber(r.rmsDbfs),
+    peakDbfs: diagNumber(r.peakDbfs),
+    txMonitorRequested: Boolean(r.txMonitorRequested),
+    squelchEnabled: Boolean(r.squelchEnabled),
+    squelchOpen: Boolean(r.squelchOpen),
+    squelchTailActive: Boolean(r.squelchTailActive),
+    squelchGateGain: diagNumber(r.squelchGateGain),
+    squelchMode: diagString(r.squelchMode) ?? 'unknown',
+    squelchGateSource: diagString(r.squelchGateSource) ?? 'unknown',
+    squelchOpenKnown: Boolean(r.squelchOpenKnown),
+    monitorBacklogSamples: diagNumber(r.monitorBacklogSamples) ?? 0,
+    audioSinkCount: diagNumber(r.audioSinkCount) ?? 0,
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeHardwareDisplayBufferDiagnostics(raw: unknown): HardwareDisplayBufferDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    valid: Boolean(r.valid),
+    ageMs: diagNumber(r.ageMs),
+    validBins: diagNumber(r.validBins) ?? 0,
+    minDb: diagNumber(r.minDb),
+    maxDb: diagNumber(r.maxDb),
+    meanDb: diagNumber(r.meanDb),
+    dynamicRangeDb: diagNumber(r.dynamicRangeDb),
+  };
+}
+
+function normalizeHardwareDisplayDiagnostics(raw: unknown): HardwareDisplayDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    clientCount: diagNumber(r.clientCount) ?? 0,
+    framesBroadcast: diagNumber(r.framesBroadcast) ?? 0,
+    lastSeq: diagNumber(r.lastSeq) ?? 0,
+    lastFrameAgeMs: diagNumber(r.lastFrameAgeMs),
+    lastFrameUnixMs: diagNumber(r.lastFrameUnixMs),
+    panValid: Boolean(r.panValid),
+    waterfallValid: Boolean(r.waterfallValid),
+    panSource: diagString(r.panSource) ?? 'none',
+    waterfallSource: diagString(r.waterfallSource) ?? 'none',
+    keyed: Boolean(r.keyed),
+    psMonitorRequested: Boolean(r.psMonitorRequested),
+    psFeedbackCorrecting: Boolean(r.psFeedbackCorrecting),
+    width: diagNumber(r.width) ?? 0,
+    centerHz: diagNumber(r.centerHz),
+    hzPerPixel: diagNumber(r.hzPerPixel),
+    pan: normalizeHardwareDisplayBufferDiagnostics(r.pan),
+    waterfall: normalizeHardwareDisplayBufferDiagnostics(r.waterfall),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizePureSignalDiagnostics(raw: unknown): HardwarePureSignalDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  const source = r.feedbackSource === 'External' || r.feedbackSource === 'external'
+    ? 'external'
+    : 'internal';
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    enabled: Boolean(r.enabled),
+    monitorEnabled: Boolean(r.monitorEnabled),
+    auto: r.auto === undefined ? true : Boolean(r.auto),
+    single: Boolean(r.single),
+    autoAttenuate: r.autoAttenuate === undefined ? true : Boolean(r.autoAttenuate),
+    feedbackSource: source,
+    externalFeedback: Boolean(r.externalFeedback),
+    externalFeedbackPathSupported: Boolean(r.externalFeedbackPathSupported),
+    rfBypassRequired: Boolean(r.rfBypassRequired),
+    rfBypassSelected: Boolean(r.rfBypassSelected),
+    feedbackLevelRaw: diagNumber(r.feedbackLevelRaw) ?? 0,
+    feedbackLevelPct: diagNumber(r.feedbackLevelPct) ?? 0,
+    feedbackTargetRaw: diagNumber(r.feedbackTargetRaw) ?? 152.293,
+    feedbackUsableMinRaw: diagNumber(r.feedbackUsableMinRaw) ?? 128,
+    feedbackUsableMaxRaw: diagNumber(r.feedbackUsableMaxRaw) ?? 181,
+    feedbackCenteredMinRaw: diagNumber(r.feedbackCenteredMinRaw) ?? 138,
+    feedbackCenteredMaxRaw: diagNumber(r.feedbackCenteredMaxRaw) ?? 176,
+    txFeedbackAttenuationDb: diagNumber(r.txFeedbackAttenuationDb) ?? 0,
+    txFeedbackAttenuationDbMin: diagNumber(r.txFeedbackAttenuationDbMin) ?? 0,
+    hwPeak: diagNumber(r.hwPeak) ?? 0,
+    hwPeakDefault: diagNumber(r.hwPeakDefault) ?? 0,
+    calState: diagNumber(r.calState) ?? 0,
+    correcting: Boolean(r.correcting),
+    calibrationStalled: Boolean(r.calibrationStalled),
+    healthStatus: diagString(r.healthStatus) ?? 'unknown',
+    manualReference: diagString(r.manualReference) ?? '',
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeFrontendDspScene(raw: unknown): FrontendDspSceneDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    available: Boolean(r.available),
+    ageMs: diagNumber(r.ageMs),
+    status: diagString(r.status) ?? 'unknown',
+    fresh: Boolean(r.fresh),
+    stale: Boolean(r.stale),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    atUtc: diagString(r.atUtc),
+    sourceAtUtc: diagString(r.sourceAtUtc),
+    sourceAgeMs: diagNumber(r.sourceAgeMs),
+    sourceClockSkewMs: diagNumber(r.sourceClockSkewMs),
+    sourceClientId: diagString(r.sourceClientId),
+    mode: modeFromWire(r.mode),
+    signalProfile: diagString(r.signalProfile),
+    signalReason: diagString(r.signalReason),
+    smartNrProfile: diagString(r.smartNrProfile),
+    smartNrReason: diagString(r.smartNrReason),
+    smartNrRecommendation: diagString(r.smartNrRecommendation),
+    smartNrHeldByRxChain: diagBool(r.smartNrHeldByRxChain),
+    smartNrRxChainLabel: diagString(r.smartNrRxChainLabel),
+    smartNrRxChainRecommendation: diagString(r.smartNrRxChainRecommendation),
+    smartNrRxChainTone: diagString(r.smartNrRxChainTone),
+    smartNrRxChainScore: diagNumber(r.smartNrRxChainScore),
+    maxSnrDb: diagNumber(r.maxSnrDb),
+    coherentMaxSnrDb: diagNumber(r.coherentMaxSnrDb),
+    occupiedPct: diagNumber(r.occupiedPct),
+    coherentOccupiedPct: diagNumber(r.coherentOccupiedPct),
+    impulsivePct: diagNumber(r.impulsivePct),
+    peakCount: diagNumber(r.peakCount),
+    coherentPeakCount: diagNumber(r.coherentPeakCount),
+    coherentSubthresholdSignal: diagBool(r.coherentSubthresholdSignal),
+    topPeaks: normalizeFrontendDspSceneTopPeaks(r.topPeaks),
+    adjacentNoiseUsable: diagBool(r.adjacentNoiseUsable),
+    adjacentNoiseBins: diagNumber(r.adjacentNoiseBins),
+    adjacentNoiseLeftBins: diagNumber(r.adjacentNoiseLeftBins),
+    adjacentNoiseRightBins: diagNumber(r.adjacentNoiseRightBins),
+    adjacentNoiseFloorDb: diagNumber(r.adjacentNoiseFloorDb),
+    adjacentNoiseP10Db: diagNumber(r.adjacentNoiseP10Db),
+    adjacentNoiseP50Db: diagNumber(r.adjacentNoiseP50Db),
+    adjacentNoiseP90Db: diagNumber(r.adjacentNoiseP90Db),
+    adjacentNoiseLeftFloorDb: diagNumber(r.adjacentNoiseLeftFloorDb),
+    adjacentNoiseRightFloorDb: diagNumber(r.adjacentNoiseRightFloorDb),
+    adjacentNoiseSlopeDbPerKhz: diagNumber(r.adjacentNoiseSlopeDbPerKhz),
+    adjacentNoiseRejectedPct: diagNumber(r.adjacentNoiseRejectedPct),
+  };
+}
+
+function normalizeFrontendAudioPlayback(raw: unknown): FrontendAudioPlaybackDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      available: false,
+      ageMs: null,
+      sourceAgeMs: null,
+      sourceClockSkewMs: null,
+      status: 'unavailable',
+      fresh: false,
+      stale: false,
+      diagnosticRecommendation: 'Frontend RX playback diagnostics are not available from this backend yet; use server RX audio diagnostics and browser console probes until OpenhpsdrZeus is restarted.',
+      atUtc: null,
+      sourceAtUtc: null,
+      sourceClientId: null,
+      playbackState: null,
+      contextState: null,
+      bufferedSamples: 0,
+      bufferedMs: null,
+      sampleRateHz: 0,
+      contextSampleRateHz: 0,
+      baseLatencyMs: null,
+      outputLatencyMs: null,
+      underrunCount: 0,
+      droppedSamples: 0,
+      latePushCount: 0,
+      latenessVsScheduleCount: 0,
+      pendingSources: 0,
+      bufferTargetMs: null,
+      bufferMaxMs: null,
+      errorMessage: null,
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    available: Boolean(r.available),
+    ageMs: diagNumber(r.ageMs),
+    sourceAgeMs: diagNumber(r.sourceAgeMs),
+    sourceClockSkewMs: diagNumber(r.sourceClockSkewMs),
+    status: diagString(r.status) ?? 'unknown',
+    fresh: Boolean(r.fresh),
+    stale: Boolean(r.stale),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    atUtc: diagString(r.atUtc),
+    sourceAtUtc: diagString(r.sourceAtUtc),
+    sourceClientId: diagString(r.sourceClientId),
+    playbackState: diagString(r.playbackState),
+    contextState: diagString(r.contextState),
+    bufferedSamples: diagNumber(r.bufferedSamples) ?? 0,
+    bufferedMs: diagNumber(r.bufferedMs),
+    sampleRateHz: diagNumber(r.sampleRateHz) ?? 0,
+    contextSampleRateHz: diagNumber(r.contextSampleRateHz) ?? 0,
+    baseLatencyMs: diagNumber(r.baseLatencyMs),
+    outputLatencyMs: diagNumber(r.outputLatencyMs),
+    underrunCount: diagNumber(r.underrunCount) ?? 0,
+    droppedSamples: diagNumber(r.droppedSamples) ?? 0,
+    latePushCount: diagNumber(r.latePushCount) ?? 0,
+    latenessVsScheduleCount: diagNumber(r.latenessVsScheduleCount) ?? 0,
+    pendingSources: diagNumber(r.pendingSources) ?? 0,
+    bufferTargetMs: diagNumber(r.bufferTargetMs),
+    bufferMaxMs: diagNumber(r.bufferMaxMs),
+    errorMessage: diagString(r.errorMessage),
+  };
+}
+
+function normalizeSmartNrCondition(raw: unknown): SmartNrConditionDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    available: Boolean(r.available),
+    status: diagString(r.status) ?? 'unknown',
+    fresh: Boolean(r.fresh),
+    stale: Boolean(r.stale),
+    ageMs: diagNumber(r.ageMs),
+    atUtc: diagString(r.atUtc),
+    sourceAtUtc: diagString(r.sourceAtUtc),
+    sourceAgeMs: diagNumber(r.sourceAgeMs),
+    sourceClockSkewMs: diagNumber(r.sourceClockSkewMs),
+    sourceClientId: diagString(r.sourceClientId),
+    mode: modeFromWire(r.mode),
+    profile: diagString(r.profile),
+    reason: diagString(r.reason),
+    recommendation: diagString(r.recommendation),
+    heldByRxChain: diagBool(r.heldByRxChain),
+    rxChainLabel: diagString(r.rxChainLabel),
+    rxChainRecommendation: diagString(r.rxChainRecommendation),
+    rxChainTone: diagString(r.rxChainTone),
+    rxChainScore: diagNumber(r.rxChainScore),
+    maxSnrDb: diagNumber(r.maxSnrDb),
+    coherentMaxSnrDb: diagNumber(r.coherentMaxSnrDb),
+    occupiedPct: diagNumber(r.occupiedPct),
+    coherentOccupiedPct: diagNumber(r.coherentOccupiedPct),
+    impulsivePct: diagNumber(r.impulsivePct),
+    peakCount: diagNumber(r.peakCount),
+    coherentPeakCount: diagNumber(r.coherentPeakCount),
+    coherentSubthresholdSignal: diagBool(r.coherentSubthresholdSignal),
+    adjacentNoiseUsable: diagBool(r.adjacentNoiseUsable),
+    adjacentNoiseBins: diagNumber(r.adjacentNoiseBins),
+    adjacentNoiseLeftBins: diagNumber(r.adjacentNoiseLeftBins),
+    adjacentNoiseRightBins: diagNumber(r.adjacentNoiseRightBins),
+    adjacentNoiseFloorDb: diagNumber(r.adjacentNoiseFloorDb),
+    adjacentNoiseP10Db: diagNumber(r.adjacentNoiseP10Db),
+    adjacentNoiseP50Db: diagNumber(r.adjacentNoiseP50Db),
+    adjacentNoiseP90Db: diagNumber(r.adjacentNoiseP90Db),
+    adjacentNoiseLeftFloorDb: diagNumber(r.adjacentNoiseLeftFloorDb),
+    adjacentNoiseRightFloorDb: diagNumber(r.adjacentNoiseRightFloorDb),
+    adjacentNoiseSlopeDbPerKhz: diagNumber(r.adjacentNoiseSlopeDbPerKhz),
+    adjacentNoiseRejectedPct: diagNumber(r.adjacentNoiseRejectedPct),
+    wdspActive: Boolean(r.wdspActive),
+    wdspNativeLoadable: Boolean(r.wdspNativeLoadable),
+    wdspEmnrPost2Available: Boolean(r.wdspEmnrPost2Available),
+    wdspNr4SbnrAvailable: Boolean(r.wdspNr4SbnrAvailable),
+    nr4Readiness: diagString(r.nr4Readiness) ?? 'unknown',
+    requestedNrMode: diagString(r.requestedNrMode) ?? 'Off',
+    effectiveNrMode: diagString(r.effectiveNrMode) ?? 'Off',
+    expectedNrMode: diagString(r.expectedNrMode),
+    runtimeAligned: diagBool(r.runtimeAligned),
+    runtimeAlignmentStatus: diagString(r.runtimeAlignmentStatus) ?? 'unknown',
+    runtimeAlignmentRecommendation:
+      diagString(r.runtimeAlignmentRecommendation) ??
+      'Smart NR runtime alignment is not available from this backend yet.',
+    rxChain: normalizeSmartNrRxChainRuntime(r.rxChain),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeDspExternalEngineCandidate(raw: unknown): DspExternalEngineCandidateDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    id: diagString(r.id) ?? '',
+    name: diagString(r.name) ?? '',
+    family: diagString(r.family) ?? '',
+    integrationPoint: diagString(r.integrationPoint) ?? '',
+    defaultState: diagString(r.defaultState) ?? 'off',
+    rolloutPolicy: diagString(r.rolloutPolicy) ?? 'candidate-only-opt-in-bakeoff',
+    license: diagString(r.license) ?? '',
+    packagingStatus: diagString(r.packagingStatus) ?? '',
+    runtimeRisk: diagString(r.runtimeRisk) ?? 'unknown',
+    latencyRisk: diagString(r.latencyRisk) ?? 'unknown',
+    radioSafetyRisk: diagString(r.radioSafetyRisk) ?? 'unknown',
+    strengths: diagStringArray(r.strengths),
+    requiredBenchmarks: diagStringArray(r.requiredBenchmarks),
+    requiredEvidence: diagStringArray(r.requiredEvidence),
+    blockers: diagStringArray(r.blockers),
+    referenceUrls: diagStringArray(r.referenceUrls),
+  };
+}
+
+function normalizeDspLiveDiagnostics(raw: unknown): DspLiveDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    generatedUtc: diagString(r.generatedUtc) ?? new Date().toISOString(),
+    status: diagString(r.status) ?? 'unavailable',
+    qualityTone: diagString(r.qualityTone) ?? 'standby',
+    readinessScore: diagNumber(r.readinessScore) ?? 0,
+    readyForLiveBenchmark: Boolean(r.readyForLiveBenchmark),
+    readyForExternalEngineBakeoff: Boolean(r.readyForExternalEngineBakeoff),
+    externalEngineBakeoffStatus: diagString(r.externalEngineBakeoffStatus) ?? 'external-engine-bakeoff-preflight-required',
+    externalEngineBakeoffConstraints: diagStringArray(r.externalEngineBakeoffConstraints),
+    rolloutGate: diagString(r.rolloutGate) ?? 'opt-in-only',
+    wdspActive: Boolean(r.wdspActive),
+    wdspNativeLoadable: Boolean(r.wdspNativeLoadable),
+    wdspEmnrPost2Available: Boolean(r.wdspEmnrPost2Available),
+    wdspNr4SbnrAvailable: Boolean(r.wdspNr4SbnrAvailable),
+    nr4Readiness: diagString(r.nr4Readiness) ?? 'unknown',
+    frontendSceneAvailable: Boolean(r.frontendSceneAvailable),
+    frontendSceneStatus: diagString(r.frontendSceneStatus) ?? 'unknown',
+    frontendSceneFresh: Boolean(r.frontendSceneFresh),
+    frontendSceneStale: Boolean(r.frontendSceneStale),
+    frontendSceneAgeMs: diagNumber(r.frontendSceneAgeMs),
+    frontendAdjacentNoiseUsable: diagBool(r.frontendAdjacentNoiseUsable),
+    frontendAdjacentNoiseBins: diagNumber(r.frontendAdjacentNoiseBins),
+    frontendAdjacentNoiseLeftBins: diagNumber(r.frontendAdjacentNoiseLeftBins),
+    frontendAdjacentNoiseRightBins: diagNumber(r.frontendAdjacentNoiseRightBins),
+    frontendAdjacentNoiseFloorDb: diagNumber(r.frontendAdjacentNoiseFloorDb),
+    frontendAdjacentNoiseP10Db: diagNumber(r.frontendAdjacentNoiseP10Db),
+    frontendAdjacentNoiseP50Db: diagNumber(r.frontendAdjacentNoiseP50Db),
+    frontendAdjacentNoiseP90Db: diagNumber(r.frontendAdjacentNoiseP90Db),
+    frontendAdjacentNoiseLeftFloorDb: diagNumber(r.frontendAdjacentNoiseLeftFloorDb),
+    frontendAdjacentNoiseRightFloorDb: diagNumber(r.frontendAdjacentNoiseRightFloorDb),
+    frontendAdjacentNoiseSlopeDbPerKhz: diagNumber(r.frontendAdjacentNoiseSlopeDbPerKhz),
+    frontendAdjacentNoiseRejectedPct: diagNumber(r.frontendAdjacentNoiseRejectedPct),
+    smartNrProfile: diagString(r.smartNrProfile),
+    expectedNrMode: diagString(r.expectedNrMode),
+    runtimeAligned: diagBool(r.runtimeAligned),
+    runtimeAlignmentStatus: diagString(r.runtimeAlignmentStatus) ?? 'unknown',
+    requestedNrMode: diagString(r.requestedNrMode) ?? 'Off',
+    effectiveNrMode: diagString(r.effectiveNrMode) ?? 'Off',
+    heldByRxChain: diagBool(r.heldByRxChain),
+    rxChainScore: diagNumber(r.rxChainScore),
+    rxChainTone: diagString(r.rxChainTone),
+    rxChainLabel: diagString(r.rxChainLabel),
+    rxChainFilterLowHz: diagNumber(r.rxChainFilterLowHz),
+    rxChainFilterHighHz: diagNumber(r.rxChainFilterHighHz),
+    rxChainFilterWidthHz: diagNumber(r.rxChainFilterWidthHz),
+    rxChainFilterPresetName: diagString(r.rxChainFilterPresetName),
+    evidence: diagStringArray(r.evidence),
+    constraints: diagStringArray(r.constraints),
+    recommendedActions: diagStringArray(r.recommendedActions),
+    candidateTools: diagStringArray(r.candidateTools),
+    benchmarkPlanEndpoint: diagString(r.benchmarkPlanEndpoint) ?? '/api/dsp/benchmark-plan',
+    benchmarkScenarioCount: diagNumber(r.benchmarkScenarioCount) ?? 0,
+    nextBenchmarkScenarios: diagStringArray(r.nextBenchmarkScenarios),
+    benchmarkAcceptanceGates: diagStringArray(r.benchmarkAcceptanceGates),
+    externalEngineCandidates: Array.isArray(r.externalEngineCandidates)
+      ? r.externalEngineCandidates.map(normalizeDspExternalEngineCandidate)
+      : [],
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeSmartNrRxChainRuntime(raw: unknown): SmartNrRxChainRuntimeDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    source: diagString(r.source) ?? 'unknown',
+    filterLowHz: diagNumber(r.filterLowHz) ?? 0,
+    filterHighHz: diagNumber(r.filterHighHz) ?? 0,
+    filterWidthHz: diagNumber(r.filterWidthHz) ?? 0,
+    filterPresetName: diagString(r.filterPresetName),
+    autoAgcEnabled: Boolean(r.autoAgcEnabled),
+    agcMode: diagString(r.agcMode) ?? 'unknown',
+    agcTopDb: diagNumber(r.agcTopDb) ?? 0,
+    agcOffsetDb: diagNumber(r.agcOffsetDb) ?? 0,
+    effectiveAgcTopDb: diagNumber(r.effectiveAgcTopDb) ?? 0,
+    autoAttEnabled: Boolean(r.autoAttEnabled),
+    adcProtectionEnabled: Boolean(r.adcProtectionEnabled),
+    attenDb: diagNumber(r.attenDb) ?? 0,
+    attOffsetDb: diagNumber(r.attOffsetDb) ?? 0,
+    effectiveAttenDb: diagNumber(r.effectiveAttenDb) ?? 0,
+    adcOverloadWarning: Boolean(r.adcOverloadWarning),
+    adcOverloadLevel: diagNumber(r.adcOverloadLevel) ?? 0,
+    lastOverloadBits: diagNumber(r.lastOverloadBits) ?? 0,
+    adc0MaxMagnitude: diagNumber(r.adc0MaxMagnitude),
+    adc1MaxMagnitude: diagNumber(r.adc1MaxMagnitude),
+    adc0MaxMagnitudeAtOverload: diagNumber(r.adc0MaxMagnitudeAtOverload) ?? 0,
+    adc1MaxMagnitudeAtOverload: diagNumber(r.adc1MaxMagnitudeAtOverload) ?? 0,
+    lastAdcTelemetryUtc: diagString(r.lastAdcTelemetryUtc),
+    squelchEnabled: Boolean(r.squelchEnabled),
+    squelchAdaptive: r.squelchAdaptive === undefined ? true : Boolean(r.squelchAdaptive),
+    squelchLevel: diagNumber(r.squelchLevel) ?? 0,
+    preampOn: Boolean(r.preampOn),
+  };
+}
+
+function normalizeTxRingDiagnostics(raw: unknown): TxRingDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    totalWritten: diagNumber(r.totalWritten) ?? 0,
+    totalRead: diagNumber(r.totalRead) ?? 0,
+    count: diagNumber(r.count) ?? 0,
+    dropped: diagNumber(r.dropped) ?? 0,
+    capacity: diagNumber(r.capacity) ?? 0,
+    recentMag: diagNumber(r.recentMag) ?? 0,
+  };
+}
+
+function normalizeTxIngestDiagnostics(raw: unknown): TxIngestDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    totalMicSamples: diagNumber(r.totalMicSamples) ?? 0,
+    totalTxBlocks: diagNumber(r.totalTxBlocks) ?? 0,
+    droppedFrames: diagNumber(r.droppedFrames) ?? 0,
+  };
+}
+
+function normalizeTxAudioPathHealth(raw: unknown): TxAudioPathHealthDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      hostTxActive: false,
+      p2Attached: false,
+      p2DucLive: false,
+      p2WaitingForTx: false,
+      p2LastActivityAgeMs: null,
+      p2InputComplexSamples: 0,
+      p2PacketsSent: 0,
+      p2QueuedPackets: null,
+      requiresMicUplink: false,
+      micUplinkStatus: 'unknown',
+      micUplinkLastFrameAgeMs: null,
+      micUplinkFrames: 0,
+      micUplinkSamples: 0,
+      micUplinkInvalidFrames: 0,
+      micUplinkOversizeMessages: 0,
+      totalMicSamples: 0,
+      totalTxBlocks: 0,
+      droppedFrames: 0,
+      ringTotalWritten: 0,
+      ringTotalRead: 0,
+      ringCount: 0,
+      ringCapacity: 0,
+      ringFillPct: 0,
+      ringDropped: 0,
+      ringDropRatioPct: 0,
+      ringRecentMag: 0,
+      diagnosticRecommendation: 'TX audio-path health is not available from this backend yet; use raw ring, ingest, and P2 counters until OpenhpsdrZeus is restarted.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    hostTxActive: Boolean(r.hostTxActive),
+    p2Attached: Boolean(r.p2Attached),
+    p2DucLive: Boolean(r.p2DucLive),
+    p2WaitingForTx: Boolean(r.p2WaitingForTx),
+    p2LastActivityAgeMs: diagNumber(r.p2LastActivityAgeMs),
+    p2InputComplexSamples: diagNumber(r.p2InputComplexSamples) ?? 0,
+    p2PacketsSent: diagNumber(r.p2PacketsSent) ?? 0,
+    p2QueuedPackets: diagNumber(r.p2QueuedPackets),
+    requiresMicUplink: Boolean(r.requiresMicUplink),
+    micUplinkStatus: diagString(r.micUplinkStatus) ?? 'unknown',
+    micUplinkLastFrameAgeMs: diagNumber(r.micUplinkLastFrameAgeMs),
+    micUplinkFrames: diagNumber(r.micUplinkFrames) ?? 0,
+    micUplinkSamples: diagNumber(r.micUplinkSamples) ?? 0,
+    micUplinkInvalidFrames: diagNumber(r.micUplinkInvalidFrames) ?? 0,
+    micUplinkOversizeMessages: diagNumber(r.micUplinkOversizeMessages) ?? 0,
+    totalMicSamples: diagNumber(r.totalMicSamples) ?? 0,
+    totalTxBlocks: diagNumber(r.totalTxBlocks) ?? 0,
+    droppedFrames: diagNumber(r.droppedFrames) ?? 0,
+    ringTotalWritten: diagNumber(r.ringTotalWritten) ?? 0,
+    ringTotalRead: diagNumber(r.ringTotalRead) ?? 0,
+    ringCount: diagNumber(r.ringCount) ?? 0,
+    ringCapacity: diagNumber(r.ringCapacity) ?? 0,
+    ringFillPct: diagNumber(r.ringFillPct) ?? 0,
+    ringDropped: diagNumber(r.ringDropped) ?? 0,
+    ringDropRatioPct: diagNumber(r.ringDropRatioPct) ?? 0,
+    ringRecentMag: diagNumber(r.ringRecentMag) ?? 0,
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeProtocol2TxIqDiagnostics(raw: unknown): Protocol2TxIqDiagnosticsDto | null {
+  if (raw === null || raw === undefined) return null;
+  const r = asDiagRecord(raw);
+  return {
+    inputComplexSamples: diagNumber(r.inputComplexSamples) ?? 0,
+    packetsQueued: diagNumber(r.packetsQueued) ?? 0,
+    packetsSent: diagNumber(r.packetsSent) ?? 0,
+    queuedPackets: diagNumber(r.queuedPackets) ?? 0,
+    queueWriteFailures: diagNumber(r.queueWriteFailures) ?? 0,
+    sendFailures: diagNumber(r.sendFailures) ?? 0,
+    resetDrainedPackets: diagNumber(r.resetDrainedPackets) ?? 0,
+    scratchComplexSamples: diagNumber(r.scratchComplexSamples) ?? 0,
+    nextSequence: diagNumber(r.nextSequence) ?? 0,
+    lastPacketsPerSecond: diagNumber(r.lastPacketsPerSecond) ?? 0,
+    lastFifoModelSamples: diagNumber(r.lastFifoModelSamples) ?? 0,
+    lastRateTimestampUtc: diagString(r.lastRateTimestampUtc),
+    senderRunning: Boolean(r.senderRunning),
+  };
+}
+
+function normalizeTxMicUplinkDiagnostics(raw: unknown): TxMicUplinkDiagnosticsDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      status: 'unavailable',
+      subscriberAttached: false,
+      clientCount: 0,
+      expectedFrameSamples: 960,
+      expectedFrameBytes: 3840,
+      totalFrames: 0,
+      totalSamples: 0,
+      totalBytes: 0,
+      lastFrameBytes: 0,
+      lastFrameSamples: 0,
+      lastFrameAgeMs: null,
+      lastFrameUtc: null,
+      invalidFrames: 0,
+      oversizeMessages: 0,
+      unknownFrames: 0,
+      diagnosticRecommendation: 'TX mic uplink diagnostics are not available from this backend yet; use ingest counters and TXA stage meters until OpenhpsdrZeus is restarted.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    status: diagString(r.status) ?? 'unknown',
+    subscriberAttached: Boolean(r.subscriberAttached),
+    clientCount: diagNumber(r.clientCount) ?? 0,
+    expectedFrameSamples: diagNumber(r.expectedFrameSamples) ?? 960,
+    expectedFrameBytes: diagNumber(r.expectedFrameBytes) ?? 3840,
+    totalFrames: diagNumber(r.totalFrames) ?? 0,
+    totalSamples: diagNumber(r.totalSamples) ?? 0,
+    totalBytes: diagNumber(r.totalBytes) ?? 0,
+    lastFrameBytes: diagNumber(r.lastFrameBytes) ?? 0,
+    lastFrameSamples: diagNumber(r.lastFrameSamples) ?? 0,
+    lastFrameAgeMs: diagNumber(r.lastFrameAgeMs),
+    lastFrameUtc: diagString(r.lastFrameUtc),
+    invalidFrames: diagNumber(r.invalidFrames) ?? 0,
+    oversizeMessages: diagNumber(r.oversizeMessages) ?? 0,
+    unknownFrames: diagNumber(r.unknownFrames) ?? 0,
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeTxEgressHealth(raw: unknown): TxEgressHealthDto {
+  if (raw === null || raw === undefined) {
+    return {
+      schemaVersion: 0,
+      generatedUtc: new Date().toISOString(),
+      activeTransport: 'unknown',
+      healthStatus: 'unknown',
+      p2Attached: false,
+      p2Live: false,
+      p2LastActivityAgeMs: null,
+      p1RingDropRatioPct: 0,
+      hostMoxOn: false,
+      hostTunOn: false,
+      hostTwoToneOn: false,
+      hostTxActive: false,
+      hardwarePtt: null,
+      forwardWatts: null,
+      rfDetected: false,
+      rfEvidenceStatus: 'unknown',
+      qualityScore: 0,
+      qualityTone: 'unknown',
+      p2PacketRateStatus: 'missing',
+      p2LastPacketsPerSecond: null,
+      p2FifoModelSamples: null,
+      p2QueuedPackets: null,
+      p2TransportFailures: 0,
+      qualityReasons: ['tx-egress-health-unavailable'],
+      txDutyProfile: 'unknown',
+      continuousDutyRecommendedMaxWatts: null,
+      continuousDutyLimitExceeded: false,
+      continuousDutyManualReference: null,
+      diagnosticRecommendation: 'TX egress health is not available from this backend yet; use raw counters until OpenhpsdrZeus is restarted.',
+    };
+  }
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+    activeTransport: diagString(r.activeTransport) ?? 'unknown',
+    healthStatus: diagString(r.healthStatus) ?? 'unknown',
+    p2Attached: Boolean(r.p2Attached),
+    p2Live: Boolean(r.p2Live),
+    p2LastActivityAgeMs: diagNumber(r.p2LastActivityAgeMs),
+    p1RingDropRatioPct: diagNumber(r.p1RingDropRatioPct) ?? 0,
+    hostMoxOn: Boolean(r.hostMoxOn),
+    hostTunOn: Boolean(r.hostTunOn),
+    hostTwoToneOn: Boolean(r.hostTwoToneOn),
+    hostTxActive: Boolean(r.hostTxActive),
+    hardwarePtt: diagBool(r.hardwarePtt),
+    forwardWatts: diagNumber(r.forwardWatts),
+    rfDetected: Boolean(r.rfDetected),
+    rfEvidenceStatus: diagString(r.rfEvidenceStatus) ?? 'unknown',
+    qualityScore: diagNumber(r.qualityScore) ?? 0,
+    qualityTone: diagString(r.qualityTone) ?? 'unknown',
+    p2PacketRateStatus: diagString(r.p2PacketRateStatus) ?? 'missing',
+    p2LastPacketsPerSecond: diagNumber(r.p2LastPacketsPerSecond),
+    p2FifoModelSamples: diagNumber(r.p2FifoModelSamples),
+    p2QueuedPackets: diagNumber(r.p2QueuedPackets),
+    p2TransportFailures: diagNumber(r.p2TransportFailures) ?? 0,
+    qualityReasons: Array.isArray(r.qualityReasons)
+      ? r.qualityReasons.map((item) => diagString(item)).filter((item): item is string => item !== null)
+      : [],
+    txDutyProfile: diagString(r.txDutyProfile) ?? 'unknown',
+    continuousDutyRecommendedMaxWatts: diagNumber(r.continuousDutyRecommendedMaxWatts),
+    continuousDutyLimitExceeded: Boolean(r.continuousDutyLimitExceeded),
+    continuousDutyManualReference: diagString(r.continuousDutyManualReference),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeTxStageDiagnostics(raw: unknown): TxStageDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    source: diagString(r.source) ?? 'unknown',
+    status: diagString(r.status) ?? 'idle',
+    hostTxActive: Boolean(r.hostTxActive),
+    micPkDbfs: diagNumber(r.micPkDbfs),
+    micAvDbfs: diagNumber(r.micAvDbfs),
+    eqPkDbfs: diagNumber(r.eqPkDbfs),
+    eqAvDbfs: diagNumber(r.eqAvDbfs),
+    lvlrPkDbfs: diagNumber(r.lvlrPkDbfs),
+    lvlrAvDbfs: diagNumber(r.lvlrAvDbfs),
+    lvlrGrDb: diagNumber(r.lvlrGrDb) ?? 0,
+    cfcPkDbfs: diagNumber(r.cfcPkDbfs),
+    cfcAvDbfs: diagNumber(r.cfcAvDbfs),
+    cfcGrDb: diagNumber(r.cfcGrDb) ?? 0,
+    compPkDbfs: diagNumber(r.compPkDbfs),
+    compAvDbfs: diagNumber(r.compAvDbfs),
+    alcPkDbfs: diagNumber(r.alcPkDbfs),
+    alcAvDbfs: diagNumber(r.alcAvDbfs),
+    alcGrDb: diagNumber(r.alcGrDb) ?? 0,
+    outPkDbfs: diagNumber(r.outPkDbfs),
+    outAvDbfs: diagNumber(r.outAvDbfs),
+    outputHeadroomDb: diagNumber(r.outputHeadroomDb),
+    outputCrestFactorDb: diagNumber(r.outputCrestFactorDb),
+    densityStatus: diagString(r.densityStatus) ?? 'unknown',
+    densityTone: diagString(r.densityTone) ?? 'verify',
+    densityRecommendation: diagString(r.densityRecommendation),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+  };
+}
+
+function normalizeTxDiagnostics(raw: unknown): TxDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  const pluginRaw = r.txPlugins === null || r.txPlugins === undefined
+    ? null
+    : asDiagRecord(r.txPlugins);
+  const vstRaw = r.vstEngine === null || r.vstEngine === undefined
+    ? null
+    : asDiagRecord(r.vstEngine);
+  const rxVstRaw = r.rxVstEngine === null || r.rxVstEngine === undefined
+    ? null
+    : asDiagRecord(r.rxVstEngine);
+  const ring = normalizeTxRingDiagnostics(r.ring);
+  const ingest = normalizeTxIngestDiagnostics(r.ingest);
+  const protocol2 = normalizeProtocol2TxIqDiagnostics(r.protocol2);
+  return {
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+    iqSourceType: diagString(r.iqSourceType),
+    iqSourceIsRing: Boolean(r.iqSourceIsRing),
+    ring,
+    ingest,
+    protocol2,
+    micUplink: normalizeTxMicUplinkDiagnostics(r.micUplink),
+    audioPath: normalizeTxAudioPathHealth(r.audioPath),
+    stage: normalizeTxStageDiagnostics(r.stage),
+    egress: normalizeTxEgressHealth(r.egress),
+    txPlugins: pluginRaw === null
+      ? null
+      : {
+          masterBypassed: Boolean(pluginRaw.masterBypassed),
+          bypassedForRemoteTx: Boolean(pluginRaw.bypassedForRemoteTx),
+        },
+    vstEngine: vstRaw === null
+      ? null
+      : {
+          active: Boolean(vstRaw.active),
+          degradedBlocks: diagNumber(vstRaw.degradedBlocks) ?? 0,
+        },
+    rxVstEngine: rxVstRaw === null
+      ? null
+      : {
+          active: Boolean(rxVstRaw.active),
+          available: Boolean(rxVstRaw.available),
+          activePlugins: diagNumber(rxVstRaw.activePlugins) ?? 0,
+          degradedBlocks: diagNumber(rxVstRaw.degradedBlocks) ?? 0,
+        },
+  };
+}
+
+function normalizeExternalPttStatus(raw: unknown): ExternalPttStatusDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    available: Boolean(r.available),
+    protocol: diagString(r.protocol) ?? 'none',
+    hardwarePtt: diagBool(r.hardwarePtt),
+    cwKeyDown: diagBool(r.cwKeyDown),
+    ownedMox: Boolean(r.ownedMox),
+    hangTimeMs: diagNumber(r.hangTimeMs) ?? 0,
+    moxOn: Boolean(r.moxOn),
+    tunOn: Boolean(r.tunOn),
+    twoToneOn: Boolean(r.twoToneOn),
+    moxOwner: diagString(r.moxOwner),
+    cwMode: Boolean(r.cwMode),
+    sidetoneAvailable: Boolean(r.sidetoneAvailable),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function diagActiveProtocol(raw: unknown): 'P1' | 'P2' | null {
+  return raw === 'P1' || raw === 'P2' ? raw : null;
+}
+
+function normalizeHardwareKeyingStatus(raw: unknown): HardwareKeyingStatusDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    p1Packets: diagNumber(r.p1Packets) ?? 0,
+    p1LastUpdatedUtc: diagString(r.p1LastUpdatedUtc),
+    p1HardwarePtt: diagBool(r.p1HardwarePtt),
+    p1CwKeyDown: diagBool(r.p1CwKeyDown),
+    p2Packets: diagNumber(r.p2Packets) ?? 0,
+    p2LastUpdatedUtc: diagString(r.p2LastUpdatedUtc),
+    p2PttIn: diagBool(r.p2PttIn),
+    p2DotIn: diagBool(r.p2DotIn),
+    p2DashIn: diagBool(r.p2DashIn),
+    p2SidetoneActive: diagBool(r.p2SidetoneActive),
+    externalPtt: normalizeExternalPttStatus(r.externalPtt),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeRadioPowerReading(raw: unknown): RadioPowerReadingDto {
+  const r = asDiagRecord(raw);
+  return {
+    packets: diagNumber(r.packets) ?? 0,
+    lastUpdatedUtc: diagString(r.lastUpdatedUtc),
+    exciterAdc: diagNumber(r.exciterAdc),
+    fwdAdc: diagNumber(r.fwdAdc),
+    revAdc: diagNumber(r.revAdc),
+    fwdWatts: diagNumber(r.fwdWatts),
+    refWatts: diagNumber(r.refWatts),
+    swr: diagNumber(r.swr),
+  };
+}
+
+function normalizeRadioPowerCalibration(raw: unknown): RadioPowerCalibrationDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    calibrationBoard: diagString(r.calibrationBoard) ?? 'Unknown',
+    bridgeVolt: diagNumber(r.bridgeVolt) ?? 0,
+    refVoltage: diagNumber(r.refVoltage) ?? 0,
+    adcCalOffset: diagNumber(r.adcCalOffset) ?? 0,
+    calibrationMaxWatts: diagNumber(r.calibrationMaxWatts) ?? 0,
+    calibrationFallbackApplied: Boolean(r.calibrationFallbackApplied),
+    capabilityMaxPowerWatts: diagNumber(r.capabilityMaxPowerWatts) ?? 0,
+    p1: normalizeRadioPowerReading(r.p1),
+    p2: normalizeRadioPowerReading(r.p2),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeRadioSupplyReading(raw: unknown): RadioSupplyReadingDto {
+  const r = asDiagRecord(raw);
+  return {
+    packets: diagNumber(r.packets) ?? 0,
+    lastUpdatedUtc: diagString(r.lastUpdatedUtc),
+    supplyVoltsAdc: diagNumber(r.supplyVoltsAdc),
+    supplyVolts: diagNumber(r.supplyVolts),
+    rawScaledSupplyVolts: diagNumber(r.rawScaledSupplyVolts),
+    supplyVoltsTrusted: Boolean(r.supplyVoltsTrusted),
+    scaleStatus: diagString(r.scaleStatus) ?? 'unknown',
+  };
+}
+
+function normalizeRadioSupplyAlarms(raw: unknown): RadioSupplyAlarmsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    supportsSupplyTelemetry: Boolean(r.supportsSupplyTelemetry),
+    adcSupplyMv: diagNumber(r.adcSupplyMv) ?? 0,
+    activeThresholdsConfigured: Boolean(r.activeThresholdsConfigured),
+    alarmActive: Boolean(r.alarmActive),
+    alarmStatus: diagString(r.alarmStatus) ?? 'unknown',
+    p1: normalizeRadioSupplyReading(r.p1),
+    p2: normalizeRadioSupplyReading(r.p2),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeRadioPaThermalDiagnostics(raw: unknown): RadioPaThermalDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    supportsTemperatureTelemetry: Boolean(r.supportsTemperatureTelemetry),
+    temperatureDecoded: Boolean(r.temperatureDecoded),
+    temperatureAvailable: Boolean(r.temperatureAvailable),
+    source: diagString(r.source) ?? 'unavailable',
+    status: diagString(r.status) ?? 'unknown',
+    tempC: diagNumber(r.tempC),
+    rawAdc: diagNumber(r.rawAdc),
+    ageMs: diagNumber(r.ageMs),
+    lastUpdatedUtc: diagString(r.lastUpdatedUtc),
+    warningTempC: diagNumber(r.warningTempC) ?? 50,
+    criticalTempC: diagNumber(r.criticalTempC) ?? 55,
+    manualReference: diagString(r.manualReference),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeRadioNetworkCounters(raw: unknown): RadioNetworkCountersDto {
+  const r = asDiagRecord(raw);
+  return {
+    attached: Boolean(r.attached),
+    totalFrames: diagNumber(r.totalFrames) ?? 0,
+    droppedFrames: diagNumber(r.droppedFrames) ?? 0,
+    dropRatioPct: diagNumber(r.dropRatioPct) ?? 0,
+    hiPriorityPackets: diagNumber(r.hiPriorityPackets),
+    psPairedPackets: diagNumber(r.psPairedPackets),
+  };
+}
+
+function normalizeRadioNetworkProfile(raw: unknown): RadioNetworkProfileDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    connectionStatus: diagString(r.connectionStatus) ?? 'Disconnected',
+    endpoint: diagString(r.endpoint),
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    sampleRateHz: diagNumber(r.sampleRateHz) ?? 0,
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    transport: diagString(r.transport) ?? 'udp',
+    p1: normalizeRadioNetworkCounters(r.p1),
+    p2: normalizeRadioNetworkCounters(r.p2),
+    healthStatus: diagString(r.healthStatus) ?? 'unknown',
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeUserIoLine(raw: unknown): UserIoLineDto {
+  const r = asDiagRecord(raw);
+  return {
+    id: diagString(r.id) ?? 'unknown',
+    kind: diagString(r.kind) ?? 'unknown',
+    label: diagString(r.label) ?? 'User I/O',
+    rawAdc: diagNumber(r.rawAdc),
+    normalizedPct: diagNumber(r.normalizedPct),
+    digitalState: diagBool(r.digitalState),
+  };
+}
+
+function normalizeUserIoLines(raw: unknown): UserIoLineDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(normalizeUserIoLine);
+}
+
+function normalizeUserIoLabels(raw: unknown): UserIoLabelsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    p2Attached: Boolean(r.p2Attached),
+    p2Packets: diagNumber(r.p2Packets) ?? 0,
+    p2LastUpdatedUtc: diagString(r.p2LastUpdatedUtc),
+    lines: normalizeUserIoLines(r.lines),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeUserIoActions(raw: unknown): UserIoActionsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    p2Attached: Boolean(r.p2Attached),
+    p2Packets: diagNumber(r.p2Packets) ?? 0,
+    p2LastUpdatedUtc: diagString(r.p2LastUpdatedUtc),
+    actionBindingsConfigured: Boolean(r.actionBindingsConfigured),
+    lines: normalizeUserIoLines(r.lines),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeRadioDigInDiagnostics(raw: unknown): RadioDigInDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    activeProtocol: diagActiveProtocol(r.activeProtocol),
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    p2Attached: Boolean(r.p2Attached),
+    p2Packets: diagNumber(r.p2Packets) ?? 0,
+    p2LastUpdatedUtc: diagString(r.p2LastUpdatedUtc),
+    userDigitalIn: diagNumber(r.userDigitalIn),
+    txDisableLineId: diagString(r.txDisableLineId) ?? 'userDigital0',
+    txDisableLineName: diagString(r.txDisableLineName) ?? 'User I/O IO4',
+    txDisableBit: diagNumber(r.txDisableBit) ?? 0,
+    txDisableRawHigh: diagBool(r.txDisableRawHigh),
+    txDisableActive: diagBool(r.txDisableActive),
+    txDisablePolarity: diagString(r.txDisablePolarity) ?? 'active-low',
+    txDisableMappingStatus: diagString(r.txDisableMappingStatus) ?? 'unknown',
+    txInhibitBehaviorArmed: Boolean(r.txInhibitBehaviorArmed),
+    cwKeyTipSource: diagString(r.cwKeyTipSource) ?? 'p2.dotIn',
+    cwKeyTipDown: diagBool(r.cwKeyTipDown),
+    cwDashInputDown: diagBool(r.cwDashInputDown),
+    manualReference: diagString(r.manualReference),
+    diagnosticRecommendation: diagString(r.diagnosticRecommendation),
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+  };
+}
+
+function diagNumberArray(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v) => diagNumber(v) ?? 0);
+}
+
+function normalizeMapBytes(raw: unknown): HardwareMapByteDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      offset: diagNumber(r.offset) ?? 0,
+      hexOffset: diagString(r.hexOffset) ?? '0x00',
+      known: diagString(r.known),
+      first: diagNumber(r.first) ?? 0,
+      last: diagNumber(r.last) ?? 0,
+      min: diagNumber(r.min) ?? 0,
+      max: diagNumber(r.max) ?? 0,
+      changedMask: diagNumber(r.changedMask) ?? 0,
+      changedMaskHex: diagString(r.changedMaskHex) ?? '0x00',
+      changeCount: diagNumber(r.changeCount) ?? 0,
+      bitSetCounts: diagNumberArray(r.bitSetCounts),
+      bitChangeCounts: diagNumberArray(r.bitChangeCounts),
+    };
+  });
+}
+
+function normalizeMapWords(raw: unknown): HardwareMapWordDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      offset: diagNumber(r.offset) ?? 0,
+      hexOffset: diagString(r.hexOffset) ?? '0x00',
+      known: diagString(r.known),
+      first: diagNumber(r.first) ?? 0,
+      last: diagNumber(r.last) ?? 0,
+      min: diagNumber(r.min) ?? 0,
+      max: diagNumber(r.max) ?? 0,
+      changeCount: diagNumber(r.changeCount) ?? 0,
+    };
+  });
+}
+
+function normalizeByteStreamMap(raw: unknown): HardwareByteStreamMapDto {
+  const r = asDiagRecord(raw);
+  return {
+    stream: diagString(r.stream) ?? '',
+    source: diagString(r.source) ?? '',
+    samples: diagNumber(r.samples) ?? 0,
+    startedUtc: diagString(r.startedUtc),
+    lastUpdatedUtc: diagString(r.lastUpdatedUtc),
+    length: diagNumber(r.length) ?? 0,
+    lastHex: diagString(r.lastHex) ?? '',
+    changedByteCount: diagNumber(r.changedByteCount) ?? 0,
+    changedWordCount: diagNumber(r.changedWordCount) ?? 0,
+    bytes: normalizeMapBytes(r.bytes),
+    words: normalizeMapWords(r.words),
+  };
+}
+
+function normalizeP1AddressMap(raw: unknown): HardwareP1AddressMapDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      c0Address: diagNumber(r.c0Address) ?? 0,
+      hexAddress: diagString(r.hexAddress) ?? '0x00',
+      samples: diagNumber(r.samples) ?? 0,
+      lastRawC0: diagNumber(r.lastRawC0) ?? 0,
+      lastRawC0Hex: diagString(r.lastRawC0Hex) ?? '0x00',
+      firstAin0: diagNumber(r.firstAin0) ?? 0,
+      firstAin1: diagNumber(r.firstAin1) ?? 0,
+      lastAin0: diagNumber(r.lastAin0) ?? 0,
+      lastAin1: diagNumber(r.lastAin1) ?? 0,
+      minAin0: diagNumber(r.minAin0) ?? 0,
+      maxAin0: diagNumber(r.maxAin0) ?? 0,
+      minAin1: diagNumber(r.minAin1) ?? 0,
+      maxAin1: diagNumber(r.maxAin1) ?? 0,
+      ain0ChangeCount: diagNumber(r.ain0ChangeCount) ?? 0,
+      ain1ChangeCount: diagNumber(r.ain1ChangeCount) ?? 0,
+      knownAin0: diagString(r.knownAin0),
+      knownAin1: diagString(r.knownAin1),
+      notes: diagString(r.notes) ?? '',
+    };
+  });
+}
+
+function normalizeP1Map(raw: unknown): HardwareP1MapDto {
+  const r = asDiagRecord(raw);
+  return {
+    stream: diagString(r.stream) ?? '',
+    source: diagString(r.source) ?? '',
+    samples: diagNumber(r.samples) ?? 0,
+    startedUtc: diagString(r.startedUtc),
+    lastUpdatedUtc: diagString(r.lastUpdatedUtc),
+    addresses: normalizeP1AddressMap(r.addresses),
+    rawGap: diagString(r.rawGap) ?? '',
+  };
+}
+
+function normalizeP1MarkerDeltas(raw: unknown): HardwareP1MarkerDeltaDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      c0Address: diagNumber(r.c0Address) ?? 0,
+      hexAddress: diagString(r.hexAddress) ?? '0x00',
+      knownAin0: diagString(r.knownAin0),
+      knownAin1: diagString(r.knownAin1),
+      previousAin0: diagNumber(r.previousAin0),
+      currentAin0: diagNumber(r.currentAin0),
+      previousAin1: diagNumber(r.previousAin1),
+      currentAin1: diagNumber(r.currentAin1),
+      ain0Delta: diagNumber(r.ain0Delta),
+      ain1Delta: diagNumber(r.ain1Delta),
+      ain0ChangeCountDelta: diagNumber(r.ain0ChangeCountDelta) ?? 0,
+      ain1ChangeCountDelta: diagNumber(r.ain1ChangeCountDelta) ?? 0,
+    };
+  });
+}
+
+function normalizeByteMarkerDeltas(raw: unknown): HardwareByteMarkerDeltaDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      offset: diagNumber(r.offset) ?? 0,
+      hexOffset: diagString(r.hexOffset) ?? '0x00',
+      known: diagString(r.known),
+      previous: diagNumber(r.previous),
+      current: diagNumber(r.current),
+      previousHex: diagString(r.previousHex) ?? '-',
+      currentHex: diagString(r.currentHex) ?? '-',
+      xorMask: diagNumber(r.xorMask) ?? 0,
+      xorMaskHex: diagString(r.xorMaskHex) ?? '0x00',
+      intervalChangeCount: diagNumber(r.intervalChangeCount) ?? 0,
+      intervalChangedBits: diagNumberArray(r.intervalChangedBits),
+    };
+  });
+}
+
+function normalizeWordMarkerDeltas(raw: unknown): HardwareWordMarkerDeltaDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      offset: diagNumber(r.offset) ?? 0,
+      hexOffset: diagString(r.hexOffset) ?? '0x00',
+      known: diagString(r.known),
+      previous: diagNumber(r.previous),
+      current: diagNumber(r.current),
+      previousHex: diagString(r.previousHex) ?? '-',
+      currentHex: diagString(r.currentHex) ?? '-',
+      valueDelta: diagNumber(r.valueDelta),
+      intervalChangeCount: diagNumber(r.intervalChangeCount) ?? 0,
+    };
+  });
+}
+
+function normalizeMappingMarkerDelta(raw: unknown): HardwareMappingMarkerDeltaDto {
+  const r = asDiagRecord(raw);
+  return {
+    previousId: diagNumber(r.previousId),
+    previousLabel: diagString(r.previousLabel),
+    baseline: Boolean(r.baseline),
+    p1SampleDelta: diagNumber(r.p1SampleDelta) ?? 0,
+    p2SampleDelta: diagNumber(r.p2SampleDelta) ?? 0,
+    p1ChangedAddresses: normalizeP1MarkerDeltas(r.p1ChangedAddresses),
+    p2ChangedBytes: normalizeByteMarkerDeltas(r.p2ChangedBytes),
+    p2ChangedWords: normalizeWordMarkerDeltas(r.p2ChangedWords),
+  };
+}
+
+function normalizeMappingMarkers(raw: unknown): HardwareMappingMarkerDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    const activeProtocol =
+      r.activeProtocol === 'P1' || r.activeProtocol === 'P2'
+        ? r.activeProtocol
+        : null;
+    return {
+      id: diagNumber(r.id) ?? 0,
+      label: diagString(r.label) ?? '',
+      notes: diagString(r.notes),
+      createdUtc: diagString(r.createdUtc) ?? new Date().toISOString(),
+      activeProtocol,
+      endpoint: diagString(r.endpoint),
+      p1Packets: diagNumber(r.p1Packets) ?? 0,
+      p2Packets: diagNumber(r.p2Packets) ?? 0,
+      p1Samples: diagNumber(r.p1Samples) ?? 0,
+      p2Samples: diagNumber(r.p2Samples) ?? 0,
+      p1LastUpdatedUtc: diagString(r.p1LastUpdatedUtc),
+      p2LastUpdatedUtc: diagString(r.p2LastUpdatedUtc),
+      sincePrevious: normalizeMappingMarkerDelta(r.sincePrevious),
+    };
+  });
+}
+
+function normalizeHardwareMapping(raw: unknown): HardwareMappingDto {
+  const r = asDiagRecord(raw);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 1,
+    p1: normalizeP1Map(r.p1),
+    p2HiPriority: normalizeByteStreamMap(r.p2HiPriority),
+    markers: normalizeMappingMarkers(r.markers),
+  };
+}
+
+const FULL_RX_SAMPLE_RATE_LADDER_HZ = [48_000, 96_000, 192_000, 384_000, 768_000, 1_536_000];
+
+function normalizeHardwareSampleRates(raw: unknown): HardwareSampleRateCapabilityDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      rateHz: diagNumber(r.rateHz) ?? 0,
+      label: diagString(r.label) ?? '',
+      supportedByBoard: Boolean(r.supportedByBoard),
+      supportedByActiveProtocol: Boolean(r.supportedByActiveProtocol),
+      currentlySelected: Boolean(r.currentlySelected),
+      status: diagString(r.status) ?? 'unknown',
+      notes: diagString(r.notes) ?? '',
+    };
+  });
+}
+
+function normalizeHardwarePotentialItems(raw: unknown): HardwarePotentialItemDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      id: diagString(r.id) ?? '',
+      title: diagString(r.title) ?? '',
+      category: diagString(r.category) ?? '',
+      manualCapability: diagString(r.manualCapability) ?? '',
+      currentExposure: diagString(r.currentExposure) ?? '',
+      implementationStatus: diagString(r.implementationStatus) ?? 'unknown',
+      safetyClass: diagString(r.safetyClass) ?? 'unknown',
+      userConfigurable: Boolean(r.userConfigurable),
+      telemetryPaths: diagStringArray(r.telemetryPaths),
+      currentControls: diagStringArray(r.currentControls),
+      blockers: diagStringArray(r.blockers),
+      nextStep: diagString(r.nextStep) ?? '',
+    };
+  });
+}
+
+function normalizeHardwarePotential(raw: unknown): HardwarePotentialDto {
+  const r = asDiagRecord(raw);
+  const protocol = diagString(r.activeProtocol) ?? 'none';
+  const fullLadder = diagNumberArray(r.fullRxSampleRateLadderHz);
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 0,
+    generatedUtc: diagString(r.generatedUtc) ?? new Date().toISOString(),
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    g2Class: Boolean(r.g2Class),
+    activeProtocol: protocol,
+    currentSampleRateHz: diagNumber(r.currentSampleRateHz) ?? 0,
+    maxRxSampleRateHz: diagNumber(r.maxRxSampleRateHz) ?? 0,
+    fullRxSampleRateLadderHz: fullLadder.length
+      ? fullLadder
+      : [...FULL_RX_SAMPLE_RATE_LADDER_HZ],
+    sampleRates: normalizeHardwareSampleRates(r.sampleRates),
+    items: normalizeHardwarePotentialItems(r.items),
+    ditherRandomAudit: diagStringArray(r.ditherRandomAudit),
+    filterAndWindowAudit: diagStringArray(r.filterAndWindowAudit),
+    diagnosticRecommendation:
+      diagString(r.diagnosticRecommendation) ??
+      'Hardware-potential diagnostics are not available from this backend yet; restart OpenhpsdrZeus after updating to expose sample-rate, dither/random, and filter/window audits.',
+  };
+}
+
+function normalizeG2MappedSensors(raw: unknown): G2MappedSensorDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      id: diagString(r.id) ?? '',
+      label: diagString(r.label) ?? '',
+      telemetryPath: diagString(r.telemetryPath) ?? '',
+      source: diagString(r.source) ?? '',
+      rawValue: diagNumber(r.rawValue),
+      status: diagString(r.status) ?? 'unknown',
+      notes: diagString(r.notes) ?? '',
+    };
+  });
+}
+
+function normalizeG2UnmappedManualSensors(raw: unknown): G2UnmappedManualSensorDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    return {
+      id: diagString(r.id) ?? '',
+      label: diagString(r.label) ?? '',
+      manualEvidence: diagString(r.manualEvidence) ?? '',
+      currentTelemetryStatus: diagString(r.currentTelemetryStatus) ?? 'unknown',
+      requiredCapture: diagString(r.requiredCapture) ?? '',
+      safetyClass: diagString(r.safetyClass) ?? 'tx-monitoring-only',
+    };
+  });
+}
+
+function normalizeG2CandidateTelemetryWords(raw: unknown): G2CandidateTelemetryWordDto[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const r = asDiagRecord(entry);
+    const offset = diagNumber(r.offset) ?? 0;
+    return {
+      offset,
+      hexOffset: diagString(r.hexOffset) ?? `0x${offset.toString(16).toUpperCase().padStart(2, '0')}`,
+      known: diagString(r.known),
+      last: diagNumber(r.last) ?? 0,
+      min: diagNumber(r.min) ?? 0,
+      max: diagNumber(r.max) ?? 0,
+      changeCount: diagNumber(r.changeCount) ?? 0,
+      status: diagString(r.status) ?? 'unknown',
+      mappingHint: diagString(r.mappingHint) ?? '',
+    };
+  });
+}
+
+function normalizeG2SensorMappingDiagnostics(raw: unknown): G2SensorMappingDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  const activeProtocol =
+    r.activeProtocol === 'P1' || r.activeProtocol === 'P2'
+      ? r.activeProtocol
+      : null;
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 1,
+    activeProtocol,
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    g2Class: Boolean(r.g2Class),
+    p2Attached: Boolean(r.p2Attached),
+    p2Packets: diagNumber(r.p2Packets) ?? 0,
+    p2LastUpdatedUtc: diagString(r.p2LastUpdatedUtc),
+    status: diagString(r.status) ?? 'unavailable',
+    mappedSensors: normalizeG2MappedSensors(r.mappedSensors),
+    unmappedManualSensors: normalizeG2UnmappedManualSensors(r.unmappedManualSensors),
+    candidateWords: normalizeG2CandidateTelemetryWords(r.candidateWords),
+    manualReference:
+      diagString(r.manualReference)
+      ?? 'G2 sensor mapping diagnostics are not available from this backend yet.',
+    diagnosticRecommendation:
+      diagString(r.diagnosticRecommendation)
+      ?? 'Restart OpenhpsdrZeus after updating to expose G2 PA current, driver current, fan, and P2 thermal mapping guidance.',
+    generatedUtc: diagString(r.generatedUtc) ?? new Date().toISOString(),
+  };
+}
+
+function normalizeG2FirmwareOptions(raw: unknown): G2FirmwareOptionsDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  const activeProtocol =
+    r.activeProtocol === 'P1' || r.activeProtocol === 'P2'
+      ? r.activeProtocol
+      : null;
+  const options = Array.isArray(r.options)
+    ? r.options.map((entry) => {
+      const item = asDiagRecord(entry);
+      return {
+        id: diagString(item.id) ?? '',
+        label: diagString(item.label) ?? '',
+        enabled: diagBool(item.enabled),
+        thetisDefaultEnabled: Boolean(item.thetisDefaultEnabled),
+        status: diagString(item.status) ?? 'unknown',
+        source: diagString(item.source) ?? '',
+        notes: diagString(item.notes) ?? '',
+      };
+    })
+    : [];
+
+  return {
+    schemaVersion: diagNumber(r.schemaVersion) ?? 1,
+    activeProtocol,
+    connectedBoard: diagString(r.connectedBoard) ?? 'Unknown',
+    effectiveBoard: diagString(r.effectiveBoard) ?? 'Unknown',
+    orionMkIIVariant: diagString(r.orionMkIIVariant) ?? 'G2',
+    g2Class: Boolean(r.g2Class),
+    maxRxFrequencyMhz: diagNumber(r.maxRxFrequencyMhz) ?? 60,
+    maxRxFrequencyStatus: diagString(r.maxRxFrequencyStatus) ?? 'unknown',
+    rx1AttenuatorDb: diagNumber(r.rx1AttenuatorDb) ?? 0,
+    rx1AttenuatorStatus: diagString(r.rx1AttenuatorStatus) ?? 'unknown',
+    rx1AttenuatorSupported: Boolean(r.rx1AttenuatorSupported),
+    options,
+    missingControlSurface: diagString(r.missingControlSurface) ?? '',
+    manualReference:
+      diagString(r.manualReference)
+      ?? 'G2 firmware option diagnostics are not available from this backend yet.',
+    diagnosticRecommendation:
+      diagString(r.diagnosticRecommendation)
+      ?? 'Restart OpenhpsdrZeus after updating to expose G2 dither/random/MaxRXFreq diagnostics.',
+    generatedUtc: diagString(r.generatedUtc) ?? new Date().toISOString(),
+  };
+}
+
+function normalizeHardwareDiagnostics(raw: unknown): HardwareDiagnosticsDto {
+  const r = asDiagRecord(raw);
+  const p1 = asDiagRecord(r.p1);
+  const p2 = asDiagRecord(r.p2);
+  const activeProtocol =
+    r.activeProtocol === 'P1' || r.activeProtocol === 'P2'
+      ? r.activeProtocol
+      : null;
+  return {
+    hardwareDiagnosticsApiVersion:
+      diagNumber(r.hardwareDiagnosticsApiVersion) ?? 0,
+    generatedUtc:
+      typeof r.generatedUtc === 'string'
+        ? r.generatedUtc
+        : new Date().toISOString(),
+    connectionStatus: normalizeStatus(r.connectionStatus),
+    endpoint: diagString(r.endpoint),
+    vfoHz: diagNumber(r.vfoHz) ?? 0,
+    sampleRate: diagNumber(r.sampleRate) ?? 0,
+    mode: normalizeMode(r.mode),
+    connectedBoard:
+      typeof r.connectedBoard === 'string' ? r.connectedBoard : 'Unknown',
+    effectiveBoard:
+      typeof r.effectiveBoard === 'string' ? r.effectiveBoard : 'Unknown',
+    orionMkIIVariant:
+      typeof r.orionMkIIVariant === 'string' ? r.orionMkIIVariant : 'G2',
+    capabilities: parseBoardCapabilities(r.capabilities),
+    dsp: normalizeDspDiagnostics(r.dsp),
+    frontendDspScene: normalizeFrontendDspScene(r.frontendDspScene),
+    frontendAudioPlayback: normalizeFrontendAudioPlayback(r.frontendAudioPlayback),
+    pureSignal: normalizePureSignalDiagnostics(r.pureSignal),
+    digIn: normalizeRadioDigInDiagnostics(r.digIn),
+    g2Sensors: normalizeG2SensorMappingDiagnostics(r.g2Sensors),
+    g2FirmwareOptions: normalizeG2FirmwareOptions(r.g2FirmwareOptions),
+    activeProtocol,
+    p1: {
+      packets: diagNumber(p1.packets) ?? 0,
+      lastUpdatedUtc: diagString(p1.lastUpdatedUtc),
+      lastC0Address: diagNumber(p1.lastC0Address),
+      lastAin0: diagNumber(p1.lastAin0),
+      lastAin1: diagNumber(p1.lastAin1),
+      exciterAdc: diagNumber(p1.exciterAdc),
+      fwdAdc: diagNumber(p1.fwdAdc),
+      revAdc: diagNumber(p1.revAdc),
+      userAdc0: diagNumber(p1.userAdc0),
+      userAdc1: diagNumber(p1.userAdc1),
+      supplyVoltsAdc: diagNumber(p1.supplyVoltsAdc),
+      adcOverloadBits: diagNumber(p1.adcOverloadBits) ?? 0,
+      hardwarePtt: diagBool(p1.hardwarePtt),
+      cwKeyDown: diagBool(p1.cwKeyDown),
+    },
+    p2: {
+      packets: diagNumber(p2.packets) ?? 0,
+      lastUpdatedUtc: diagString(p2.lastUpdatedUtc),
+      pttIn: diagBool(p2.pttIn),
+      dotIn: diagBool(p2.dotIn),
+      dashIn: diagBool(p2.dashIn),
+      pllLocked: diagBool(p2.pllLocked),
+      sidetoneActive: diagBool(p2.sidetoneActive),
+      adcOverloadBits: diagNumber(p2.adcOverloadBits),
+      exciterAdc: diagNumber(p2.exciterAdc),
+      fwdAdc: diagNumber(p2.fwdAdc),
+      revAdc: diagNumber(p2.revAdc),
+      adc0MaxMagnitude: diagNumber(p2.adc0MaxMagnitude),
+      adc1MaxMagnitude: diagNumber(p2.adc1MaxMagnitude),
+      adc0MaxMagnitudeAtOverload:
+        diagNumber(p2.adc0MaxMagnitudeAtOverload) ?? 0,
+      adc1MaxMagnitudeAtOverload:
+        diagNumber(p2.adc1MaxMagnitudeAtOverload) ?? 0,
+      supplyVoltsAdc: diagNumber(p2.supplyVoltsAdc),
+      userAdc0: diagNumber(p2.userAdc0),
+      userAdc1: diagNumber(p2.userAdc1),
+      userAdc2: diagNumber(p2.userAdc2),
+      userAdc3: diagNumber(p2.userAdc3),
+      userDigitalIn: diagNumber(p2.userDigitalIn),
+      hardwareLeds: diagNumber(p2.hardwareLeds),
+    },
+    mapping: normalizeHardwareMapping(r.mapping),
+    referenceMap: normalizeDiagnosticItems(r.referenceMap),
+    hardwarePotential: normalizeHardwarePotential(r.hardwarePotential),
+    candidateSettings: normalizeDiagnosticItems(r.candidateSettings),
+    featureSurfaces: normalizeFeatureSurfaces(r.featureSurfaces),
+  };
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    // Set from the server's 409 body when a P2 connect is refused because the
+    // radio is owned by another controller. `reclaimable` means the caller can
+    // offer a Reclaim-then-connect takeover (see /api/connect/p2 busy guard).
+    public readonly busy: boolean = false,
+    public readonly reclaimable: boolean = false,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function jsonFetch<T>(
+  input: RequestInfo,
+  init: RequestInit | undefined,
+  parse: (raw: unknown) => T,
+): Promise<T> {
+  const res = await fetch(input, init);
+  if (!res.ok) {
+    // Server returns { error: "..." } on 400; fall back to status text otherwise.
+    let message = `${res.status} ${res.statusText}`;
+    let busy = false;
+    let reclaimable = false;
+    try {
+      const body = (await res.json()) as unknown;
+      if (body && typeof body === 'object') {
+        const b = body as { error?: unknown; busy?: unknown; reclaimable?: unknown };
+        if (typeof b.error === 'string') message = b.error;
+        busy = b.busy === true;
+        reclaimable = b.reclaimable === true;
+      }
+    } catch {
+      /* non-JSON body — keep status text */
+    }
+    throw new ApiError(res.status, message, busy, reclaimable);
+  }
+  const raw = (await res.json()) as unknown;
+  return parse(raw);
+}
+
+export function fetchState(signal?: AbortSignal): Promise<RadioStateDto> {
+  return jsonFetch('/api/state', { signal }, normalizeState);
+}
+
+export function fetchRadios(signal?: AbortSignal): Promise<RadioInfoDto[]> {
+  return jsonFetch('/api/radios', { signal }, normalizeRadios);
+}
+
+export function fetchProtocol3Presence(
+  ip: string,
+  signal?: AbortSignal,
+): Promise<Protocol3PresenceDto> {
+  return jsonFetch(
+    `/api/protocol3/presence?ip=${encodeURIComponent(ip)}`,
+    { signal },
+    normalizeProtocol3Presence,
+  );
+}
+
+export function fetchProtocol3SidecarStatus(
+  signal?: AbortSignal,
+): Promise<Protocol3SidecarStatusDto> {
+  return jsonFetch(
+    '/api/protocol3/sidecar',
+    { signal },
+    normalizeProtocol3SidecarStatus,
+  );
+}
+
+/** A POTA / SOTA / DX activation spot from GET /api/spots/activations. `freqHz`
+ *  is absolute Hz (server normalizes POTA kHz / SOTA MHz / DX kHz). `mode` is
+ *  the raw upstream string (SSB/CW/FT8/…) — map it to an RxMode at tune time. */
+export interface ActivationSpotDto {
+  source: 'POTA' | 'SOTA' | 'DX';
+  activator: string;
+  freqHz: number;
+  mode: string;
+  reference: string;
+  name: string | null;
+  location: string | null;
+  grid: string | null;
+  comments: string | null;
+  spotter: string | null;
+  spotTime: string;
+}
+
+export function fetchActivationSpots(
+  signal?: AbortSignal,
+): Promise<ActivationSpotDto[]> {
+  return jsonFetch(
+    '/api/spots/activations',
+    { signal },
+    (raw) => (Array.isArray(raw) ? (raw as ActivationSpotDto[]) : []),
+  );
+}
+
+/** Operator settings for the Spots feature (GET/POST /api/spots/settings).
+ *  Mirrors the server-side Zeus.Contracts.SpotsSettings record. */
+export interface SpotsSettings {
+  enabled: boolean;
+  potaEnabled: boolean;
+  sotaEnabled: boolean;
+  pollIntervalSeconds: number;
+  setModeOnTune: boolean;
+  tuneOnlyWhenConnected: boolean;
+  cwSideband: 'CWU' | 'CWL';
+  /** Band-key allow-list (e.g. ['20m','40m']); empty = all bands. */
+  bands: string[];
+  /** Mode-group allow-list (CW / PHONE / DIGITAL / FM / AM); empty = all. */
+  modes: string[];
+  /** Drop spots whose comment marks the activator QRT/closing. */
+  hideQrt: boolean;
+  /** Hide spots older than this many minutes; 0 = no age limit. */
+  maxAgeMinutes: number;
+  /** Collapse to the single newest spot per activator. */
+  latestPerActivator: boolean;
+  /** Hz added to the dial when tuning a CW spot (e.g. for CW pitch offset). */
+  cwTuneOffsetHz: number;
+  /** Hz added to the dial when tuning a digital spot. */
+  digiTuneOffsetHz: number;
+  /** Include the DX-cluster feed (off by default — high volume). */
+  dxEnabled: boolean;
+  /** POTA feed endpoint (blank/invalid falls back to the default on the server). */
+  potaUrl: string;
+  /** SOTA feed endpoint. */
+  sotaUrl: string;
+  /** DX-cluster feed endpoint (DXSummit-compatible JSON shape). */
+  dxUrl: string;
+  /** Callsigns to flag with a ★ and alert on (upper-case, deduped server-side). */
+  watchlist: string[];
+  /** Raise a desktop notification when a watched call appears in the feed. */
+  alertsEnabled: boolean;
+  /** Also play a short audio cue with the alert. */
+  alertSound: boolean;
+  /** Hide spots whose activator is already in the local logbook. */
+  hideWorked: boolean;
+  /** Lazily resolve operator names via the QRZ session (respects the quota). */
+  enrichQrz: boolean;
+  /** Seconds the VFO dwells on each spot in scan mode (2–120). */
+  scanDwellSeconds: number;
+}
+
+const DEFAULT_POTA_URL = 'https://api.pota.app/spot/activator';
+const DEFAULT_SOTA_URL = 'https://api2.sota.org.uk/api/spots/50/all';
+const DEFAULT_DX_URL = 'https://www.dxsummit.fi/api/v1/spots?limit=50';
+
+export const SPOTS_SETTINGS_DEFAULTS: SpotsSettings = {
+  enabled: true,
+  potaEnabled: true,
+  sotaEnabled: true,
+  pollIntervalSeconds: 60,
+  setModeOnTune: true,
+  tuneOnlyWhenConnected: true,
+  cwSideband: 'CWU',
+  bands: [],
+  modes: [],
+  hideQrt: true,
+  maxAgeMinutes: 0,
+  latestPerActivator: false,
+  cwTuneOffsetHz: 0,
+  digiTuneOffsetHz: 0,
+  dxEnabled: false,
+  potaUrl: DEFAULT_POTA_URL,
+  sotaUrl: DEFAULT_SOTA_URL,
+  dxUrl: DEFAULT_DX_URL,
+  watchlist: [],
+  alertsEnabled: false,
+  alertSound: true,
+  hideWorked: false,
+  enrichQrz: false,
+  scanDwellSeconds: 8,
+};
+
+const SPOTS_MAX_AGE_LIMIT = 1440;
+const SPOTS_MAX_TUNE_OFFSET = 5_000;
+const SPOTS_MIN_SCAN_DWELL = 2;
+const SPOTS_MAX_SCAN_DWELL = 120;
+
+function urlOrDefault(v: unknown, fallback: string): string {
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : fallback;
+}
+
+function toStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  // Preserve case (canonical band keys are lowercase '20m', mode-group keys are
+  // uppercase 'CW'); the filter pipeline compares case-insensitively.
+  return v
+    .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    .map((x) => x.trim());
+}
+
+function clampInt(v: unknown, lo: number, hi: number, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(n)));
+}
+
+function normalizeSpotsSettings(raw: unknown): SpotsSettings {
+  const r = (raw ?? {}) as Partial<SpotsSettings>;
+  return {
+    ...SPOTS_SETTINGS_DEFAULTS,
+    ...r,
+    cwSideband: r.cwSideband === 'CWL' ? 'CWL' : 'CWU',
+    bands: toStringArray(r.bands),
+    modes: toStringArray(r.modes),
+    hideQrt: r.hideQrt ?? SPOTS_SETTINGS_DEFAULTS.hideQrt,
+    maxAgeMinutes: clampInt(r.maxAgeMinutes, 0, SPOTS_MAX_AGE_LIMIT, 0),
+    latestPerActivator: r.latestPerActivator ?? false,
+    pollIntervalSeconds: clampInt(r.pollIntervalSeconds, 30, 600, 60),
+    cwTuneOffsetHz: clampInt(r.cwTuneOffsetHz, -SPOTS_MAX_TUNE_OFFSET, SPOTS_MAX_TUNE_OFFSET, 0),
+    digiTuneOffsetHz: clampInt(r.digiTuneOffsetHz, -SPOTS_MAX_TUNE_OFFSET, SPOTS_MAX_TUNE_OFFSET, 0),
+    dxEnabled: r.dxEnabled ?? false,
+    potaUrl: urlOrDefault(r.potaUrl, DEFAULT_POTA_URL),
+    sotaUrl: urlOrDefault(r.sotaUrl, DEFAULT_SOTA_URL),
+    dxUrl: urlOrDefault(r.dxUrl, DEFAULT_DX_URL),
+    // Watchlist entries are upper-cased so the panel can match them against the
+    // (already upper-cased) activator with a plain Set lookup.
+    watchlist: toStringArray(r.watchlist).map((c) => c.toUpperCase()),
+    alertsEnabled: r.alertsEnabled ?? false,
+    alertSound: r.alertSound ?? true,
+    hideWorked: r.hideWorked ?? false,
+    enrichQrz: r.enrichQrz ?? false,
+    scanDwellSeconds: clampInt(r.scanDwellSeconds, SPOTS_MIN_SCAN_DWELL, SPOTS_MAX_SCAN_DWELL, 8),
+  };
+}
+
+export function fetchSpotsSettings(signal?: AbortSignal): Promise<SpotsSettings> {
+  return jsonFetch('/api/spots/settings', { signal }, normalizeSpotsSettings);
+}
+
+export function updateSpotsSettings(
+  settings: SpotsSettings,
+  signal?: AbortSignal,
+): Promise<SpotsSettings> {
+  return jsonFetch(
+    '/api/spots/settings',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(settings),
+      signal,
+    },
+    normalizeSpotsSettings,
+  );
+}
+
+/** One prefs database (profile) from GET /api/prefs/databases. Mirrors
+ *  Zeus.Contracts.PrefsDatabaseInfo. `relativePath` is under the Zeus data dir
+ *  ("zeus-prefs.db" or "profiles/<name>.db"); `modifiedUtcMs` is Unix epoch ms
+ *  (0 when the file does not exist yet, i.e. a never-written Default). */
+export interface PrefsDatabaseInfo {
+  name: string;
+  relativePath: string;
+  sizeBytes: number;
+  modifiedUtcMs: number;
+  active: boolean;
+}
+
+/** GET /api/prefs/databases — the active profile plus every available one.
+ *  Mirrors Zeus.Contracts.PrefsDatabasesDto. */
+export interface PrefsDatabasesDto {
+  activeRelativePath: string;
+  databases: PrefsDatabaseInfo[];
+}
+
+function normalizePrefsDatabases(raw: unknown): PrefsDatabasesDto {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const list = Array.isArray(obj.databases) ? obj.databases : [];
+  const databases: PrefsDatabaseInfo[] = list.map((entry) => {
+    const e = (entry ?? {}) as Record<string, unknown>;
+    return {
+      name: typeof e.name === 'string' ? e.name : '',
+      relativePath: typeof e.relativePath === 'string' ? e.relativePath : '',
+      sizeBytes: typeof e.sizeBytes === 'number' ? e.sizeBytes : 0,
+      modifiedUtcMs: typeof e.modifiedUtcMs === 'number' ? e.modifiedUtcMs : 0,
+      active: e.active === true,
+    };
+  });
+  return {
+    activeRelativePath:
+      typeof obj.activeRelativePath === 'string' ? obj.activeRelativePath : '',
+    databases,
+  };
+}
+
+export function listPrefsDatabases(
+  signal?: AbortSignal,
+): Promise<PrefsDatabasesDto> {
+  return jsonFetch('/api/prefs/databases', { signal }, normalizePrefsDatabases);
+}
+
+/** Point the active-profile pointer at `relativePath`. Takes effect on the next
+ *  launch — the caller should follow up with restartApp(). Resolves to the
+ *  server's { restartRequired } acknowledgement. */
+export function setActivePrefsDatabase(
+  relativePath: string,
+  signal?: AbortSignal,
+): Promise<{ restartRequired: boolean }> {
+  return jsonFetch(
+    '/api/prefs/active-database',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ relativePath }),
+      signal,
+    },
+    (raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      return { restartRequired: o.restartRequired === true };
+    },
+  );
+}
+
+/** Create a new empty named profile and return the refreshed list. */
+export function createPrefsDatabase(
+  name: string,
+  signal?: AbortSignal,
+): Promise<PrefsDatabasesDto> {
+  return jsonFetch(
+    '/api/prefs/databases',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+      signal,
+    },
+    normalizePrefsDatabases,
+  );
+}
+
+/** Import an existing .db from a server-side file path as a new profile and
+ *  return the refreshed list. `name` defaults to the source file name. */
+export function importPrefsDatabase(
+  sourcePath: string,
+  name?: string,
+  signal?: AbortSignal,
+): Promise<PrefsDatabasesDto> {
+  return jsonFetch(
+    '/api/prefs/databases/import',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sourcePath, name: name ?? null }),
+      signal,
+    },
+    normalizePrefsDatabases,
+  );
+}
+
+/** Import a user-picked .db file (chosen via a native file dialog) by
+ *  uploading its bytes as multipart form-data. The webview can't give the
+ *  server a filesystem path, so we send the contents and the server writes
+ *  them into the profiles dir. `name` defaults to the uploaded file name. */
+export function uploadPrefsDatabase(
+  file: File,
+  name?: string,
+  signal?: AbortSignal,
+): Promise<PrefsDatabasesDto> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (name && name.trim().length > 0) form.append('name', name.trim());
+  // No explicit content-type — the browser sets the multipart boundary.
+  return jsonFetch(
+    '/api/prefs/databases/upload',
+    { method: 'POST', body: form, signal },
+    normalizePrefsDatabases,
+  );
+}
+
+/** Download an existing prefs database (.db) to the user's machine. Fetches the
+ *  bytes and saves them via a temporary object URL (rather than navigating to
+ *  the endpoint) so server-side errors surface as exceptions the caller can show
+ *  instead of opening a JSON error blob in a new tab. */
+export async function exportPrefsDatabase(
+  relativePath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/prefs/databases/export?relativePath=${encodeURIComponent(relativePath)}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body?.error === 'string') message = body.error;
+    } catch {
+      /* non-JSON body — keep status text */
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  const blob = await res.blob();
+  // Prefer the server's Content-Disposition filename; fall back to the leaf of
+  // the relative path.
+  const cd = res.headers.get('content-disposition') ?? '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  const fileName = match?.[1]
+    ? decodeURIComponent(match[1])
+    : relativePath.split('/').pop() || 'zeus-prefs.db';
+
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+/** Ask the backend to relaunch itself (a fresh copy with the same args, after
+ *  this process exits). Used after switching the active prefs database. */
+export function restartApp(
+  signal?: AbortSignal,
+): Promise<{ restarting: boolean }> {
+  return jsonFetch(
+    '/api/app/restart',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal,
+    },
+    (raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      return { restarting: o.restarting === true };
+    },
+  );
+}
+
+/** Ask the backend to exit (close the app). Used by the login dialog's Exit
+ *  button — the desktop Photino window tears down cleanly when the process
+ *  exits. The response may not arrive before the process dies. */
+export function quitApp(
+  signal?: AbortSignal,
+): Promise<{ quitting: boolean }> {
+  return jsonFetch(
+    '/api/app/quit',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal,
+    },
+    (raw) => {
+      const o = (raw ?? {}) as Record<string, unknown>;
+      return { quitting: o.quitting === true };
+    },
+  );
+}
+
+export type UpdateAction = 'none' | 'download' | 'openRelease';
+
+/** Status of the local install vs the latest production build on the download
+ *  domain (GET /api/system/update). Mirrors Zeus.Contracts.RepoUpdateStatus. */
+export interface RepoUpdateStatus {
+  isGitRepo: boolean;
+  branch: string | null;
+  currentSha: string | null;
+  currentShortSha: string | null;
+  currentSubject: string | null;
+  upstreamRef: string | null;
+  behind: number;
+  ahead: number;
+  dirty: boolean;
+  canFastForward: boolean;
+  latestRemoteSha: string | null;
+  latestRemoteSubject: string | null;
+  remoteUrl: string | null;
+  checkedUtc: string | null;
+  error: string | null;
+  installedVersion: string;
+  runtimePlatform: string;
+  runtimeArchitecture: string;
+  updateAvailable: boolean;
+  updateAction: UpdateAction;
+  latestVersion: string | null;
+  minVersion: string | null;
+  forceUpdate: boolean;
+  forceReason: 'minVersion' | 'downgrade' | string | null;
+  releaseTag: string | null;
+  releaseName: string | null;
+  releaseUrl: string | null;
+  releasePublishedUtc: string | null;
+  releaseAssetName: string | null;
+  releaseDownloadUrl: string | null;
+  releaseAssetSizeBytes: number | null;
+  releaseAssetDigest: string | null;
+}
+
+/** Read the latest production build vs the installed version. `fetch=false`
+ *  skips the network and reports the last-known local version. */
+export function fetchUpdateStatus(
+  fetch = true,
+  signal?: AbortSignal,
+): Promise<RepoUpdateStatus> {
+  return jsonFetch(
+    `/api/system/update?fetch=${fetch ? 'true' : 'false'}`,
+    { signal },
+    (raw) => raw as RepoUpdateStatus,
+  );
+}
+
+export function fetchHardwareDiagnostics(
+  signal?: AbortSignal,
+): Promise<HardwareDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics',
+    { signal },
+    normalizeHardwareDiagnostics,
+  );
+}
+
+export function resetHardwareDiagnosticsMap(
+  signal?: AbortSignal,
+): Promise<HardwareDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics/map/reset',
+    { method: 'POST', signal },
+    normalizeHardwareDiagnostics,
+  );
+}
+
+export function createHardwareDiagnosticsMarker(
+  label: string,
+  notes?: string,
+  signal?: AbortSignal,
+): Promise<HardwareDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics/map/marker',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ label, notes }),
+      signal,
+    },
+    normalizeHardwareDiagnostics,
+  );
+}
+
+export function publishFrontendDspSceneDiagnostics(
+  payload: FrontendDspSceneDiagnosticsPayload,
+  signal?: AbortSignal,
+): Promise<FrontendDspSceneDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics/dsp-scene',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    },
+    normalizeFrontendDspScene,
+  );
+}
+
+export function fetchFrontendDspSceneDiagnostics(
+  signal?: AbortSignal,
+): Promise<FrontendDspSceneDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics/dsp-scene',
+    { signal },
+    normalizeFrontendDspScene,
+  );
+}
+
+export function publishFrontendAudioPlaybackDiagnostics(
+  payload: FrontendAudioPlaybackDiagnosticsPayload,
+  signal?: AbortSignal,
+): Promise<FrontendAudioPlaybackDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics/audio-playback',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    },
+    normalizeFrontendAudioPlayback,
+  );
+}
+
+export function fetchFrontendAudioPlaybackDiagnostics(
+  signal?: AbortSignal,
+): Promise<FrontendAudioPlaybackDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/diagnostics/audio-playback',
+    { signal },
+    normalizeFrontendAudioPlayback,
+  );
+}
+
+export function fetchSmartNrCondition(
+  signal?: AbortSignal,
+): Promise<SmartNrConditionDto> {
+  return jsonFetch(
+    '/api/dsp/nr-condition',
+    { signal },
+    normalizeSmartNrCondition,
+  );
+}
+
+export function fetchDspLiveDiagnostics(
+  signal?: AbortSignal,
+): Promise<DspLiveDiagnosticsDto> {
+  return jsonFetch(
+    '/api/dsp/live-diagnostics',
+    { signal },
+    normalizeDspLiveDiagnostics,
+  );
+}
+
+export function fetchTxDiagnostics(
+  signal?: AbortSignal,
+): Promise<TxDiagnosticsDto> {
+  return jsonFetch(
+    '/api/tx/diag',
+    { signal },
+    normalizeTxDiagnostics,
+  );
+}
+
+export function fetchExternalPttStatus(
+  signal?: AbortSignal,
+): Promise<ExternalPttStatusDto> {
+  return jsonFetch(
+    '/api/tx/external-ptt',
+    { signal },
+    normalizeExternalPttStatus,
+  );
+}
+
+export function fetchHardwareKeyingStatus(
+  signal?: AbortSignal,
+): Promise<HardwareKeyingStatusDto> {
+  return jsonFetch(
+    '/api/cw/hardware-keying',
+    { signal },
+    normalizeHardwareKeyingStatus,
+  );
+}
+
+export function fetchRadioPowerCalibration(
+  signal?: AbortSignal,
+): Promise<RadioPowerCalibrationDto> {
+  return jsonFetch(
+    '/api/radio/power-calibration',
+    { signal },
+    normalizeRadioPowerCalibration,
+  );
+}
+
+export function fetchRadioSupplyAlarms(
+  signal?: AbortSignal,
+): Promise<RadioSupplyAlarmsDto> {
+  return jsonFetch(
+    '/api/radio/supply-alarms',
+    { signal },
+    normalizeRadioSupplyAlarms,
+  );
+}
+
+export function fetchRadioPaThermalDiagnostics(
+  signal?: AbortSignal,
+): Promise<RadioPaThermalDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/pa-thermal',
+    { signal },
+    normalizeRadioPaThermalDiagnostics,
+  );
+}
+
+export function fetchG2SensorMappingDiagnostics(
+  signal?: AbortSignal,
+): Promise<G2SensorMappingDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/g2-sensors',
+    { signal },
+    normalizeG2SensorMappingDiagnostics,
+  );
+}
+
+export function fetchRadioNetworkProfile(
+  signal?: AbortSignal,
+): Promise<RadioNetworkProfileDto> {
+  return jsonFetch(
+    '/api/radio/network-profile',
+    { signal },
+    normalizeRadioNetworkProfile,
+  );
+}
+
+export function fetchUserIoLabels(
+  signal?: AbortSignal,
+): Promise<UserIoLabelsDto> {
+  return jsonFetch(
+    '/api/radio/user-io/labels',
+    { signal },
+    normalizeUserIoLabels,
+  );
+}
+
+export function fetchUserIoActions(
+  signal?: AbortSignal,
+): Promise<UserIoActionsDto> {
+  return jsonFetch(
+    '/api/radio/user-io/actions',
+    { signal },
+    normalizeUserIoActions,
+  );
+}
+
+export function fetchRadioDigInDiagnostics(
+  signal?: AbortSignal,
+): Promise<RadioDigInDiagnosticsDto> {
+  return jsonFetch(
+    '/api/radio/dig-in',
+    { signal },
+    normalizeRadioDigInDiagnostics,
+  );
+}
+
+export function connect(
+  req: ConnectRequest,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/connect',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function connectP2(
+  req: ConnectRequest,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return jsonFetch(
+    '/api/connect/p2',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    (raw) => raw,
+  );
+}
+
+export function connectP3(
+  req: ConnectRequest,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return jsonFetch(
+    '/api/connect/p3',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    (raw) => raw,
+  );
+}
+
+// Take over a Busy radio: ask the server to send a protocol stop so the radio
+// drops its current owner, freeing it for an immediate connect. `endpoint` is
+// the discovered "ip:port"; `protocol` is 'P1' or 'P2'. Resolves once the
+// server has sent the stop and waited for the radio to settle.
+export function reclaimRadio(
+  endpoint: string,
+  protocol: 'P1' | 'P2',
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return jsonFetch(
+    '/api/radios/reclaim',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint, protocol }),
+      signal,
+    },
+    (raw) => raw,
+  );
+}
+
+export function disconnect(signal?: AbortSignal): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/disconnect',
+    { method: 'POST', signal },
+    normalizeState,
+  );
+}
+
+export function disconnectP2(signal?: AbortSignal): Promise<unknown> {
+  return jsonFetch(
+    '/api/disconnect/p2',
+    { method: 'POST', signal },
+    (raw) => raw,
+  );
+}
+
+export function disconnectP3(signal?: AbortSignal): Promise<unknown> {
+  return jsonFetch(
+    '/api/disconnect/p3',
+    { method: 'POST', signal },
+    (raw) => raw,
+  );
+}
+
+// Move the hardware NCO center frequency without touching vfoHz. Called by
+// the panadapter pan gesture (use-pan-tune-gesture.ts) when a drag releases
+// past the edge of the current IQ capture window. Server returns the full
+// updated StateDto; 400 if hz is out of range for the connected radio.
+// LO frequencies cross the wire as a 64-bit integer (`RadioLoSetRequest.Hz` /
+// `ReceiverLoSetRequest.Hz` are `long`). Several callers — chiefly the CTUN
+// zoom/recenter and keep-in-view autopan paths — compute the LO from
+// floating-point view-center math and can hand us a FRACTIONAL Hz (e.g.
+// 3_853_999.9999). System.Text.Json cannot parse a decimal into an Int64 and
+// rejects the whole request with HTTP 400, so the hardware LO never moves; under
+// CTUN that leaves the frozen DDC window pointed at the wrong place and the
+// panadapter/waterfall blank out (issue #1191). Round + clamp at this single
+// wire seam so NO caller can emit a non-integer or out-of-range LO. Rounding is
+// sub-Hz on the LO — far below the radio's tuning resolution, no audible effect.
+const MAX_LO_HZ = 60_000_000;
+export function toWireHz(hz: number): number {
+  if (!Number.isFinite(hz)) return 0;
+  return Math.min(MAX_LO_HZ, Math.max(0, Math.round(hz)));
+}
+
+export function setRadioLo(
+  hz: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/radio/lo',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hz: toWireHz(hz) }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Pan a receiver's DDC centre (the keep-in-view autopan lever). Index 0 is
+// RX1's hardware NCO (→ /api/radio/lo); index >= 1 recentres a secondary DDC
+// via /api/receivers/{index}/lo. The server no-ops the secondary path for P1
+// (shared NCO), CTUN-off, or a disabled receiver — see RequestSecondaryLo.
+export function setReceiverLo(
+  index: number,
+  hz: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  if (index <= 0) return setRadioLo(hz, signal);
+  return jsonFetch(
+    `/api/receivers/${index}/lo`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hz: toWireHz(hz) }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Toggle CTUN (click-tune / centred tuning). Server returns the full updated
+// StateDto; on enable the hardware NCO is frozen at its current centre, on
+// disable it snaps back to the dial. See use-pan-tune-gesture.ts for how the
+// gesture changes when ctunEnabled flips.
+export function setCtun(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/radio/ctun',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setVfo(
+  hz: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  // VFO-lock gate. The mobile shell exposes a padlock toggle that suppresses
+  // tuning so a finger drag / band tap / scroll can't pull the radio off
+  // frequency. We re-fetch the canonical state instead of returning a stub
+  // so callers' `.then(applyState)` rolls back any optimistic local vfoHz
+  // they wrote before calling us. `vfo-lock-store` has no api/client deps,
+  // so this static import doesn't create a cycle.
+  if (vfoLockStore.getState().locked) {
+    return fetchState(signal);
+  }
+  return jsonFetch(
+    '/api/vfo',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hz }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setVfoB(
+  hz: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  if (vfoLockStore.getState().locked) {
+    return fetchState(signal);
+  }
+  return jsonFetch(
+    '/api/vfo',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hz, receiver: 1 }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function swapVfos(signal?: AbortSignal): Promise<RadioStateDto> {
+  if (vfoLockStore.getState().locked) {
+    return fetchState(signal);
+  }
+  return jsonFetch(
+    '/api/vfo/swap',
+    {
+      method: 'POST',
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setRx2(
+  req: {
+    enabled?: boolean;
+    vfoBHz?: number;
+    afGainDb?: number;
+  },
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx2',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enabled: req.enabled,
+        vfoBHz: req.vfoBHz,
+        afGainDb: req.afGainDb,
+      }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Configure any receiver by index for full multi-DDC (RX1=0, RX2=1, RX3+=2..).
+// Mirrors POST /api/receivers/{index}; index 0/1 delegate server-side to the
+// RX1/RX2 setters, index >= 2 drives an extra hardware DDC. Only the supplied
+// fields change. Returns the canonical state for `.then(applyState)`.
+export function setReceiver(
+  index: number,
+  req: {
+    enabled?: boolean;
+    vfoHz?: number;
+    adcSource?: number;
+    mode?: RxMode;
+    filterLowHz?: number;
+    filterHighHz?: number;
+    afGainDb?: number;
+    filterPresetName?: string | null;
+  },
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  // VFO-lock gate for the RX3+ write path (postReceiverVfo routes here for
+  // index >= 2). Mirrors the gates on setVfo / setVfoB so a locked dial can't
+  // be moved through the multi-DDC endpoint either; only the VFO write is
+  // refetched — enabled / adcSource / mode / filter / AF still pass through.
+  if (req.vfoHz !== undefined && vfoLockStore.getState().locked) {
+    return fetchState(signal);
+  }
+  return jsonFetch(
+    `/api/receivers/${index}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enabled: req.enabled,
+        vfoHz: req.vfoHz,
+        adcSource: req.adcSource,
+        // RxMode serialises as its numeric ordinal on the write path (the
+        // server has no JsonStringEnumConverter) — same encoding setMode uses.
+        mode: req.mode !== undefined ? MODE_ORDER.indexOf(req.mode) : undefined,
+        filterLowHz: req.filterLowHz,
+        filterHighHz: req.filterHighHz,
+        afGainDb: req.afGainDb,
+        filterPresetName: req.filterPresetName,
+      }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setTxVfo(
+  txVfo: TxVfo,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/vfo',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ txVfo: txVfo === 'B' ? 1 : 0 }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Select the transmit target by receiver index (0=RX1, 1=RX2, >=2 extra DDC).
+// Mirrors POST /api/tx/receiver; the server clamps an unexposed index to RX1.
+export function setTxReceiver(
+  index: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/receiver',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ index }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Per-RX audio mute for the hero mixer / VFO panel. Mirrors
+// POST /api/receivers/{index}/mute. index 0=RX1, 1=RX2, >=2 extra DDC.
+export function setReceiverMuted(
+  index: number,
+  muted: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    `/api/receivers/${index}/mute`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ muted }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setMode(
+  mode: RxMode,
+  signal?: AbortSignal,
+  receiver: TxVfo = 'A',
+): Promise<RadioStateDto> {
+  // Server's System.Text.Json has no JsonStringEnumConverter — it expects
+  // enum values as numeric ordinals on the write path. Normalizer handles
+  // both forms on the read path, so the wire is asymmetric today.
+  const modeIndex = MODE_ORDER.indexOf(mode);
+  return jsonFetch(
+    '/api/mode',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: modeIndex, receiver: receiver === 'B' ? 1 : 0 }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setBandwidth(
+  low: number,
+  high: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/bandwidth',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ low, high }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Preferred filter endpoint: includes optional preset name for chip tracking.
+export function setFilter(
+  lowHz: number,
+  highHz: number,
+  presetName?: string,
+  signal?: AbortSignal,
+  receiver: TxVfo = 'A',
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/filter',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        lowHz,
+        highHz,
+        presetName: presetName ?? null,
+        receiver: receiver === 'B' ? 1 : 0,
+      }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// TX bandpass filter — signed Hz pair, LSB negative, DSB symmetric. Per-mode
+// memory is server-side; caller passes already-signed values for the active
+// mode.
+export function setTxFilter(
+  lowHz: number,
+  highHz: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx-filter',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lowHz, highHz }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// SSB bandpass "rectangularity" — issue #871. Independent RX and TX
+// selectors push the chosen WDSP fir.c window (Soft / Sharp) to the live
+// engine and persist server-side.
+export function setRxFilterWindow(
+  window: BandpassWindow,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/filter-window',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ window }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setTxFilterWindow(
+  window: BandpassWindow,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/filter-window',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ window }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+function normalizeFilterPreset(raw: unknown): FilterPresetDto | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.slotName !== 'string' || typeof r.label !== 'string') return null;
+  return {
+    slotName: r.slotName,
+    label: r.label,
+    lowHz: typeof r.lowHz === 'number' ? r.lowHz : 0,
+    highHz: typeof r.highHz === 'number' ? r.highHz : 0,
+    isVar: Boolean(r.isVar),
+  };
+}
+
+export function getFilterPresets(
+  mode: RxMode,
+  signal?: AbortSignal,
+): Promise<FilterPresetDto[]> {
+  return jsonFetch(
+    `/api/filter/presets?mode=${encodeURIComponent(mode)}`,
+    { signal },
+    (raw) => {
+      if (!Array.isArray(raw)) return [];
+      return raw.flatMap((item) => {
+        const p = normalizeFilterPreset(item);
+        return p ? [p] : [];
+      });
+    },
+  );
+}
+
+export function setFilterAdvancedPaneOpen(
+  open: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/filter/advanced-pane',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ open }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setFilterPresetOverride(
+  mode: RxMode,
+  slotName: string,
+  lowHz: number,
+  highHz: number,
+  signal?: AbortSignal,
+): Promise<FilterPresetDto[]> {
+  return jsonFetch(
+    '/api/filter/presets',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode, slotName, lowHz, highHz }),
+      signal,
+    },
+    (raw) => {
+      if (!Array.isArray(raw)) return [];
+      return raw.flatMap((item) => {
+        const p = normalizeFilterPreset(item);
+        return p ? [p] : [];
+      });
+    },
+  );
+}
+
+export function getFavoriteFilterSlots(
+  mode: RxMode,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return jsonFetch(
+    `/api/filter/favorites?mode=${mode}`,
+    { method: 'GET', signal },
+    (raw) => {
+      if (typeof raw === 'object' && raw !== null && 'slotNames' in raw) {
+        const slotNames = raw.slotNames;
+        if (Array.isArray(slotNames)) {
+          return slotNames.filter((s): s is string => typeof s === 'string');
+        }
+      }
+      return ['F6', 'F5', 'F4']; // Default fallback
+    },
+  );
+}
+
+export function setFavoriteFilterSlots(
+  mode: RxMode,
+  slotNames: string[],
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/filter/favorites',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode, slotNames }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// 768/1536 kHz need a wide DDC transport (P2/P3); Protocol 1 caps at 384 kHz.
+// ConnectPanel gates the higher rungs to P2, and the backend rejects them on
+// a P1 connect.
+export type SampleRate = 48_000 | 96_000 | 192_000 | 384_000 | 768_000 | 1_536_000;
+
+export function setSampleRate(
+  rate: SampleRate,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/sampleRate',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rate }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setPreamp(
+  on: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/preamp',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setAgcTop(
+  topDb: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/agcGain',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ topDb }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setRxAfGain(
+  db: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/afGain',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ db }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setAttenuator(
+  db: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/attenuator',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ db }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setAutoAtt(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/auto-att',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function fetchAdcProtection(
+  signal?: AbortSignal,
+): Promise<AdcProtectionStatusDto> {
+  return jsonFetch(
+    '/api/rx/adc-protection',
+    { signal },
+    normalizeAdcProtectionStatus,
+  );
+}
+
+export function setAdcProtection(
+  patch: AdcProtectionSetRequest,
+  signal?: AbortSignal,
+): Promise<AdcProtectionStatusDto> {
+  return jsonFetch(
+    '/api/rx/adc-protection',
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal,
+    },
+    normalizeAdcProtectionStatus,
+  );
+}
+
+export function setAutoAgc(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/auto-agc',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setZoom(
+  level: ZoomLevel,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/zoom',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// Workspace UI zoom — POSTs the new percent; the server clamps and echoes the
+// full state back for the optimistic-send + applyState reconcile. Distinct from
+// setZoom (spectral analyzer zoom).
+export function setWorkspaceZoom(
+  pct: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/ui/workspace-zoom',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pct }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setNr(
+  nr: NrConfigDto,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/nr',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // Server registers JsonStringEnumConverter, so NrMode/NbMode travel as
+      // PascalCase strings ("Off"/"Anr"/"Emnr"/"Sbnr", "Off"/"Nb1"/"Nb2").
+      // Unknown values get a 400, which ApiError surfaces to the caller.
+      body: JSON.stringify({ nr }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setAgc(
+  agc: AgcConfigDto,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/agc',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // Server registers JsonStringEnumConverter, so AgcMode travels as a
+      // PascalCase string ("Fixed"/"Long"/.../"Custom"). Unknown values get
+      // a 400, which ApiError surfaces to the caller.
+      body: JSON.stringify({ agc }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setSquelch(
+  squelch: SquelchConfigDto,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/squelch',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // The server clamps level to 0..100 and 400s anything out of range.
+      body: JSON.stringify({ squelch }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// TX leveling — replace-style like setSquelch. The server validates/clamps
+// every range and 400s anything out of bounds. Returns the full state for
+// optimistic-send + applyState reconcile.
+export function setTxLeveling(
+  txLeveling: TxLevelingConfigDto,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/leveling',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ txLeveling }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function setTxPhaseRotator(
+  txPhaseRotator: TxPhaseRotatorConfigDto,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/phase-rotator',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ txPhaseRotator }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// PATCH-style request for the NR2 right-click popover. All fields nullable;
+// server merges onto the persisted NrConfig and returns the full state so
+// the frontend can reconcile.
+export type Nr2Post2PatchBody = {
+  post2Run?: boolean | null;
+  post2Factor?: number | null;
+  post2Nlevel?: number | null;
+  post2Rate?: number | null;
+  post2Taper?: number | null;
+};
+
+export function setNr2Post2(
+  body: Nr2Post2PatchBody,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/nr2/post2',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// PATCH-style request for the NR2 core algorithm selectors + Trained-method
+// T1/T2. Server merges null-absent fields onto the persisted NrConfig.
+export type Nr2CorePatchBody = {
+  gainMethod?: number | null;
+  npeMethod?: number | null;
+  aeRun?: boolean | null;
+  trainT1?: number | null;
+  trainT2?: number | null;
+};
+
+export function setNr2Core(
+  body: Nr2CorePatchBody,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/nr2/core',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// PATCH-style request for the NR4 right-click popover. Same merge semantics
+// as setNr2Post2.
+export type Nr4PatchBody = {
+  reductionAmount?: number | null;
+  smoothingFactor?: number | null;
+  whiteningFactor?: number | null;
+  noiseRescale?: number | null;
+  postFilterThreshold?: number | null;
+  noiseScalingType?: number | null;
+  position?: number | null;
+};
+
+export function setNr4(
+  body: Nr4PatchBody,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/nr4',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// ---- NR3 (RNNoise) model management ----
+// Zeus ships no model; the operator installs an RNNoise weights file (upload or
+// URL fetch) via the DSP menu. `available` reflects whether libwdsp exports the
+// RNNR symbols; `modelName` is the installed file name (null = none).
+export type Nr3ModelStatus = { available: boolean; modelName: string | null };
+
+export function getNr3ModelStatus(signal?: AbortSignal): Promise<Nr3ModelStatus> {
+  return jsonFetch(
+    '/api/rx/nr3/model',
+    { signal },
+    (raw) => {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      return {
+        available: Boolean(r.available),
+        modelName: typeof r.modelName === 'string' ? r.modelName : null,
+      };
+    },
+  );
+}
+
+export function uploadNr3Model(file: File, signal?: AbortSignal): Promise<RadioStateDto> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  // No content-type header: the browser sets multipart/form-data + boundary.
+  return jsonFetch('/api/rx/nr3/model', { method: 'POST', body: form, signal }, normalizeState);
+}
+
+export function downloadNr3Model(url: string, signal?: AbortSignal): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/nr3/model/download',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+export function removeNr3Model(signal?: AbortSignal): Promise<RadioStateDto> {
+  return jsonFetch('/api/rx/nr3/model', { method: 'DELETE', signal }, normalizeState);
+}
+
+// MOX endpoint returns {moxOn} — not a full StateDto — because MOX is
+// transient and deliberately absent from the persisted state snapshot.
+// 409 while disconnected surfaces as ApiError with the server's message.
+export function setMox(
+  on: boolean,
+  signal?: AbortSignal,
+): Promise<{ moxOn: boolean }> {
+  return jsonFetch(
+    '/api/tx/mox',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on }),
+      signal,
+    },
+    (raw) => ({ moxOn: Boolean((raw as { moxOn?: unknown }).moxOn) }),
+  );
+}
+
+// Drive endpoint returns {drivePercent} — same pattern as MOX; drive is
+// transient TX state that isn't part of the persisted radio snapshot.
+export function setDrive(
+  percent: number,
+  signal?: AbortSignal,
+): Promise<{ drivePercent: number }> {
+  return jsonFetch(
+    '/api/tx/drive',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ percent: Math.round(percent) }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { drivePercent?: unknown }).drivePercent;
+      return { drivePercent: typeof v === 'number' ? v : 0 };
+    },
+  );
+}
+
+// TX pre-key (MOX) delay: POST /api/tx/prekey-delay { delayMs }. Returns the
+// server-applied value, which may be lower than requested (clamped below the
+// PS MOX hold-off). Issue #630.
+export function setTxPreKeyDelay(
+  delayMs: number,
+  signal?: AbortSignal,
+): Promise<{ txMoxPreKeyDelayMs: number }> {
+  return jsonFetch(
+    '/api/tx/prekey-delay',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ delayMs: Math.round(delayMs) }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { txMoxPreKeyDelayMs?: unknown }).txMoxPreKeyDelayMs;
+      return { txMoxPreKeyDelayMs: typeof v === 'number' ? v : 0 };
+    },
+  );
+}
+
+// TX tail (MOX hang) delay: POST /api/tx/tail-delay { delayMs }. Returns the
+// server-applied value (clamped 0..500). Issue #1294.
+export function setTxTailDelay(
+  delayMs: number,
+  signal?: AbortSignal,
+): Promise<{ txMoxTailDelayMs: number }> {
+  return jsonFetch(
+    '/api/tx/tail-delay',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ delayMs: Math.round(delayMs) }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { txMoxTailDelayMs?: unknown }).txMoxTailDelayMs;
+      return { txMoxTailDelayMs: typeof v === 'number' ? v : 0 };
+    },
+  );
+}
+
+export function setRogerBeep(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<{ rogerBeepEnabled: boolean }> {
+  return jsonFetch(
+    '/api/tx/roger-beep',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    (raw) => ({
+      rogerBeepEnabled: Boolean((raw as { rogerBeepEnabled?: unknown }).rogerBeepEnabled),
+    }),
+  );
+}
+
+// TX timeout: POST /api/tx/timeout { seconds }. Returns { txTimeoutSec }.
+// seconds=0 disables the guard; otherwise the server clamps to [30, 600] s and
+// the echoed value reflects what was applied. Issue #1270.
+export function setTxTimeout(
+  seconds: number,
+  signal?: AbortSignal,
+): Promise<{ txTimeoutSec: number }> {
+  return jsonFetch(
+    '/api/tx/timeout',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ seconds: Math.round(seconds) }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { txTimeoutSec?: unknown }).txTimeoutSec;
+      return { txTimeoutSec: typeof v === 'number' ? v : 120 };
+    },
+  );
+}
+
+// Tune-drive endpoint: POST /api/tx/tune-drive { percent }. Returns
+// { tunePercent }. Backend picks this in place of drivePercent while TUN is
+// keyed; same PA-gain calibration applies.
+export function setTuneDrive(
+  percent: number,
+  signal?: AbortSignal,
+): Promise<{ tunePercent: number }> {
+  return jsonFetch(
+    '/api/tx/tune-drive',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ percent: Math.round(percent) }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { tunePercent?: unknown }).tunePercent;
+      return { tunePercent: typeof v === 'number' ? v : 0 };
+    },
+  );
+}
+
+// TUN endpoint: POST /api/tx/tun { on }. Returns { tunOn }. Keys a single-tone
+// carrier via WDSP SetTXAPostGen* and is mutually exclusive with MOX on the
+// server.
+export function setTun(
+  on: boolean,
+  signal?: AbortSignal,
+): Promise<{ tunOn: boolean }> {
+  return jsonFetch(
+    '/api/tx/tun',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on }),
+      signal,
+    },
+    (raw) => ({ tunOn: Boolean((raw as { tunOn?: unknown }).tunOn) }),
+  );
+}
+
+// Per-band memory: last-used (hz, mode) persisted server-side in LiteDB.
+// Shared across any browser hitting the same backend — localStorage would
+// trap the state in one device.
+export type BandMemoryEntry = {
+  band: string;
+  hz: number;
+  mode: RxMode;
+};
+
+function normalizeBandMemoryEntry(raw: unknown): BandMemoryEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const band = typeof r.band === 'string' ? r.band : null;
+  const hz = typeof r.hz === 'number' ? r.hz : null;
+  if (!band || hz === null) return null;
+  return { band, hz, mode: normalizeMode(r.mode) };
+}
+
+export function fetchBandMemory(
+  signal?: AbortSignal,
+): Promise<BandMemoryEntry[]> {
+  return jsonFetch('/api/bands/memory', { signal }, (raw) => {
+    if (!Array.isArray(raw)) return [];
+    const out: BandMemoryEntry[] = [];
+    for (const entry of raw) {
+      const n = normalizeBandMemoryEntry(entry);
+      if (n) out.push(n);
+    }
+    return out;
+  });
+}
+
+export function saveBandMemory(
+  band: string,
+  hz: number,
+  mode: RxMode,
+  signal?: AbortSignal,
+): Promise<BandMemoryEntry> {
+  // Mode travels as a numeric ordinal, matching the setMode convention the
+  // server already validates against. The server's JsonStringEnumConverter
+  // accepts both strings and ordinals on the read path.
+  const modeIndex = MODE_ORDER.indexOf(mode);
+  return jsonFetch(
+    `/api/bands/memory/${encodeURIComponent(band)}`,
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hz, mode: modeIndex }),
+      signal,
+    },
+    (raw) => {
+      const n = normalizeBandMemoryEntry(raw);
+      return n ?? { band, hz, mode };
+    },
+  );
+}
+
+// Leveler max-gain endpoint: POST /api/tx/leveler-max-gain { gain }. Returns
+// { levelerMaxGainDb }. Backend clamps to [0, 20] and echoes the applied
+// value; RadioService persists the setting, and the DSP pipeline reapplies it
+// to the active TXA engine after reconnects or engine swaps.
+export function setLevelerMaxGain(
+  gain: number,
+  signal?: AbortSignal,
+): Promise<{ levelerMaxGainDb: number }> {
+  return jsonFetch(
+    '/api/tx/leveler-max-gain',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ gain }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { levelerMaxGainDb?: unknown }).levelerMaxGainDb;
+      return { levelerMaxGainDb: typeof v === 'number' ? v : gain };
+    },
+  );
+}
+
+// PureSignal master arm + cal-mode. POST /api/tx/ps. Backend swaps the engine
+// state machine (SetPSRunCal, SetPSControl) and toggles the radio-side
+// feedback wire bits. Returns the updated StateDto.
+export async function setPs(
+  req: { enabled: boolean; auto: boolean; single: boolean },
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/ps',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// PureSignal advanced settings. Nullable fields = partial update so the
+// settings panel doesn't have to round-trip every value.
+export async function setPsAdvanced(
+  req: {
+    ptol?: boolean;
+    autoAttenuate?: boolean;
+    moxDelaySec?: number;
+    loopDelaySec?: number;
+    ampDelayNs?: number;
+    hwPeak?: number;
+    intsSpiPreset?: string;
+  },
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/ps/advanced',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// PureSignal feedback antenna source. Internal coupler vs External
+// (Bypass). Server enum is 0 (Internal) / 1 (External); the wire DTO
+// uses 'Internal' / 'External' string serialization through System.Text.Json
+// default StringEnumConverter setup.
+export async function setPsFeedbackSource(
+  source: 'internal' | 'external',
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/ps/feedback-source',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        source: source === 'external' ? 'External' : 'Internal',
+      }),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// Manual PS TX feedback attenuation (dB). Operator alternative to
+// AutoAttenuate for a fixed external-tap chain — sets the value that lands
+// the feedback in calcc's range; server clamps to the board range and
+// persists per board.
+export async function setPsFeedbackAttenuation(
+  db: number,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/ps/feedback-attenuation',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ db: Math.round(db) }),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// PS-Monitor toggle (issue #121). When on AND PS is armed AND PS has
+// converged, the TX panadapter switches its source from the post-CFIR
+// predistorted-IQ analyzer to the PS-feedback (post-PA loopback) analyzer
+// so the operator sees the actual on-air RF instead of the predistorted
+// baseband. Default off — preserves the Thetis-style predistorted view.
+// Server-side this is a pure UI source-routing flag; no WDSP setter, no
+// wire-format change, default-off is byte-identical to pre-#121.
+export async function setPsMonitor(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/ps/monitor',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// TX Monitor toggle — engages the engine's preview path. The server
+// demodulates the post-CFIR TX IQ back to mono baseband audio at the actual
+// TX bandwidth profile and substitutes it for RX audio in the AudioFrame
+// stream while monitor is on. Operator preference, not persisted across
+// sessions; defaults off on connect.
+export async function setTxMonitor(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/monitor',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// ---- Unified TX Audio Profiles -----------------------------------------
+// These REPLACE /api/tx/station-profiles* and the TX /api/tx-audio-suite/profiles*
+// routes. The RX route (/api/rx-audio-suite/profiles*) is untouched.
+
+export function fetchTxAudioProfiles(
+  signal?: AbortSignal,
+): Promise<TxAudioProfileDto[]> {
+  return jsonFetch(
+    '/api/tx-audio-profiles',
+    { signal },
+    normalizeTxAudioProfilesResponse,
+  );
+}
+
+// Save the LIVE state as a profile named <name>. The body carries ONLY the
+// name; the backend snapshots everything (single source of truth — the client
+// never assembles the profile body). Re-saving the same name/slug overwrites.
+export function saveTxAudioProfile(
+  name: string,
+  signal?: AbortSignal,
+): Promise<TxAudioProfileDto> {
+  return jsonFetch(
+    '/api/tx-audio-profiles',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+      signal,
+    },
+    (raw) => {
+      const p = normalizeTxAudioProfile(raw);
+      if (!p) throw new ApiError(500, 'Malformed TX audio profile response');
+      return p;
+    },
+  );
+}
+
+// Apply a profile by id to LIVE state (write-through Set* paths; PureSignal is
+// never touched). Records last-loaded server-side and returns a full StateDto so
+// the live UI snaps without a second round-trip.
+export function applyTxAudioProfile(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ApplyTxAudioProfileResultDto> {
+  return jsonFetch(
+    `/api/tx-audio-profiles/${encodeURIComponent(id)}/apply`,
+    { method: 'POST', signal },
+    (raw) => {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const profile = normalizeTxAudioProfile(r.profile);
+      if (!profile) throw new ApiError(500, 'Malformed apply response');
+      return {
+        profile,
+        state: normalizeState(r.state),
+        pluginIds: Array.isArray(r.pluginIds)
+          ? (r.pluginIds.filter((s): s is string => typeof s === 'string'))
+          : [],
+        parked: Array.isArray(r.parked)
+          ? (r.parked.filter((s): s is string => typeof s === 'string'))
+          : [],
+        processingMode: r.processingMode === 'vst' ? 'vst' : 'native',
+        engineActive: r.engineActive === true,
+        engineAvailable: r.engineAvailable === true,
+        masterBypass: r.masterBypass === true,
+      };
+    },
+  );
+}
+
+export async function deleteTxAudioProfile(
+  id: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  return jsonFetch(
+    `/api/tx-audio-profiles/${encodeURIComponent(id)}`,
+    { method: 'DELETE', signal },
+    (raw) => {
+      const r = (raw ?? {}) as { deleted?: unknown };
+      return typeof r.deleted === 'string' ? r.deleted : id;
+    },
+  );
+}
+
+export function fetchLastLoadedTxAudioProfile(
+  signal?: AbortSignal,
+): Promise<LastLoadedTxAudioProfileDto> {
+  return jsonFetch(
+    '/api/tx-audio-profiles/last-loaded',
+    { signal },
+    normalizeLastLoadedTxAudioProfile,
+  );
+}
+
+export function setLastLoadedTxAudioProfile(
+  id: string | null,
+  signal?: AbortSignal,
+): Promise<LastLoadedTxAudioProfileDto> {
+  return jsonFetch(
+    '/api/tx-audio-profiles/last-loaded',
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+      signal,
+    },
+    normalizeLastLoadedTxAudioProfile,
+  );
+}
+
+// Import a TX audio profile from a user-picked .json file (uploaded as
+// multipart — the webview can't hand the server a filesystem path). The profile
+// is ADDED to the collection (never applied); the server uniquifies the name if
+// the slug is already taken. Returns the stored profile.
+export function importTxAudioProfile(
+  file: File,
+  name?: string,
+  signal?: AbortSignal,
+): Promise<TxAudioProfileDto> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (name && name.trim().length > 0) form.append('name', name.trim());
+  // No explicit content-type — the browser sets the multipart boundary.
+  return jsonFetch(
+    '/api/tx-audio-profiles/import',
+    { method: 'POST', body: form, signal },
+    (raw) => {
+      const p = normalizeTxAudioProfile(raw);
+      if (!p) throw new ApiError(500, 'Malformed imported TX audio profile response');
+      return p;
+    },
+  );
+}
+
+// Download a saved TX audio profile as a .json file. Fetches the bytes and saves
+// them via a temporary object URL (so server-side errors surface as exceptions
+// the caller can show, rather than opening a JSON error blob in a new tab) —
+// mirrors exportPrefsDatabase.
+export async function exportTxAudioProfile(
+  id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/tx-audio-profiles/${encodeURIComponent(id)}/export`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body?.error === 'string') message = body.error;
+    } catch {
+      /* non-JSON body — keep status text */
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  const blob = await res.blob();
+  const cd = res.headers.get('content-disposition') ?? '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  const fileName = match?.[1] ? decodeURIComponent(match[1]) : `${id}.json`;
+
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+export function fetchTxFidelityPolicy(
+  signal?: AbortSignal,
+): Promise<TxFidelityPolicyDto> {
+  return jsonFetch(
+    '/api/tx/fidelity-policy',
+    { signal },
+    normalizeTxFidelityPolicy,
+  );
+}
+
+export function saveTxFidelityPolicy(
+  policy: TxFidelityPolicyDto,
+  signal?: AbortSignal,
+): Promise<TxFidelityPolicyDto> {
+  return jsonFetch(
+    '/api/tx/fidelity-policy',
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(policy),
+      signal,
+    },
+    normalizeTxFidelityPolicy,
+  );
+}
+
+export async function resetPs(signal?: AbortSignal): Promise<void> {
+  await jsonFetch('/api/tx/ps/reset', { method: 'POST', signal }, () => null);
+}
+
+export async function savePs(filename: string, signal?: AbortSignal): Promise<void> {
+  await jsonFetch(
+    '/api/tx/ps/save',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename }),
+      signal,
+    },
+    () => null,
+  );
+}
+
+export async function restorePs(filename: string, signal?: AbortSignal): Promise<void> {
+  await jsonFetch(
+    '/api/tx/ps/restore',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filename }),
+      signal,
+    },
+    () => null,
+  );
+}
+
+// CFC (Continuous Frequency Compressor) — issue #123. POSTs the full
+// 10-band CFC profile + master flags. Server treats this as the
+// authoritative state and persists it. Optimistic-update pattern lives in
+// the panel — failures roll the local store back to the prior config.
+export async function setCfcConfig(
+  cfg: CfcConfigDto,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/cfc',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ config: cfg }),
+      signal,
+    },
+    (raw) => normalizeState(raw),
+  );
+}
+
+export async function fetchCfcPresets(signal?: AbortSignal): Promise<CfcPresetDto[]> {
+  return jsonFetch(
+    '/api/tx/cfc/presets',
+    { signal },
+    (raw) => normalizeCfcPresetsResponse(raw),
+  );
+}
+
+export async function saveCfcPreset(
+  name: string,
+  cfg: CfcConfigDto,
+  signal?: AbortSignal,
+): Promise<CfcPresetDto> {
+  return jsonFetch(
+    `/api/tx/cfc/presets/${encodeURIComponent(name)}`,
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ config: cfg }),
+      signal,
+    },
+    (raw) =>
+      normalizeCfcPreset(raw) ?? {
+        name,
+        config: normalizeCfc(cfg),
+        createdUtc: '',
+        updatedUtc: '',
+      },
+  );
+}
+
+// Two-tone test generator. Protocol-agnostic — works on both P1 and P2.
+export async function setTwoTone(
+  req: { enabled: boolean; freq1?: number; freq2?: number; mag?: number },
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/tx/twotone',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    (raw) => raw as RadioStateDto,
+  );
+}
+
+// Normalise a wire KiwiConfigDto, tolerating an older/partial server response.
+function normalizeKiwiConfig(raw: unknown): KiwiConfigDto {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : false,
+    url: typeof r.url === 'string' ? r.url : null,
+    hasPassword: typeof r.hasPassword === 'boolean' ? r.hasPassword : false,
+    status: typeof r.status === 'string' ? r.status : 'disabled',
+    statusDetail: typeof r.statusDetail === 'string' ? r.statusDetail : null,
+  };
+}
+
+// KiwiSDR slice receiver: GET /api/kiwi → current config + connection status.
+export async function getKiwiConfig(signal?: AbortSignal): Promise<KiwiConfigDto> {
+  return jsonFetch('/api/kiwi', { signal }, (raw) => normalizeKiwiConfig(raw));
+}
+
+// KiwiSDR slice receiver: POST /api/kiwi → apply config, returns updated status.
+// Only supplied fields change. An empty-string `password` clears the stored
+// password; omitting it leaves it unchanged.
+export async function setKiwiConfig(
+  req: { enabled?: boolean; url?: string; password?: string },
+  signal?: AbortSignal,
+): Promise<KiwiConfigDto> {
+  return jsonFetch(
+    '/api/kiwi',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    },
+    (raw) => normalizeKiwiConfig(raw),
+  );
+}
+
+// Public KiwiSDR directory: GET /api/kiwi/directory → receivers for the map
+// picker. Proxied + cached server-side. Returns [] on any upstream failure.
+export async function getKiwiDirectory(signal?: AbortSignal): Promise<KiwiDirectoryEntry[]> {
+  return jsonFetch('/api/kiwi/directory', { signal }, (raw) =>
+    Array.isArray(raw) ? (raw as KiwiDirectoryEntry[]) : [],
+  );
+}
+
+// Mic-gain endpoint: POST /api/mic-gain { db }. Returns { micGainDb }.
+// Failures bubble up so the slider can roll back the optimistic update.
+export function setMicGain(
+  db: number,
+  signal?: AbortSignal,
+): Promise<{ micGainDb: number }> {
+  return jsonFetch(
+    '/api/mic-gain',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ db: Math.round(db) }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { micGainDb?: unknown }).micGainDb;
+      return { micGainDb: typeof v === 'number' ? v : 0 };
+    },
+  );
+}
+
+// ---- FreeDV digital-voice telemetry / config ----
+// FreeDV is a normal selectable RxMode ('FREEDV', byte 10); selecting it goes
+// through setMode like any other mode. The plugin runs the codec2/FreeDV modem.
+// These endpoints carry the modem telemetry + config that drive the native
+// FreeDV panel — they are NOT part of StateDto.
+
+export type FreeDvSubmode =
+  | 'RadeV1'
+  | 'Mode700D'
+  | 'Mode700E'
+  | 'Mode700C'
+  | 'Mode1600'
+  | 'Mode800XA';
+
+// Panel-facing submode order + short labels, matching freedv-gui 2.1.0's
+// selector (RADEV1, 700D, 700E, 1600). 700C/800XA remain valid on the backend
+// and in auto-detect's scan set, but freedv-gui retired them from its UI so we
+// mirror that here. `rade` marks the submode that needs the native RADE library.
+export const FREEDV_SUBMODES: ReadonlyArray<{
+  value: FreeDvSubmode;
+  label: string;
+  rade?: boolean;
+}> = [
+  { value: 'RadeV1', label: 'RADEV1', rade: true },
+  { value: 'Mode700D', label: '700D' },
+  { value: 'Mode700E', label: '700E' },
+  { value: 'Mode1600', label: '1600' },
+];
+
+// Mirrors the plugin-side FreeDvStatusDto (GET /api/plugins/org.openhpsdr.freedv/status).
+export type FreeDvStatusDto = {
+  nativeAvailable: boolean;
+  active: boolean;
+  submode: FreeDvSubmode;
+  synced: boolean;
+  snrDb: number;
+  squelchEnabled: boolean;
+  snrSquelchThreshDb: number;
+  speechSampleRateHz: number;
+  modemSampleRateHz: number;
+  rxText: string | null;
+  txText: string | null;
+  libraryVersion: string | null;
+  // Auto submode detection: while unsynced the modem cycles submodes until one
+  // locks. `submode` reflects the live (possibly scanner-chosen) mode.
+  autoDetect: boolean;
+  // True when the native RADE modem is available. False until librade is
+  // integrated — RADEV1 then runs no decoder and the panel shows a gated state.
+  radeAvailable: boolean;
+};
+
+// PUT /config body — all fields optional, null = leave unchanged.
+export type FreeDvConfigRequest = {
+  submode?: FreeDvSubmode;
+  squelchEnabled?: boolean;
+  snrSquelchThreshDb?: number;
+  txText?: string;
+  autoDetect?: boolean;
+};
+
+// Every valid submode name — a SUPERSET of the panel list. The backend can
+// report 700C/800XA (auto-detect still scans them) even though they're not shown
+// as buttons, so the normalizer must accept them or it would mislabel them.
+const FREEDV_SUBMODE_NAMES: readonly FreeDvSubmode[] = [
+  'Mode700D',
+  'Mode700E',
+  'Mode700C',
+  'Mode1600',
+  'Mode800XA',
+  'RadeV1',
+];
+
+// Indexed by the C# FreeDvSubmode byte value (700D=0 … 800XA=4, RadeV1=5) for the
+// defensive numeric path. Order here is the wire byte order, NOT the panel order.
+const FREEDV_SUBMODE_BY_BYTE: readonly FreeDvSubmode[] = [
+  'Mode700D',
+  'Mode700E',
+  'Mode700C',
+  'Mode1600',
+  'Mode800XA',
+  'RadeV1',
+];
+
+function normalizeFreeDvSubmode(v: unknown): FreeDvSubmode {
+  if (typeof v === 'string' && (FREEDV_SUBMODE_NAMES as readonly string[]).includes(v)) {
+    return v as FreeDvSubmode;
+  }
+  if (typeof v === 'number' && Number.isInteger(v)) {
+    return FREEDV_SUBMODE_BY_BYTE[v] ?? 'Mode700D';
+  }
+  return 'Mode700D';
+}
+
+// Defensive normalizer: the backend may not be wired yet (404) or may send a
+// partial frame. Coerce every field so the panel never reads undefined.
+function normalizeFreeDvStatus(raw: unknown): FreeDvStatusDto {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, dflt: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : dflt;
+  const bool = (v: unknown): boolean => v === true;
+  const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  return {
+    nativeAvailable: bool(r.nativeAvailable),
+    active: bool(r.active),
+    submode: normalizeFreeDvSubmode(r.submode),
+    synced: bool(r.synced),
+    snrDb: num(r.snrDb, 0),
+    squelchEnabled: bool(r.squelchEnabled),
+    snrSquelchThreshDb: num(r.snrSquelchThreshDb, 0),
+    speechSampleRateHz: num(r.speechSampleRateHz, 8000),
+    modemSampleRateHz: num(r.modemSampleRateHz, 8000),
+    rxText: str(r.rxText),
+    txText: str(r.txText),
+    libraryVersion: str(r.libraryVersion),
+    autoDetect: bool(r.autoDetect),
+    radeAvailable: bool(r.radeAvailable),
+  };
+}
+
+// GET /status. Callers should catch and fall back to an unavailable UI state
+// while the plugin is absent or inactive.
+export function getFreeDvStatus(signal?: AbortSignal): Promise<FreeDvStatusDto> {
+  return jsonFetch(`${FREEDV_PLUGIN_BASE}/status`, { signal }, normalizeFreeDvStatus);
+}
+
+// PUT /config. Only the supplied fields change; returns the updated
+// status so the panel can reconcile in one round-trip.
+export function setFreeDvConfig(
+  req: FreeDvConfigRequest,
+  signal?: AbortSignal,
+): Promise<FreeDvStatusDto> {
+  return jsonFetch(
+    `${FREEDV_PLUGIN_BASE}/config`,
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        submode: req.submode ?? null,
+        autoDetect: req.autoDetect ?? null,
+        squelchEnabled: req.squelchEnabled ?? null,
+        snrSquelchThreshDb: req.snrSquelchThreshDb ?? null,
+        txText: req.txText ?? null,
+      }),
+      signal,
+    },
+    normalizeFreeDvStatus,
+  );
+}
+
+// FreeDV native status compatibility endpoint. Natives are bundled inside the
+// plugin zip; the backend returns an already-installed shape for UI parity.
+export type FreeDvInstallPhase = 'idle' | 'downloading' | 'staging' | 'done' | 'failed';
+
+export type FreeDvInstallStatusDto = {
+  phase: FreeDvInstallPhase;
+  percent: number;
+  message: string | null;
+  installed: boolean;
+};
+
+const FREEDV_INSTALL_PHASES: readonly FreeDvInstallPhase[] = [
+  'idle',
+  'downloading',
+  'staging',
+  'done',
+  'failed',
+];
+
+function normalizeFreeDvInstallStatus(raw: unknown): FreeDvInstallStatusDto {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const phase =
+    typeof r.phase === 'string' && (FREEDV_INSTALL_PHASES as readonly string[]).includes(r.phase)
+      ? (r.phase as FreeDvInstallPhase)
+      : 'idle';
+  return {
+    phase,
+    percent: typeof r.percent === 'number' ? r.percent : 0,
+    message: typeof r.message === 'string' ? r.message : null,
+    installed: r.installed === true,
+  };
+}
+
+export function getFreeDvInstallStatus(signal?: AbortSignal): Promise<FreeDvInstallStatusDto> {
+  return jsonFetch(`${FREEDV_PLUGIN_BASE}/install`, { signal }, normalizeFreeDvInstallStatus);
+}
+
+export function startFreeDvInstall(signal?: AbortSignal): Promise<FreeDvInstallStatusDto> {
+  return jsonFetch(`${FREEDV_PLUGIN_BASE}/install`, { method: 'POST', signal }, normalizeFreeDvInstallStatus);
+}
+
+// ---- FreeDV Reporter — live station list (GET /stations) ----
+// Mirrors the plugin-side FreeDvStationDto / FreeDvStationsResponseDto records
+// (System.Text.Json camelCase serialisation).
+
+export type FreeDvStationDto = {
+  sid: string;
+  callsign: string;
+  gridSquare: string | null;
+  freqHz: number;
+  mode: string;          // FreeDV submode as advertised, e.g. "1600","700D","700E","RADEV1"
+  transmitting: boolean;
+  rxOnly: boolean;
+  message: string | null;
+  version: string | null;
+  lastRxSnr: number | null;
+  lastRxCallsign: string | null;
+  lastRxMode: string | null;
+  lastUpdate: string;    // ISO-8601 UTC
+  connectTime: string | null;
+};
+
+export type FreeDvStationsResponseDto = {
+  connectionState: string; // "Disconnected"|"Connecting"|"Connected"|"Reconnecting"
+  enabled: boolean;
+  stations: FreeDvStationDto[];
+  reporting: boolean;      // true when on the public map ("report" role)
+  mySid: string | null;    // operator's own session id while reporting
+};
+
+// ---- FreeDV Reporter "report mode" settings (GET/POST /reporter/settings) ----
+// Mirrors the plugin-side FreeDvReporterSettings record. Strictly opt-in:
+// reportEnabled defaults false and the backend only joins the public map in
+// "report" role when enabled AND callsign + grid are present.
+export type FreeDvReporterSettings = {
+  reportEnabled: boolean;
+  callsign: string;
+  gridSquare: string;
+  message: string;
+};
+
+function normalizeFreeDvReporterSettings(raw: unknown): FreeDvReporterSettings {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    reportEnabled: r.reportEnabled === true,
+    callsign: typeof r.callsign === 'string' ? r.callsign : '',
+    gridSquare: typeof r.gridSquare === 'string' ? r.gridSquare : '',
+    message: typeof r.message === 'string' ? r.message : '',
+  };
+}
+
+function normalizeFreeDvStation(raw: unknown): FreeDvStationDto {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    sid: typeof r.sid === 'string' ? r.sid : '',
+    callsign: typeof r.callsign === 'string' ? r.callsign : '',
+    gridSquare: str(r.gridSquare),
+    freqHz: typeof r.freqHz === 'number' ? r.freqHz : 0,
+    mode: typeof r.mode === 'string' ? r.mode : '',
+    transmitting: r.transmitting === true,
+    rxOnly: r.rxOnly === true,
+    message: str(r.message),
+    version: str(r.version),
+    lastRxSnr: num(r.lastRxSnr),
+    lastRxCallsign: str(r.lastRxCallsign),
+    lastRxMode: str(r.lastRxMode),
+    lastUpdate: typeof r.lastUpdate === 'string' ? r.lastUpdate : '',
+    connectTime: str(r.connectTime),
+  };
+}
+
+function normalizeFreeDvStationsResponse(raw: unknown): FreeDvStationsResponseDto {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    connectionState: typeof r.connectionState === 'string' ? r.connectionState : 'Disconnected',
+    enabled: r.enabled === true,
+    stations: Array.isArray(r.stations) ? (r.stations as unknown[]).map(normalizeFreeDvStation) : [],
+    reporting: r.reporting === true,
+    mySid: typeof r.mySid === 'string' ? r.mySid : null,
+  };
+}
+
+// GET /stations — live FreeDV Reporter station list.
+export function fetchFreeDvStations(signal?: AbortSignal): Promise<FreeDvStationsResponseDto> {
+  return jsonFetch(`${FREEDV_PLUGIN_BASE}/stations`, { signal }, normalizeFreeDvStationsResponse);
+}
+
+// GET /reporter/settings — current report-mode opt-in settings.
+export function getFreeDvReporterSettings(signal?: AbortSignal): Promise<FreeDvReporterSettings> {
+  return jsonFetch(`${FREEDV_PLUGIN_BASE}/reporter/settings`, { signal }, normalizeFreeDvReporterSettings);
+}
+
+// POST /reporter/settings — save report-mode settings (the backend
+// normalizes, persists, and reconnects in the new role). Returns what was saved.
+export function setFreeDvReporterSettings(
+  settings: FreeDvReporterSettings,
+  signal?: AbortSignal,
+): Promise<FreeDvReporterSettings> {
+  return jsonFetch(
+    `${FREEDV_PLUGIN_BASE}/reporter/settings`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        reportEnabled: settings.reportEnabled,
+        callsign: settings.callsign,
+        gridSquare: settings.gridSquare,
+        message: settings.message,
+      }),
+      signal,
+    },
+    normalizeFreeDvReporterSettings,
+  );
+}
+
+// POST /stations/{sid}/qsy — ask that station to QSY to my current
+// VFO frequency. Resolves on success; rejects (jsonFetch throws on non-2xx) when
+// not reporting or the sid is unknown.
+export function freeDvStationQsy(sid: string, signal?: AbortSignal): Promise<void> {
+  return jsonFetch(
+    `${FREEDV_PLUGIN_BASE}/stations/${encodeURIComponent(sid)}/qsy`,
+    { method: 'POST', signal },
+    () => undefined,
+  );
+}

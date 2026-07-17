@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Version Management -->
+    <!-- When building from a tag (e.g., v0.1.0), GITHUB_REF_NAME will be set -->
+    <!-- Otherwise, fall back to the in-development VersionPrefix below.    -->
+    <!-- Bump this when a release branch opens — current target: v0.10.6.   -->
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.10.9</VersionPrefix>
+    <VersionSuffix Condition="'$(VersionSuffix)' == '' AND '$(GITHUB_REF_TYPE)' != 'tag'">dev</VersionSuffix>
+    <Version Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</Version>
+    <Version Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</Version>
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,83 @@
+name: KB2UKA-Agent — Issue Triage
+
+# Automated triage on newly-opened issues. Runs as KB2UKA-Agent (App ID
+# 3702876), distinct from kb2uka-agent.yml (which is the mention-based
+# coding bot). Replaces the previous zeus-agent.yml that ran under
+# Brian's Zeus-Agent App — that App is not installed on this repo
+# post-transfer, so it was failing on every issue event.
+#
+# Secrets required (set via `gh secret set`):
+#   - KB2UKA_AGENT_APP_ID      — GitHub App ID (3702876)
+#   - KB2UKA_AGENT_PRIVATE_KEY — Contents of the App's .pem private key
+#   - KB2UKA_OAUTH_TOKEN       — Anthropic Claude Code OAuth token
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    name: KB2UKA-Triage
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mint KB2UKA-Agent App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KB2UKA_AGENT_APP_ID }}
+          private-key: ${{ secrets.KB2UKA_AGENT_PRIVATE_KEY }}
+
+      - name: Run KB2UKA-Agent triage
+        uses: anthropics/claude-code-base-action@v0.0.63
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.KB2UKA_OAUTH_TOKEN }}
+          allowed_tools: "Bash(gh label list),Bash(gh label list:*),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh search:*),Read,Glob,Grep"
+          # Bumped 15 → 30 after issue #371 ran out of budget on research
+          # before reaching the mandatory comment step. The agent now has
+          # room to do a few rounds of repo grep + closed-issue search and
+          # still post the triage comment the prompt requires.
+          max_turns: "30"
+          model: "claude-sonnet-4-6"
+          prompt: |
+            You are **KB2UKA-Agent** 🛠, the automated triage assistant for Zeus
+            (a cross-platform, web-frontend HPSDR client for original-protocol
+            and Protocol-2 radios — .NET 8 backend, Vite + React frontend, WDSP
+            native DSP engine via P/Invoke). Thetis is the sole authoritative
+            upstream reference; see CLAUDE.md for the red-light / green-light
+            rules.
+
+            Issue #${{ github.event.issue.number }} was just opened:
+            Title: ${{ github.event.issue.title }}
+
+            Your job:
+            1. Read the issue body and skim the repo for relevant context
+               (README.md, CLAUDE.md, docs/lessons/, docs/rca/, recent closed
+               issues).
+            2. Fetch available labels with `gh label list` and apply a sensible subset.
+               NEVER invent new labels.
+                 - Type:     bug | enhancement | question | documentation
+                 - Priority: P1 | P2 | P3  (only if you can judge it confidently)
+                 - Extras:   needs-repro (bug missing repro steps),
+                             duplicate (when you find the original — link it)
+            3. Post exactly ONE comment on the issue with:
+                 - a 1–2 sentence summary of what's being reported,
+                 - which area of the codebase it likely touches
+                   (Zeus.Server / Zeus.Dsp / Zeus.Protocol1 / Zeus.Protocol2 /
+                    Zeus.Contracts / zeus-web / WDSP-native / TX pipeline /
+                    rotctld / QRZ),
+                 - any clarifying questions the reporter should answer,
+                 - a sign-off line: "— KB2UKA-Agent 🛠".
+
+            Rules:
+            - Be concise. Prefer understatement. No "Great question!" openings.
+            - Do NOT attempt a fix. Do NOT close the issue. Do NOT open a PR.
+            - Respect the red-light list in CLAUDE.md (visual design, UX,
+              architecture, defaults) — flag these for maintainer review
+              rather than proposing changes.

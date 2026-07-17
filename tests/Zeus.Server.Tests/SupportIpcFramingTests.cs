@@ -1,0 +1,278 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA),
+//                         Christian Suarez (N9WAR), and contributors.
+//
+// See ATTRIBUTIONS.md at the repository root for the full provenance
+// statement and per-component attribution.
+
+using System.Buffers.Binary;
+using System.Text;
+using Zeus.Support.Contracts;
+
+namespace Zeus.Server.Tests;
+
+// Length-prefixed JSON framing + DTO contract for the backend<->sidecar IPC.
+public class SupportIpcFramingTests
+{
+    private static async Task<SupportIpcMessage?> RoundTripAsync(SupportIpcMessage message)
+    {
+        using var ms = new MemoryStream();
+        await SupportIpcFraming.WriteAsync(ms, message);
+        ms.Position = 0;
+        return await SupportIpcFraming.ReadAsync(ms);
+    }
+
+    [Fact]
+    public async Task Hello_RoundTrips()
+    {
+        var hello = new SupportHello(
+            ProtocolVersion: SupportIpc.ProtocolVersion,
+            BackendPid: 4242,
+            AppVersion: "1.2.3",
+            Platform: "win32-x64",
+            QrzCallsign: "N9WAR",
+            RemoteDiagnosticsEnabled: true,
+            AutoShareOnCrash: false,
+            AppLogPath: @"C:\Users\x\AppData\Local\Zeus\logs\zeus-app.log",
+            StartupLogPath: @"C:\Users\x\AppData\Local\Zeus\zeus-startup.log");
+
+        var result = await RoundTripAsync(hello);
+
+        // Records have value equality, so a full round-trip must reproduce the
+        // concrete type and every field.
+        Assert.Equal(hello, result);
+        Assert.IsType<SupportHello>(result);
+    }
+
+    [Fact]
+    public async Task Hello_WithQrzSessionKey_RoundTrips()
+    {
+        // v2 identity payload: the session key must survive the round-trip so the
+        // sidecar can build its broker client from IPC-delivered identity.
+        var hello = new SupportHello(
+            ProtocolVersion: SupportIpc.ProtocolVersion,
+            BackendPid: 1, AppVersion: "v", Platform: "p",
+            QrzCallsign: "N9WAR",
+            RemoteDiagnosticsEnabled: true,
+            AutoShareOnCrash: false,
+            AppLogPath: "a", StartupLogPath: "s",
+            QrzSessionKey: "sess-abc-123");
+
+        var result = Assert.IsType<SupportHello>(await RoundTripAsync(hello));
+        Assert.Equal(hello, result);
+        Assert.Equal("sess-abc-123", result.QrzSessionKey);
+    }
+
+    [Fact]
+    public async Task StateChanged_WithQrzSessionKey_RoundTrips()
+    {
+        var state = new SupportStateChanged(
+            QrzCallsign: "N9WAR",
+            RemoteDiagnosticsEnabled: true,
+            AutoShareOnCrash: true,
+            QrzSessionKey: "sess-xyz");
+
+        var result = Assert.IsType<SupportStateChanged>(await RoundTripAsync(state));
+        Assert.Equal(state, result);
+        Assert.Equal("sess-xyz", result.QrzSessionKey);
+    }
+
+    [Fact]
+    public void ProtocolVersion_IsAtLeastV2_ForIdentityOverIpc()
+        => Assert.True(SupportIpc.ProtocolVersion >= 2,
+            "v2 added QrzSessionKey to the identity messages; version must not regress.");
+
+    [Fact]
+    public void ProtocolVersion_IsAtLeastV3_ForRadioMetadataOverIpc()
+        => Assert.True(SupportIpc.ProtocolVersion >= 3,
+            "v3 added RadioBoard/RadioModel/RadioConnected to the identity messages; version must not regress.");
+
+    [Fact]
+    public async Task Hello_WithRadioMetadata_RoundTrips()
+    {
+        // v3 radio metadata: board / model / connected must survive the round-trip
+        // so the sidecar can publish the operator's hardware in its presence body.
+        var hello = new SupportHello(
+            ProtocolVersion: SupportIpc.ProtocolVersion,
+            BackendPid: 1, AppVersion: "v", Platform: "p",
+            QrzCallsign: "N9WAR",
+            RemoteDiagnosticsEnabled: true,
+            AutoShareOnCrash: false,
+            AppLogPath: "a", StartupLogPath: "s",
+            QrzSessionKey: "sess",
+            RadioBoard: "ANAN-G2", RadioModel: "G2", RadioConnected: true);
+
+        var result = Assert.IsType<SupportHello>(await RoundTripAsync(hello));
+        Assert.Equal(hello, result);
+        Assert.Equal("ANAN-G2", result.RadioBoard);
+        Assert.Equal("G2", result.RadioModel);
+        Assert.True(result.RadioConnected);
+    }
+
+    [Fact]
+    public async Task StateChanged_WithRadioMetadata_RoundTrips()
+    {
+        var state = new SupportStateChanged(
+            QrzCallsign: "N9WAR",
+            RemoteDiagnosticsEnabled: true,
+            AutoShareOnCrash: true,
+            QrzSessionKey: "sess",
+            RadioBoard: "Hermes-Lite 2", RadioModel: null, RadioConnected: true);
+
+        var result = Assert.IsType<SupportStateChanged>(await RoundTripAsync(state));
+        Assert.Equal(state, result);
+        Assert.Equal("Hermes-Lite 2", result.RadioBoard);
+        Assert.Null(result.RadioModel);
+        Assert.True(result.RadioConnected);
+    }
+
+    [Fact]
+    public async Task Hello_WithoutRadioMetadata_DefaultsToDisconnected()
+    {
+        // Omitting the v3 params (older-style construction) must default to "no radio".
+        var hello = new SupportHello(
+            ProtocolVersion: SupportIpc.ProtocolVersion,
+            BackendPid: 1, AppVersion: "v", Platform: "p",
+            QrzCallsign: "N9WAR",
+            RemoteDiagnosticsEnabled: true,
+            AutoShareOnCrash: false,
+            AppLogPath: "a", StartupLogPath: "s");
+
+        var result = Assert.IsType<SupportHello>(await RoundTripAsync(hello));
+        Assert.Null(result.RadioBoard);
+        Assert.Null(result.RadioModel);
+        Assert.False(result.RadioConnected);
+    }
+
+    [Fact]
+    public async Task PromptResult_PreservesEnumDecision()
+    {
+        var msg = new SupportPromptResult("req-1", SupportPromptDecision.Timeout);
+        var result = await RoundTripAsync(msg);
+        Assert.Equal(msg, result);
+    }
+
+    [Theory]
+    [InlineData(SupportPromptDecision.Allow)]
+    [InlineData(SupportPromptDecision.Deny)]
+    [InlineData(SupportPromptDecision.Timeout)]
+    [InlineData(SupportPromptDecision.Unavailable)]
+    public async Task AllDecisions_RoundTrip(SupportPromptDecision decision)
+    {
+        var result = await RoundTripAsync(new SupportPromptResult("r", decision));
+        Assert.Equal(decision, Assert.IsType<SupportPromptResult>(result).Decision);
+    }
+
+    [Fact]
+    public async Task Sequence_OfMessages_RoundTripsInOrder()
+    {
+        SupportIpcMessage[] sent =
+        [
+            new SupportHeartbeat(123),
+            new SupportPromptRequest("req-9", "KB2UKA", "looking into a crash"),
+            new SupportDiagnosticsPull("req-10", "dsp-live"),
+            new SupportDiagnosticsSnapshot("req-10", Ok: true, Json: "{\"x\":1}"),
+        ];
+
+        using var ms = new MemoryStream();
+        foreach (var m in sent)
+            await SupportIpcFraming.WriteAsync(ms, m);
+        ms.Position = 0;
+
+        foreach (var expected in sent)
+            Assert.Equal(expected, await SupportIpcFraming.ReadAsync(ms));
+
+        // Stream is now exhausted exactly at a frame boundary → clean EOF.
+        Assert.Null(await SupportIpcFraming.ReadAsync(ms));
+    }
+
+    [Fact]
+    public async Task Read_OnEmptyStream_ReturnsNull()
+    {
+        using var ms = new MemoryStream();
+        Assert.Null(await SupportIpcFraming.ReadAsync(ms));
+    }
+
+    [Fact]
+    public async Task Read_ZeroLengthFrame_Throws()
+    {
+        using var ms = new MemoryStream(new byte[4]); // length prefix = 0
+        await Assert.ThrowsAsync<InvalidDataException>(() => SupportIpcFraming.ReadAsync(ms));
+    }
+
+    [Fact]
+    public async Task Read_OversizedFrame_Throws()
+    {
+        var header = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)SupportIpc.MaxFrameBytes + 1);
+        using var ms = new MemoryStream(header);
+        await Assert.ThrowsAsync<InvalidDataException>(() => SupportIpcFraming.ReadAsync(ms));
+    }
+
+    [Fact]
+    public async Task Read_TruncatedPayload_Throws()
+    {
+        // Header promises 50 bytes; supply only 10 then EOF.
+        var header = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(header, 50);
+        var buf = new byte[4 + 10];
+        header.CopyTo(buf, 0);
+        Encoding.UTF8.GetBytes("0123456789").CopyTo(buf, 4);
+
+        using var ms = new MemoryStream(buf);
+        await Assert.ThrowsAsync<InvalidDataException>(() => SupportIpcFraming.ReadAsync(ms));
+    }
+
+    [Fact]
+    public void PipeNameForSession_SanitisesAndIsStable()
+    {
+        Assert.Equal("zeus-support", SupportIpc.PipeNameForSession(null));
+        Assert.Equal("zeus-support", SupportIpc.PipeNameForSession("   "));
+        // Non-alphanumerics collapse to underscores; the same token is stable.
+        var a = SupportIpc.PipeNameForSession("ab/cd-12");
+        Assert.Equal("zeus-support-ab_cd_12", a);
+        Assert.Equal(a, SupportIpc.PipeNameForSession("ab/cd-12"));
+    }
+
+    // Regression: a full 32-hex GUID session token (what the backend actually mints,
+    // SupportSidecarBridge.SessionToken = Guid.NewGuid().ToString("N")) must produce a
+    // pipe name whose macOS-realised Unix-domain-socket path fits inside the 104-char
+    // sun_path cap. Before the token was bounded, the realised path was 105 chars and
+    // the sidecar's NamedPipeServerStream threw ArgumentOutOfRangeException every
+    // second on macOS — so the operator never appeared in the /admin presence list and
+    // crash auto-share never fired, while Windows/Linux clients worked.
+    [Fact]
+    public void PipeNameForSession_RealisedMacOsSocketPath_FitsUnder104()
+    {
+        // .NET realises a local named pipe as {GetTempPath()}/CoreFxPipe_{pipeName}.
+        // Use a representative deep macOS temp dir: /var/folders/xx/<24>/T/ = 49 chars.
+        const string macTempDir = "/var/folders/7v/4s264zd570q7_w7l5nbt_rbh0000gn/T/";
+        const string coreFxPrefix = "CoreFxPipe_";
+        const int macSunPathLimit = 104;
+
+        var token = Guid.NewGuid().ToString("N"); // 32 hex chars, as in production
+        var pipeName = SupportIpc.PipeNameForSession(token);
+        var realisedPath = macTempDir + coreFxPrefix + pipeName;
+
+        Assert.True(
+            realisedPath.Length <= macSunPathLimit,
+            $"realised macOS socket path is {realisedPath.Length} chars (limit {macSunPathLimit}): {realisedPath}");
+    }
+
+    // The bound must not defeat its purpose: two distinct full tokens must still yield
+    // distinct pipe names (so two Zeus instances on one machine don't collide), and the
+    // derivation stays deterministic (both IPC ends derive the same name from the same
+    // token).
+    [Fact]
+    public void PipeNameForSession_BoundedTokenStaysDistinctAndDeterministic()
+    {
+        var t1 = Guid.NewGuid().ToString("N");
+        var t2 = Guid.NewGuid().ToString("N");
+
+        Assert.Equal(SupportIpc.PipeNameForSession(t1), SupportIpc.PipeNameForSession(t1));
+        Assert.NotEqual(SupportIpc.PipeNameForSession(t1), SupportIpc.PipeNameForSession(t2));
+    }
+}

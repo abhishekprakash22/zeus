@@ -1,0 +1,88 @@
+#!/bin/sh
+set -eu
+
+zero="0000000000000000000000000000000000000000"
+failed=0
+cr=$(printf '\r')
+expected_primary="Christian Suarez (N9WAR) <christiantsuarez@gmail.com>"
+expected_handle="iamexemplar <christiantsuarez@gmail.com>"
+
+is_expected_identity() {
+  case "$1" in
+    *"$expected_primary"*|*"$expected_handle"*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+contains_ai_identity() {
+  case "$1" in
+    *[Cc][Ll][Aa][Uu][Dd][Ee]*|*[Aa][Nn][Tt][Hh][Rr][Oo][Pp][Ii][Cc]*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+commit_has_forbidden_message() {
+  message_commit=$1
+  message_scope=${2:-all}
+  while IFS= read -r line || [ -n "$line" ]
+  do
+    if [ "$message_scope" = "expected" ] && contains_ai_identity "$line"; then
+      return 0
+    fi
+  done <<EOF
+$(git show -s --format=%B "$message_commit")
+EOF
+
+
+  return 1
+}
+
+list_pushed_commits() {
+  local_sha=$1
+  remote_sha=$2
+
+  if [ "$remote_sha" = "$zero" ]; then
+    git rev-list "$local_sha" --not --remotes 2>/dev/null || true
+  else
+    git rev-list "$local_sha" "^$remote_sha" 2>/dev/null || true
+  fi
+}
+
+while read -r local_ref local_sha remote_ref remote_sha
+do
+  local_ref=${local_ref%$cr}
+  local_sha=${local_sha%$cr}
+  remote_ref=${remote_ref%$cr}
+  remote_sha=${remote_sha%$cr}
+
+  [ "$local_sha" = "$zero" ] && continue
+
+  for commit in $(list_pushed_commits "$local_sha" "$remote_sha")
+  do
+    author_ident="$(git show -s --format='%an <%ae>' "$commit")"
+    committer_ident="$(git show -s --format='%cn <%ce>' "$commit")"
+
+    message_scope=all
+    if is_expected_identity "$author_ident" && is_expected_identity "$committer_ident"; then
+      message_scope=expected
+    fi
+
+    if commit_has_forbidden_message "$commit" "$message_scope"; then
+      echo "Refusing push: commit $commit contains forbidden attribution text." >&2
+      failed=1
+    fi
+  done
+done
+
+if [ "$failed" -ne 0 ]; then
+  echo "Remove AI-assistant attribution from commit messages before pushing." >&2
+  exit 1
+fi

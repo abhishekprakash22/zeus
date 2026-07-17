@@ -1,0 +1,681 @@
+/* ===========================================================
+   Filter visualization PRD §3.2 — advanced filter ribbon.
+
+   Palette: NEUTRAL WARM GRAY (no blue, no cyan). Body is a
+   #26292f → #1e2025 gradient; preset panel is #2a2d33 with a
+   hairline border and 8px radius. Selected state brightens the
+   chip base and edges but stays in the gray family.
+
+   Layout lives as a dedicated row inside `.workspace` column 1
+   — above `.hero`, beside `.side-stack`. When
+   `.workspace.has-filter-ribbon` is not set (ribbon closed), the
+   row never exists.
+   =========================================================== */
+
+.workspace.has-filter-ribbon {
+  grid-template-rows: auto 1fr 200px;
+}
+.workspace.has-filter-ribbon .filter-ribbon { grid-column: 1; grid-row: 1; }
+.workspace.has-filter-ribbon .hero         { grid-row: 2; align-self: stretch; }
+.workspace.has-filter-ribbon .bottom-row   { grid-row: 3; }
+.workspace.has-filter-ribbon .side-stack   { grid-row: 1 / span 3; }
+
+.filter-ribbon {
+  position: relative;
+  color: #edeef1;
+  font-family: inherit;
+  min-height: 0;
+  border-radius: 0;
+  padding: 10px 12px 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: linear-gradient(180deg, #26292f 0%, #1e2025 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 30px 80px rgba(0, 0, 0, 0.45);
+}
+
+.filter-ribbon__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #7c8088;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+.filter-ribbon__close:hover { color: #edeef1; background: rgba(255, 255, 255, 0.04); }
+
+/* Two-column layout: wide left area (readouts + mini-pan + hint)
+   and a fixed-width preset panel on the right. */
+.filter-ribbon__body {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  column-gap: 14px;
+  align-items: stretch;
+}
+
+/* Left column — vertical stack */
+.filter-ribbon__main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+
+.filter-ribbon__topRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  align-items: start;
+  column-gap: 8px;
+  padding: 2px 6px 6px;
+}
+.filter-ribbon__topCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.filter-ribbon__topCol--bw { align-items: flex-start; text-align: left; }
+.filter-ribbon__topCol--lo { align-items: center;    text-align: center; }
+.filter-ribbon__topCol--pb { align-items: center;    text-align: center; }
+.filter-ribbon__topCol--hi { align-items: flex-end;  text-align: right; }
+
+/* Uppercase, letter-spaced, muted neutral labels */
+.filter-ribbon__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: #7c8088;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.filter-ribbon__topCol--bw .filter-ribbon__label { color: #b4b7bd; }
+
+.filter-ribbon__label--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  color: #b4b7bd;
+}
+.filter-ribbon__presets-icon { opacity: 0.75; font-size: 12px; }
+
+/* LOW CUT / HIGH CUT value */
+.filter-ribbon__freq {
+  font-size: 17px;
+  font-weight: 600;
+  color: #edeef1;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+/* PASSBAND focal readout: bigger white number with small "kHz" suffix */
+.filter-ribbon__passband {
+  color: #edeef1;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.filter-ribbon__passband-value { font-size: 22px; font-weight: 600; letter-spacing: 0.02em; }
+.filter-ribbon__passband-unit  { font-size: 12px; color: #b4b7bd; font-weight: 500; }
+
+/* Mini-pan — fills the remaining vertical space in the main column.
+   Height accommodates the top LOW/HIGH CUT callout band (~22px) on top
+   of the spectrum/passband/axis stack. */
+.filter-ribbon__minipan {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 102px;
+  height: 122px;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+/* Mini-pan canvas + overlay wrapper. The canvas fills the wrapper; the width
+   pill floats bottom-centre over it. touch-action:none keeps pointer drags
+   from being stolen by the browser's scroll/zoom gestures. */
+.filter-minipan-stack {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.filter-minipan-stack--split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.075);
+}
+.filter-minipan-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  isolation: isolate;
+  background: rgba(2, 4, 7, 0.48);
+}
+.filter-minipan-wrap--split {
+  overflow: hidden;
+}
+.filter-minipan-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.30) 0%, transparent 12%, transparent 88%, rgba(0, 0, 0, 0.30) 100%),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 4px);
+  mix-blend-mode: screen;
+  opacity: 0.36;
+}
+.filter-minipan-canvas {
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  background: transparent;
+}
+.filter-minipan-vfo-tag {
+  position: absolute;
+  z-index: 3;
+  top: 3px;
+  left: 5px;
+  max-width: 86px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 2px 5px;
+  border-radius: var(--r-sm, 3px);
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--fg-1, #d9dce2);
+  background: rgba(4, 7, 11, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.42);
+  pointer-events: none;
+}
+.filter-minipan-vfo-tag.is-rx1 {
+  color: var(--accent-bright, #7dbbff);
+}
+.filter-minipan-vfo-tag.is-rx2 {
+  color: var(--signal, #25d366);
+}
+
+/* Live passband-width readout, click-to-edit. Sits in the mini-pan's reserved
+   top callout band, horizontally centred over the passband (left set inline),
+   so it aligns with LOW CUT / HIGH CUT without covering the spectrum trace. */
+.filter-minipan-width-pill,
+.filter-minipan-width-input {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  padding: 2px 7px;
+  border-radius: var(--r-sm, 3px);
+  color: var(--fg-0, #edeef1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.02) 48%, rgba(0, 0, 0, 0.18) 100%),
+    rgba(7, 9, 13, 0.78);
+  border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 42%, rgba(255, 255, 255, 0.22));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.52),
+    0 0 16px color-mix(in srgb, var(--accent, #4a9eff) 34%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.18);
+  z-index: 2;
+  backdrop-filter: blur(7px);
+}
+.filter-minipan-width-pill {
+  cursor: text;
+  appearance: none;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+.filter-minipan-width-pill:hover {
+  border-color: color-mix(in srgb, var(--accent-bright, #4ea6ff) 62%, rgba(255, 255, 255, 0.36));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.04) 48%, rgba(0, 0, 0, 0.16) 100%),
+    rgba(10, 13, 18, 0.82);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 0 22px color-mix(in srgb, var(--accent-bright, #4ea6ff) 48%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.20);
+  transform: translateX(-50%) scale(1.02);
+}
+.filter-minipan-width-input {
+  width: 64px;
+  text-align: center;
+  outline: none;
+  border-color: var(--accent, #4a9eff);
+}
+/* Strip number-spinner chrome so the pill stays compact. */
+.filter-minipan-width-input::-webkit-outer-spin-button,
+.filter-minipan-width-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.filter-minipan-width-input { -moz-appearance: textfield; appearance: textfield; }
+
+/* ===========================================================
+   Docked "Bandwidth Filter" workspace tile (FilterRibbonPanel).
+   The tile owns the height, so the drop-down ribbon's fixed
+   122px mini-pan, chunky padding, and dramatic drop-shadow make
+   the content overflow the tile (inner scrollbar) and read too
+   tall next to the VFO. Here we let the mini-pan flex to fill
+   whatever height the tile gives it — no fixed height, no
+   scrollbar — and strip the drop-down-only chrome.
+   =========================================================== */
+.filter-ribbon-panel--minipan .filter-ribbon {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  padding: 6px 8px;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+.filter-ribbon-panel--minipan .filter-ribbon__body {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: 1fr;
+}
+.filter-ribbon-panel--minipan .filter-ribbon__main {
+  height: 100%;
+  min-height: 0;
+}
+.filter-ribbon-panel--minipan .filter-ribbon__minipan {
+  height: 100%;
+  min-height: 56px;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(255, 255, 255, 0.045), transparent 48%),
+    linear-gradient(180deg, rgba(8, 10, 13, 0.78) 0%, rgba(4, 5, 7, 0.96) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: var(--r-sm, 3px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(0, 0, 0, 0.42);
+}
+
+/* ===========================================================
+   Docked "Filter Presets" workspace tile (FilterPresetsPanel).
+   Renders FilterRibbon section="presets" — only the right-hand
+   preset card. The drop-down body grid is `1fr 280px`, so with
+   the mini-pan column absent the preset card lands in the 1fr
+   slot and leaves a dead 280px gap on the right. Collapse the
+   body to a single column so the card fills the tile with even
+   left/right padding, and strip the drop-down-only chrome.
+   =========================================================== */
+.filter-ribbon-panel--presets .filter-ribbon {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+.filter-ribbon-panel--presets .filter-ribbon__body {
+  grid-template-columns: 1fr;
+  column-gap: 0;
+}
+
+/* ===== Preset panel (right column) — its own framed card ===== */
+.filter-ribbon__presets {
+  background: #2a2d33;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0;
+  padding: 8px 8px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.filter-ribbon__section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: #7c8088;
+  text-transform: uppercase;
+  line-height: 1;
+  margin-top: 1px;
+}
+.filter-ribbon__section-label:first-child { margin-top: 0; }
+
+.filter-ribbon__favorites {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+
+.filter-ribbon__preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 3px;
+}
+
+.filter-ribbon__custom-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.filter-ribbon__custom-input {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 5px;
+  background: linear-gradient(180deg, #1f2126 0%, #1a1c20 100%);
+  color: #edeef1;
+  border: 1px solid #3a3e45;
+  border-radius: 0;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.filter-ribbon__custom-input:focus {
+  border-color: #626670;
+}
+.filter-ribbon__custom-input:disabled {
+  color: #7c8088;
+  cursor: not-allowed;
+}
+.filter-ribbon__custom-sep {
+  font-size: 11px;
+  color: #7c8088;
+  line-height: 1;
+}
+.filter-ribbon__custom-unit {
+  font-size: 9px;
+  color: #7c8088;
+  letter-spacing: 0.18em;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+
+/* Beveled neutral-gray chip — sized to match the app's .btn.sm. */
+.filter-ribbon__chip {
+  appearance: none;
+  font-family: inherit;
+  padding: 3px 4px;
+  font-size: clamp(9.5px, 0.1vw + 9px, 11px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #e0e2e6;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.12) 100%),
+    linear-gradient(180deg, #3a3e45 0%, #2a2d33 100%);
+  border: 1px solid #4a4e55;
+  border-top-color: #585c63;
+  border-bottom-color: #32353b;
+  border-radius: 0;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 120ms ease, filter 120ms ease, color 120ms ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 1px 0 rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+.filter-ribbon__chip:hover {
+  filter: brightness(1.12);
+  border-color: #626670;
+}
+.filter-ribbon__chip.is-active {
+  color: #ffffff;
+  border-color: #8a8e97;
+  border-top-color: #a4a8b0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.02) 45%, rgba(0, 0, 0, 0.10) 100%),
+    linear-gradient(180deg, #52565e 0%, #3a3e45 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(220, 225, 232, 0.15),
+    0 0 10px rgba(200, 205, 212, 0.10),
+    0 1px 0 rgba(0, 0, 0, 0.40);
+}
+
+/* Favorites row — slightly larger, weightier than the dense preset grid. */
+.filter-ribbon__chip--fav {
+  padding: 5px 5px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* Drag-source ghosting and drop-target highlight. */
+.filter-ribbon__chip[draggable='true'] { cursor: grab; }
+.filter-ribbon__chip[draggable='true']:active { cursor: grabbing; }
+.filter-ribbon__chip.is-dragging { opacity: 0.45; }
+.filter-ribbon__chip.is-drop-target {
+  border-color: #4a9eff;
+  border-top-color: #6cb0ff;
+  background:
+    linear-gradient(180deg, rgba(74, 158, 255, 0.22) 0%, rgba(74, 158, 255, 0.04) 50%, rgba(0, 0, 0, 0.10) 100%),
+    linear-gradient(180deg, #3a3e45 0%, #2a2d33 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(108, 176, 255, 0.40),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 0 12px rgba(74, 158, 255, 0.20),
+    0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.filter-ribbon__custom {
+  appearance: none;
+  font-family: inherit;
+  padding: 6px 10px;
+  font-size: clamp(10px, 0.1vw + 9.5px, 12px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  border-radius: 0;
+  color: #e0e2e6;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.12) 100%),
+    linear-gradient(180deg, #3a3e45 0%, #2a2d33 100%);
+  border: 1px solid #4a4e55;
+  border-top-color: #585c63;
+  border-bottom-color: #32353b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-transform: uppercase;
+  margin-top: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 1px 0 rgba(0, 0, 0, 0.35);
+}
+.filter-ribbon__custom:hover {
+  filter: brightness(1.12);
+  border-color: #626670;
+}
+.filter-ribbon__custom.is-active {
+  color: #ffffff;
+  border-color: #8a8e97;
+  border-top-color: #a4a8b0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.02) 45%, rgba(0, 0, 0, 0.10) 100%),
+    linear-gradient(180deg, #52565e 0%, #3a3e45 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(220, 225, 232, 0.15),
+    0 0 10px rgba(200, 205, 212, 0.10),
+    0 1px 0 rgba(0, 0, 0, 0.40);
+}
+.filter-ribbon__custom-icon { opacity: 0.75; margin-left: 8px; font-size: 12px; }
+
+/* ===========================================================
+   Compact filter bar — triplet readout above the preset chips.
+   Mirrors the ribbon's top-row hierarchy (LOW CUT / PASSBAND /
+   HIGH CUT) at miniature scale so the edges are legible without
+   opening the ribbon.
+   =========================================================== */
+.filter-bar__readout {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: baseline;
+  column-gap: 10px;
+  margin: 2px 0 5px;
+  padding: 3px 4px 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.filter-bar__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  position: relative;
+}
+.filter-bar__cell--lo     { align-items: flex-start; text-align: left; }
+.filter-bar__cell--width  { align-items: center;    text-align: center; }
+.filter-bar__cell--hi     { align-items: flex-end;  text-align: right; }
+
+/* Hairline vertical dividers between cells — pure atmosphere, no strong line. */
+.filter-bar__cell--width::before,
+.filter-bar__cell--width::after {
+  content: '';
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+}
+.filter-bar__cell--width::before { left: -5px; }
+.filter-bar__cell--width::after  { right: -5px; }
+
+.filter-bar__key {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--fg-3);
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+}
+.filter-bar__val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-0);
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.filter-bar__val--accent {
+  font-size: 13.5px;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+/* ===========================================================
+   Light theme — re-skin the filter ribbon's hardcoded warm-grey
+   palette to brushed silver. The original gradient (#26292f →
+   #1e2025) and chip family (#3a3e45 / #2a2d33 / #4a4e55) read as
+   a dark slab pasted onto the silver chassis, so we flip them
+   here. Active-state blue accent (#4a9eff) and signal colours
+   pass through unchanged — they read well on both backgrounds.
+   =========================================================== */
+:root[data-theme="light"] .filter-ribbon {
+  color: var(--fg-0);
+  background: linear-gradient(180deg, var(--panel-head-top) 0%, var(--panel-head-bot) 100%);
+  border: 1px solid var(--panel-border);
+  box-shadow:
+    inset 0 1px 0 var(--panel-hl-top),
+    0 1px 2px rgba(0, 0, 0, 0.12);
+}
+:root[data-theme="light"] .filter-ribbon__close { color: var(--fg-2); }
+:root[data-theme="light"] .filter-ribbon__close:hover {
+  color: var(--fg-0);
+  background: rgba(0, 0, 0, 0.06);
+}
+:root[data-theme="light"] .filter-ribbon__label { color: var(--fg-2); }
+:root[data-theme="light"] .filter-ribbon__topCol--bw .filter-ribbon__label,
+:root[data-theme="light"] .filter-ribbon__passband-unit { color: var(--fg-1); }
+:root[data-theme="light"] .filter-ribbon__freq,
+:root[data-theme="light"] .filter-ribbon__passband-value { color: var(--fg-0); }
+
+/* Preset panel + mini-pan surfaces */
+:root[data-theme="light"] .filter-ribbon__presets,
+:root[data-theme="light"] .filter-ribbon__minipan {
+  background: var(--bg-2);
+  border-color: var(--panel-border);
+  color: var(--fg-1);
+}
+:root[data-theme="light"] .filter-ribbon__section-label { color: var(--fg-2); }
+
+:root[data-theme="light"] .filter-ribbon-panel--minipan .filter-ribbon__minipan {
+  background:
+    radial-gradient(circle at 50% 8%, rgba(255, 255, 255, 0.24), transparent 46%),
+    linear-gradient(180deg, #242932 0%, #11151b 100%);
+  border-color: rgba(20, 24, 31, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.80),
+    0 1px 2px rgba(0, 0, 0, 0.16);
+}
+:root[data-theme="light"] .filter-minipan-width-pill,
+:root[data-theme="light"] .filter-minipan-width-input {
+  color: #ffffff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.03) 48%, rgba(0, 0, 0, 0.22) 100%),
+    rgba(8, 10, 14, 0.78);
+}
+
+/* Preset chips — match light-theme button surfaces. Keep active
+   blue accent intact; just re-skin the rest state. */
+:root[data-theme="light"] .filter-ribbon__chip,
+:root[data-theme="light"] .filter-ribbon__custom {
+  color: var(--fg-1);
+  background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-3) 100%);
+  border: 1px solid var(--line-strong);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 1px 0 rgba(0, 0, 0, 0.08);
+}
+:root[data-theme="light"] .filter-ribbon__chip:hover,
+:root[data-theme="light"] .filter-ribbon__custom:hover {
+  border-color: var(--fg-3);
+  filter: none;
+}
+:root[data-theme="light"] .filter-ribbon__chip.is-active,
+:root[data-theme="light"] .filter-ribbon__custom.is-active {
+  color: #ffffff;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent) 100%);
+  border-color: var(--accent);
+}
+:root[data-theme="light"] .filter-ribbon__chip.is-drop-target {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg, rgba(74, 158, 255, 0.18) 0%, rgba(74, 158, 255, 0.04) 50%, transparent 100%),
+    linear-gradient(180deg, var(--bg-2) 0%, var(--bg-3) 100%);
+}

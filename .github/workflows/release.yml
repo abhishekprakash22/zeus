@@ -1,0 +1,1831 @@
+name: Release
+
+# Five trigger paths:
+#   1. push of a v*.*.* tag                 → full release (build + publish to GitHub Releases)
+#   2. push to a release/** branch          → dry-run build only (artifacts uploaded, no Release)
+#   3. manual workflow_dispatch (draft=off) → dry-run build only (run from any branch via the
+#                                             Actions tab → Release → Run workflow)
+#   4. manual workflow_dispatch (draft=on)  → DRAFT GitHub Release (maintainers only). Same
+#                                             VersionPrefix as the eventual public release —
+#                                             no -dryrun.<sha> suffix on artifact names — so
+#                                             the bits you smoke-test are byte-for-byte what
+#                                             would ship if you flip the draft to "Published".
+#   5. workflow_call (mode=nightly)         → nightly build invoked by .github/workflows/nightly.yml.
+#                                             Builds develop tip (caller passes ref=develop), versions
+#                                             artifacts as <prefix>-nightly.YYYYMMDD.<shortsha>, and
+#                                             publishes a rolling prerelease at tag `nightly`.
+#
+# In all five modes the same matrix builds one installer per platform.
+# The shipped installer wraps a single `OpenhpsdrZeus` binary that serves
+# both modes: launched with no args it runs as the LAN-bound HTTP service;
+# launched with `--desktop` it runs as a Photino native shell. 'create-release'
+# is gated on is-release='true' (modes 1 and 4); 'create-nightly-release' is
+# gated on is-nightly='true' (mode 5 only).
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    branches:
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Publish as a DRAFT GitHub Release (visible only to maintainers, version not suffixed with -dryrun.<sha>). Leave unchecked for a regular dry-run that only uploads artifacts to the run page.'
+        type: boolean
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      mode:
+        description: 'Build mode when invoked as a reusable workflow. `nightly` builds develop for the rolling prerelease; `download-main` builds main for openhpsdrzeus.com downloads; other values fall through to the dry-run path.'
+        type: string
+        required: false
+        default: dryrun
+      ref:
+        description: 'Git ref to check out in every job. Empty string keeps existing behaviour (use the triggering SHA). Nightly callers pass `develop` so the schedule-trigger (which fires on the default branch, main) still builds develop tip.'
+        type: string
+        required: false
+        default: ''
+    outputs:
+      version:
+        description: 'Full SemVer string used in artifact filenames.'
+        value: ${{ jobs.determine-version.outputs.version }}
+      version-prefix:
+        description: 'Numeric MAJOR.MINOR.PATCH version prefix.'
+        value: ${{ jobs.determine-version.outputs.version-prefix }}
+      version-suffix:
+        description: 'Pre-release/build suffix, if any.'
+        value: ${{ jobs.determine-version.outputs.version-suffix }}
+
+jobs:
+  determine-version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    outputs:
+      # Full SemVer string used in artifact filenames (e.g. 0.4.1-dryrun.abc1234).
+      version: ${{ steps.parse.outputs.version }}
+      # Numeric MAJOR.MINOR.PATCH for -p:VersionPrefix. .NET's AssemblyVersion /
+      # FileVersion are derived from this in Directory.Build.props and reject
+      # any non-numeric content (CS7034 / CS7035), so the suffix has to ride on
+      # VersionSuffix instead.
+      version-prefix: ${{ steps.parse.outputs.version-prefix }}
+      version-suffix: ${{ steps.parse.outputs.version-suffix }}
+      is-release: ${{ steps.parse.outputs.is-release }}
+      is-draft: ${{ steps.parse.outputs.is-draft }}
+      is-nightly: ${{ steps.parse.outputs.is-nightly }}
+      sign-macos: ${{ steps.parse.outputs.sign-macos }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Parse version + validate (tag mode only)
+        id: parse
+        env:
+          # workflow_dispatch boolean inputs arrive as the strings "true"/"false";
+          # plumb through env so the bash conditional below stays readable.
+          DISPATCH_DRAFT: ${{ github.event.inputs.draft }}
+          # workflow_call input — empty unless invoked by nightly.yml (or any
+          # other reusable caller). Drives the IS_NIGHTLY branch below.
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          IS_DRAFT="false"
+          IS_NIGHTLY="false"
+          SIGN_MACOS="false"
+          if [[ "$INPUT_MODE" == "nightly" ]]; then
+            # Nightly mode — caller (nightly.yml) has already pointed checkout
+            # at develop via `inputs.ref`, so HEAD reflects develop tip rather
+            # than the schedule-trigger ref (main). Read SHA from git, not from
+            # $GITHUB_SHA, for the same reason.
+            VERSION_PREFIX=$(sed -n 's:.*<VersionPrefix[^>]*>\([^<]*\)</VersionPrefix>.*:\1:p' Directory.Build.props | head -1)
+            VERSION_PREFIX="${VERSION_PREFIX:-0.0.0}"
+            DATE_STAMP=$(date -u +%Y%m%d)
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            VERSION_SUFFIX="nightly.${DATE_STAMP}.${SHORT_SHA}"
+            VERSION="${VERSION_PREFIX}-${VERSION_SUFFIX}"
+            IS_RELEASE="false"
+            IS_NIGHTLY="true"
+            SIGN_MACOS="true"
+            echo "Nightly build (ref=$GITHUB_REF, head=$SHORT_SHA) → version $VERSION"
+          elif [[ "$INPUT_MODE" == "download-main" ]]; then
+            # Website download mode — build the current main branch and publish
+            # the artifacts to openhpsdrzeus.com via the caller workflow. Use a
+            # monotonic suffix so every main build can coexist in the download
+            # manifest, while the website marks only the newest one as latest.
+            VERSION_PREFIX=$(sed -n 's:.*<VersionPrefix[^>]*>\([^<]*\)</VersionPrefix>.*:\1:p' Directory.Build.props | head -1)
+            VERSION_PREFIX="${VERSION_PREFIX:-0.0.0}"
+            DATE_STAMP=$(date -u +%Y%m%d)
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            VERSION_SUFFIX="main.${DATE_STAMP}.${SHORT_SHA}"
+            VERSION="${VERSION_PREFIX}-${VERSION_SUFFIX}"
+            IS_RELEASE="false"
+            SIGN_MACOS="true"
+            echo "Download build (ref=$GITHUB_REF, head=$SHORT_SHA) → version $VERSION"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            # Tag push — strict release path.
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Tag '$GITHUB_REF_NAME' does not match vMAJOR.MINOR.PATCH (e.g. v1.2.3)."
+              exit 1
+            fi
+            git fetch origin main --depth=0 2>/dev/null || git fetch origin main
+            TAG_SHA=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
+            if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+              echo "::error::Tag '$GITHUB_REF_NAME' (commit $TAG_SHA) is not reachable from origin/main. Releases must be tagged from main."
+              exit 1
+            fi
+            VERSION_PREFIX="${GITHUB_REF_NAME#v}"
+            VERSION_SUFFIX=""
+            VERSION="$VERSION_PREFIX"
+            IS_RELEASE="true"
+            SIGN_MACOS="true"
+            echo "Tagged release $GITHUB_REF_NAME → version $VERSION"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DRAFT" == "true" ]]; then
+            # Manual dispatch with draft=true — produce a DRAFT GitHub Release
+            # using the in-tree VersionPrefix verbatim. No -dryrun.<sha> suffix:
+            # the artifact filenames you smoke-test must match the eventual
+            # published release byte-for-byte. The draft is only visible to
+            # maintainers until someone clicks "Publish release".
+            VERSION_PREFIX=$(sed -n 's:.*<VersionPrefix[^>]*>\([^<]*\)</VersionPrefix>.*:\1:p' Directory.Build.props | head -1)
+            VERSION_PREFIX="${VERSION_PREFIX:-0.0.0}"
+            VERSION_SUFFIX=""
+            VERSION="$VERSION_PREFIX"
+            IS_RELEASE="true"
+            IS_DRAFT="true"
+            SIGN_MACOS="true"
+            echo "Draft release dispatch (ref=$GITHUB_REF) → version $VERSION (draft=true)"
+          else
+            # Branch push or manual dispatch (draft=false) — dry-run path. Read
+            # VersionPrefix from Directory.Build.props and ride the dryrun.<sha>
+            # tag on VersionSuffix so .NET's AssemblyVersion (which is built
+            # from VersionPrefix only) stays a valid MAJOR.MINOR.PATCH.
+            VERSION_PREFIX=$(sed -n 's:.*<VersionPrefix[^>]*>\([^<]*\)</VersionPrefix>.*:\1:p' Directory.Build.props | head -1)
+            VERSION_PREFIX="${VERSION_PREFIX:-0.0.0}"
+            SHORT_SHA="${GITHUB_SHA:0:7}"
+            VERSION_SUFFIX="dryrun.${SHORT_SHA}"
+            VERSION="${VERSION_PREFIX}-${VERSION_SUFFIX}"
+            IS_RELEASE="false"
+            echo "Dry-run build (trigger=$GITHUB_EVENT_NAME ref=$GITHUB_REF) → version $VERSION"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version-prefix=${VERSION_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "version-suffix=${VERSION_SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "is-release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "is-draft=${IS_DRAFT}" >> "$GITHUB_OUTPUT"
+          echo "is-nightly=${IS_NIGHTLY}" >> "$GITHUB_OUTPUT"
+          echo "sign-macos=${SIGN_MACOS}" >> "$GITHUB_OUTPUT"
+
+  # ---------- Native WDSP rebuild (always-fresh natives in releases) -------
+  #
+  # Releases used to ship whatever native binaries were committed at the tag
+  # SHA — leaving a stale-natives race if a native/** source change reached
+  # main without a matching binary commit. These jobs rebuild WDSP for every
+  # shipped platform during the release run and hand the fresh binaries to
+  # build-release via artifacts. The committed Zeus.Dsp/runtimes/ blobs are
+  # ignored for releases (they remain useful only for local `dotnet run`).
+  #
+  # Build steps mirror build-native-libs.yml — see the comment-blocks there
+  # for the per-arch CRT linkage / vcpkg triplet / WDSP_WITH_NR4 reasoning.
+
+  build-native-windows:
+    name: Build native WDSP (windows-${{ matrix.arch }})
+    needs: determine-version
+    # Pinned: windows-latest rolled past the VS 2022 image ~2026-06-10 and the
+    # 'Visual Studio 17 2022' generator below stopped resolving, killing every
+    # nightly. Keep runner + generator in lockstep; bump both together.
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install FFTW via vcpkg
+        run: |
+          $triplet = if ("${{ matrix.arch }}" -eq "arm64") {
+            "arm64-windows-static"
+          } else {
+            "x64-windows-static-md"
+          }
+          vcpkg install fftw3:$triplet
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          $archFlag = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
+          $triplet = if ("${{ matrix.arch }}" -eq "arm64") {
+            "arm64-windows-static"
+          } else {
+            "x64-windows-static-md"
+          }
+          $cmakeArgs = @(
+            '-S', 'native/wdsp',
+            '-B', 'native/build',
+            '-G', 'Visual Studio 17 2022',
+            '-A', $archFlag,
+            '-T', 'ClangCL',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_TARGET_TRIPLET=$triplet",
+            '-DWDSP_WITH_NR3=ON',
+            '-DWDSP_WITH_NR4=ON'
+          )
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $cmakeArgs += '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded'
+          }
+          Write-Host "cmake args:"; $cmakeArgs | ForEach-Object { Write-Host "  $_" }
+          & cmake @cmakeArgs
+
+      - name: Build
+        run: cmake --build native/build --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vsInstall\VC\Tools\MSVC" }
+          $exports = & $dumpbin /EXPORTS native/build/Release/wdsp.dll | Select-String "SetRXASBNR"
+          $count = ($exports | Measure-Object).Count
+          Write-Host "Found $count SetRXASBNR* exports"
+          if ($count -ne 8) { throw "Expected 8 SetRXASBNR* exports, got $count. NR4 did not link correctly." }
+
+      - name: Verify RNNR exports
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vsInstall\VC\Tools\MSVC" }
+          $exports = & $dumpbin /EXPORTS native/build/Release/wdsp.dll | Select-String "RNNR"
+          $count = ($exports | Measure-Object).Count
+          Write-Host "Found $count RNNR exports"
+          if ($count -ne 4) { throw "Expected 4 RNNR exports, got $count. NR3 did not link correctly." }
+
+      - name: Stage DLL
+        run: |
+          $rid = "win-${{ matrix.arch }}"
+          $destDir = "staged/$rid"
+          New-Item -ItemType Directory -Force -Path $destDir
+          Copy-Item "native/build/Release/wdsp.dll" "$destDir/wdsp.dll"
+
+      # ---------- miniaudio (desktop-mode RX sink + TX mic capture) -------
+      #
+      # Pure C, no third-party deps — WASAPI is loaded dynamically at
+      # runtime, so no link libs and no vcpkg packages are required. Same
+      # VS 2022 generator + arch flag as wdsp above. We do NOT pass
+      # `-T ClangCL` here: that toolset was needed only because libspecbleach
+      # (NR4) uses a C99 VLA that MSVC rejects; miniaudio is plain MSVC-clean.
+      - name: Configure miniaudio (CMake)
+        run: |
+          $archFlag = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
+          cmake -S native/miniaudio -B native/build-miniaudio `
+            -G "Visual Studio 17 2022" `
+            -A $archFlag
+
+      - name: Build miniaudio
+        run: cmake --build native/build-miniaudio --config Release --parallel
+
+      - name: Stage miniaudio DLL
+        run: |
+          $rid = "win-${{ matrix.arch }}"
+          Copy-Item "native/build-miniaudio/Release/miniaudio.dll" "staged/$rid/miniaudio.dll"
+
+      - name: Build and stage VST bridge
+        shell: pwsh
+        run: ./tools/stage-windows-vst-bridge.ps1 -Arch "${{ matrix.arch }}" -InitSubmodules
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Artifact name kept as `wdsp-native-*` for compatibility with the
+          # build-release `Map RID to native artifact name` step; the staged
+          # dir now contains both wdsp.dll and miniaudio.dll, and the
+          # downstream `download-artifact` extracts the whole directory into
+          # Zeus.Dsp/runtimes/<rid>/native/.
+          name: wdsp-native-win-${{ matrix.arch }}
+          path: staged/win-${{ matrix.arch }}/
+
+      - name: Upload VST bridge artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeus-vst-bridge-win-${{ matrix.arch }}
+          path: Zeus.Plugins.Host/runtimes/win-${{ matrix.arch }}/native/
+
+  build-native-linux:
+    name: Build native WDSP (linux-x64)
+    needs: determine-version
+    # Pinned to ubuntu-22.04 (glibc 2.35) to match release.yml's linux build
+    # host — see the comment in build-release matrix's linux entry.
+    # linux-arm64 is built in a separate cross-compile job below because it
+    # needs an aarch64 toolchain and arm64 FFTW build.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev cmake build-essential pkg-config
+
+      - name: Configure CMake
+        run: |
+          cmake -S native/wdsp -B native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWDSP_WITH_NR3=ON \
+            -DWDSP_WITH_NR4=ON
+
+      - name: Build
+        run: cmake --build native/build --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          count=$(nm -D native/build/libwdsp.so | grep -c "SetRXASBNR" || true)
+          echo "Found $count SetRXASBNR* exports"
+          if [ "$count" -ne 8 ]; then
+            echo "ERROR: Expected 8 SetRXASBNR* exports, got $count. NR4 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify RNNR exports
+        run: |
+          count=$(nm -D native/build/libwdsp.so | grep -c "RNNR" || true)
+          echo "Found $count RNNR exports"
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Stage library + bundled FFTW
+        run: |
+          set -eux
+          destDir="staged/linux-x64"
+          mkdir -p "$destDir"
+          cp native/build/libwdsp.so "$destDir/libwdsp.so"
+          for soname in libfftw3.so.3 libfftw3f.so.3; do
+            src=$(readlink -f "/usr/lib/x86_64-linux-gnu/$soname")
+            cp "$src" "$destDir/$soname"
+          done
+          ls -la "$destDir/"
+          ldd "$destDir/libwdsp.so"
+
+      # ---------- miniaudio (desktop-mode RX sink + TX mic capture) -------
+      #
+      # Pure C, no third-party deps — ALSA / PulseAudio / JACK are loaded
+      # dynamically at runtime via dlopen. Only -ldl + -lpthread + -lm are
+      # required at link time and all three live in libc / libpthread, which
+      # are already present in the build-essential toolchain installed
+      # above. No additional apt packages needed.
+      - name: Build & stage miniaudio
+        run: |
+          set -eux
+          cmake -S native/miniaudio -B native/build-miniaudio -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build-miniaudio --config Release --parallel
+          cp native/build-miniaudio/libminiaudio.so staged/linux-x64/libminiaudio.so
+          ldd staged/linux-x64/libminiaudio.so
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Staged dir now contains libwdsp.so + libfftw3.so.3 +
+          # libfftw3f.so.3 + libminiaudio.so. The downstream
+          # `download-artifact` extracts the whole directory into
+          # Zeus.Dsp/runtimes/linux-x64/native/.
+          name: wdsp-native-linux-x64
+          path: staged/linux-x64/
+
+  build-native-macos:
+    name: Build native WDSP (osx-arm64)
+    needs: determine-version
+    runs-on: macos-latest  # Apple Silicon — matches release.yml macos-arm64 host
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install build dependencies
+        run: |
+          # fftw bottle ships both fftw3 (double, for WDSP) and fftw3f (single,
+          # for libspecbleach / NR4). cmake is preinstalled on macos-latest but
+          # `brew install cmake` is a no-op safety net.
+          brew install fftw cmake
+
+      - name: Configure CMake
+        run: |
+          cmake -S native/wdsp -B native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWDSP_WITH_NR3=ON \
+            -DWDSP_WITH_NR4=ON
+
+      - name: Build
+        run: cmake --build native/build --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          # macOS nm prefixes C symbols with an underscore — match _SetRXASBNR.
+          count=$(nm -gU native/build/libwdsp.dylib | grep -c "_SetRXASBNR" || true)
+          echo "Found $count _SetRXASBNR* exports"
+          if [ "$count" -ne 8 ]; then
+            echo "ERROR: Expected 8 _SetRXASBNR* exports, got $count. NR4 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify RNNR exports
+        run: |
+          count=$(nm -gU native/build/libwdsp.dylib | grep -c "RNNR" || true)
+          echo "Found $count RNNR exports"
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Stage dylib + bundled FFTW
+        run: |
+          set -eux
+          destDir="staged/osx-arm64"
+          mkdir -p "$destDir"
+          cp native/build/libwdsp.dylib "$destDir/libwdsp.dylib"
+
+          # Bundle both FFTW precisions alongside libwdsp so the .app is
+          # self-contained on any Mac without Homebrew FFTW installed —
+          # mirrors what the Linux job already does for libfftw3.so.3.
+          fftw_lib="$(brew --prefix fftw)/lib"
+          cp "${fftw_lib}/libfftw3.3.dylib"  "$destDir/libfftw3.3.dylib"
+          cp "${fftw_lib}/libfftw3f.3.dylib" "$destDir/libfftw3f.3.dylib"
+
+          # Rewrite the absolute Homebrew LC_LOAD_DYLIB paths baked into
+          # libwdsp.dylib by the CI runner to @loader_path so the dylib
+          # resolves its FFTW deps relative to its own location, independent
+          # of DYLD_LIBRARY_PATH. Belt-and-suspenders alongside launch.sh's
+          # DYLD_LIBRARY_PATH export.
+          install_name_tool \
+            -change "${fftw_lib}/libfftw3.3.dylib"  @loader_path/libfftw3.3.dylib \
+            -change "${fftw_lib}/libfftw3f.3.dylib" @loader_path/libfftw3f.3.dylib \
+            "$destDir/libwdsp.dylib"
+
+          # Fail the build if any Homebrew absolute path survives — a leftover
+          # would ship a bundle broken on Macs without Homebrew FFTW installed.
+          if otool -L "$destDir/libwdsp.dylib" | grep -q '/opt/homebrew'; then
+            echo "ERROR: Homebrew absolute paths still present after install_name_tool rewrite"
+            otool -L "$destDir/libwdsp.dylib"
+            exit 1
+          fi
+          otool -L "$destDir/libwdsp.dylib"
+          ls -la "$destDir/"
+
+      # ---------- miniaudio (desktop-mode RX sink + TX mic capture) -------
+      #
+      # Pure C, CoreAudio backend. cmake is already installed by the wdsp
+      # step above. macOS frameworks (CoreAudio / AudioToolbox / AudioUnit /
+      # CoreFoundation) come from the SDK that ships with Xcode CLT on
+      # macos-latest — no extra brew packages needed.
+      - name: Build & stage miniaudio
+        run: |
+          set -eux
+          cmake -S native/miniaudio -B native/build-miniaudio -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build-miniaudio --config Release --parallel
+          cp native/build-miniaudio/libminiaudio.dylib staged/osx-arm64/libminiaudio.dylib
+          otool -L staged/osx-arm64/libminiaudio.dylib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Staged dir now contains libwdsp.dylib + libfftw3.3.dylib +
+          # libfftw3f.3.dylib + libminiaudio.dylib. The downstream
+          # `download-artifact` extracts the whole directory into
+          # Zeus.Dsp/runtimes/osx-arm64/native/.
+          name: wdsp-native-osx-arm64
+          path: staged/osx-arm64/
+
+  build-native-linux-arm64:
+    name: Build native WDSP (linux-arm64, cross-compile)
+    needs: determine-version
+    # Cross-compile on the ubuntu-22.04 x64 runner using aarch64-linux-gnu-gcc
+    # (glibc 2.35 build host → compatible with Debian 12+, RPi OS Bookworm+).
+    # Build fresh libwdsp.so with NR4/SBNR plus libminiaudio.so and bundle the
+    # arm64 FFTW SONAMEs side-by-side so release packages never ship stale
+    # committed linux-arm64 native blobs.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install aarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake build-essential pkg-config wget make
+
+      - name: Build arm64 FFTW double and float
+        run: |
+          set -eux
+          wget https://www.fftw.org/fftw-3.3.10.tar.gz
+          tar xzf fftw-3.3.10.tar.gz
+          cp -a fftw-3.3.10 fftw-3.3.10-float
+
+          cd fftw-3.3.10
+          ./configure --host=aarch64-linux-gnu --prefix="$HOME/fftw-arm64" \
+            CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+            --enable-shared --disable-static
+          make -j"$(nproc)"
+          make install
+
+          cd ../fftw-3.3.10-float
+          ./configure --host=aarch64-linux-gnu --prefix="$HOME/fftw-arm64" \
+            CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+            --enable-float --enable-shared --disable-static
+          make -j"$(nproc)"
+          make install
+
+      - name: Configure WDSP
+        run: |
+          cmake -S native/wdsp -B native/build-wdsp-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWDSP_WITH_NR3=ON \
+            -DWDSP_WITH_NR4=ON \
+            -DFFTW_ROOT="$HOME/fftw-arm64" \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_FIND_ROOT_PATH="$HOME/fftw-arm64" \
+            -DCMAKE_PREFIX_PATH="$HOME/fftw-arm64"
+
+      - name: Build WDSP
+        run: cmake --build native/build-wdsp-arm64 --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          count=$(aarch64-linux-gnu-nm -D native/build-wdsp-arm64/libwdsp.so | grep -c "SetRXASBNR" || true)
+          echo "Found $count SetRXASBNR* exports"
+          if [ "$count" -ne 8 ]; then
+            echo "ERROR: Expected 8 SetRXASBNR* exports, got $count. NR4 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify RNNR exports
+        run: |
+          count=$(aarch64-linux-gnu-nm -D native/build-wdsp-arm64/libwdsp.so | grep -c "RNNR" || true)
+          echo "Found $count RNNR exports"
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Stage WDSP + bundled FFTW
+        run: |
+          set -eux
+          mkdir -p staged/linux-arm64
+          cp native/build-wdsp-arm64/libwdsp.so staged/linux-arm64/libwdsp.so
+          for soname in libfftw3.so.3 libfftw3f.so.3; do
+            src=$(readlink -f "$HOME/fftw-arm64/lib/$soname")
+            test -f "$src"
+            cp "$src" "staged/linux-arm64/$soname"
+          done
+          file staged/linux-arm64/libwdsp.so
+          aarch64-linux-gnu-objdump -p staged/linux-arm64/libwdsp.so | grep NEEDED
+
+      - name: Cross-compile libminiaudio for arm64
+        run: |
+          cmake -S native/miniaudio -B native/build-miniaudio-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64
+          cmake --build native/build-miniaudio-arm64 --config Release --parallel
+
+      - name: Stage miniaudio
+        run: |
+          cp native/build-miniaudio-arm64/libminiaudio.so staged/linux-arm64/
+          file staged/linux-arm64/libminiaudio.so
+          aarch64-linux-gnu-objdump -p staged/linux-arm64/libminiaudio.so | grep NEEDED
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdsp-native-linux-arm64
+          path: staged/linux-arm64/
+
+  # Build the operator's manual PDF once (GitHub's ubuntu-latest image ships
+  # Node + google-chrome, which docs/manual/build.sh uses as its headless print
+  # engine) and share it as an artifact. Every packaging job drops this PDF into
+  # its publish payload so the manual ships *inside* each installer. Built fresh
+  # from the chapter sources each release — no PDF binary committed to git.
+  build-manual:
+    name: Build operator's manual PDF
+    needs: determine-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build the operator's manual PDF
+        # --no-sandbox / --disable-dev-shm-usage are required for headless Chrome
+        # under the runner's user namespace; harmless locally (the flag is unset
+        # for developer builds).
+        env:
+          MANUAL_CHROME_EXTRA_FLAGS: "--no-sandbox --disable-dev-shm-usage"
+        run: |
+          chmod +x docs/manual/build.sh
+          docs/manual/build.sh
+      - name: Upload manual PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-manual-pdf
+          path: docs/manual/build/Zeus-Operator-Manual.pdf
+          if-no-files-found: error
+
+  build-release:
+    name: Build (${{ matrix.config.os }})
+    needs:
+      - determine-version
+      - build-manual
+      - build-native-windows
+      - build-native-linux
+      - build-native-linux-arm64
+      - build-native-macos
+    runs-on: ${{ matrix.config.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os: windows
+            runner: windows-latest
+            rid: win-x64
+            arch: x64
+            artifact: windows-installer
+          # Windows-on-ARM. Cross-published from the x64 windows-latest host —
+          # .NET 10 emits win-arm64 binaries from any host arch, and Inno Setup
+          # iscc on x64 produces an installer that targets ARM64 fine. Keeping
+          # the runner pinned to windows-latest (rather than windows-11-arm)
+          # avoids native-tooling drift between the two arches.
+          - os: windows
+            runner: windows-latest
+            rid: win-arm64
+            arch: arm64
+            artifact: windows-arm64-installer
+          - os: linux
+            # Pinned to ubuntu-22.04 (glibc 2.35) — the self-contained .NET
+            # publish embeds native runtime libs that link against the build
+            # host's glibc, so building on ubuntu-latest (24.04, glibc 2.39)
+            # produces a tarball that fails on Ubuntu 22.04 / Debian 12 / RHEL
+            # 9 with `version GLIBC_2.38 not found`. Match build-native-libs.yml.
+            runner: ubuntu-22.04
+            rid: linux-x64
+            artifact: linux-tarball
+            appimage_artifact: linux-appimage
+            build_appimage: 'true'
+            uses_committed_native: 'false'
+          - os: linux
+            # arm64 (Raspberry Pi 4+, Pi 5, arm64 servers). Cross-published
+            # from the ubuntu-22.04 x64 runner — dotnet publish -r linux-arm64
+            # works on any host arch. Fresh arm64 WDSP/miniaudio artifacts are
+            # built above on ubuntu-22.04 with the aarch64 cross toolchain.
+            # AppImages are cross-built via ARCH=aarch64 — appimagetool
+            # downloads the aarch64 runtime.
+            runner: ubuntu-22.04
+            rid: linux-arm64
+            artifact: linux-arm64-tarball
+            appimage_artifact: linux-arm64-appimage
+            build_appimage: 'true'
+            uses_committed_native: 'false'
+          - os: macos-arm64
+            runner: macos-latest  # Apple Silicon
+            rid: osx-arm64
+            artifact: macos-arm64-pkg
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The DeepCW ONNX model lives in a git submodule and is a build-time
+      # dependency of the web bundle (decode-worker.ts statically imports
+      # model.onnx?url). Without it the `npm run build` step below fails to
+      # resolve the import and no installer is produced. Targeted init keeps
+      # the heavy vst3sdk submodule out of this job (the VST bridge is staged
+      # separately in build-native-windows).
+      - name: Init DeepCW model submodule (frontend build dependency)
+        run: git submodule update --init zeus-web/external/deepcw-engine
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION}"
+
+      # Map release matrix RID → native artifact built by the build-native-*
+      # jobs above. Keep this in sync if either set changes.
+      - name: Map RID to native artifact name
+        id: native-artifact
+        shell: bash
+        run: |
+          case "${{ matrix.config.rid }}" in
+            win-x64)    echo "name=wdsp-native-win-x64"    >> "$GITHUB_OUTPUT" ;;
+            win-arm64)  echo "name=wdsp-native-win-arm64"  >> "$GITHUB_OUTPUT" ;;
+            linux-x64)  echo "name=wdsp-native-linux-x64"  >> "$GITHUB_OUTPUT" ;;
+            osx-arm64)  echo "name=wdsp-native-osx-arm64"  >> "$GITHUB_OUTPUT" ;;
+            linux-arm64) echo "name=wdsp-native-linux-arm64" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::No native artifact mapped for RID ${{ matrix.config.rid }}"; exit 1 ;;
+          esac
+
+      # Download natives built fresh in this same workflow run and stage them
+      # into Zeus.Dsp/runtimes/<rid>/native/, overwriting whatever was
+      # committed at the tag SHA. This is what makes releases immune to
+      # stale-committed-natives drift — the binaries that ship are always
+      # built from the exact source the tag points at.
+      - name: Download fresh native WDSP for ${{ matrix.config.rid }}
+        if: matrix.config.uses_committed_native != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.native-artifact.outputs.name }}
+          path: Zeus.Dsp/runtimes/${{ matrix.config.rid }}/native/
+
+      - name: Download fresh VST bridge for Windows
+        if: matrix.config.os == 'windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: zeus-vst-bridge-${{ matrix.config.rid }}
+          path: Zeus.Plugins.Host/runtimes/${{ matrix.config.rid }}/native/
+
+      - name: Verify staged natives
+        shell: bash
+        run: |
+          echo "Native files now staged for ${{ matrix.config.rid }}:"
+          ls -la "Zeus.Dsp/runtimes/${{ matrix.config.rid }}/native/"
+          if [ "${{ matrix.config.os }}" = "windows" ]; then
+            echo "VST bridge files now staged for ${{ matrix.config.rid }}:"
+            ls -la "Zeus.Plugins.Host/runtimes/${{ matrix.config.rid }}/native/"
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: zeus-web/package-lock.json
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+        working-directory: zeus-web
+
+      - name: Publish OpenhpsdrZeus
+        # Single self-contained publish per RID. The resulting binary
+        # (`OpenhpsdrZeus`) serves both launch modes: no args = LAN HTTP
+        # service, `--desktop` = Photino native shell. Per-installer scripts
+        # (Windows .iss, Linux tarball/AppImage, macOS .app) consume this
+        # output dir directly. Force bash so the backslash line-continuations
+        # parse on windows-latest (where the default shell is PowerShell).
+        # VersionPrefix stays numeric (consumed by AssemblyVersion); the
+        # text suffix rides on VersionSuffix and lands in InformationalVersion.
+        shell: bash
+        run: |
+          dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj \
+            -c Release \
+            -r ${{ matrix.config.rid }} \
+            --self-contained true \
+            -p:PublishReadyToRun=true \
+            -p:VersionPrefix=${{ needs.determine-version.outputs.version-prefix }} \
+            -p:VersionSuffix=${{ needs.determine-version.outputs.version-suffix }} \
+            -p:DebugType=embedded \
+            -p:DebugSymbols=false
+
+      # Drop the operator's manual PDF (built once by build-manual) into the
+      # publish payload BEFORE packaging. Every installer script bundles the
+      # whole publish dir (Windows .iss recursesubdirs, Linux `cp -r publish/*`,
+      # macOS `cp -r publish/* Resources/app/`), so this one copy ships the
+      # manual inside every installer with no per-packager edits.
+      - name: Download operator's manual PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: operator-manual-pdf
+          path: manual-pdf
+
+      - name: Bundle operator's manual into the payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="OpenhpsdrZeus/bin/Release/net10.0/${{ matrix.config.rid }}/publish"
+          cp "manual-pdf/Zeus-Operator-Manual.pdf" "$dest/Zeus-Operator-Manual.pdf"
+          echo "Bundled operator's manual into ${{ matrix.config.rid }} payload:"
+          ls -la "$dest/Zeus-Operator-Manual.pdf"
+
+      - name: Verify Windows installer payload
+        if: matrix.config.os == 'windows'
+        shell: pwsh
+        run: ./tools/verify-windows-installer-payload.ps1 -PublishDir "OpenhpsdrZeus/bin/Release/net10.0/${{ matrix.config.rid }}/publish" -Arch "${{ matrix.config.arch }}"
+
+      # ---------- Installer packaging (one per OS, two launch modes) ------
+
+      # Download the Microsoft Visual C++ 2015-2022 Redistributable matching
+      # this installer's architecture. zeus-windows.iss bundles this file via
+      # the [Files] section and runs it at install time, guarded by a
+      # VCRedistNeeded() registry check so it skips on machines that already
+      # have a compatible runtime. Without this, every fresh-Windows operator
+      # who downloads Zeus gets a silently broken install — see issue #452.
+      # aka.ms URLs are Microsoft's stable redirects; the resolved binary
+      # tracks the latest 14.x service pack on each fetch (binary-compatible).
+      - name: Download Visual C++ Redistributable
+        if: matrix.config.os == 'windows'
+        shell: pwsh
+        run: |
+          $url = "https://aka.ms/vs/17/release/vc_redist.${{ matrix.config.arch }}.exe"
+          $out = "installers\vc_redist.${{ matrix.config.arch }}.exe"
+          Write-Host "Downloading $url -> $out"
+          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          Get-Item $out | Select-Object Name, Length
+
+      # Download the Microsoft Edge WebView2 Evergreen Runtime bootstrapper.
+      # zeus-windows.iss bundles it and runs it at install time, guarded by a
+      # WebView2Needed() registry check so it skips machines that already have
+      # the runtime. Without WebView2, Photino cannot create the desktop window
+      # and Zeus flash-and-closes on first launch — common on Windows 11 LTSC /
+      # IoT / Enterprise N and debloated images. The fwlink redirect is
+      # Microsoft's stable evergreen URL; the same universal bootstrapper covers
+      # both x64 and arm64 (it detects the host arch), so it is not arch-suffixed.
+      - name: Download Edge WebView2 Runtime
+        if: matrix.config.os == 'windows'
+        shell: pwsh
+        run: |
+          $url = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+          $out = "installers\MicrosoftEdgeWebview2Setup.exe"
+          Write-Host "Downloading $url -> $out"
+          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          Get-Item $out | Select-Object Name, Length
+
+      - name: Build Windows Installer (Inno Setup)
+        if: matrix.config.os == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y
+          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          iscc /DMyAppVersion="${{ steps.version.outputs.version }}" /DArch="${{ matrix.config.arch }}" installers\zeus-windows.iss
+
+      - name: Upload Windows Installer
+        if: matrix.config.os == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config.artifact }}
+          path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-win-${{ matrix.config.arch }}-setup.exe
+          if-no-files-found: error
+
+      - name: Build Linux Package
+        if: matrix.config.os == 'linux'
+        run: |
+          chmod +x installers/create-linux-package.sh
+          installers/create-linux-package.sh ${{ steps.version.outputs.version }} ${{ matrix.config.rid }}
+
+      - name: Upload Linux Package
+        if: matrix.config.os == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config.artifact }}
+          path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-${{ matrix.config.rid }}.tar.gz
+          if-no-files-found: error
+
+      - name: Build Linux Desktop AppImage
+        if: matrix.config.build_appimage == 'true'
+        run: |
+          # appimagetool fetched on-demand by the script. We pass
+          # --appimage-extract-and-run inside the script so FUSE2 isn't
+          # required on the runner. The AppImage is the desktop-mode
+          # single-file launcher; the tarball ships separately for the
+          # service-mode / LAN-browser use case.
+          # arm64 AppImages require a native arm64 runner — skipped here.
+          chmod +x installers/create-linux-desktop-appimage.sh
+          installers/create-linux-desktop-appimage.sh ${{ steps.version.outputs.version }}
+
+      - name: Upload Linux Desktop + Server AppImages
+        if: matrix.config.build_appimage == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config.appimage_artifact }}
+          # Both AppImages — the desktop one (--desktop default) and the
+          # server one (--server, Photino status window). The glob picks
+          # up both since they share the OpenhpsdrZeus prefix.
+          # Covers both x86_64 (linux-x64) and aarch64 (linux-arm64).
+          path: installers/output/OpenhpsdrZeus*-${{ steps.version.outputs.version }}-linux-*.AppImage
+          if-no-files-found: error
+
+      # ---------- macOS code-signing + notarization ------------------------
+      #
+      # Five steps gated on sign-macos=true: import the Developer
+      # ID cert into an ephemeral keychain, run the existing builder with
+      # CODESIGN_IDENTITY exported (the script signs apps inside-out with
+      # hardened-runtime, see installers/create-macos-app.sh), build/sign the
+      # package, submit it to Apple notary, staple the ticket, and verify Gatekeeper
+      # acceptance. The dry-run path falls through to the original
+      # unsigned-build step further down.
+      #
+      # Why gated:
+      #   - Notarization burns 2-15 min of macos-latest runner time (10x
+      #     Linux cost) and counts against Apple's API submission quota.
+      #     dry-run builds don't need either.
+      #   - Apple's API key (.p8) only exists as a secret in the repo; PRs
+      #     from forks running release.yml as a dry-run would otherwise hit
+      #     a "secret missing" error mid-job.
+      #
+      # The ephemeral keychain name embeds run_id + run_attempt so two
+      # concurrent dispatches (e.g. nightly cron racing with a maintainer's
+      # manual run) never collide on /Users/runner/Library/Keychains.
+      - name: macOS — dry-run notice (signing/notarization skipped)
+        if: ${{ startsWith(matrix.config.os, 'macos') && needs.determine-version.outputs.sign-macos != 'true' }}
+        run: |
+          echo "::notice::macOS package will NOT be signed or notarized in dry-run mode."
+
+      - name: macOS — import Developer ID certificates
+        id: macos-certs
+        if: ${{ startsWith(matrix.config.os, 'macos') && needs.determine-version.outputs.sign-macos == 'true' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_INSTALLER_CERT_P12_B64: ${{ secrets.MACOS_INSTALLER_CERT_P12_B64 }}
+          MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+          MACOS_INSTALLER_SIGNING_IDENTITY: ${{ secrets.MACOS_INSTALLER_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/build-${{ github.run_id }}-${{ github.run_attempt }}.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/macos-cert.p12"
+          INSTALLER_CERT_PATH="$RUNNER_TEMP/macos-installer-cert.p12"
+          INTERMEDIATE_PATH="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+
+          # Decode the base64-encoded .p12 to a temp file. `security import`
+          # cannot read from stdin so we have to materialize it; we shred it
+          # below once it's in the keychain.
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          # Download Apple's Developer ID Certification Authority (G2)
+          # intermediate cert. A .p12 exported from Keychain Access ships
+          # only the leaf + private key, NOT the intermediate. On a dev
+          # Mac the intermediate is already in login.keychain from prior
+          # Xcode use, so the chain validates fine — but a fresh GitHub
+          # Actions runner only has Apple Root CA in its trust store, so
+          # codesign warns "unable to build chain to self-signed root"
+          # and notarytool rejects the resulting bundle. URL is Apple's
+          # stable publication endpoint; cert is valid through 2031.
+          curl -fsSL --retry 3 \
+              https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+              -o "$INTERMEDIATE_PATH"
+
+          # Per-run ephemeral keychain so concurrent dispatches don't trample
+          # each other and so cleanup is just `security delete-keychain`.
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # 6h timeout — comfortably longer than any release build wall clock.
+          # Default is 5 minutes auto-lock which would break a slow notarization.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import the intermediate FIRST so chain validation works the
+          # moment the leaf .p12 lands in the keychain.
+          security import "$INTERMEDIATE_PATH" \
+              -k "$KEYCHAIN_PATH" \
+              -T /usr/bin/codesign
+
+          # -A allows all apps to use the key without prompting (no GUI on CI).
+          # -T whitelists specific tools so set-key-partition-list below can
+          # set a durable ACL — without it codesign would still prompt for
+          # the keychain password on first private-key access.
+          security import "$CERT_PATH" \
+              -P "$MACOS_CERTIFICATE_PWD" \
+              -A -t cert -f pkcs12 \
+              -k "$KEYCHAIN_PATH" \
+              -T /usr/bin/codesign \
+              -T /usr/bin/security
+
+          PKG_SIGNING_AVAILABLE="false"
+          if [ -n "${MACOS_INSTALLER_CERT_P12_B64:-}" ] && [ -n "${MACOS_INSTALLER_CERT_PASSWORD:-}" ] && [ -n "${MACOS_INSTALLER_SIGNING_IDENTITY:-}" ]; then
+              echo "$MACOS_INSTALLER_CERT_P12_B64" | base64 --decode > "$INSTALLER_CERT_PATH"
+              security import "$INSTALLER_CERT_PATH" \
+                  -P "$MACOS_INSTALLER_CERT_PASSWORD" \
+                  -A -t cert -f pkcs12 \
+                  -k "$KEYCHAIN_PATH" \
+                  -T /usr/bin/productbuild \
+                  -T /usr/bin/productsign \
+                  -T /usr/bin/security
+              PKG_SIGNING_AVAILABLE="true"
+          else
+              echo "::warning::Developer ID Installer certificate secrets are not configured; macOS package signing and notarization will be skipped."
+          fi
+
+          # Make the codesign ACL durable. Without this codesign hangs on
+          # CI waiting for a human to acknowledge the keychain prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+              -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+
+          # Prepend the temp keychain to the user search list. codesign
+          # defaults to login.keychain otherwise and never finds our cert.
+          # Capture the existing list into a bash array — string-mangling
+          # via tr corrupts paths in edge cases (we saw a local-test run
+          # end up with the search list set to a single mangled entry
+          # containing literal "-d -db" fragments).
+          ORIGINAL_KEYCHAINS=()
+          while IFS= read -r line; do
+              clean=$(echo "$line" | sed -E 's/^[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/')
+              [ -n "$clean" ] && ORIGINAL_KEYCHAINS+=("$clean")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "${ORIGINAL_KEYCHAINS[@]}"
+
+          # Shred the on-disk cert files — both are safely in the keychain
+          # now. macOS `rm -P` overwrites with 0xff/0x00/0xff before unlink.
+          # The intermediate is public so shredding it is paranoia, but
+          # cheap and keeps the cleanup symmetric.
+          rm -P "$CERT_PATH" 2>/dev/null || rm -f "$CERT_PATH"
+          rm -P "$INSTALLER_CERT_PATH" 2>/dev/null || rm -f "$INSTALLER_CERT_PATH"
+          rm -P "$INTERMEDIATE_PATH" 2>/dev/null || rm -f "$INTERMEDIATE_PATH"
+
+          # Propagate KEYCHAIN_PATH to subsequent steps. create-macos-app.sh
+          # picks this up as the --keychain arg for every codesign call.
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+          # Sanity check: the identity must be findable, otherwise the build
+          # step will fail mid-way through codesign with a less helpful error.
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          if [ "$PKG_SIGNING_AVAILABLE" = "true" ]; then
+              security find-identity -v -p basic "$KEYCHAIN_PATH" | grep -F "Developer ID Installer" || {
+                  echo "::warning::No Developer ID Installer identity was found after import; package signing and notarization will be skipped."
+                  PKG_SIGNING_AVAILABLE="false"
+              }
+          fi
+          echo "pkg-signing=${PKG_SIGNING_AVAILABLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS Package
+        if: startsWith(matrix.config.os, 'macos')
+        env:
+          # Ternary: signed only when sign-macos=true. In dry-run
+          # the value is the empty string regardless of whether
+          # MACOS_SIGNING_IDENTITY is configured — keeps an accidentally-set
+          # secret from sneaking signing into a dry-run build.
+          CODESIGN_IDENTITY: ${{ needs.determine-version.outputs.sign-macos == 'true' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+          ENTITLEMENTS_PATH: ${{ github.workspace }}/installers/zeus-macos.entitlements
+          PKG_SIGN_IDENTITY: ${{ needs.determine-version.outputs.sign-macos == 'true' && steps.macos-certs.outputs.pkg-signing == 'true' && secrets.MACOS_INSTALLER_SIGNING_IDENTITY || '' }}
+          # KEYCHAIN_PATH flows in via $GITHUB_ENV from the import step above.
+        run: |
+          set -e
+          chmod +x installers/create-macos-app.sh
+          chmod +x installers/create-macos-pkg.sh
+          ARCH="${{ matrix.config.rid == 'osx-arm64' && 'arm64' || 'x64' }}"
+          installers/create-macos-app.sh ${{ steps.version.outputs.version }} $ARCH
+          installers/create-macos-pkg.sh ${{ steps.version.outputs.version }} $ARCH
+
+      - name: macOS — notarize package
+        if: ${{ startsWith(matrix.config.os, 'macos') && needs.determine-version.outputs.sign-macos == 'true' && steps.macos-certs.outputs.pkg-signing == 'true' }}
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_API_KEY_P8: ${{ secrets.APPSTORE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          ARCH="${{ matrix.config.rid == 'osx-arm64' && 'arm64' || 'x64' }}"
+          PKG_PATH="installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-${ARCH}.pkg"
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+
+          # The .p8 secret is stored base64-encoded to avoid newline mangling
+          # in GitHub's secret editor. If you ever rotate the key, paste the
+          # `base64 < AuthKey_XXXXXX.p8` output as the secret value.
+          echo "$APPSTORE_API_KEY_P8" | base64 --decode > "$KEY_PATH"
+
+          # notarytool submit blocks until accepted/invalid (~2-15 min). We
+          # capture stdout to parse the submission ID, then drive the
+          # accept/reject branch from --output-format json status field.
+          # Don't use `set -e` around the submit itself — we want to fetch
+          # the log on rejection before exiting.
+          set +e
+          SUBMIT_OUT=$(xcrun notarytool submit "$PKG_PATH" \
+              --key "$KEY_PATH" \
+              --key-id "$APPSTORE_KEY_ID" \
+              --issuer "$APPSTORE_ISSUER_ID" \
+              --wait \
+              --output-format json)
+          SUBMIT_RC=$?
+          set -e
+          echo "$SUBMIT_OUT"
+
+          # Parse with python3 (preinstalled on macos-latest) rather than jq
+          # to avoid an extra brew install.
+          SUBMISSION_ID=$(echo "$SUBMIT_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || true)
+          STATUS=$(echo "$SUBMIT_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || true)
+
+          if [ "$STATUS" != "Accepted" ] || [ "$SUBMIT_RC" -ne 0 ]; then
+              echo "::error::Notarization failed (status=$STATUS, rc=$SUBMIT_RC, id=$SUBMISSION_ID)"
+              if [ -n "$SUBMISSION_ID" ]; then
+                  echo "::group::notarytool log $SUBMISSION_ID"
+                  xcrun notarytool log "$SUBMISSION_ID" \
+                      --key "$KEY_PATH" \
+                      --key-id "$APPSTORE_KEY_ID" \
+                      --issuer "$APPSTORE_ISSUER_ID" || true
+                  echo "::endgroup::"
+              else
+                  echo "::error::No submission ID returned — submit failed before Apple accepted it. Check network / quota / cert validity."
+              fi
+              rm -P "$KEY_PATH" 2>/dev/null || rm -f "$KEY_PATH"
+              exit 1
+          fi
+
+          rm -P "$KEY_PATH" 2>/dev/null || rm -f "$KEY_PATH"
+          echo "Notarization accepted (id=$SUBMISSION_ID)"
+
+      - name: macOS — staple notarization ticket
+        if: ${{ startsWith(matrix.config.os, 'macos') && needs.determine-version.outputs.sign-macos == 'true' && steps.macos-certs.outputs.pkg-signing == 'true' }}
+        run: |
+          set -euo pipefail
+          ARCH="${{ matrix.config.rid == 'osx-arm64' && 'arm64' || 'x64' }}"
+          PKG_PATH="installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-${ARCH}.pkg"
+          # Stapling embeds the ticket into the package so first install works
+          # offline. Without staple, Gatekeeper has to call out to Apple to
+          # verify notarization on every first launch — which fails for
+          # users behind firewalls / on planes.
+          xcrun stapler staple "$PKG_PATH"
+          xcrun stapler validate "$PKG_PATH"
+
+      - name: macOS — Gatekeeper assess
+        if: ${{ startsWith(matrix.config.os, 'macos') && needs.determine-version.outputs.sign-macos == 'true' && steps.macos-certs.outputs.pkg-signing == 'true' }}
+        run: |
+          set -euo pipefail
+          ARCH="${{ matrix.config.rid == 'osx-arm64' && 'arm64' || 'x64' }}"
+          PKG_PATH="installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-${ARCH}.pkg"
+          # `--type install` is the Gatekeeper context for package installers.
+          # Any rejection here (e.g. stale notarization, wrong identity)
+          # would fail before users see a broken download.
+          spctl --assess --type install --verbose=2 "$PKG_PATH"
+
+      - name: Upload macOS Package
+        if: startsWith(matrix.config.os, 'macos')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config.artifact }}
+          path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-*.pkg
+          if-no-files-found: error
+
+      # Defensive cleanup — the macos-latest runner is ephemeral and gets
+      # torn down after the job, but explicit removal of the temp keychain
+      # + any leftover .p8/.p12 means a `if: always()` run on a future
+      # runner image that caches $RUNNER_TEMP between jobs won't leak.
+      - name: macOS — clean up signing material
+        if: ${{ always() && startsWith(matrix.config.os, 'macos') && needs.determine-version.outputs.sign-macos == 'true' }}
+        run: |
+          set +e
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+              security delete-keychain "$KEYCHAIN_PATH"
+          fi
+          rm -P "$RUNNER_TEMP/macos-cert.p12"        2>/dev/null || rm -f "$RUNNER_TEMP/macos-cert.p12"
+          rm -P "$RUNNER_TEMP/macos-installer-cert.p12" 2>/dev/null || rm -f "$RUNNER_TEMP/macos-installer-cert.p12"
+          rm -P "$RUNNER_TEMP/AuthKey.p8"            2>/dev/null || rm -f "$RUNNER_TEMP/AuthKey.p8"
+          rm -P "$RUNNER_TEMP/DeveloperIDG2CA.cer"   2>/dev/null || rm -f "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          # Restore the default user keychain search list to login only.
+          security list-keychains -d user -s login.keychain-db || true
+          true
+
+  create-release:
+    name: Create GitHub Release
+    needs: [determine-version, build-release]
+    if: needs.determine-version.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Display artifact structure
+        run: ls -R release-artifacts
+
+      - name: Create Release Notes
+        run: |
+          # Lead the release body with THIS version's What's New — the top
+          # section of CHANGELOG.md (from the first '## [' to the next) — so the
+          # changelog sits above the installer tables and the GitHub-appended
+          # asset list (project release-notes convention).
+          awk '/^## \[/{c++} c==2{exit} c{print}' CHANGELOG.md > whats-new.md
+          {
+            echo "# Openhpsdr Zeus v${{ steps.version.outputs.version }}"
+            echo ""
+            echo "Cross-platform SDR client for OpenHPSDR Protocol-1 and Protocol-2 radios."
+            echo ""
+            cat whats-new.md
+            echo ""
+          } > release-notes.md
+          cat >> release-notes.md << 'EOF'
+          One binary, three launch modes:
+
+          - **Headless service** (no flag, default) — LAN-bound HTTP/HTTPS server on
+            port 6060/6443. Console banner only, no GUI. Use this for systemd, Docker,
+            Raspberry Pi, or any headless deploy.
+          - **Server mode** (`--server` flag) — same backend as headless, plus a
+            small Photino status window showing the LAN URLs and a Stop Zeus button.
+            What the new **Zeus Server** desktop icon launches on Windows / macOS /
+            Linux.
+          - **Desktop mode** (`--desktop` flag) — full Photino native window with the
+            web UI inline. Loopback only, no browser tab. Use this for single-machine
+            local operation.
+
+          ## Downloads
+
+          ### Windows (x64 / ARM64)
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-win-x64-setup.exe**
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-win-arm64-setup.exe**
+
+          The installer drops two Start Menu shortcuts plus optional desktop
+          icons: **Openhpsdr Zeus** (Photino native window, `--desktop`) and
+          **Openhpsdr Zeus Server** (backend + small status window with the LAN
+          URLs and a Stop Zeus button, `--server`). The desktop-icon checkboxes
+          appear on the installer's "Additional Tasks" page — pick whichever
+          icons you want on the desktop. ARM64 build is native for Surface Pro X
+          / Snapdragon X Elite hosts. .NET 10 runtime is bundled — no separate
+          install required.
+
+          Upgrade behaviour: this installer reuses the same AppId as the previous
+          service-mode installer, so it upgrades that install in place. If you
+          previously installed the separate "Zeus Desktop" edition it remains
+          alongside this install as cruft until you uninstall it manually from
+          Settings → Apps.
+
+          ### macOS (Apple Silicon)
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-arm64.pkg**
+
+          Run the package installer and click Install. It installs both
+          `OpenHPSDR Zeus.app` and `OpenHPSDR Zeus Server.app` in Applications.
+          Double-clicking `OpenHPSDR Zeus.app` opens the Photino desktop window;
+          double-clicking `OpenHPSDR Zeus Server.app` runs the backend with a small
+          status window showing the LAN URLs and a Stop Zeus button.
+
+          Intel Mac builds are no longer published — the `macos-13` runner queue
+          on GitHub-hosted Actions is too slow to be practical. Build from source
+          if you need one.
+
+          The package and both `.app` bundles are signed and notarized by Apple,
+          so Gatekeeper accepts them directly — no `xattr -cr` workaround needed.
+
+          ### Linux (x64)
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-linux-x64.tar.gz**
+            — extract; run `./install-icons.sh` to register Zeus + Zeus Server
+            in the application menu, or invoke any of the three launchers
+            directly: `./openhpsdr-zeus` (headless service), `./openhpsdr-zeus-desktop`
+            (Photino window), `./openhpsdr-zeus-server` (backend + status window).
+            Self-contained .NET runtime + bundled side-by-side FFTW3.
+          - **OpenhpsdrZeus-${{ steps.version.outputs.version }}-linux-x86_64.AppImage**
+            — single-file Photino desktop launcher: `chmod +x` and run.
+          - **OpenhpsdrZeus-Server-${{ steps.version.outputs.version }}-linux-x86_64.AppImage**
+            — single-file server launcher: backend + status window with the
+            LAN URLs and a Stop Zeus button.
+          - Both AppImages require `libwebkit2gtk-4.1-0` (`apt install` / `dnf install`).
+
+          ### Linux (arm64 — Raspberry Pi 4 / Pi 5)
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-linux-arm64.tar.gz**
+            — headless server for Raspberry Pi 4/5 and other arm64 boards.
+            Extract and run `./OpenhpsdrZeus`; open `http://<pi-ip>:6060` in
+            any browser. Self-contained — no .NET install needed on the Pi.
+            Requires: 64-bit OS (Raspberry Pi OS 64-bit or Debian arm64).
+            No extra FFTW packages needed; `libfftw3.so.3` and `libfftw3f.so.3`
+            are bundled beside `libwdsp.so`.
+            Desktop/Photino mode requires `libwebkit2gtk-4.1-0`.
+            See `docs/lessons/raspberry-pi-deployment.md` for the full setup guide.
+
+          ## License
+
+          GNU GPL v2 or later. See [LICENSE](https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus/blob/main/LICENSE) for details.
+          EOF
+
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Openhpsdr Zeus v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          # Draft mode is set by determine-version when triggered via
+          # workflow_dispatch with draft=true. Tag-push releases publish
+          # immediately (is-draft="false" in that path).
+          draft: ${{ needs.determine-version.outputs.is-draft == 'true' }}
+          prerelease: false
+          files: |
+            release-artifacts/windows-installer/*
+            release-artifacts/windows-arm64-installer/*
+            release-artifacts/linux-tarball/*
+            release-artifacts/linux-appimage/*
+            release-artifacts/linux-arm64-tarball/*
+            release-artifacts/macos-arm64-pkg/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------- Nightly rolling prerelease ----------------------------------
+  #
+  # Only fires when determine-version set is-nightly=true, i.e. the workflow
+  # was invoked via workflow_call with mode=nightly (see nightly.yml). Force-
+  # recreates a single GitHub Release at tag `nightly` so end users have a
+  # stable URL pointing at the latest develop tip.
+  create-nightly-release:
+    name: Publish nightly prerelease
+    needs: [determine-version, build-release]
+    if: needs.determine-version.outputs.is-nightly == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          DATE_STAMP=$(date -u +%Y-%m-%d)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short-sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE_STAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Display artifact structure
+        run: ls -R release-artifacts
+
+      - name: Build commit list since last tagged release
+        id: commits
+        run: |
+          # Find the most recent v*.*.* tag reachable from HEAD; fall back to
+          # "no previous tag" if the repo has never been tagged (unlikely but
+          # cheap to guard).
+          LAST_TAG=$(git describe --tags --abbrev=0 --match='v*.*.*' 2>/dev/null || echo "")
+          if [[ -n "$LAST_TAG" ]]; then
+            echo "Last tag: $LAST_TAG"
+            git log --pretty=format:'- %s (%h)' "${LAST_TAG}..HEAD" > commits.txt
+          else
+            echo "No previous v*.*.* tag found; listing last 50 commits"
+            git log --pretty=format:'- %s (%h)' -n 50 > commits.txt
+          fi
+          echo "last-tag=${LAST_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create nightly release notes
+        run: |
+          cat > nightly-notes.md << EOF
+          # Openhpsdr Zeus nightly build
+
+          **Built from \`develop\` at commit \`${{ steps.version.outputs.short-sha }}\` on ${{ steps.version.outputs.date }} (UTC).**
+          **Version string:** \`${{ steps.version.outputs.version }}\`
+
+          > ⚠️  This is a **development build**, not a release. It rolls forward
+          > nightly and is not signed, tested, or supported in the same way as
+          > tagged releases. Use it to try the latest changes; do not rely on it
+          > for production operation. Uninstall before installing a tagged
+          > release.
+
+          Same one-binary, three-launch-modes layout as a tagged release —
+          see the project README for headless / server / desktop semantics.
+
+          ## Downloads
+
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-win-x64-setup.exe** — Windows x64 installer
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-win-arm64-setup.exe** — Windows ARM64 installer
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-linux-x64.tar.gz** — Linux x64 tarball
+          - **OpenhpsdrZeus-${{ steps.version.outputs.version }}-linux-x86_64.AppImage** — Linux desktop AppImage
+          - **OpenhpsdrZeus-Server-${{ steps.version.outputs.version }}-linux-x86_64.AppImage** — Linux server AppImage
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-linux-arm64.tar.gz** — Linux arm64 tarball (Raspberry Pi 4/5)
+          - **openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-arm64.pkg** — macOS Apple Silicon package installer
+
+          The macOS package is signed and notarized — no \`xattr -cr\` workaround
+          needed even on nightlies. Linux AppImage dependencies are listed
+          in the latest tagged release notes.
+
+          ## Changes since ${{ steps.commits.outputs.last-tag }}
+          EOF
+          if [[ -s commits.txt ]]; then
+            cat commits.txt >> nightly-notes.md
+          else
+            echo "_(no changes since last tag)_" >> nightly-notes.md
+          fi
+          echo "" >> nightly-notes.md
+          echo "" >> nightly-notes.md
+          echo "Source: <https://github.com/${{ github.repository }}/commit/${{ steps.version.outputs.short-sha }}>" >> nightly-notes.md
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Force-recreate the rolling `nightly` release/tag so the rolling
+          # pointer moves to the new build SHA and old assets disappear.
+          #
+          # We deliberately do NOT use softprops/action-gh-release@v1 with
+          # `target_commitish: <sha>` here: that path 422s when the tag
+          # doesn't already exist (GitHub: "tag_name is not a valid tag").
+          # Instead we pre-create the tag via the Git refs API and then
+          # attach the release to the now-existing tag via `gh release
+          # create`, which is robust on both first and subsequent runs.
+          SHORT_SHA="${{ steps.version.outputs.short-sha }}"
+          # The Git refs API rejects abbreviated SHAs with HTTP 422
+          # ("At least 40 characters are required; only 7 were supplied").
+          # Same checkout as the version step above, so HEAD is the same
+          # commit — resolve the full 40-char SHA here for the API calls.
+          FULL_SHA=$(git rev-parse HEAD)
+          REPO="${{ github.repository }}"
+
+          # Drop the previous release if any (keep the tag — we'll move it
+          # next). `|| true` because the first nightly has nothing to delete.
+          gh release delete nightly --yes --repo "$REPO" || true
+
+          # Force-create or move refs/tags/nightly to the build SHA via the
+          # Git refs API, independent of local checkout state.
+          if gh api "repos/$REPO/git/refs/tags/nightly" >/dev/null 2>&1; then
+            gh api "repos/$REPO/git/refs/tags/nightly" \
+              -X PATCH -F sha="$FULL_SHA" -F force=true >/dev/null
+          else
+            gh api "repos/$REPO/git/refs" \
+              -X POST -f ref="refs/tags/nightly" -f sha="$FULL_SHA" >/dev/null
+          fi
+
+          # Create the prerelease against the freshly pointed tag.
+          gh release create nightly \
+            --prerelease \
+            --title "Openhpsdr Zeus nightly — ${{ steps.version.outputs.date }} ($SHORT_SHA)" \
+            --notes-file nightly-notes.md \
+            --repo "$REPO" \
+            release-artifacts/windows-installer/* \
+            release-artifacts/windows-arm64-installer/* \
+            release-artifacts/linux-tarball/* \
+            release-artifacts/linux-appimage/* \
+            release-artifacts/linux-arm64-tarball/* \
+            release-artifacts/macos-arm64-pkg/*
+
+  # ---------- Website download publish (tagged releases only) -------------
+  #
+  # Publishes the freshly-built installers / packages / AppImages / tarballs to the
+  # Cloudflare R2 bucket behind downloads.openhpsdrzeus.com, which feeds both
+  # the openhpsdrzeus.com #download section and the in-app updater.
+  #
+  # Gated on is-release=true AND is-draft!=true, so it runs ONLY for a real
+  # tagged production release (a v*.*.* tag push) — never for a DRAFT dispatch,
+  # a dry-run, a nightly, or a push to main. The version published is therefore
+  # the clean tag SemVer (e.g. 0.10.0), not a rolling main.<date>.<sha> build.
+  #
+  # Reuses the artifacts already built by build-release (no second build), so a
+  # release notarizes macOS exactly once. To re-publish without re-tagging,
+  # re-run this single job from the release run.
+  publish-downloads:
+    name: Publish to downloads.openhpsdrzeus.com
+    needs: [determine-version, build-release]
+    if: needs.determine-version.outputs.is-release == 'true' && needs.determine-version.outputs.is-draft != 'true'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DOWNLOAD_BASE_URL: https://downloads.openhpsdrzeus.com
+      ZEUS_DOWNLOAD_VERSION: ${{ needs.determine-version.outputs.version }}
+      ZEUS_DOWNLOAD_CHANNEL: release
+      ZEUS_DOWNLOAD_BRANCH: ${{ github.ref_name }}
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Display artifact structure
+        run: find release-artifacts -maxdepth 3 -type f -print | sort
+
+      - name: Fetch current download manifest
+        run: |
+          if ! curl -fsSL "$DOWNLOAD_BASE_URL/manifest.json" -o existing-manifest.json; then
+            printf '{ "schema": 1, "updatedAt": null, "latest": null, "versions": [] }\n' > existing-manifest.json
+          fi
+
+      - name: Render release notes from CHANGELOG
+        run: |
+          # Extract THIS release's section from CHANGELOG.md — the block from the
+          # first '## [' heading to the next — matching the create-release job's
+          # convention, then render it to HTML for the website download panel.
+          # This job only runs for a published tagged release (is-release &&
+          # !is-draft gating), so draft/dev notes never reach the site.
+          awk '/^## \[/{c++} c==2{exit} c{print}' CHANGELOG.md > whats-new.md
+          if [ -s whats-new.md ]; then
+            npx --yes marked@12.0.2 -i whats-new.md -o release-notes.html
+            echo "ZEUS_RELEASE_NOTES_HTML_FILE=$PWD/release-notes.html" >> "$GITHUB_ENV"
+            echo "Rendered $(wc -c < release-notes.html) bytes of release notes for the download page."
+          else
+            echo "::warning::CHANGELOG.md produced no notes section; publishing without notes."
+          fi
+
+      - name: Read update floor
+        id: update-floor
+        run: |
+          MIN_VERSION=$(node -e "const fs=require('fs'); const p='tools/update-floor.json'; const v=JSON.parse(fs.readFileSync(p,'utf8')).minVersion; process.stdout.write(typeof v === 'string' && v.trim() ? v.trim() : '');")
+          if [ -n "$MIN_VERSION" ]; then
+            echo "Using update floor: $MIN_VERSION"
+          else
+            echo "No update floor override set."
+          fi
+          echo "min-version=$MIN_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate download manifest
+        env:
+          UPDATE_MIN_VERSION: ${{ steps.update-floor.outputs.min-version }}
+        run: node tools/update-download-manifest.mjs release-artifacts existing-manifest.json manifest.json
+
+      - name: Upload installers to R2
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            key="versions/${ZEUS_DOWNLOAD_VERSION}/${name}"
+            case "$name" in
+              *.exe) content_type="application/vnd.microsoft.portable-executable" ;;
+              *.pkg) content_type="application/vnd.apple.installer+xml" ;;
+              *.tar.gz) content_type="application/gzip" ;;
+              *.AppImage) content_type="application/octet-stream" ;;
+              *) content_type="application/octet-stream" ;;
+            esac
+            npx --yes wrangler@4.103.0 r2 object put "openhpsdrzeus-downloads/${key}" \
+              --file "$file" \
+              --content-type "$content_type" \
+              --remote
+          done < <(find release-artifacts -type f \( -name '*.exe' -o -name '*.pkg' -o -name '*.tar.gz' -o -name '*.AppImage' \) -print0)
+
+      - name: Upload manifests to R2
+        run: |
+          npx --yes wrangler@4.103.0 r2 object put openhpsdrzeus-downloads/manifest.json \
+            --file manifest.json \
+            --content-type application/json \
+            --remote
+          npx --yes wrangler@4.103.0 r2 object put openhpsdrzeus-downloads/latest.json \
+            --file latest.json \
+            --content-type application/json \
+            --remote
+          npx --yes wrangler@4.103.0 r2 object put "openhpsdrzeus-downloads/versions/${ZEUS_DOWNLOAD_VERSION}/manifest.json" \
+            --file latest.json \
+            --content-type application/json \
+            --remote
+
+      - name: Verify public manifest
+        run: |
+          curl -fsSL "$DOWNLOAD_BASE_URL/manifest.json" | node -e "
+          const chunks = [];
+          process.stdin.on('data', c => chunks.push(c));
+          process.stdin.on('end', () => {
+            const manifest = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            if (manifest.latest !== process.env.ZEUS_DOWNLOAD_VERSION) {
+              throw new Error(`latest mismatch: ${manifest.latest} !== ${process.env.ZEUS_DOWNLOAD_VERSION}`);
+            }
+            console.log(`Published ${manifest.latest} with ${manifest.versions[0].assets.length} assets`);
+          });
+          "
+
+  prune-old-releases:
+    name: Archive and prune old releases
+    needs: [determine-version, create-release, publish-downloads]
+    if: needs.determine-version.outputs.is-release == 'true' && needs.determine-version.outputs.is-draft != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DOWNLOAD_BASE_URL: https://downloads.openhpsdrzeus.com
+      PUBLIC_BUCKET: openhpsdrzeus-downloads
+      ARCHIVE_BUCKET: openhpsdrzeus-archive
+      ZEUS_DOWNLOAD_VERSION: ${{ needs.determine-version.outputs.version }}
+      WRANGLER_SEND_METRICS: "false"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Create private archive bucket
+        run: |
+          set -euo pipefail
+          echo "Ensuring private archive bucket exists: ${ARCHIVE_BUCKET}"
+          set +e
+          # `r2 bucket create` is always a remote operation and rejects the
+          # `--remote` flag (that flag belongs to the `r2 object` commands);
+          # passing it makes wrangler print usage help and exit 1.
+          CREATE_OUT=$(npx --yes wrangler@4.103.0 r2 bucket create "${ARCHIVE_BUCKET}" 2>&1)
+          CREATE_RC=$?
+          set -e
+          echo "$CREATE_OUT"
+          if [ "$CREATE_RC" -ne 0 ] && ! grep -Eiq 'already exists|exists' <<< "$CREATE_OUT"; then
+            exit "$CREATE_RC"
+          fi
+          echo "::notice::Archive bucket is intentionally private; this workflow does not bind a public domain."
+
+      - name: List public release objects
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.103.0 r2 object list "${PUBLIC_BUCKET}" \
+            --prefix versions/ \
+            --remote \
+            --json > r2-objects.json
+          node <<'NODE' > archive-keys.txt
+          const fs = require('fs');
+          const version = process.env.ZEUS_DOWNLOAD_VERSION;
+          const raw = JSON.parse(fs.readFileSync('r2-objects.json', 'utf8'));
+          if (raw.truncated || raw.cursor) {
+            throw new Error('R2 object listing was paginated; refusing to prune from a partial listing.');
+          }
+          const objects = Array.isArray(raw)
+            ? raw
+            : Array.isArray(raw.objects)
+              ? raw.objects
+              : Array.isArray(raw.result)
+                ? raw.result
+                : [];
+          const currentPrefix = `versions/${version}/`;
+          const keys = objects
+            .map((o) => typeof o === 'string' ? o : (o.key || o.name))
+            .filter((key) => typeof key === 'string' && /^versions\/[^/]+\//.test(key))
+            .filter((key) => !key.startsWith(currentPrefix))
+            .sort();
+          process.stdout.write(keys.join('\n'));
+          if (keys.length > 0) process.stdout.write('\n');
+          NODE
+          echo "Objects to archive before public prune:"
+          if [ -s archive-keys.txt ]; then
+            cat archive-keys.txt
+          else
+            echo "(none)"
+          fi
+
+      - name: Archive old public R2 prefixes
+        run: |
+          set -euo pipefail
+          if [ ! -s archive-keys.txt ]; then
+            echo "No old public version prefixes to archive."
+            exit 0
+          fi
+          tmpdir="$(mktemp -d)"
+          cleanup() { rm -rf "$tmpdir"; }
+          trap cleanup EXIT
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            file="${tmpdir}/$(printf '%s' "$key" | sed 's#[/:]#_#g')"
+            echo "Archiving ${key}"
+            npx --yes wrangler@4.103.0 r2 object get "${PUBLIC_BUCKET}/${key}" \
+              --file "$file" \
+              --remote
+            case "$key" in
+              *.json) content_type="application/json" ;;
+              *.exe) content_type="application/vnd.microsoft.portable-executable" ;;
+              *.pkg) content_type="application/vnd.apple.installer+xml" ;;
+              *.tar.gz) content_type="application/gzip" ;;
+              *.AppImage) content_type="application/octet-stream" ;;
+              *) content_type="application/octet-stream" ;;
+            esac
+            npx --yes wrangler@4.103.0 r2 object put "${ARCHIVE_BUCKET}/${key}" \
+              --file "$file" \
+              --content-type "$content_type" \
+              --remote
+            rm -f "$file"
+          done < archive-keys.txt
+
+      - name: Delete old GitHub releases
+        run: |
+          set -euo pipefail
+          gh release list --repo "${{ github.repository }}" --limit 1000 --json tagName,isPrerelease > releases.json
+          node <<'NODE' > delete-release-tags.txt
+          const fs = require('fs');
+          const releases = JSON.parse(fs.readFileSync('releases.json', 'utf8'));
+          const current = parse(process.env.ZEUS_DOWNLOAD_VERSION);
+          function parse(value) {
+            const m = String(value || '').match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+            if (!m) return null;
+            return [Number(m[1]), Number(m[2]), Number(m[3])];
+          }
+          function older(a, b) {
+            for (let i = 0; i < 3; i += 1) {
+              if (a[i] !== b[i]) return a[i] < b[i];
+            }
+            return false;
+          }
+          const tags = [];
+          for (const release of releases) {
+            const tag = release.tagName;
+            const parsed = parse(tag);
+            if (tag === 'nightly') {
+              tags.push(tag);
+            } else if (release.isPrerelease === true && /^test-/.test(tag)) {
+              tags.push(tag);
+            } else if (/^v\d+\.\d+\.\d+$/.test(tag) && parsed && current && older(parsed, current)) {
+              tags.push(tag);
+            }
+          }
+          process.stdout.write([...new Set(tags)].sort().join('\n'));
+          if (tags.length > 0) process.stdout.write('\n');
+          NODE
+          if [ ! -s delete-release-tags.txt ]; then
+            echo "No old GitHub releases to delete."
+            exit 0
+          fi
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "Deleting GitHub release ${tag} (tag preserved)"
+            gh release delete "$tag" --yes --repo "${{ github.repository }}"
+          done < delete-release-tags.txt
+
+      - name: Delete archived public R2 prefixes
+        run: |
+          set -euo pipefail
+          if [ ! -s archive-keys.txt ]; then
+            echo "No archived public version prefixes to delete."
+            exit 0
+          fi
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            echo "Deleting public ${key}"
+            npx --yes wrangler@4.103.0 r2 object delete "${PUBLIC_BUCKET}/${key}" --remote
+          done < archive-keys.txt
+
+      - name: Rewrite public manifest to current version only
+        run: |
+          set -euo pipefail
+          curl -fsSL "$DOWNLOAD_BASE_URL/latest.json" -o latest.json
+          if ! curl -fsSL "$DOWNLOAD_BASE_URL/manifest.json" -o manifest-before-prune.json; then
+            printf '{ "schema": 1, "updatedAt": null, "latest": null, "minVersion": null, "versions": [] }\n' > manifest-before-prune.json
+          fi
+          node <<'NODE'
+          const fs = require('fs');
+          const version = process.env.ZEUS_DOWNLOAD_VERSION;
+          const latest = JSON.parse(fs.readFileSync('latest.json', 'utf8'));
+          const previous = JSON.parse(fs.readFileSync('manifest-before-prune.json', 'utf8'));
+          if (latest.version !== version) {
+            throw new Error(`latest.json version ${latest.version} did not match ${version}`);
+          }
+          const minVersion = typeof previous.minVersion === 'string' && previous.minVersion.trim()
+            ? previous.minVersion.trim()
+            : typeof latest.minVersion === 'string' && latest.minVersion.trim()
+              ? latest.minVersion.trim()
+              : null;
+          latest.minVersion = minVersion;
+          const manifest = {
+            schema: 1,
+            updatedAt: new Date().toISOString(),
+            latest: version,
+            minVersion,
+            versions: [latest],
+          };
+          fs.writeFileSync('manifest-pruned.json', `${JSON.stringify(manifest, null, 2)}\n`);
+          fs.writeFileSync('latest-pruned.json', `${JSON.stringify(latest, null, 2)}\n`);
+          NODE
+          npx --yes wrangler@4.103.0 r2 object put "${PUBLIC_BUCKET}/manifest.json" \
+            --file manifest-pruned.json \
+            --content-type application/json \
+            --remote
+          npx --yes wrangler@4.103.0 r2 object put "${PUBLIC_BUCKET}/latest.json" \
+            --file latest-pruned.json \
+            --content-type application/json \
+            --remote
+          npx --yes wrangler@4.103.0 r2 object put "${PUBLIC_BUCKET}/versions/${ZEUS_DOWNLOAD_VERSION}/manifest.json" \
+            --file latest-pruned.json \
+            --content-type application/json \
+            --remote
+
+      - name: Verify pruned public manifest
+        run: |
+          set -euo pipefail
+          curl -fsSL "$DOWNLOAD_BASE_URL/manifest.json" | node -e "
+          const chunks = [];
+          process.stdin.on('data', c => chunks.push(c));
+          process.stdin.on('end', () => {
+            const manifest = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            if (manifest.latest !== process.env.ZEUS_DOWNLOAD_VERSION) {
+              throw new Error(\`latest mismatch: \${manifest.latest} !== \${process.env.ZEUS_DOWNLOAD_VERSION}\`);
+            }
+            if (!Array.isArray(manifest.versions) || manifest.versions.length !== 1 || manifest.versions[0].version !== process.env.ZEUS_DOWNLOAD_VERSION) {
+              throw new Error('manifest was not pruned to the current version only');
+            }
+            console.log(\`Pruned manifest now contains only \${manifest.latest}\`);
+          });
+          "

@@ -1,0 +1,653 @@
+name: Build Native Libraries
+
+on:
+  # Manual trigger only. The previous push-based auto-rebuild opened a PR
+  # (auto/native-libs-update) on every native/** change, which produced
+  # noisy follow-up PRs that were almost always functionally no-ops because
+  # the maintainer had already rebuilt and committed the binaries that
+  # mattered inside the source-change PR itself. Run this workflow by hand
+  # ("Run workflow" in the Actions UI) when a native/ source change actually
+  # needs cross-platform binaries rebuilt — then download the per-platform
+  # artifacts from the run summary and commit them.
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows Native Libraries
+    # Pinned: windows-latest rolled past the VS 2022 image ~2026-06-10 and the
+    # 'Visual Studio 17 2022' generator below stopped resolving. Keep runner +
+    # generator in lockstep; bump both together.
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        # arm64 enabled: the _MM_SET_FLUSH_ZERO_MODE SSE-intrinsic block in
+        # channel.c is now gated out for ARM64 alongside linux/APPLE, so the
+        # rest of WDSP compiles cleanly under VS 2022's ARM64 toolset. CMake
+        # picks `-A ARM64` below, vcpkg uses the `arm64-windows-static`
+        # triplet, and dumpbin (a host-arch tool) reads the ARM64 PE fine.
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FFTW via vcpkg
+        run: |
+          # CRT linkage is per-arch:
+          #
+          # x64 uses the static-md triplet — FFTW is linked statically into
+          # wdsp.dll, but the resulting DLL still imports the dynamic CRT
+          # (vcruntime140.dll, ucrtbase.dll). On x64 boxes vcruntime140.dll
+          # is effectively ubiquitous (Office, Steam, .NET SDK, the bulk of
+          # Windows installer programs all ship the VC++ Redistributable),
+          # so this is fine and matches the choice that has been working
+          # for x64 for the entire Zeus 0.x line.
+          #
+          # arm64 uses the static triplet — FFTW *and* the CRT are linked
+          # into wdsp.dll (matched on the CMake side by
+          # CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded). Win-ARM does NOT
+          # ship the ARM64 VC++ Redistributable by default and a fresh
+          # Surface Pro X / Snapdragon X Elite system has no other
+          # ARM64 native software to drag it in. With the static-md
+          # triplet the resulting wdsp.dll loads VCRUNTIME140.dll at
+          # runtime and we ship to a "module could not be found" error
+          # the first time anything in WdspNativeLoader tries to open a
+          # channel. The static-CRT build has zero non-Windows-shipped
+          # imports — verified locally with llvm-objdump.
+          $triplet = if ("${{ matrix.arch }}" -eq "arm64") {
+            "arm64-windows-static"
+          } else {
+            "x64-windows-static-md"
+          }
+          vcpkg install fftw3:$triplet
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          $archFlag = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
+          # Recompute the triplet here rather than passing it through
+          # GITHUB_ENV. Step-to-step env var hand-off via PowerShell's
+          # `>> $env:GITHUB_ENV` has been finicky on windows-latest (the
+          # var lands but evaluates empty in the next step), and the
+          # derivation is short. Must stay in sync with the FFTW step.
+          $triplet = if ("${{ matrix.arch }}" -eq "arm64") {
+            "arm64-windows-static"
+          } else {
+            "x64-windows-static-md"
+          }
+          # ClangCL toolset: the vendored libspecbleach source uses a C99
+          # variable-length array in get_rolling_median_spectrum which MSVC
+          # does not implement. clang-cl supports VLAs and ships with the
+          # Visual Studio installation on the GitHub windows-latest runner;
+          # it uses the MSVC ABI so the resulting wdsp.dll stays binary-
+          # compatible with anything else built by MSVC. This matches what
+          # MW0LGE almost certainly used to produce the pre-built
+          # specbleach.dll committed to the Thetis tree (Thetis itself
+          # never rebuilds libspecbleach in CI). No vendored source patch
+          # is required.
+          #
+          # WDSP_WITH_NR4=ON pulls in native/libspecbleach/ and WDSP_WITH_NR3=ON
+          # pulls in native/rnnoise/ as STATIC sub-targets embedded into wdsp.dll.
+          # Both flags are explicit for build-log clarity.
+          #
+          # arm64 also passes CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded so
+          # WDSP itself is built with /MT, matching the static-CRT FFTW
+          # produced by the arm64-windows-static vcpkg triplet. Without
+          # this match the link step trips LNK2038 ("mismatch detected
+          # for 'RuntimeLibrary'") because vcpkg's libfftw3-3.lib expects
+          # /MT and CMake's MSVC default is /MD. See the FFTW step above
+          # for why arm64 needs static CRT in the first place.
+          #
+          # Build the cmake invocation as a single array and splat it
+          # via `& cmake @cmakeArgs`. Earlier attempts used backtick
+          # line-continuation with a trailing `@extraArgs` splat, which
+          # PowerShell on windows-latest mangled — a single-element
+          # array containing "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+          # arrived at cmake as multiple tokens including a stray "d"
+          # and a bare "-". Building one array end-to-end avoids the
+          # whole continuation-plus-splat parsing footgun.
+          $cmakeArgs = @(
+            '-S', 'native/wdsp',
+            '-B', 'native/build',
+            '-G', 'Visual Studio 17 2022',
+            '-A', $archFlag,
+            '-T', 'ClangCL',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_TARGET_TRIPLET=$triplet",
+            '-DWDSP_WITH_NR3=ON',
+            '-DWDSP_WITH_NR4=ON'
+          )
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $cmakeArgs += '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded'
+          }
+          Write-Host "cmake args:"; $cmakeArgs | ForEach-Object { Write-Host "  $_" }
+          & cmake @cmakeArgs
+
+      - name: Build
+        run: |
+          cmake --build native/build --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          # Phase 1 of issue #162: confirm the rebuild actually picks up the
+          # libspecbleach-backed sbnr.c (8 SetRXASBNR* exports). If this fails
+          # the build is silently stub-based and NR4 won't work at runtime.
+          #
+          # dumpbin lives inside the MSVC toolset and isn't on PATH outside a
+          # developer shell. vswhere is on every windows-latest runner image
+          # at a fixed path; use it to locate the latest VS install and pick
+          # the highest-versioned x64-host dumpbin under VC\Tools\MSVC.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vsInstall\VC\Tools\MSVC" }
+          Write-Host "Using dumpbin: $dumpbin"
+          $exports = & $dumpbin /EXPORTS native/build/Release/wdsp.dll | Select-String "SetRXASBNR"
+          $count = ($exports | Measure-Object).Count
+          Write-Host "Found $count SetRXASBNR* exports:"
+          $exports
+          if ($count -ne 8) {
+            throw "Expected 8 SetRXASBNR* exports, got $count. NR4 did not link correctly."
+          }
+
+      - name: Verify RNNR exports
+        run: |
+          # NR3/RNNoise: confirm the rebuild links the vendored librnnoise-backed
+          # rnnr.c (4 RNNR exports: SetRXARNNRRun/Position, RNNRloadModel, RNNRmodelLoaded). If this
+          # fails the build is silently stub-based and NR3 won't work at runtime.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vsInstall\VC\Tools\MSVC" }
+          $exports = & $dumpbin /EXPORTS native/build/Release/wdsp.dll | Select-String "RNNR"
+          $count = ($exports | Measure-Object).Count
+          Write-Host "Found $count RNNR exports:"
+          $exports
+          if ($count -ne 4) {
+            throw "Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+          }
+
+      - name: Stage DLL
+        run: |
+          $rid = "win-${{ matrix.arch }}"
+          $destDir = "Zeus.Dsp/runtimes/$rid/native"
+          New-Item -ItemType Directory -Force -Path $destDir
+          Copy-Item "native/build/Release/wdsp.dll" "$destDir/wdsp.dll"
+
+      # ---------- miniaudio (desktop-mode RX sink + TX mic capture) -------
+      #
+      # Pure C, no third-party deps — WASAPI is loaded dynamically at
+      # runtime, so no link libs and no vcpkg packages are required. Same
+      # VS 2022 generator + arch flag as wdsp above. We do NOT pass
+      # `-T ClangCL` here: that toolset was only needed because libspecbleach
+      # (NR4) uses a C99 VLA that MSVC rejects; miniaudio is plain MSVC-clean.
+      - name: Configure miniaudio (CMake)
+        run: |
+          $archFlag = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
+          cmake -S native/miniaudio -B native/build-miniaudio `
+            -G "Visual Studio 17 2022" `
+            -A $archFlag
+
+      - name: Build miniaudio
+        run: cmake --build native/build-miniaudio --config Release --parallel
+
+      - name: Stage miniaudio DLL
+        run: |
+          $rid = "win-${{ matrix.arch }}"
+          Copy-Item "native/build-miniaudio/Release/miniaudio.dll" "Zeus.Dsp/runtimes/$rid/native/miniaudio.dll"
+
+      # zeus_ft8 / zeus_wspr moved to the com.kb2uka.digital plugin repo
+      # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
+
+      # ---------- codec2 (FreeDV digital voice modem) ---------------------
+      #
+      # Fetched from drowe67/codec2 (pinned tag, see native/codec2/CMakeLists.txt)
+      # via FetchContent and built through codec2's own CMake. Classic modes
+      # only — no LPCNet / 2020, so no FFTW / vcpkg dependency. Build only the
+      # `codec2` target; the upstream tree also defines CLI tools we don't ship.
+      # PREFIX "" on Windows yields codec2.dll (no "lib" prefix). The DLL lands
+      # under the fetched src tree, so locate it rather than assuming a path.
+      # codec2's OFDM/filter code is C99 _Complex, which MSVC's C compiler CANNOT
+      # build (its UCRT also hijacks the `complex` macro, so clang-cl fails too).
+      # codec2 targets MinGW on Windows (note its CMake `if(MINGW)` branch), so the
+      # x64 DLL is built with MinGW-w64 gcc + Ninja, static-linking libgcc for a
+      # standalone DLL (deps: KERNEL32 + system UCRT only). The native/codec2
+      # CMakeLists PATCH_COMMAND guards codec2's GCC-only global flags so the
+      # build is clean. win-arm64 codec2 needs an aarch64 MinGW (llvm-mingw) —
+      # tracked as a follow-up; FreeDV is gracefully unavailable on win-arm64
+      # until then (the modem reports NativeAvailable=false and passes audio
+      # through). See native/codec2/VENDORING.md.
+      - name: Set up MinGW + Ninja (codec2, x64)
+        if: matrix.arch == 'x64'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+          path-type: inherit
+
+      - name: Build & stage codec2 (x64, MinGW)
+        if: matrix.arch == 'x64'
+        shell: msys2 {0}
+        run: |
+          set -eux
+          cmake -S native/codec2 -B native/build-codec2 -G Ninja \
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libgcc -static -s"
+          cmake --build native/build-codec2 --config Release --target codec2 --parallel
+          dll=$(find native/build-codec2 -name 'codec2.dll' | head -n1)
+          test -n "$dll"
+          cp "$dll" Zeus.Dsp/runtimes/win-x64/native/codec2.dll
+          objdump -p Zeus.Dsp/runtimes/win-x64/native/codec2.dll | grep 'DLL Name'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Directory upload (not a single file) so the artifact carries
+          # wdsp.dll, miniaudio.dll and codec2.dll. Matches the linux job below.
+          name: wdsp-windows-${{ matrix.arch }}
+          path: Zeus.Dsp/runtimes/win-${{ matrix.arch }}/native/
+
+  build-linux:
+    name: Build Linux Native Libraries
+    # Pinned to ubuntu-22.04 (glibc 2.35) so libwdsp.so loads on Ubuntu 22.04,
+    # Debian 12, RHEL 9 and equivalents. ubuntu-latest moved to 24.04 (glibc
+    # 2.39) and produced binaries that fail with `version GLIBC_2.38 not
+    # found` on every older distro. Do NOT bump this without a deliberate
+    # decision to drop those users — same applies to the arm64 cross-compile
+    # below, whose aarch64 sysroot comes from this host's apt.
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          # libfftw3-dev ships both fftw3 (double, for WDSP) and fftw3f
+          # (single, for libspecbleach / NR4) in the same package — no
+          # extra dependency needed for NR4.
+          sudo apt-get update
+          sudo apt-get install -y libfftw3-dev cmake build-essential pkg-config
+
+      - name: Install cross-compilation tools (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake pkg-config wget make
+
+          # Cross-compile both FFTW precisions for arm64. WDSP itself links
+          # against double-precision fftw3, while libspecbleach / NR4 links
+          # against single-precision fftw3f.
+          wget https://www.fftw.org/fftw-3.3.10.tar.gz
+          tar xzf fftw-3.3.10.tar.gz
+          cp -a fftw-3.3.10 fftw-3.3.10-float
+
+          cd fftw-3.3.10
+          ./configure --host=aarch64-linux-gnu --prefix="$HOME/fftw-arm64" \
+            CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+            --enable-shared --disable-static
+          make -j"$(nproc)"
+          make install
+
+          cd ../fftw-3.3.10-float
+          ./configure --host=aarch64-linux-gnu --prefix="$HOME/fftw-arm64" \
+            CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+            --enable-float --enable-shared --disable-static
+          make -j"$(nproc)"
+          make install
+
+      - name: Configure CMake (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          # WDSP_WITH_NR4=ON pulls in native/libspecbleach/ and WDSP_WITH_NR3=ON
+          # pulls in native/rnnoise/ as STATIC sub-targets embedded into libwdsp.so.
+          # Both flags are explicit for build-log clarity.
+          cmake -S native/wdsp -B native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWDSP_WITH_NR3=ON \
+            -DWDSP_WITH_NR4=ON
+
+      - name: Configure CMake (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          cmake -S native/wdsp -B native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWDSP_WITH_NR3=ON \
+            -DWDSP_WITH_NR4=ON \
+            -DFFTW_ROOT=$HOME/fftw-arm64 \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_FIND_ROOT_PATH=$HOME/fftw-arm64 \
+            -DCMAKE_PREFIX_PATH=$HOME/fftw-arm64
+
+      - name: Build
+        run: |
+          cmake --build native/build --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          # Phase 1 of issue #162: confirm the rebuild actually picks up the
+          # libspecbleach-backed sbnr.c (8 SetRXASBNR* exports). If this fails
+          # the build is silently stub-based and NR4 won't work at runtime.
+          nm_tool="nm"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            nm_tool="aarch64-linux-gnu-nm"
+          fi
+          count=$($nm_tool -D native/build/libwdsp.so | grep -c "SetRXASBNR" || true)
+          echo "Found $count SetRXASBNR* exports:"
+          $nm_tool -D native/build/libwdsp.so | grep "SetRXASBNR" || true
+          if [ "$count" -ne 8 ]; then
+            echo "ERROR: Expected 8 SetRXASBNR* exports, got $count. NR4 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify RNNR exports
+        run: |
+          # NR3/RNNoise: confirm libwdsp.so carries the 3 RNNR exports
+          # (SetRXARNNRRun/Position, RNNRloadModel, RNNRmodelLoaded). A stub-based build would have
+          # zero and NR3 would be silently broken at runtime.
+          nm_tool="nm"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            nm_tool="aarch64-linux-gnu-nm"
+          fi
+          count=$($nm_tool -D native/build/libwdsp.so | grep -c "RNNR" || true)
+          echo "Found $count RNNR exports:"
+          $nm_tool -D native/build/libwdsp.so | grep "RNNR" || true
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Stage library
+        run: |
+          rid="linux-${{ matrix.arch }}"
+          destDir="Zeus.Dsp/runtimes/$rid/native"
+          mkdir -p "$destDir"
+          cp native/build/libwdsp.so "$destDir/libwdsp.so"
+
+      - name: Bundle FFTW3 alongside libwdsp.so
+        run: |
+          # Ship the FFTW3 dynamic libs in the tarball so the launcher's
+          # LD_LIBRARY_PATH finds them and the user does NOT need libfftw3
+          # installed system-wide. readlink -f resolves the SONAME symlink
+          # so we copy the real .so file, then rename it back to the SONAME
+          # filename libwdsp.so was linked against.
+          set -eux
+          rid="linux-${{ matrix.arch }}"
+          destDir="Zeus.Dsp/runtimes/$rid/native"
+          for soname in libfftw3.so.3 libfftw3f.so.3; do
+            if [ "${{ matrix.arch }}" = "arm64" ]; then
+              src=$(readlink -f "$HOME/fftw-arm64/lib/$soname")
+            else
+              src=$(readlink -f "/usr/lib/x86_64-linux-gnu/$soname")
+            fi
+            test -f "$src"
+            cp "$src" "$destDir/$soname"
+          done
+          ls -la "$destDir/"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            aarch64-linux-gnu-objdump -p "$destDir/libwdsp.so" | grep NEEDED
+          else
+            ldd "$destDir/libwdsp.so"
+          fi
+
+      # ---------- miniaudio (desktop-mode RX sink + TX mic capture) -------
+      #
+      # Pure C, no third-party deps — ALSA / PulseAudio / JACK are loaded
+      # dynamically at runtime via dlopen. Link-time only needs -ldl,
+      # -lpthread, -lm, all libc-resident.
+      - name: Build & stage miniaudio (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          set -eux
+          cmake -S native/miniaudio -B native/build-miniaudio -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build-miniaudio --config Release --parallel
+          cp native/build-miniaudio/libminiaudio.so Zeus.Dsp/runtimes/linux-x64/native/libminiaudio.so
+          ldd Zeus.Dsp/runtimes/linux-x64/native/libminiaudio.so
+
+      - name: Build & stage miniaudio (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          # Reuse the aarch64-linux-gnu cross toolchain installed for wdsp
+          # above. No sysroot extras needed: pthread/dl/m come from the
+          # cross libc that ships with gcc-aarch64-linux-gnu.
+          set -eux
+          cmake -S native/miniaudio -B native/build-miniaudio \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+          cmake --build native/build-miniaudio --config Release --parallel
+          cp native/build-miniaudio/libminiaudio.so Zeus.Dsp/runtimes/linux-arm64/native/libminiaudio.so
+          file Zeus.Dsp/runtimes/linux-arm64/native/libminiaudio.so
+
+      # ---------- codec2 (FreeDV digital voice modem) ---------------------
+      #
+      # Fetched from drowe67/codec2 (pinned tag, see native/codec2/CMakeLists.txt)
+      # via FetchContent and built through codec2's own CMake. Classic modes
+      # only — no LPCNet / 2020, so no FFTW dependency (unlike wdsp). Build only
+      # the `codec2` target; the upstream tree also defines CLI tools we don't
+      # ship. The .so lands under the fetched src tree, so locate it rather than
+      # assuming a path, and copy the real file behind any SONAME symlink.
+      - name: Build & stage codec2 (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          set -eux
+          cmake -S native/codec2 -B native/build-codec2 -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build-codec2 --config Release --target codec2 --parallel
+          so=$(find native/build-codec2 -name 'libcodec2.so*' ! -type l | head -n1)
+          test -n "$so"
+          cp "$so" Zeus.Dsp/runtimes/linux-x64/native/libcodec2.so
+          ldd Zeus.Dsp/runtimes/linux-x64/native/libcodec2.so
+
+      - name: Build & stage codec2 (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          # Reuse the aarch64-linux-gnu cross toolchain installed for wdsp.
+          # Classic codec2 needs no external libs, so no cross-FFTW required.
+          set -eux
+          cmake -S native/codec2 -B native/build-codec2 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+          cmake --build native/build-codec2 --config Release --target codec2 --parallel
+          so=$(find native/build-codec2 -name 'libcodec2.so*' ! -type l | head -n1)
+          test -n "$so"
+          cp "$so" Zeus.Dsp/runtimes/linux-arm64/native/libcodec2.so
+          file Zeus.Dsp/runtimes/linux-arm64/native/libcodec2.so
+
+      # zeus_ft8 / zeus_wspr moved to the com.kb2uka.digital plugin repo
+      # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdsp-linux-${{ matrix.arch }}
+          # Directory upload (not a single file) so the bundled FFTW .so.3
+          # files land in the artifact alongside libwdsp.so.
+          path: Zeus.Dsp/runtimes/linux-${{ matrix.arch }}/native/
+
+  build-macos:
+    name: Build macOS Native Libraries
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          # fftw bottle ships both fftw3 (double, for WDSP) and fftw3f
+          # (single, for libspecbleach / NR4). cmake is preinstalled on
+          # macos-14 but brew keeps this aligned with release.yml.
+          brew install fftw cmake
+
+      - name: Configure CMake
+        run: |
+          cmake -S native/wdsp -B native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWDSP_WITH_NR3=ON \
+            -DWDSP_WITH_NR4=ON
+
+      - name: Build
+        run: cmake --build native/build --config Release --parallel
+
+      - name: Verify SBNR exports
+        run: |
+          # macOS nm prefixes C symbols with an underscore.
+          count=$(nm -gU native/build/libwdsp.dylib | grep -c "_SetRXASBNR" || true)
+          echo "Found $count _SetRXASBNR* exports"
+          if [ "$count" -ne 8 ]; then
+            echo "ERROR: Expected 8 _SetRXASBNR* exports, got $count. NR4 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify RNNR exports
+        run: |
+          # NR3/RNNoise: 4 RNNR exports (SetRXARNNRRun/Position, RNNRloadModel, RNNRmodelLoaded).
+          # macOS nm prefixes C symbols with an underscore; match the RNNR substring.
+          count=$(nm -gU native/build/libwdsp.dylib | grep -c "RNNR" || true)
+          echo "Found $count RNNR exports"
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Stage dylib + bundled FFTW
+        run: |
+          set -eux
+          destDir="Zeus.Dsp/runtimes/osx-arm64/native"
+          mkdir -p "$destDir"
+          cp native/build/libwdsp.dylib "$destDir/libwdsp.dylib"
+
+          fftw_lib="$(brew --prefix fftw)/lib"
+          cp "${fftw_lib}/libfftw3.3.dylib"  "$destDir/libfftw3.3.dylib"
+          cp "${fftw_lib}/libfftw3f.3.dylib" "$destDir/libfftw3f.3.dylib"
+
+          install_name_tool \
+            -change "${fftw_lib}/libfftw3.3.dylib"  @loader_path/libfftw3.3.dylib \
+            -change "${fftw_lib}/libfftw3f.3.dylib" @loader_path/libfftw3f.3.dylib \
+            "$destDir/libwdsp.dylib"
+
+          if otool -L "$destDir/libwdsp.dylib" | grep -q '/opt/homebrew'; then
+            echo "ERROR: Homebrew absolute paths still present after install_name_tool rewrite"
+            otool -L "$destDir/libwdsp.dylib"
+            exit 1
+          fi
+          otool -L "$destDir/libwdsp.dylib"
+
+      # ---------- miniaudio (desktop-mode RX sink + TX mic capture) -------
+      #
+      # Pure C, CoreAudio backend. macOS frameworks (CoreAudio /
+      # AudioToolbox / AudioUnit / CoreFoundation) come from the SDK that
+      # ships with Xcode CLT on macos-14.
+      - name: Build & stage miniaudio
+        run: |
+          set -eux
+          cmake -S native/miniaudio -B native/build-miniaudio -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build-miniaudio --config Release --parallel
+          cp native/build-miniaudio/libminiaudio.dylib Zeus.Dsp/runtimes/osx-arm64/native/libminiaudio.dylib
+          otool -L Zeus.Dsp/runtimes/osx-arm64/native/libminiaudio.dylib
+
+      # ---------- codec2 (FreeDV digital voice modem) ---------------------
+      #
+      # Fetched from drowe67/codec2 (pinned tag, see native/codec2/CMakeLists.txt)
+      # via FetchContent and built through codec2's own CMake. Classic modes
+      # only — no LPCNet / 2020, so no FFTW dependency. Build only the `codec2`
+      # target; the upstream tree also defines CLI tools we don't ship. The
+      # .dylib lands under the fetched src tree, so locate it rather than
+      # assuming a path.
+      - name: Build & stage codec2
+        run: |
+          set -eux
+          cmake -S native/codec2 -B native/build-codec2 -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build-codec2 --config Release --target codec2 --parallel
+          # codec2's CMake emits a versioned dylib (libcodec2.1.2.dylib) with
+          # libcodec2.dylib as a symlink — match the real file, not the symlink,
+          # and stage it under the plain soname the loader probes for.
+          dylib=$(find native/build-codec2 -name 'libcodec2*.dylib' ! -type l | head -n1)
+          test -n "$dylib"
+          cp "$dylib" Zeus.Dsp/runtimes/osx-arm64/native/libcodec2.dylib
+          otool -L Zeus.Dsp/runtimes/osx-arm64/native/libcodec2.dylib
+
+      # zeus_ft8 / zeus_wspr moved to the com.kb2uka.digital plugin repo
+      # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdsp-osx-arm64
+          path: Zeus.Dsp/runtimes/osx-arm64/native/
+
+  # ---------- zeus-vst-bridge (in-process VST3 host) ------------------
+  #
+  # The bridge hosts VST3 plugins via Steinberg's MIT-licensed vst3sdk,
+  # vendored as a submodule under native/zeus-vst-bridge/third_party/.
+  # Unlike wdsp/miniaudio it has no FFTW / vcpkg dependency, so a plain
+  # checkout + submodule init + cmake is enough on every platform. The
+  # staged binary lands in Zeus.Plugins.Host/runtimes/<rid>/native/ to
+  # match the runtimes packaging in Zeus.Plugins.Host.csproj. Download
+  # the per-platform artifact from the run summary and commit it, same
+  # as the wdsp/miniaudio flow above.
+  build-vst-bridge:
+    name: Build VST3 Bridge (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            rid: win-x64
+          - os: ubuntu-22.04
+            rid: linux-x64
+          - os: macos-14
+            rid: osx-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      # vst3sdk has nested submodules; only the hosting subset is needed
+      # (base / pluginterfaces / public.sdk / cmake) — skip the heavy
+      # vstgui4 / doc / tutorials modules to keep the checkout small.
+      - name: Init vst3sdk submodule (hosting subset)
+        shell: bash
+        run: |
+          git submodule update --init native/zeus-vst-bridge/third_party/vst3sdk
+          git -C native/zeus-vst-bridge/third_party/vst3sdk \
+            submodule update --init base pluginterfaces public.sdk cmake
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S native/zeus-vst-bridge -B native/zeus-vst-bridge/build -G "Visual Studio 17 2022" -A x64
+
+      - name: Configure CMake (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -S native/zeus-vst-bridge -B native/zeus-vst-bridge/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build native/zeus-vst-bridge/build --config Release --parallel
+
+      - name: Stage bridge binary
+        shell: bash
+        run: |
+          dest="Zeus.Plugins.Host/runtimes/${{ matrix.rid }}/native"
+          mkdir -p "$dest"
+          case "${{ matrix.rid }}" in
+            win-x64)   cp native/zeus-vst-bridge/build/Release/zeus-vst-bridge.dll "$dest/zeus-vst-bridge.dll" ;;
+            linux-x64) cp native/zeus-vst-bridge/build/libzeus-vst-bridge.so       "$dest/libzeus-vst-bridge.so" ;;
+            osx-arm64) cp native/zeus-vst-bridge/build/libzeus-vst-bridge.dylib    "$dest/libzeus-vst-bridge.dylib" ;;
+          esac
+          ls -la "$dest"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeus-vst-bridge-${{ matrix.rid }}
+          path: Zeus.Plugins.Host/runtimes/${{ matrix.rid }}/native/

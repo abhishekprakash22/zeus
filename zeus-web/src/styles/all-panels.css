@@ -1,0 +1,1651 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Theming for the workspace-level react-grid-layout substrate that replaces
+ * flexlayout-react. Mirrors the meters-grid.css patterns — same RGL CSS
+ * imports (deduped by the bundler), tokenised chrome on every selector. */
+
+@import 'react-grid-layout/css/styles.css';
+@import 'react-resizable/css/styles.css';
+
+/* Outer FlexWorkspace container — held over from the legacy CSS so layouts
+ * don't shift when the flex-layout.css file was removed. Establishes the
+ * positioning context for the absolute "+ Add Panel" button. */
+.flex-workspace {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Inner workspace shell — measured by useContainerWidth and hosts the RGL
+ * grid. FlexWorkspace holds the per-cell pixel size constant, so panels never
+ * rescale when the window is resized; the column count grows/shrinks with the
+ * window instead. */
+.all-panels-workspace {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  /* Fixed-cell grid: a column and a row are a CONSTANT pixel size (set in
+   * FlexWorkspace), so panels never rescale when the window is resized. The
+   * workspace canvas is sized to the MONITOR (the maximum field), and panels
+   * are bounded to it (RGL gridBounds + maxRows) — a panel can never be dragged
+   * or expanded past the physical screen, so there is no "infinite void" to
+   * scroll into. Scrolling therefore only ever spans real content, and the
+   * north star is the MAXIMIZED window (any OS, desktop or web):
+   *   - Maximized (window ≈ monitor): everything fits, no scrollbars.
+   *   - Windowed / resized smaller (window < monitor): the canvas is larger
+   *     than the window, so the workspace SCROLLS to reach the panels.
+   * A panel saved beyond the monitor (from before this bound) is unreachable
+   * even when maximized, so the add-panel flow closes those on first run;
+  * panels merely outside a small window are kept and reappear on maximize. */
+  overflow: auto;
+  /* ResizeObserver measures the scrollport's content box. Without a reserved
+   * gutter, a vertical scrollbar that appears while the startup layout is
+   * settling steals inline space, which changes the measured width and can
+   * make the fixed-cell grid flip between widths. Keep that gutter stable from
+   * the first pass so startup cannot enter a scrollbar/measurement loop. */
+  scrollbar-gutter: stable;
+  /* v3 Lifted Dark: workspace ground is the distinct mid-grey "table"
+   * (--bg-workspace), so the chrome (--bg-0) and the panels (--bg-1) each
+   * read as their own surface. */
+  background: var(--bg-workspace);
+}
+
+.all-panels-grid.react-grid-layout {
+  background: transparent;
+  position: relative;
+  min-height: 100%;
+}
+
+/* Each grid item — a workspace tile wrapper. The upstream
+ * react-grid-layout/css/styles.css sets `will-change: transform` and
+ * `transition: all 200ms ease` on .react-grid-item, which permanently
+ * promotes every tile to its own GPU compositor layer. With a WebGL
+ * panadapter inside that subtree, every frame triggers a layer
+ * re-composite up to the root — visible on macOS as WindowServer +
+ * Chrome GPU pinning. We override both: only promote / animate while
+ * the operator is actively dragging or resizing. */
+.all-panels-grid .react-grid-item {
+  background: transparent;
+  will-change: auto;
+  transition: none;
+}
+
+/* Item being dragged / resized — RGL adds .react-draggable-dragging or
+ * .resizing while the operator's pointer is live. Lift z so the drag
+ * preview doesn't disappear under siblings, and re-enable the snappy
+ * transform/size transitions + GPU promotion only for the duration of
+ * the gesture. */
+.all-panels-grid .react-grid-item.react-draggable-dragging,
+.all-panels-grid .react-grid-item.resizing {
+  z-index: 4;
+  opacity: 0.92;
+  will-change: transform;
+  transition: transform var(--dur-fast) var(--ease-out),
+    width var(--dur-fast) var(--ease-out),
+    height var(--dur-fast) var(--ease-out);
+}
+
+/* Premium reflow: while the operator is actively dragging or resizing, let the
+ * OTHER tiles glide to their new slots instead of snapping instantly. Scoped to
+ * the live interaction (the --interacting class is toggled by WorkspaceCanvas)
+ * and to non-dragged tiles, so idle tiles keep `transition: none` and are never
+ * promoted to a GPU compositor layer — preserving the WebGL-panadapter cost
+ * guard the base .react-grid-item rule above exists for. absoluteStrategy
+ * positions tiles via top/left, so those are the properties we ease. */
+.all-panels-grid--interacting
+  .react-grid-item:not(.react-draggable-dragging):not(.resizing) {
+  transition: top var(--dur-fast) var(--ease-out),
+    left var(--dur-fast) var(--ease-out);
+}
+
+/* Drop placeholder — accent-blue ghost where the dragged tile will land. */
+.all-panels-grid .react-grid-placeholder {
+  background: var(--accent);
+  opacity: 0.18;
+  border-radius: var(--r-sm);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+/* Resize handles — every edge and corner (RGL emits eight via the
+ * resizeHandles prop). Shared base: a 20×20 invisible hit box sitting above
+ * the panel body so grabs aren't intercepted by canvas pointerdown listeners
+ * (panadapter, world map). The base react-resizable/css/styles.css (imported
+ * above) provides each handle's per-direction POSITION (top/left/right/bottom)
+ * and a rotated arrow image; we drop the image and the rotate so the hit box
+ * stays an axis-aligned square, keep the base positioning, and draw our own
+ * chevron only on the SE corner. The old unqualified override pinned every
+ * handle to right:2px;bottom:2px;cursor:se-resize — which stacked all eight in
+ * the SE corner — so each direction now carries its own cursor instead. */
+.all-panels-grid .react-grid-item > .react-resizable-handle {
+  background-image: none;
+  width: 20px;
+  height: 20px;
+  /* Override the base per-direction rotate so the square hit box (and the SE
+   * chevron drawn below) isn't spun. */
+  transform: none;
+  /* z-index here is low so the workspace's own dragging overlays still win. */
+  z-index: 2;
+}
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-sw,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-se,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-nw,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-ne,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-w,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-e,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-n,
+.all-panels-grid
+  .react-grid-item
+  > .react-resizable-handle.react-resizable-handle-s {
+  transform: none;
+}
+/* Per-direction cursors. Positioning is inherited from the base react-resizable
+ * stylesheet; we only restyle, we do not reposition. */
+.all-panels-grid .react-resizable-handle-e {
+  cursor: e-resize;
+}
+.all-panels-grid .react-resizable-handle-w {
+  cursor: w-resize;
+}
+.all-panels-grid .react-resizable-handle-n {
+  cursor: n-resize;
+}
+.all-panels-grid .react-resizable-handle-s {
+  cursor: s-resize;
+}
+.all-panels-grid .react-resizable-handle-se {
+  cursor: se-resize;
+}
+.all-panels-grid .react-resizable-handle-sw {
+  cursor: sw-resize;
+}
+.all-panels-grid .react-resizable-handle-ne {
+  cursor: ne-resize;
+}
+.all-panels-grid .react-resizable-handle-nw {
+  cursor: nw-resize;
+}
+/* Visible chevron affordance only on the SE corner — bigger than the
+ * meters-grid (workspace tiles are larger). Always visible at low contrast;
+ * brightens to --accent on hover/resize. The edge/corner handles stay
+ * invisible hit boxes so the tile chrome doesn't sprout eight chevrons. */
+.all-panels-grid .react-resizable-handle-se::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--fg-2);
+  border-bottom: 2px solid var(--fg-2);
+  opacity: 0.7;
+  transition: opacity var(--dur-fast), border-color var(--dur-fast);
+}
+.all-panels-grid .react-grid-item:hover .react-resizable-handle-se::after {
+  opacity: 1;
+  border-color: var(--accent);
+}
+.all-panels-grid .react-grid-item.resizing .react-resizable-handle-se::after {
+  border-color: var(--accent);
+  opacity: 1;
+}
+.all-panels-grid .react-grid-item[data-tile-locked='true'] .react-resizable-handle {
+  display: none;
+}
+
+/* Workspace tile — beveled chrome wrapping the panel body. Mirrors the
+ * .panel recipe from layout.css so RGL tiles read the same as the legacy
+ * fixed-grid panels. */
+.workspace-tile {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm, 4px);
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 var(--panel-hl-top, rgba(255, 255, 255, 0.10)),
+    0 1px 0 rgba(0, 0, 0, 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* Tile chrome header — "brass instrument plate".
+ * Each panel reads as a piece of equipment with an engraved label plate
+ * above it: subtle vertical gradient lifts the header off the panel base,
+ * a 2 px --power amber rail runs the leading edge as a single decisive
+ * accent, a 1 px specular highlight catches across the top, and the
+ * bottom hairline carries a hint of lamp warmth instead of neutral grey.
+ * Title is rendered in engraved-uppercase (open tracking + faint amber
+ * text-shadow) so it pops without resorting to colored type. */
+.workspace-tile-header {
+  position: relative;
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  background:
+    linear-gradient(180deg, #1c1c21 0%, #141418 100%);
+  border-bottom: 1px solid rgba(255, 177, 60, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+  cursor: grab;
+}
+/* Leading-edge gold rail — the brass plate's mounting screw line. Sits
+ * inside the rounded tile corner via the parent's overflow: hidden. */
+.workspace-tile-header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--power);
+  box-shadow:
+    0 0 6px rgba(255, 177, 60, 0.55),
+    0 0 14px rgba(255, 177, 60, 0.22);
+}
+.workspace-tile-header:active {
+  cursor: grabbing;
+}
+.workspace-tile--locked .workspace-tile-header,
+.workspace-tile--locked .workspace-tile-header:active {
+  cursor: default;
+}
+
+.workspace-tile-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-3);
+  cursor: grab;
+  flex-shrink: 0;
+  transition: color var(--dur-fast);
+}
+.workspace-tile-drag-handle:active {
+  cursor: grabbing;
+}
+.workspace-tile-header:hover .workspace-tile-drag-handle,
+.workspace-tile-drag-handle:hover {
+  color: var(--power);
+}
+.workspace-tile--locked .workspace-tile-drag-handle,
+.workspace-tile--locked .workspace-tile-header:hover .workspace-tile-drag-handle,
+.workspace-tile--locked .workspace-tile-drag-handle:hover {
+  color: var(--fg-3);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.workspace-tile-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-0);
+  text-shadow: 0 0 8px rgba(255, 177, 60, 0.10);
+  user-select: none;
+}
+
+.workspace-tile-close,
+.workspace-tile-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--r-xs, 2px);
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+  flex-shrink: 0;
+}
+.workspace-tile-lock.is-locked {
+  color: var(--power);
+  background: color-mix(in srgb, var(--power) 10%, transparent);
+}
+.workspace-tile-lock.is-inherited {
+  color: var(--fg-2);
+  opacity: 0.78;
+}
+.workspace-tile-close:hover {
+  color: var(--tx);
+  background: var(--bg-2);
+}
+.workspace-tile-lock:hover {
+  color: var(--power);
+  background: var(--bg-2);
+}
+.workspace-tile-close:focus-visible,
+.workspace-tile-lock:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Light theme — flip the brass-plate header gradient from hardcoded dark
+   to the brushed-silver --panel-head-top/-bot tokens so the header reads
+   as part of the silver chassis. Title amber-glow is dropped (vanishes on
+   silver); the leading amber rail (::before) stays — works on both. */
+:root[data-theme="light"] .workspace-tile-header {
+  background: linear-gradient(180deg, var(--panel-head-top) 0%, var(--panel-head-bot) 100%);
+  border-bottom: 1px solid var(--panel-border);
+  box-shadow:
+    inset 0 1px 0 var(--panel-hl-top),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+}
+:root[data-theme="light"] .workspace-tile-title {
+  color: var(--fg-0);
+  text-shadow: none;
+}
+:root[data-theme="light"] .workspace-tile-drag-handle {
+  color: var(--fg-2);
+}
+
+.workspace-tile-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  /* Let each panel own its scrolling. Compact readout/control panels should
+   * not acquire generic tile scrollbars just because the viewport changed. */
+  overflow: hidden;
+}
+
+.workspace-tile[data-panel-id='vfo'] .freq-panel.vfo-dual-panel {
+  overflow: hidden;
+}
+
+.tx-audio-profile-picker {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tx-audio-profile-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  min-width: 0;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tx-audio-profile-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.tx-audio-profile-trigger:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tx-audio-profile-trigger-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-audio-profile-caret {
+  flex: 0 0 auto;
+  color: var(--fg-2);
+  transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast);
+}
+
+.tx-audio-profile-trigger[aria-expanded='true'] .tx-audio-profile-caret {
+  color: var(--fg-0);
+  transform: rotate(180deg);
+}
+
+.tx-audio-profile-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  min-width: 140px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 3px;
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  z-index: 260;
+}
+
+.tx-audio-profile-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tx-audio-profile-option:hover,
+.tx-audio-profile-option:focus-visible {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  outline: none;
+}
+
+.tx-audio-profile-option.is-active {
+  background: var(--accent-soft);
+  color: var(--fg-0);
+}
+
+.tx-audio-profile-option--placeholder {
+  color: var(--fg-3);
+  cursor: default;
+}
+
+.tx-audio-profile-option--placeholder:hover,
+.tx-audio-profile-option--placeholder:focus-visible {
+  background: transparent;
+  color: var(--fg-3);
+}
+
+/* Panels with internal scrolling or fixed-height roots need a resolved flex
+ * height from the tile body. That keeps their internals from expanding past
+ * the panel bounds when the window is resized. */
+.workspace-tile[data-panel-id='smeter'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='tx'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='txfidelity'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='txmeters'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='spots'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='logbook'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='qrz'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='dsp'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='freedv'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='freedvstations'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='vfo'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='chat'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='filterpresets'] > .workspace-tile-body,
+.workspace-tile[data-panel-id='ps'] > .workspace-tile-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-tile[data-panel-id='smeter'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='tx'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='txfidelity'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='txmeters'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='spots'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='logbook'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='qrz'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='dsp'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='freedv'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='freedvstations'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='vfo'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='chat'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='filterpresets'] > .workspace-tile-body > *,
+.workspace-tile[data-panel-id='ps'] > .workspace-tile-body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+}
+
+/* URL Embed panel — headerless tile that frames an arbitrary page. The
+ * header strip carries an address bar between the drag grip and the close
+ * X; the body is an edge-to-edge iframe (or an empty-state prompt). */
+.url-embed-bar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.url-embed-input {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-0);
+  background: var(--bg-0, rgba(0, 0, 0, 0.35));
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs, 2px);
+  outline: none;
+}
+.url-embed-input::placeholder {
+  color: var(--fg-3);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.url-embed-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft, rgba(46, 142, 255, 0.14));
+}
+.url-embed-input--error,
+.url-embed-input--error:focus {
+  border-color: var(--tx);
+  box-shadow: 0 0 0 1px rgba(230, 58, 43, 0.25);
+}
+.url-embed-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--r-xs, 2px);
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.url-embed-btn:hover {
+  color: var(--accent-bright, var(--accent));
+  background: var(--bg-2);
+}
+.url-embed-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.url-embed-body {
+  overflow: hidden;
+}
+.url-embed-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  min-height: 0;
+  background: #fff;
+}
+.url-embed-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 16px 24px;
+  text-align: center;
+  color: var(--fg-3);
+}
+.url-embed-empty-title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+}
+.url-embed-empty-hint {
+  margin: 0;
+  max-width: 32ch;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-3);
+}
+.url-embed-empty-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--tx);
+}
+
+/* Star button shows its pinned state by adopting the accent colour. */
+.url-embed-btn.url-embed-btn--active {
+  color: var(--accent);
+}
+
+/* LAN Browser bookmark bar — a thin strip of pinned device pages between the
+ * address-bar header and the iframe body. Horizontally scrollable so a long
+ * list never pushes the body out. */
+.lan-bookmark-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  background: var(--panel-bot, rgba(0, 0, 0, 0.2));
+  border-top: 1px solid var(--line);
+}
+.lan-bookmark {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 160px;
+  height: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs, 2px);
+  background: var(--bg-1, rgba(255, 255, 255, 0.04));
+  color: var(--fg-2);
+  transition: border-color var(--dur-fast), color var(--dur-fast);
+}
+.lan-bookmark:hover {
+  color: var(--fg-0);
+  border-color: var(--accent);
+}
+.lan-bookmark--active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.lan-bookmark-go {
+  max-width: 138px;
+  padding: 0 4px 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.lan-bookmark-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.lan-bookmark-del:hover {
+  color: var(--tx);
+}
+.lan-bookmark-go:focus-visible,
+.lan-bookmark-del:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.workspace-tile--unavailable {
+  border-style: dashed;
+}
+
+.workspace-unavailable-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+  padding: 14px;
+  color: var(--fg-2);
+  background:
+    linear-gradient(180deg, rgba(255, 177, 60, 0.04), transparent 42%),
+    var(--bg-1);
+}
+
+.workspace-unavailable-panel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--power);
+  background: rgba(255, 177, 60, 0.08);
+  border: 1px solid rgba(255, 177, 60, 0.24);
+  border-radius: var(--r-sm);
+}
+
+.workspace-unavailable-panel-title {
+  font: 700 12px/1.2 var(--font-sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-0);
+}
+
+.workspace-unavailable-panel-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.workspace-unavailable-panel-copy p {
+  margin: 0;
+  font: 500 11px/1.45 var(--font-sans);
+}
+
+.workspace-unavailable-panel-copy code {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 5px 7px;
+  color: var(--fg-1);
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-xs);
+  font: 600 10px/1.2 var(--font-mono);
+  white-space: nowrap;
+}
+
+.workspace-unavailable-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workspace-unavailable-panel-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Workspace-level Add Panel button — fixed bottom-right of the workspace.
+ * Kept small and translucent so it remains available without becoming
+ * another transport-row control or covering much panel content. */
+.workspace-add-panel-btn {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.015)),
+    rgba(12, 13, 15, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  opacity: 0.68;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast),
+    border-color var(--dur-fast),
+    color var(--dur-fast),
+    opacity var(--dur-fast),
+    transform var(--dur-fast);
+}
+.workspace-add-panel-btn:hover {
+  background:
+    linear-gradient(180deg, var(--btn-active-top), var(--btn-active-bot));
+  border-color: var(--accent);
+  color: var(--btn-active-text, var(--fg-0));
+  opacity: 1;
+  transform: translateY(-1px);
+}
+.workspace-add-panel-btn:disabled {
+  cursor: default;
+  opacity: 0.32;
+  transform: none;
+}
+.workspace-add-panel-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+/* Workspace zoom cluster (ZOOM − | nn% | +) — lives in the bottom transport
+ * bar beside the PA-temperature chip. Styled to the footer .chip vocabulary
+ * (dark inset, hairline border) so it reads as a matched status affordance
+ * rather than a floating pill. */
+.workspace-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: var(--r-xs);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: border-color var(--dur-fast);
+}
+.workspace-zoom-controls:hover,
+.workspace-zoom-controls:focus-within {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.workspace-zoom-controls > .k {
+  color: var(--fg-2);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 9px;
+  margin-right: 2px;
+}
+.workspace-zoom-btn,
+.workspace-zoom-readout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border-radius: var(--r-xs);
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast);
+}
+.workspace-zoom-btn {
+  width: 18px;
+}
+.workspace-zoom-readout {
+  min-width: 34px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: var(--fg-0);
+}
+.workspace-zoom-btn:hover:not(:disabled),
+.workspace-zoom-readout:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg-0);
+}
+.workspace-zoom-btn:disabled {
+  cursor: default;
+  opacity: 0.32;
+}
+.workspace-zoom-btn:focus-visible,
+.workspace-zoom-readout:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+
+/* Categorized AddPanel modal — left rail of category chips, right pane of
+ * panel cards. Stacks the rail vertically so all categories are reachable
+ * without tab-bar overflow. */
+.add-panel-modal {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  width: 90%;
+  max-width: 720px;
+  max-height: 80vh;
+  overflow: hidden;
+}
+
+.add-panel-modal-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--panel-border);
+  background: linear-gradient(90deg, var(--panel-head-top, var(--panel-top)), var(--panel-head-bot, var(--panel-bot)));
+}
+.add-panel-modal-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-1);
+}
+
+.add-panel-modal-rail {
+  border-right: 1px solid var(--panel-border);
+  background: var(--bg-0);
+  padding: 8px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  min-height: 240px;
+}
+
+.add-panel-category-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.add-panel-category-btn:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+.add-panel-category-btn[aria-pressed='true'] {
+  background: linear-gradient(180deg, var(--btn-active-top), var(--btn-active-bot));
+  color: var(--btn-active-text, var(--fg-0));
+  border-color: var(--accent);
+}
+
+.add-panel-modal-body {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: calc(80vh - 70px);
+}
+
+.add-panel-search {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+  color: var(--fg-0);
+  font-size: 12px;
+  font-family: var(--font-sans);
+}
+
+.add-panel-cards {
+  display: grid;
+  gap: 6px;
+}
+
+.add-panel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+  color: var(--fg-1);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+  font-family: var(--font-sans);
+}
+.add-panel-card:hover {
+  background: var(--bg-2);
+  border-color: var(--accent);
+}
+.add-panel-card:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.add-panel-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-0);
+}
+.add-panel-card-title-multi {
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.add-panel-card-tags {
+  font-size: 10px;
+  color: var(--fg-2);
+  letter-spacing: 0.04em;
+}
+
+.add-panel-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-2);
+}
+
+/* AddMeter modal — three-column variant of `.add-panel-modal`: rail of
+ * category chips, scrollable meter card list, then a config pane on the
+ * right where the operator tweaks the picked meter before pressing Add. */
+.add-meter-modal {
+  grid-template-columns: 130px 1fr 280px;
+  max-width: 920px;
+}
+
+.add-meter-config-pane {
+  border-left: 1px solid var(--panel-border);
+  background: var(--bg-0);
+  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: calc(80vh - 70px);
+  font-family: var(--font-sans);
+}
+
+.add-meter-config-empty {
+  margin: auto;
+  padding: 24px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-3);
+  font-style: italic;
+}
+
+.add-meter-config-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--panel-border);
+  margin-bottom: 2px;
+}
+.add-meter-config-eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.add-meter-config-name {
+  font-size: 12px;
+  color: var(--fg-0);
+  font-weight: 600;
+}
+
+.add-meter-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.add-meter-config-row-pair {
+  flex-direction: row;
+  gap: 8px;
+}
+.add-meter-config-half {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.add-meter-config-label {
+  font-size: 9.5px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.add-meter-config-input {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-xs);
+  color: var(--fg-0);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  box-sizing: border-box;
+}
+.add-meter-config-input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.add-meter-kind-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.add-meter-kind-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-xs);
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-fast), border-color var(--dur-fast),
+    color var(--dur-fast);
+}
+.add-meter-kind-btn:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+.add-meter-kind-btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--btn-active-top), var(--btn-active-bot));
+  color: var(--btn-active-text, var(--fg-0));
+}
+.add-meter-kind-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: currentColor;
+}
+.add-meter-kind-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-meter-config-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--fg-1);
+  cursor: pointer;
+  padding: 2px 0;
+}
+.add-meter-config-toggle input[type='checkbox'] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.add-meter-config-actions {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--panel-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.add-meter-cancel-btn,
+.add-meter-add-btn {
+  padding: 6px 14px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast),
+    color var(--dur-fast);
+}
+.add-meter-cancel-btn {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--fg-2);
+}
+.add-meter-cancel-btn:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+.add-meter-add-btn {
+  background: linear-gradient(180deg, var(--btn-active-top), var(--btn-active-bot));
+  border: 1px solid var(--accent);
+  color: var(--btn-active-text, var(--fg-0));
+  font-weight: 600;
+}
+.add-meter-add-btn:hover {
+  filter: brightness(1.08);
+}
+.add-meter-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: none;
+}
+
+/* Shared Zeus confirmation/input dialogs for destructive and operator-input actions. */
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.confirm-dialog {
+  width: min(440px, 100%);
+  max-height: min(520px, calc(100vh - 36px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  color: var(--fg-1);
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 var(--panel-hl-top);
+}
+
+.confirm-dialog--danger {
+  border-color: color-mix(in srgb, var(--tx) 42%, var(--panel-border));
+}
+
+.confirm-dialog--primary {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--panel-border));
+}
+
+.confirm-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background:
+    linear-gradient(90deg, var(--panel-head-top), var(--panel-head-bot));
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.confirm-dialog-header h2 {
+  margin: 0;
+  font: 700 13px/1.2 var(--font-sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-0);
+}
+
+.confirm-dialog-body {
+  padding: 15px 16px;
+  overflow-y: auto;
+  font: 500 12px/1.5 var(--font-sans);
+  color: var(--fg-1);
+}
+
+.confirm-dialog-body p {
+  margin: 0;
+}
+
+.confirm-dialog-body p + p {
+  margin-top: 8px;
+  color: var(--fg-2);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-0);
+  border-top: 1px solid var(--panel-border);
+}
+
+.confirm-dialog-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+  filter: none;
+}
+
+.text-input-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+}
+
+.text-input-dialog-field span {
+  font: 700 10px/1 var(--font-sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.text-input-dialog-field input {
+  width: 100%;
+  padding: 7px 10px;
+  color: var(--fg-0);
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+  font: 500 12px/1.2 var(--font-sans);
+}
+
+.text-input-dialog-field input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.btn.danger {
+  color: #fff;
+  background: var(--tx);
+  border-color: var(--tx);
+  box-shadow: 0 0 0 1px rgba(255, 56, 56, 0.18);
+}
+
+.btn.danger:hover {
+  filter: brightness(1.08);
+}
+
+/* Layout settings modal — edit a NamedLayout's label, icon, and tooltip
+ * description. Reuses the modal-backdrop scrim from AddPanelModal. */
+.layout-settings-modal {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  width: 90%;
+  max-width: 460px;
+  max-height: 85vh;
+  overflow: hidden;
+}
+.layout-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--panel-border);
+  background: linear-gradient(180deg,
+    var(--panel-head-top, var(--panel-top)),
+    var(--panel-head-bot, var(--panel-bot)));
+}
+.layout-settings-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-1);
+}
+.layout-settings-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+.layout-settings-preview {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
+.layout-settings-preview-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  min-width: 64px;
+  background: linear-gradient(180deg, var(--btn-top), var(--btn-bot));
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 1px 0 var(--btn-hl), 0 0 8px var(--accent-soft);
+  color: var(--accent);
+}
+.layout-settings-preview-icon {
+  font-size: 22px;
+  line-height: 1;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
+    var(--font-sans);
+}
+.layout-settings-preview-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.layout-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.layout-settings-lock-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.layout-settings-lock-row input {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.layout-settings-lock-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.layout-settings-field-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  font-family: var(--font-sans);
+}
+.layout-settings-field-hint {
+  font-size: 10px;
+  color: var(--fg-3);
+}
+.layout-settings-input,
+.layout-settings-textarea,
+.layout-settings-icon-input {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+  color: var(--fg-0);
+  font-size: 12px;
+  font-family: var(--font-sans);
+}
+.layout-settings-textarea {
+  resize: vertical;
+  min-height: 44px;
+  font-family: var(--font-sans);
+}
+.layout-settings-input:focus,
+.layout-settings-textarea:focus,
+.layout-settings-icon-input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+.layout-settings-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.layout-settings-icon-input {
+  width: 80px;
+  text-align: center;
+  font-size: 18px;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
+    var(--font-sans);
+}
+.layout-settings-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin-top: 6px;
+}
+.layout-settings-icon-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  font-size: 18px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
+    var(--font-sans);
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+.layout-settings-icon-chip:hover {
+  background: var(--bg-2);
+  border-color: var(--accent);
+}
+.layout-settings-icon-chip.selected {
+  background: var(--bg-2);
+  border-color: var(--accent);
+  box-shadow: 0 0 6px var(--accent-soft);
+}
+.layout-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--panel-border);
+  background: var(--bg-0);
+}
+/* Pushes the trailing Cancel/Save cluster to the right while Delete stays
+   pinned left in the manager footer. */
+.layout-settings-actions-spacer {
+  flex: 1 1 auto;
+}
+/* Native select styled to match the text inputs. */
+.layout-settings-select {
+  cursor: pointer;
+  appearance: auto;
+}
+/* "Save as new" group, set off from the metadata fields by a hairline rule. */
+.layout-settings-saveas {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+/* Delete reads as a destructive action — TX red on hover/focus, no palette
+   change to chrome at rest. */
+.layout-settings-delete:not(:disabled):hover,
+.layout-settings-delete:not(:disabled):focus-visible {
+  border-color: var(--tx);
+  color: var(--tx);
+}
+/* An armed two-click confirm (Apply/Delete in the library) shows its intent
+   at rest, not only on hover. */
+.layout-settings-library .btn.is-confirm {
+  border-color: var(--tx);
+  color: var(--tx);
+}
+
+/* Saved-layouts library — set off from the workspace fields by a hairline. */
+.layout-settings-library {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+.layout-settings-library-save {
+  margin-top: 8px;
+}
+.layout-settings-library-empty {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--fg-3);
+  font-style: italic;
+}
+.layout-settings-library-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.layout-settings-library-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-sm);
+}
+.layout-settings-library-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--fg-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.layout-settings-library-icon {
+  font-size: 15px;
+  line-height: 1;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji',
+    var(--font-sans);
+}
+.layout-settings-library-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 8px;
+}
+.layout-settings-library-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+/* Compact button size for the per-row library actions. */
+.btn.xs {
+  padding: 0.2em 0.5em;
+  font-size: clamp(9px, 0.1vw + 8.5px, 11px);
+  min-height: 0;
+}

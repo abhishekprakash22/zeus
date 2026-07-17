@@ -1,0 +1,1203 @@
+/* Mobile single-column shell. Layout shape from the Zeus Mobile design;
+   colour and type from src/styles/tokens.css. The desktop "body { overflow:
+   hidden }" rule keeps the desktop shell pinned to the viewport — mobile
+   needs a scrolling document, so .m-app sets its own scroll context. */
+
+.m-app {
+  --m-trackpad-h: 72px;
+  position: fixed;
+  inset: 0;
+  background: var(--bg-app);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Status-bar / dynamic-island clearance + bottom home-indicator clearance */
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0) + var(--m-trackpad-h));
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+/* ── Topbar ────────────────────────────────────────────── */
+.m-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(90deg, var(--panel-head-top) 0%, var(--panel-head-bot) 100%);
+  border-bottom: 1px solid var(--panel-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.m-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.m-brand-mark {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+}
+.m-brand-mark .brand-mark-logo {
+  width: 18px;
+  height: 18px;
+}
+/* Stacked brand mark — tiny "OPENHPSDR" eyebrow over a larger "Zeus". Lets
+   the brand stay narrow without dropping the OpenHpsdr provenance. */
+.m-brand-text {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1;
+  white-space: nowrap;
+}
+.m-brand-pre {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 8px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.m-brand-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.6px;
+  color: var(--fg-0);
+  margin-top: 2px;
+}
+
+/* Tab strip — Radio | Settings. Underline style: the active tab grows a
+   thick accent bar along its bottom edge that visually merges into the
+   panel below, so it reads as a navigation tab rather than a free-floating
+   pill button. The strip has its own padding above and below to give the
+   tabs breathing room inside the topbar. */
+.m-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  align-self: stretch;
+  gap: 4px;
+  padding: 4px 6px 0;
+}
+.m-tab {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border: none;
+  background: transparent;
+  color: var(--fg-3);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  cursor: pointer;
+  min-height: 32px;
+  border-bottom: 2px solid transparent;
+  transition: color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.m-tab:hover { color: var(--fg-1); }
+.m-tab.on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.m-tab.on::after {
+  /* Subtle highlight glow under the active tab so it pops against the
+     panel-head gradient without needing a background fill. */
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+/* Topbar Connect/Disconnect button. With the IP gone, this collapses to a
+   compact LED + word pill so the tabs can take the centre. Still doubles
+   as the tap target for the radio-selector overlay. */
+.m-conn-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--btn-edge);
+  border-radius: var(--r-md);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  cursor: pointer;
+  min-height: 32px;
+  flex-shrink: 0;
+}
+.m-conn-btn:hover { background: var(--bg-1); }
+.m-conn-led {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  flex-shrink: 0;
+}
+.m-conn-led--off {
+  background: var(--fg-3);
+  box-shadow: none;
+}
+.m-conn-action {
+  color: var(--fg-2);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.m-conn-action--primary { color: var(--accent); font-weight: 700; }
+.m-conn-btn[data-connected='false'] { border-color: var(--accent-soft); }
+
+/* ── Radio selector overlay ─────────────────────────────── */
+.m-selector-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: env(safe-area-inset-top, 16px) 12px 12px;
+  z-index: 50;
+  overflow-y: auto;
+}
+.m-selector-sheet {
+  width: 100%;
+  max-width: 460px;
+  margin-top: 48px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.m-selector-head {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  background: linear-gradient(90deg, var(--panel-head-top) 0%, var(--panel-head-bot) 100%);
+  border-bottom: 1px solid var(--panel-border);
+}
+.m-selector-title {
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--fg-0);
+}
+.m-selector-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--fg-2);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+}
+.m-selector-close:hover { background: var(--bg-1); color: var(--fg-0); }
+.m-selector-body {
+  padding: 8px;
+  overflow-y: auto;
+}
+/* ConnectPanel sets minWidth: 460px inline (ConnectPanel.tsx:363); on a
+   402 px viewport that overflows. Force it to fill the sheet width. */
+.m-selector-body .panel { min-width: 0 !important; max-width: 100% !important; }
+
+/* ── Vertical stack ────────────────────────────────────── */
+.m-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+/* ── Section panel ─────────────────────────────────────── */
+.m-section {
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--panel-shadow);
+}
+.m-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: linear-gradient(90deg, var(--panel-head-top) 0%, var(--panel-head-bot) 100%);
+  border-bottom: 1px solid var(--panel-border);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.m-section-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  flex-shrink: 0;
+}
+.m-section-label {
+  color: var(--fg-0);
+  font-weight: 600;
+}
+.m-section-meta {
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+}
+/* Right-aligned slot in the section head — used by the S-Meter card to
+   carry SWR + MIC dBfs chips during TX. `margin-left: auto` pushes the
+   slot to the right edge regardless of the label/meta width on its left.
+   The header inherits `text-transform: uppercase`, but `.chip .k` is
+   already uppercase and `.chip .v` is just digits so the cascade is a
+   no-op in practice. */
+.m-section-extra {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.m-section-body {
+  padding: 10px;
+}
+/* Tight modifier — used by S-Meter so the LED strip + dBm readout fill the
+   panel chrome edge to edge. SMeterLive paints its own padding:10 inline,
+   override that too. */
+.m-section--tight > .m-section-body { padding: 0; }
+.m-section--tight > .m-section-body > div { padding: 0 !important; }
+
+/* The VFO. The shared `.freq-display` panel sizes digits with
+   `clamp(38px, 26cqh, 140px)` (layout.css:607); pin a tight mobile height
+   so the digits sit inside the dark blue inset chrome and the panel doesn't
+   dominate the screen. The bottom hint label (.freq-bot) is hidden — it's
+   discoverable on first interaction; not worth the extra rows on mobile. */
+/* Frequency tile = two columns. Column 1 holds the VFO digits and spans
+   the full row height; column 2 stacks Mute (top) and Lock (bottom) so the
+   two most-used radio toggles sit at thumb reach next to the frequency.
+   `align-items: stretch` lets the right-column cells inherit the VFO's
+   height without needing an explicit row template. */
+.m-vfo-grid {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 8px;
+  align-items: stretch;
+}
+.m-vfo-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  min-width: 0;
+}
+.m-vfo-side {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 6px;
+}
+/* Each side cell holds one component (AudioToggle / VfoLockButton). The
+   inner buttons are forced to fill the cell so they line up edge-to-edge
+   with the VFO digits column. AudioToggle ships its own wrapping <div>
+   with inline flex; we override the inline display so it stretches. */
+.m-vfo-side-cell { display: flex; min-height: 0; }
+.m-vfo-side-cell > * {
+  display: flex !important;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+.m-vfo-side-cell button {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.m-app .freq-display {
+  min-height: 72px;
+  padding: 6px 12px;
+  width: 100%;
+}
+.m-app .freq-display .freq-bot { display: none; }
+.m-app .freq-display .freq-digits { margin: 0; }
+
+/* ── Panadapter + waterfall ────────────────────────────── */
+/* The map-layer + spectrum stack share a single positioned ancestor so the
+   QRZ Leaflet world map can sit behind a transparent waterfall the same way
+   the desktop "hero" panel does (see App.tsx:818-882). */
+.m-pan-stack {
+  position: relative;
+  height: 310px;
+  background: var(--spec-bg);
+}
+.m-map-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+.m-pan-spectrum {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  /* panadapter / splitter / waterfall. MobileSpectrumStack overrides the
+     fr rows inline as the operator drags the divider. */
+  grid-template-rows: 0.4fr 10px 0.6fr;
+  pointer-events: auto;
+}
+.m-pan,
+.m-wf {
+  position: relative;
+  background: transparent;
+}
+
+/* Draggable divider between panadapter and waterfall — mirrors the desktop
+   .spectrum-splitter. It is the middle grid row (its height is set inline by
+   MobileSpectrumStack); touch-action:none claims the gesture so dragging it
+   resizes the split instead of scrolling the page. A thin centred line grows
+   to a 3px accent bar while dragging so the touch target reads clearly. */
+.m-spectrum-splitter {
+  position: relative;
+  z-index: 6;
+  cursor: row-resize;
+  touch-action: none;
+  background: transparent;
+}
+.m-spectrum-splitter::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--panel-border);
+  transition: background 120ms ease, height 120ms ease;
+}
+.m-spectrum-splitter.dragging::before {
+  height: 3px;
+  background: var(--accent);
+}
+/* Both child components fill their container via absolute children */
+.m-pan > *,
+.m-wf > * { position: absolute; inset: 0; }
+
+/* When the QRZ map is rendering behind, the panadapter + waterfall
+   containers must paint transparent so the map tiles bleed through. The
+   Panadapter widget's <div class="spectrum-canvas"> sets var(--spec-bg)
+   inline (Panadapter.tsx:196); override for the mobile shell. The Waterfall
+   widget's noise floor is faded inside its WebGL fragment shader by the
+   `transparent` prop we already pass. */
+.m-app .spectrum-canvas { background: transparent !important; }
+
+/* Image-mode also needs the waterfall wrapper transparent so the picture
+   shows through the bottom half. The wrapper sets background:var(--wf-0)
+   inline (Waterfall.tsx:174); the WebGL canvas inside already fades its
+   noise floor when transparent={imageMode}. Beam-map mode keeps the
+   wrapper opaque on purpose — see the Section render comment. */
+.m-pan-stack.image-mode .waterfall-canvas { background: transparent !important; }
+
+/* The Panadapter widget brings its own dB scale axis pinned to the left
+   which we keep visible. The Waterfall widget brings three pieces of chrome
+   that don't belong on mobile:
+     • γ contrast slider — hidden, takes the same left rail as the dB scale.
+     • Colormap radio group — hidden, mobile has no room for palette
+       selection in this iteration.
+     • dB AUTO/FIXED toggle — hidden. Mobile is force-pinned to AUTO at
+       MobileApp mount (see MobileApp.tsx) so the colors track the live
+       p5/p95 of the signal — FIXED mode reads grainy on a phone where
+       the operator has no easy way to drag-shift the range. */
+.m-app [aria-label="Waterfall contrast (γ)"] { display: none !important; }
+.m-app [role="radiogroup"][aria-label="Colormap"],
+.m-app [role="radiogroup"][aria-label="Colormap"] + button { display: none !important; }
+/* Pinch-to-zoom: tell the browser we own all touch on the spectrum surface
+   so it doesn't double-tap-zoom or pinch-zoom the document instead of the
+   canvas. usePanTuneGesture handles the multi-pointer math for both pan
+   (Panadapter) and waterfall canvases. */
+.m-app .m-pan canvas,
+.m-app .m-wf canvas { touch-action: none; }
+
+/* Fixed bottom frequency trackpad. It uses the same selected tuning step as
+   mouse wheel tuning, but requires more horizontal travel per step. */
+.m-frequency-trackpad {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 35;
+  display: block;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0));
+  background: linear-gradient(180deg, var(--panel-head-top) 0%, var(--panel-head-bot) 100%);
+  border-top: 1px solid var(--panel-border);
+  box-shadow: 0 -10px 24px rgba(0, 0, 0, 0.34);
+}
+.m-trackpad-pad {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: 1fr auto;
+  column-gap: 10px;
+  align-items: end;
+  min-height: 48px;
+  padding: 8px 14px 7px;
+  border: 1px solid var(--btn-edge);
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(circle at 18% 50%, rgba(255, 255, 255, 0.08) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 82% 50%, rgba(255, 255, 255, 0.08) 0 1px, transparent 1.5px),
+    linear-gradient(180deg, var(--btn-top) 0%, var(--btn-bot) 100%);
+  color: var(--fg-0);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.m-trackpad-pad::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: var(--accent);
+  opacity: 0.22;
+}
+.m-trackpad-pad::after {
+  content: '';
+  position: absolute;
+  inset: 8px 14px 22px;
+  border-radius: var(--r-sm);
+  background:
+    radial-gradient(circle at 18% 50%, rgba(255, 255, 255, 0.1) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 34% 50%, rgba(255, 255, 255, 0.08) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 50% 50%, var(--accent-soft) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 66% 50%, rgba(255, 255, 255, 0.08) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 82% 50%, rgba(255, 255, 255, 0.1) 0 1px, transparent 1.5px);
+  border: 1px solid var(--line-strong);
+  opacity: 0.66;
+  pointer-events: none;
+}
+.m-trackpad-pad[aria-disabled='true'] {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+.m-trackpad-pad:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.m-trackpad-pad.is-dragging {
+  cursor: grabbing;
+  border-color: var(--accent);
+}
+.m-trackpad-pad.is-dragging::after {
+  opacity: 1;
+  box-shadow: inset 0 1px 6px rgba(0, 0, 0, 0.5), 0 0 12px var(--accent-soft);
+}
+.m-trackpad-label,
+.m-trackpad-value {
+  min-width: 0;
+  font-family: var(--font-mono);
+  line-height: 1;
+  white-space: nowrap;
+}
+.m-trackpad-label {
+  color: var(--fg-3);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+.m-trackpad-value {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* The Panadapter section overrides the default 10px body padding so the
+   spectrum + waterfall reach the panel edges. */
+.m-section:has(.m-pan) > .m-section-body { padding: 0; }
+
+/* ── MOX block ─────────────────────────────────────────── */
+.m-mox-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Mic permission gate. Shown only when useMicUplink reports an error —
+   typically iOS Safari blocking getUserMedia over HTTP-on-LAN-IP, or a
+   prior denial that needs an explicit user-gesture re-request. */
+.m-mic-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--tx-soft);
+  border: 1px solid var(--tx);
+  border-radius: var(--r-md);
+  color: var(--fg-1);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.m-mic-gate__msg strong { color: var(--tx); margin-right: 4px; }
+.m-mic-gate__btn {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: #06121f;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  border: none;
+  min-height: 36px;
+}
+.m-mic-gate__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* "Install as app" banner (mobile). Accent-tinted card — inviting, not an
+   alert (mic-gate owns the red/tx treatment). Sits at the top of the stack
+   and is dismissible. */
+.m-install {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  color: var(--fg-1);
+}
+.m-install__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: #06121f;
+}
+.m-install__body { flex: 1 1 auto; min-width: 0; }
+.m-install__title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  color: var(--fg-0);
+}
+.m-install__msg {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-2);
+  margin-top: 2px;
+}
+.m-install__msg strong { color: var(--fg-0); }
+.m-install__inline {
+  display: inline-block;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+.m-install__btn {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: #06121f;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  border: none;
+  min-height: 36px;
+}
+.m-install__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.m-install__close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.m-install__close:hover { color: var(--fg-0); }
+.m-mox-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+.m-tx-profile {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+.m-tx-profile-status {
+  min-width: 0;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-tx-profile-status.is-error { color: var(--tx); }
+/* PTT row — PTT takes 80% of the width, TUN sits to its right at 20%
+   so the operator can key tune without leaving the radio screen. PTT
+   is the single biggest tap target on mobile so it stays dominant. */
+.m-ptt-row {
+  display: grid;
+  grid-template-columns: 4fr 1fr;
+  gap: 6px;
+  align-items: stretch;
+}
+.m-ptt-row .mobile-ptt-btn {
+  width: 100%;
+  min-height: 112px;
+  flex-direction: column;
+  gap: 4px;
+}
+/* Desktop styles add `transform: translateY(1px)` on the .tx state for a
+   press-down feel — disorienting on a phone where the surrounding row
+   stays put, so we pin it. */
+.m-ptt-row .mobile-ptt-btn.tx { transform: none; }
+.m-ptt-tun { display: flex; }
+.m-ptt-tun > * { flex: 1; width: 100%; }
+.m-ptt-tun button {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+/* Compact the secondary buttons so three fit comfortably across. */
+.m-mox-row .btn,
+.m-mox-row .tx-btn { width: 100%; padding: 10px 6px; font-size: 13px; }
+
+/* ── Controls (Mode · Band · Step · AGC) ───────────────── */
+.m-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.m-control-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.m-control-row--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.m-control-row--1 { grid-template-columns: minmax(0, 1fr); }
+.m-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.m-control-lbl {
+  font-family: var(--font-sans);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-weight: 600;
+}
+/* Native <select> styling matched to the rest of the mobile chrome. The
+   appearance reset gives us a flat dropdown with the panel-button gradient,
+   sized for a touch target. */
+.m-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 26px 6px 10px;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--fg-2) 50%) calc(100% - 12px) 50% / 5px 5px no-repeat,
+    linear-gradient(180deg, var(--btn-top) 0%, var(--btn-bot) 100%);
+  border: 1px solid var(--btn-edge);
+  border-radius: var(--r-md);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.m-select:disabled { opacity: 0.4; cursor: not-allowed; }
+.m-select:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+.m-profile-picker {
+  position: relative;
+}
+
+.m-profile-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, var(--btn-top) 0%, var(--btn-bot) 100%);
+  border: 1px solid var(--btn-edge);
+  border-radius: var(--r-md);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+  cursor: pointer;
+  text-align: left;
+}
+
+.m-profile-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-profile-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.m-profile-trigger:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.m-profile-caret {
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.m-profile-menu {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 3px;
+  max-height: min(260px, 48vh);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-0);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.55);
+}
+
+.m-profile-option {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  background: var(--bg-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--fg-1);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-profile-option:hover,
+.m-profile-option:focus {
+  background: var(--bg-2);
+  color: var(--fg-0);
+  outline: none;
+}
+
+.m-profile-option.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg-0);
+}
+
+/* iOS Safari zooms the whole viewport when focused form controls render below
+   16px. Keep mobile inputs at that floor so tapping selects/sliders never
+   magnifies the shell. */
+.m-app input:not([type='range']),
+.m-app select,
+.m-app textarea {
+  font-size: 16px !important;
+}
+
+/* Re-style the BandButtons / TuningStepWidget mobile <select> variants so
+   they match .m-select. Inside `.m-controls` we flip the legacy
+   `hide-mobile` / `show-mobile` toggles back to their mobile meaning so the
+   built-in dropdown variants surface. The `.m-app` prefix is needed to beat
+   the `.m-app .hide-mobile / .show-mobile` neutraliser further down — both
+   selectors are two-class, so without the prefix this rule loses on order. */
+.m-app .m-controls .hide-mobile { display: none !important; }
+.m-app .m-controls .show-mobile { display: block !important; }
+.m-app .m-controls .show-mobile .ctrl-group { padding: 0; }
+.m-controls .band-select,
+.m-controls .step-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 26px 6px 10px !important;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--fg-2) 50%) calc(100% - 12px) 50% / 5px 5px no-repeat,
+    linear-gradient(180deg, var(--btn-top) 0%, var(--btn-bot) 100%) !important;
+  border: 1px solid var(--btn-edge) !important;
+  border-radius: var(--r-md) !important;
+  color: var(--fg-0) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+/* Slider rows (AGC, Drive, Tune, Mic Gain). Each component renders itself as
+   a `.knob-group` flex row; on mobile we span the full row width and stretch
+   the range input. The `.label-xs` glyph (DRV / TUN / MIC) gets a touch-sized
+   pill so it reads as a row label rather than getting squeezed off-screen.
+
+   Native `<input type="range">` is restyled into a chunkier track + thumb so
+   it reads more like a hardware slider and the thumb is comfortable to drag
+   on a phone. We keep the native input (rather than pulling in a JS slider
+   lib) so the underlying components — Drive/Tune/Mic/AGC — don't need any
+   markup changes; the per-vendor `::-webkit-slider-thumb` / `::-moz-range-*`
+   pseudos do all the work. */
+.m-slider-row { display: block; }
+.m-slider-row .knob-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0 !important;
+  min-height: 44px;
+}
+.m-slider-row .knob-group input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 28px;                  /* expand touch zone, not visible track */
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.m-slider-row .knob-group input[type='range']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.m-slider-row .knob-group input[type='range']:focus { outline: none; }
+.m-slider-row .knob-group input[type='range']:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--accent-soft, rgba(74, 158, 255, 0.35));
+}
+/* WebKit/Blink — Safari (iOS), Chrome, Edge */
+.m-slider-row .knob-group input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+  border: 1px solid var(--btn-edge);
+}
+.m-slider-row .knob-group input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin-top: -9px;              /* (track 6 + 2px borders − thumb 22) / 2 */
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--accent) 0%, #2d6fbf 100%);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--accent-soft, rgba(74, 158, 255, 0.35));
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.m-slider-row .knob-group input[type='range']:active::-webkit-slider-thumb { transform: scale(1.08); }
+/* Firefox — track and progress fill (filled portion) and thumb. */
+.m-slider-row .knob-group input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+  border: 1px solid var(--btn-edge);
+}
+.m-slider-row .knob-group input[type='range']::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px 0 0 999px;
+  background: var(--accent);
+}
+.m-slider-row .knob-group input[type='range']::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--accent) 0%, #2d6fbf 100%);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+.m-slider-row .knob-group .btn { min-height: 36px; }
+.m-slider-row--lbl .knob-group .label-xs {
+  display: inline-block;
+  min-width: 36px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-1);
+  color: var(--fg-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* PS button row inside the Settings tab. The desktop PsToggleButton ships
+   with its own button chrome; we just give it a full-width container so it
+   sits cleanly under the slider stack. */
+.m-ps-row { display: flex; }
+.m-ps-row > * { flex: 1; }
+.m-ps-row .btn,
+.m-ps-row button { width: 100%; min-height: 36px; }
+
+/* VFO lock button (Radio tab, MOX row). Keeps the same chrome as TUN /
+   AudioToggle siblings so the row reads as a single triplet. The padlock
+   glyph is inline SVG inside the button; the optional "LOCK / LOCKED"
+   word sits to its right. Active state lights with the accent fill the
+   same way other mobile toggles do. */
+.m-lock-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 6px;
+  font-size: 13px;
+}
+.m-lock-btn svg { flex-shrink: 0; }
+.m-lock-lbl {
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  font-size: 11px;
+}
+.m-lock-btn.on {
+  background: var(--accent) !important;
+  color: #06121f !important;
+  border-color: var(--accent) !important;
+}
+
+/* Outside `.m-controls`, the legacy `.hide-mobile` / `.show-mobile` classes
+   were added for the chrome-only mobile fallback. The rest of the mobile
+   shell wants each component's *desktop* variant (e.g. the spectrum
+   chrome), so we neutralise both classes within .m-app. */
+.m-app .hide-mobile { display: revert !important; }
+.m-app .show-mobile { display: none !important; }
+
+/* ============================================================
+   Tools tab — 2-col tile grid (drawer view).
+   The grid lives at the same indent as .m-section so it lines up
+   with the radio-page panels above it.
+   ============================================================ */
+.m-tools-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 4px 0;
+}
+.m-tools-title {
+  font: 700 12px/1 var(--font-sans);
+  letter-spacing: 0.22em;
+  color: var(--fg-0);
+  text-transform: uppercase;
+}
+.m-tools-sub {
+  margin-left: auto;
+  font: 500 11px/1 var(--font-sans);
+  color: var(--fg-3);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.m-tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.m-tool-tile {
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  padding: 18px 14px 14px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--fg-0);
+  font: inherit;
+  display: flex; flex-direction: column; gap: 14px;
+  min-height: 160px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.m-tool-tile:hover {
+  border-color: var(--accent-line);
+  background: var(--bg-2);
+}
+.m-tool-tile:active { transform: scale(0.98); }
+.m-tool-tile::after {
+  content: ""; position: absolute; top: 0; right: 0;
+  width: 38%; height: 38%;
+  background: radial-gradient(circle at 100% 0%, var(--ok-soft), transparent 60%);
+  pointer-events: none;
+}
+
+.m-tool-tile-icon {
+  width: 44px; height: 44px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  display: grid; place-items: center;
+  color: var(--ok);
+  flex: none;
+}
+.m-tool-tile-icon svg {
+  width: 22px; height: 22px;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.m-tool-tile-text { min-width: 0; }
+.m-tool-tile-name {
+  font: 700 15px/1.15 var(--font-sans);
+  color: var(--fg-0);
+  letter-spacing: 0.01em;
+}
+.m-tool-tile-desc {
+  font: 500 11px/1.4 var(--font-sans);
+  color: var(--fg-3);
+  margin-top: 4px;
+  letter-spacing: 0.02em;
+}
+
+.m-tool-tile-tag {
+  margin-top: auto;
+  align-self: flex-start;
+  font: 600 9px/1 var(--font-mono);
+  padding: 4px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.1em;
+  border: 1px solid;
+}
+.m-tool-tile-tag--green {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: rgba(45, 213, 102, 0.35);
+}
+.m-tool-tile-tag--amber {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: rgba(255, 177, 60, 0.32);
+}
+.m-tool-tile-tag--muted {
+  color: var(--fg-3);
+  background: transparent;
+  border-color: var(--line-strong);
+}
+
+.m-tools-foot {
+  margin: 4px 4px 0;
+  padding: 14px 4px;
+  font: 500 11px/1.5 var(--font-sans);
+  color: var(--fg-3);
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+/* ============================================================
+   Tool detail page — back header + embedded desktop panel.
+   ============================================================ */
+.m-tool-page-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 2px 4px 0;
+}
+.m-back-btn {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  color: var(--fg-1);
+  display: grid; place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+.m-back-btn:hover {
+  color: var(--fg-0);
+  border-color: var(--accent-line);
+}
+.m-tool-page-title {
+  font: 700 14px/1 var(--font-sans);
+  color: var(--fg-0);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.m-tool-page-sub {
+  margin-left: auto;
+  font: 500 11px/1 var(--font-sans);
+  color: var(--fg-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Embedded desktop panel wrapper. RotatorDialPanel uses
+   position: absolute; inset: 0 — needs a positioned parent with a
+   definite size. QrzPanel and DspFlexPanel use flex columns — they
+   just need a definite height to scroll inside. */
+.m-tool-embed {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.m-tool-embed--rotator { aspect-ratio: 1 / 1.05; min-height: 380px; }
+.m-tool-embed--qrz { min-height: 520px; }
+.m-tool-embed--dsp { min-height: 600px; }
+
+/* Mobile-only tweaks that let the embedded panels read inside the
+   480-wide column without their desktop-tile chrome fighting the
+   single-column layout. */
+.m-tool-embed > * { min-width: 0; max-width: 100%; }
+.m-tool-embed .rotator-dial { padding: 6px; }
+.m-tool-embed .rd-controls { gap: 8px; }

@@ -1,0 +1,57 @@
+name: Nightly
+
+# Nightly build of `develop` tip. Calls release.yml as a reusable workflow
+# with mode=nightly + ref=develop so the same matrix that ships tagged
+# releases also publishes a rolling `nightly` GitHub prerelease for end-user
+# testing. See docs/designs/nightly-builds.md for the design + caveats.
+#
+# Two triggers:
+#   1. schedule (03:00 UTC) — fires only after this workflow file reaches the
+#                             repo's default branch (main). GitHub Actions
+#                             does not honour `schedule:` on non-default
+#                             branches, so until the next develop→main merge
+#                             the cron trigger is dormant.
+#   2. workflow_dispatch    — works from any branch immediately, always
+#                             builds develop tip (ref is hard-coded below).
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+# Required so the called workflow's create-nightly-release step can manage
+# the rolling tag + release on this repo.
+permissions:
+  contents: write
+
+# Avoid a cron run racing with a manual dispatch (e.g. maintainer testing).
+# cancel-in-progress=false makes the second run queue rather than killing
+# the first, which would leave the nightly release in a half-baked state.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: Build + publish nightly
+    # Pin the reusable workflow to @develop, NOT a local `./` path. A local path
+    # resolves release.yml at the CALLER's commit — which for a scheduled run is
+    # always the default branch (main). That loaded main's (older) build pipeline
+    # while `ref: develop` below checked out develop's SOURCE, so any build-step
+    # divergence between main and develop broke the nightly (e.g. develop's
+    # zeus-windows.iss requires MicrosoftEdgeWebview2Setup.exe but main's
+    # release.yml had no step to download it → installer compile aborted).
+    # Pinning to @develop builds develop's source with develop's pipeline, so the
+    # two stay in lockstep and the nightly self-heals as develop evolves.
+    uses: OpenHPSDR-Zeus-org/openhpsdr-zeus/.github/workflows/release.yml@develop
+    with:
+      mode: nightly
+      ref: develop
+    # Reusable-workflow calls do NOT pass repo secrets unless the caller
+    # inherits them. release.yml's macOS signing step (gated on
+    # is-nightly=='true') reads secrets.MACOS_CERTIFICATE / _PWD /
+    # KEYCHAIN_PASSWORD and the notarization keys; without this they arrive
+    # empty and `security import` dies on the empty .p12 ("Unable to decode
+    # the provided data"). See zeus-22l.
+    secrets: inherit
+    permissions:
+      contents: write

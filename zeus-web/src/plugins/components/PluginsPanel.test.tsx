@@ -1,0 +1,1010 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Component-level smoke tests for the Plugins panel and its three children.
+// We mirror the dependency-free render harness used by SettingsMenu.test.tsx
+// (raw createRoot + React.act) so the new tests don't introduce
+// @testing-library/react.
+//
+// Pattern: pre-seed the store so the mount useEffect (which auto-refreshes
+// when `loaded === false`) sees a settled state and skips its fetch. That
+// keeps every render synchronous — no chained Promise.resolve() flushes
+// inside act(), no risk of an async-act loop if a future test stub fails.
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+
+import { PluginsPanel } from './PluginsPanel';
+import { InstalledPlugins, InstalledVsts } from './InstalledPlugins';
+import { PluginBrowser } from './PluginBrowser';
+import { InstallFromUrl } from './InstallFromUrl';
+import { usePluginsStore } from '../state/plugins-store';
+import type { PluginDto, RegistryCatalog } from '../api/plugins';
+import { useUserAccessStore } from '../../state/user-access-store';
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+const EMPTY_INSTALLED = {
+  installed: [] as PluginDto[],
+  installedVsts: [] as PluginDto[],
+  blocked: [] as PluginDto[],
+  sdkAbi: 1,
+  sdkVersion: '0.6.0',
+  installedLoad: { loaded: true, inflight: false, loadError: null },
+};
+
+const EMPTY_REGISTRY = {
+  registry: {
+    schemaVersion: 1,
+    generated: '2026-05-17T00:00:00Z',
+    plugins: [],
+  } as RegistryCatalog,
+  registrySourceUrl: 'https://example.com/registry.json',
+  registryLoad: { loaded: true, inflight: false, loadError: null },
+};
+
+function resetStore() {
+  usePluginsStore.setState({
+    installed: [],
+    installedVsts: [],
+    blocked: [],
+    sdkAbi: 0,
+    sdkVersion: '',
+    installedLoad: { loaded: false, inflight: false, loadError: null },
+    registry: null,
+    registrySourceUrl: '',
+    registryLoad: { loaded: false, inflight: false, loadError: null },
+    installInflight: false,
+    lastInstallError: null,
+    lastInstallOk: null,
+    uninstallInflight: false,
+    lastUninstallError: null,
+    lastUninstallNotice: null,
+  });
+  useUserAccessStore.setState({
+    checked: true,
+    loading: false,
+    adminLoading: false,
+    saving: false,
+    error: null,
+    adminError: null,
+    session: null,
+    users: [],
+    managedPlugins: [],
+  });
+}
+
+function setPluginSession(plugin: {
+  pluginId: string;
+  displayName: string;
+  subscriptionRequired: boolean;
+  monthlyPriceCents: number;
+}) {
+  useUserAccessStore.setState({
+    checked: true,
+    session: {
+      qrzConnected: true,
+      callsign: 'N9WAR',
+      displayName: 'N9WAR',
+      accessAllowed: true,
+      isAdmin: false,
+      hasQrzXmlSubscription: true,
+      subscriptionStatus: 'manual',
+      subscriptionExpiresUtc: null,
+      pluginAccessMode: 'all',
+      pluginEntitlements: [],
+      managedPlugins: [
+        {
+          ...plugin,
+          currency: 'USD',
+          active: true,
+          checkoutUrl: null,
+          notes: null,
+          createdUtc: '',
+          updatedUtc: '',
+        },
+      ],
+      denialReason: null,
+      user: null,
+    },
+  });
+}
+
+function makeRoot() {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  return { container, root };
+}
+
+// React 19's controlled-input flow tracks the value via the native
+// HTMLInputElement.prototype setter. Setting `input.value = '...'`
+// directly bypasses React's instrumentation and the synthetic onChange
+// never fires — so we go through the prototype descriptor.
+function typeInto(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value',
+  )!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// Flush queued work after an async user action (click / form submit).
+// Several plugin flows do fetch() -> .json() -> setState and then dynamic
+// import() the runtime registry refresh, so include one macrotask turn.
+async function flush() {
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  });
+}
+
+describe('PluginsPanel — sub-tab routing', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    resetStore();
+    // Seed both load slices as "loaded" so the auto-refresh effects on
+    // InstalledPlugins / PluginBrowser become no-ops. The default tab is
+    // Installed; the user clicks through to the others.
+    usePluginsStore.setState({ ...EMPTY_INSTALLED, ...EMPTY_REGISTRY });
+    const m = makeRoot();
+    container = m.container;
+    root = m.root;
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults to the Installed tab', () => {
+    act(() => {
+      root.render(<PluginsPanel />);
+    });
+    expect(
+      container.querySelector('[data-testid="plugins-installed"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="plugins-browser"]')).toBeNull();
+  });
+
+  it('switches to the Browse tab on click', () => {
+    act(() => {
+      root.render(<PluginsPanel />);
+    });
+    const browseTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((b) => b.textContent?.includes('BROWSE'));
+    expect(browseTab).toBeDefined();
+    act(() => {
+      browseTab!.click();
+    });
+    expect(
+      container.querySelector('[data-testid="plugins-browser"]'),
+    ).not.toBeNull();
+  });
+
+  it('switches to the VSTs tab on click', () => {
+    act(() => {
+      root.render(<PluginsPanel />);
+    });
+    const vstsTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((b) => b.textContent?.includes('VSTS'));
+    expect(vstsTab).toBeDefined();
+    act(() => {
+      vstsTab!.click();
+    });
+    expect(
+      container.querySelector('[data-testid="plugins-installed-vsts"]'),
+    ).not.toBeNull();
+  });
+
+  it('switches to the InstallFromUrl tab on click', () => {
+    act(() => {
+      root.render(<PluginsPanel />);
+    });
+    const fromUrlTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ).find((b) => b.textContent?.includes('INSTALL FROM URL'));
+    expect(fromUrlTab).toBeDefined();
+    act(() => {
+      fromUrlTab!.click();
+    });
+    expect(
+      container.querySelector('[data-testid="plugins-install-from-url"]'),
+    ).not.toBeNull();
+  });
+});
+
+describe('InstalledPlugins', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    resetStore();
+    const m = makeRoot();
+    container = m.container;
+    root = m.root;
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders a card per installed plugin', () => {
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      installed: [
+        {
+          id: 'demo',
+          scanned: false,
+          name: 'Demo Plugin',
+          version: '0.1.0',
+          author: 'EI6LF',
+          description: 'A demo.',
+          homepage: 'https://example.com/demo',
+          license: 'GPL-2.0-or-later',
+          capabilities: ['hub:emit'],
+          ui: null,
+          audio: null,
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+
+    expect(container.textContent).toContain('Demo Plugin');
+    expect(container.textContent).toContain('A demo.');
+    expect(container.textContent).toContain('v0.1.0');
+    expect(container.textContent).not.toContain('demo ·');
+    expect(container.textContent).not.toContain('EI6LF');
+    expect(container.textContent).not.toContain('GPL-2.0-or-later');
+    expect(container.textContent).not.toContain('HOMEPAGE');
+    expect(container.textContent).not.toContain('https://example.com/demo');
+    expect(container.textContent).not.toContain('hub:emit');
+    expect(container.textContent).not.toContain('SDK ABI');
+  });
+
+  it('keeps scanned VSTs out of the regular Installed list', () => {
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      installed: [
+        {
+          id: 'demo',
+          scanned: false,
+          name: 'Demo Plugin',
+          version: '0.1.0',
+          author: '',
+          description: '',
+          homepage: null,
+          license: '',
+          capabilities: [],
+          ui: null,
+          audio: null,
+        },
+      ],
+      installedVsts: [
+        {
+          id: 'com.openhpsdr.zeus.vst.tdrnova',
+          scanned: true,
+          name: 'TDR Nova',
+          version: '1.0.0',
+          author: 'Scanned VST',
+          description: 'VST3 plugin registered from a scanned directory.',
+          homepage: null,
+          license: 'Unknown',
+          capabilities: [],
+          ui: null,
+          audio: {
+            vst3Path: 'C:\\VST PLUGINS\\TDR Nova.vst3',
+            slot: 'tx.post-leveler',
+            channels: 1,
+            sampleRate: 48000,
+          },
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+
+    expect(container.textContent).toContain('Demo Plugin');
+    expect(container.textContent).not.toContain('TDR Nova');
+  });
+
+  it('renders scanned VSTs in their own list', () => {
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      installed: [
+        {
+          id: 'demo',
+          scanned: false,
+          name: 'Demo Plugin',
+          version: '0.1.0',
+          author: '',
+          description: '',
+          homepage: null,
+          license: '',
+          capabilities: [],
+          ui: null,
+          audio: null,
+        },
+      ],
+      installedVsts: [
+        {
+          id: 'com.openhpsdr.zeus.rxvst.rnnoise',
+          scanned: true,
+          name: 'RNNoise RX',
+          version: '1.0.0',
+          author: 'Scanned VST',
+          description: 'VST3 plugin registered from a scanned directory.',
+          homepage: null,
+          license: 'Unknown',
+          capabilities: [],
+          ui: null,
+          audio: {
+            vst3Path: 'C:\\VST PLUGINS\\RNNoise.vst3',
+            slot: 'rx.post-demod',
+            channels: 1,
+            sampleRate: 48000,
+          },
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(<InstalledVsts />);
+    });
+
+    expect(container.textContent).toContain('RNNoise RX');
+    expect(container.textContent).toContain('VST3 plugin registered from a scanned directory.');
+    expect(container.textContent).toContain('v1.0.0');
+    expect(container.textContent).not.toContain('com.openhpsdr.zeus.rxvst.rnnoise');
+    expect(container.textContent).not.toContain('Scanned VST');
+    expect(container.textContent).not.toContain('Unknown');
+    expect(container.textContent).not.toContain('rx.post-demod');
+    expect(container.textContent).not.toContain('Demo Plugin');
+  });
+
+  it('renders the empty state when loaded with no plugins', () => {
+    usePluginsStore.setState(EMPTY_INSTALLED);
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+    expect(container.textContent).toContain('No plugins installed yet');
+  });
+
+  it('exposes the loadError surface on the store', () => {
+    // The panel renders role="alert" with the loadError message; we verify
+    // the slice that drives that render here. The full DOM path is
+    // exercised under the post-uninstall test, which exits via state too.
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      installedLoad: {
+        loaded: true,
+        inflight: false,
+        loadError: 'connection refused',
+      },
+    });
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+    expect(container.textContent).toContain('connection refused');
+    expect(
+      container.querySelector<HTMLElement>('[role="alert"]'),
+    ).not.toBeNull();
+  });
+
+  it('confirms before uninstalling, then calls DELETE /api/plugins/{id}', async () => {
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      installed: [
+        {
+          id: 'demo',
+          scanned: false,
+          name: 'Demo Plugin',
+          version: '0.1.0',
+          author: '',
+          description: '',
+          homepage: null,
+          license: '',
+          capabilities: [],
+          ui: null,
+          audio: null,
+        },
+      ],
+    });
+    // Each call returns a FRESH Response — Response bodies are single-use
+    // streams in jsdom, so re-using one across calls would throw on the
+    // second .json() and re-arm the useEffect via loadError.
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((_input, init) => {
+      if (init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(
+        jsonResponse({ sdkAbi: 1, sdkVersion: '', plugins: [] }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+    const findButton = (label: string) =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent?.trim() === label,
+      );
+
+    const uninstallBtn = findButton('UNINSTALL');
+    expect(uninstallBtn).toBeDefined();
+    await act(async () => {
+      uninstallBtn!.click();
+    });
+    await flush();
+
+    const cancelDialog = container.querySelector<HTMLElement>(
+      '[role="alertdialog"]',
+    );
+    expect(cancelDialog?.textContent).toContain('Uninstall Demo Plugin');
+    expect(cancelDialog?.textContent).toContain('Demo Plugin will be removed');
+    expect(cancelDialog?.textContent).not.toContain('demo will be removed');
+    const cancelBtn = findButton('Cancel');
+    expect(cancelBtn).toBeDefined();
+    await act(async () => {
+      cancelBtn!.click();
+    });
+    await flush();
+    expect(
+      fetchMock.mock.calls.some(
+        (c) => (c[1] as RequestInit | undefined)?.method === 'DELETE',
+      ),
+    ).toBe(false);
+
+    await act(async () => {
+      uninstallBtn!.click();
+    });
+    await flush();
+    const confirmBtn = findButton('Uninstall');
+    expect(confirmBtn).toBeDefined();
+    await act(async () => {
+      confirmBtn!.click();
+    });
+    await flush();
+
+    const deleteCall = fetchMock.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'DELETE',
+    );
+    expect(deleteCall).toBeDefined();
+    expect(deleteCall![0]).toBe('/api/plugins/demo');
+  });
+
+  it('prompts blocked installed plugins to keep access or remove', async () => {
+    const blockedPlugin: PluginDto = {
+      id: 'demo',
+      scanned: false,
+      name: 'Demo Plugin',
+      version: '0.1.0',
+      author: '',
+      description: '',
+      homepage: null,
+      license: '',
+      capabilities: [],
+      ui: null,
+      audio: null,
+    };
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      blocked: [blockedPlugin],
+    });
+    setPluginSession({
+      pluginId: 'demo',
+      displayName: 'Demo Plugin',
+      subscriptionRequired: true,
+      monthlyPriceCents: 500,
+    });
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input, init) => {
+      if (input === '/api/plugins/checkout') {
+        return Promise.resolve(jsonResponse({
+          url: null,
+          subscriptionUpdated: true,
+          pluginIds: ['demo'],
+        }));
+      }
+      if (input === '/api/users/session') {
+        return Promise.resolve(jsonResponse({
+          qrzConnected: true,
+          callsign: 'N9WAR',
+          displayName: 'N9WAR',
+          accessAllowed: true,
+          isAdmin: false,
+          hasQrzXmlSubscription: true,
+          subscriptionStatus: 'active',
+          subscriptionExpiresUtc: null,
+          pluginAccessMode: 'all',
+          pluginEntitlements: [
+            {
+              pluginId: 'demo',
+              accessAllowed: true,
+              subscriptionStatus: 'active',
+              subscriptionExpiresUtc: null,
+              denialReason: null,
+            },
+          ],
+          managedPlugins: [
+            {
+              pluginId: 'demo',
+              displayName: 'Demo Plugin',
+              subscriptionRequired: true,
+              monthlyPriceCents: 500,
+              currency: 'USD',
+              active: true,
+              checkoutUrl: null,
+              notes: null,
+              createdUtc: '',
+              updatedUtc: '',
+            },
+          ],
+          denialReason: null,
+          user: null,
+        }));
+      }
+      if (init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(jsonResponse({ sdkAbi: 1, sdkVersion: '', plugins: [] }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+    expect(container.textContent).toContain('These installed plugins are now managed as paid subscriptions');
+    expect(container.textContent).toContain('Demo Plugin');
+    expect(container.textContent).toContain('USD 5.00/mo');
+
+    const findButton = (label: string) =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent?.trim() === label,
+      );
+
+    const keepButton = findButton('KEEP ACCESS');
+    expect(keepButton).toBeDefined();
+    await act(async () => {
+      keepButton!.click();
+    });
+    await flush();
+
+    const checkoutCall = fetchMock.mock.calls.find((c) => c[0] === '/api/plugins/checkout');
+    expect(checkoutCall).toBeDefined();
+    expect(JSON.parse(String(checkoutCall![1]?.body))).toMatchObject({
+      pluginIds: ['demo'],
+    });
+
+    expect(fetchMock.mock.calls.some(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('removes blocked installed plugins when the operator declines subscription', async () => {
+    const blockedPlugin: PluginDto = {
+      id: 'demo',
+      scanned: false,
+      name: 'Demo Plugin',
+      version: '0.1.0',
+      author: '',
+      description: '',
+      homepage: null,
+      license: '',
+      capabilities: [],
+      ui: null,
+      audio: null,
+    };
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      blocked: [blockedPlugin],
+    });
+    setPluginSession({
+      pluginId: 'demo',
+      displayName: 'Demo Plugin',
+      subscriptionRequired: true,
+      monthlyPriceCents: 500,
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((_input, init) => {
+      if (init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(jsonResponse({ sdkAbi: 1, sdkVersion: '', plugins: [] }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    act(() => {
+      root.render(<InstalledPlugins />);
+    });
+
+    const findButton = (label: string) =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent?.trim() === label,
+      );
+    const removeButton = findButton('REMOVE');
+    expect(removeButton).toBeDefined();
+    await act(async () => {
+      removeButton!.click();
+    });
+    await flush();
+    expect(container.querySelector<HTMLElement>('[role="alertdialog"]')?.textContent)
+      .toContain('Remove Demo Plugin');
+    const confirmRemove = findButton('Remove');
+    expect(confirmRemove).toBeDefined();
+    await act(async () => {
+      confirmRemove!.click();
+    });
+    await flush();
+    const deleteCall = fetchMock.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'DELETE',
+    );
+    expect(deleteCall?.[0]).toBe('/api/plugins/demo');
+  });
+});
+
+describe('PluginBrowser', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    resetStore();
+    const m = makeRoot();
+    container = m.container;
+    root = m.root;
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows name description version badges and hides registry metadata', () => {
+    usePluginsStore.setState({
+      ...EMPTY_REGISTRY,
+      registry: {
+        schemaVersion: 1,
+        generated: '2026-05-17T00:00:00Z',
+        plugins: [
+          {
+            id: 'demo',
+            name: 'Demo',
+            description: 'A demo entry.',
+            author: 'EI6LF',
+            license: 'GPL-2.0-or-later',
+            homepage: 'https://example.com/demo',
+            categories: ['rx'],
+            verified: true,
+            subscription: null,
+            versions: [
+              {
+                version: '0.1.0',
+                sdkAbi: 1,
+                sdkMinVersion: '0.6.0',
+                platforms: ['any'],
+                downloadUrl: 'https://example.com/demo-0.1.0.zip',
+                sha256: 'a'.repeat(64),
+              },
+            ],
+          },
+        ],
+      },
+    });
+    act(() => {
+      root.render(<PluginBrowser />);
+    });
+    expect(container.textContent).toContain('Demo');
+    expect(container.textContent).toContain('A demo entry.');
+    expect(container.textContent).toContain('VERIFIED');
+    expect(container.textContent).toContain('v0.1.0');
+    expect(container.textContent).toContain('rx');
+    expect(container.textContent).not.toContain('https://example.com/registry.json');
+    expect(container.textContent).not.toContain('https://example.com/demo');
+    expect(container.textContent).not.toContain('demo ·');
+    expect(container.textContent).not.toContain('EI6LF');
+    expect(container.textContent).not.toContain('GPL-2.0-or-later');
+    expect(container.textContent).not.toContain('SDK ABI');
+    expect(container.textContent).not.toContain('0.6.0');
+    expect(container.textContent).not.toContain('platforms');
+  });
+
+  it('install button posts a registry-source payload', async () => {
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      ...EMPTY_REGISTRY,
+      registry: {
+        schemaVersion: 1,
+        generated: '2026-05-17T00:00:00Z',
+        plugins: [
+          {
+            id: 'demo',
+            name: 'Demo',
+            description: '',
+            author: '',
+            license: '',
+            homepage: null,
+            categories: [],
+            verified: false,
+            subscription: null,
+            versions: [
+              {
+                version: '0.1.0',
+                sdkAbi: 1,
+                sdkMinVersion: '0.6.0',
+                platforms: ['any'],
+                downloadUrl: 'https://example.com/demo.zip',
+                sha256: 'a'.repeat(64),
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      if (typeof input === 'string' && input === '/api/plugins/install') {
+        return Promise.resolve(
+          jsonResponse({
+            id: 'demo',
+            name: 'Demo',
+            version: '0.1.0',
+            author: '',
+            description: '',
+            license: '',
+            capabilities: [],
+          }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({ sdkAbi: 1, sdkVersion: '', plugins: [] }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    act(() => {
+      root.render(<PluginBrowser />);
+    });
+
+    const installBtn = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button'),
+    ).find((b) => b.textContent?.trim() === 'INSTALL');
+    expect(installBtn).toBeDefined();
+    await act(async () => {
+      installBtn!.click();
+    });
+    await flush();
+
+    const installCall = fetchMock.mock.calls.find(
+      (c) => c[0] === '/api/plugins/install',
+    );
+    expect(installCall).toBeDefined();
+    const body = JSON.parse(String(installCall![1]!.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body.source).toBe('registry');
+    expect(body.id).toBe('demo');
+    expect(body.version).toBe('0.1.0');
+  });
+
+  it('uses managed plugin pricing from the user session to gate Browse installs', async () => {
+    setPluginSession({
+      pluginId: 'demo',
+      displayName: 'Demo',
+      subscriptionRequired: true,
+      monthlyPriceCents: 700,
+    });
+    usePluginsStore.setState({
+      ...EMPTY_INSTALLED,
+      ...EMPTY_REGISTRY,
+      registry: {
+        schemaVersion: 1,
+        generated: '2026-05-17T00:00:00Z',
+        plugins: [
+          {
+            id: 'demo',
+            name: 'Demo',
+            description: '',
+            author: '',
+            license: '',
+            homepage: null,
+            categories: [],
+            verified: false,
+            subscription: null,
+            versions: [
+              {
+                version: '0.1.0',
+                sdkAbi: 1,
+                sdkMinVersion: '0.6.0',
+                platforms: ['any'],
+                downloadUrl: 'https://example.com/demo.zip',
+                sha256: 'a'.repeat(64),
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      if (input === '/api/plugins/checkout') {
+        return Promise.resolve(jsonResponse({
+          url: null,
+          subscriptionUpdated: false,
+          pluginIds: ['demo'],
+        }));
+      }
+      return Promise.resolve(jsonResponse({ sdkAbi: 1, sdkVersion: '', plugins: [] }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    act(() => {
+      root.render(<PluginBrowser />);
+    });
+    expect(container.textContent).toContain('Plugin subscription required - USD 7.00/mo');
+
+    const subscribeBtn = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button'),
+    ).find((b) => b.textContent?.trim() === 'SUBSCRIBE');
+    expect(subscribeBtn).toBeDefined();
+    await act(async () => {
+      subscribeBtn!.click();
+    });
+    await flush();
+
+    const checkoutCall = fetchMock.mock.calls.find((c) => c[0] === '/api/plugins/checkout');
+    expect(checkoutCall).toBeDefined();
+    expect(JSON.parse(String(checkoutCall![1]?.body))).toMatchObject({
+      pluginIds: ['demo'],
+    });
+    expect(fetchMock.mock.calls.some((c) => c[0] === '/api/plugins/install')).toBe(false);
+  });
+
+  it('renders a registry load error when the slice has one', () => {
+    usePluginsStore.setState({
+      ...EMPTY_REGISTRY,
+      registry: null,
+      registryLoad: {
+        loaded: true,
+        inflight: false,
+        loadError: 'upstream offline',
+      },
+    });
+    act(() => {
+      root.render(<PluginBrowser />);
+    });
+    expect(container.textContent).toContain('upstream offline');
+  });
+});
+
+describe('InstallFromUrl', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    resetStore();
+    const m = makeRoot();
+    container = m.container;
+    root = m.root;
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('disables the submit button until a valid URL is entered', () => {
+    act(() => {
+      root.render(<InstallFromUrl />);
+    });
+    const submit = container.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    );
+    expect(submit).not.toBeNull();
+    expect(submit!.disabled).toBe(true);
+
+    const urlInput = container.querySelector<HTMLInputElement>(
+      '#plugin-install-url',
+    );
+    expect(urlInput).not.toBeNull();
+    act(() => {
+      typeInto(urlInput!, 'https://example.com/demo.zip');
+    });
+    expect(submit!.disabled).toBe(false);
+  });
+
+  it('rejects a non-hex SHA-256 with an inline message', () => {
+    act(() => {
+      root.render(<InstallFromUrl />);
+    });
+    const urlInput = container.querySelector<HTMLInputElement>(
+      '#plugin-install-url',
+    )!;
+    const shaInput = container.querySelector<HTMLInputElement>(
+      '#plugin-install-sha',
+    )!;
+    act(() => {
+      typeInto(urlInput, 'https://example.com/demo.zip');
+    });
+    act(() => {
+      typeInto(shaInput, 'not-hex');
+    });
+    expect(container.textContent).toContain(
+      'SHA-256 must be 64 hex characters',
+    );
+    const submit = container.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )!;
+    expect(submit.disabled).toBe(true);
+  });
+
+  it('posts the install request on submit', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      if (typeof input === 'string' && input === '/api/plugins/install') {
+        return Promise.resolve(
+          jsonResponse({
+            id: 'demo',
+            name: 'Demo',
+            version: '0.1.0',
+            author: '',
+            description: '',
+            license: '',
+            capabilities: [],
+          }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({ sdkAbi: 1, sdkVersion: '', plugins: [] }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    act(() => {
+      root.render(<InstallFromUrl />);
+    });
+    const urlInput = container.querySelector<HTMLInputElement>(
+      '#plugin-install-url',
+    )!;
+    act(() => {
+      typeInto(urlInput, 'https://example.com/demo.zip');
+    });
+
+    const form = container.querySelector('form')!;
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    const postCall = fetchMock.mock.calls.find(
+      (c) => c[0] === '/api/plugins/install',
+    );
+    expect(postCall).toBeDefined();
+    const body = JSON.parse(String(postCall![1]!.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body.source).toBe('url');
+    expect(body.url).toBe('https://example.com/demo.zip');
+    expect('sha256' in body).toBe(false); // empty SHA omitted
+  });
+});

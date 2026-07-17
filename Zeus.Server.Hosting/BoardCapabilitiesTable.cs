@@ -82,6 +82,7 @@ internal static class BoardCapabilitiesTable
             OrionMkIIVariant.Anan8000DLE  => Saturn8000DLE,
             OrionMkIIVariant.G2           => SaturnG2,
             OrionMkIIVariant.G2_1K        => SaturnG2_1K,
+            OrionMkIIVariant.G2E          => SaturnG2E,
             // Anvelina-PRO3 — Saturn-class facts plus the EU2AV DX OC
             // extension flag (issue #407). Every other Saturn variant
             // keeps SupportsAnvelinaDxOc=false so the wire path stays
@@ -234,7 +235,8 @@ internal static class BoardCapabilitiesTable
         // line-in + Orion mic bias. NO balanced XLR — that is G2 / G2-1K only.
         HasOnboardCodec: true,
         HasRadioLineIn: true,
-        HasMicBias: true);
+        HasMicBias: true,
+        HasMicPttConfig: true);
 
     // ANAN-G2 — local Thetis parity notes pin RX1/RX2 at
     // 48/96/192/384/768/1536 kHz over Protocol 2. Saturn-FPGA G2 / G2-1K
@@ -259,6 +261,7 @@ internal static class BoardCapabilitiesTable
     private static readonly BoardCapabilities SaturnRedPitaya = Saturn with
     {
         HasMicBias = false,
+        HasMicPttConfig = false,
     };
 
     // ANAN-G2-1K — kilowatt-class with internal 1 kW PA. Same Saturn fingerprint
@@ -266,6 +269,18 @@ internal static class BoardCapabilitiesTable
     private static readonly BoardCapabilities SaturnG2_1K = SaturnG2 with
     {
         MaxPowerWatts = 1000,
+    };
+
+    // ANAN-G2E — headless network Saturn. G2-class RF/DDC facts but the
+    // switchable front-mic circuit is absent: no XLR, no Orion mic bias, no
+    // mic-PTT / tip-ring switching, no analog line-in jack (operator-
+    // confirmable; flip HasRadioLineIn if the hardware grows one).
+    private static readonly BoardCapabilities SaturnG2E = SaturnG2 with
+    {
+        HasBalancedXlr = false,
+        HasMicBias = false,
+        HasMicPttConfig = false,
+        HasRadioLineIn = false,
     };
 
     // ANVELINA-PRO3 (EU2AV). Saturn-class fingerprint plus the DX OC
@@ -278,6 +293,7 @@ internal static class BoardCapabilitiesTable
     {
         SupportsAnvelinaDxOc = true,
         HasMicBias = false,
+        HasMicPttConfig = false,
     };
 
     private static readonly BoardCapabilities HermesC10 = new(

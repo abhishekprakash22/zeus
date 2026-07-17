@@ -30,6 +30,7 @@ type Gates = {
   hasRadioLineIn: boolean;
   hasBalancedXlr: boolean;
   hasMicBias: boolean;
+  hasMicPttConfig: boolean;
 };
 
 // A fully-featured Saturn-class fingerprint: codec + line-in + balanced XLR +
@@ -40,6 +41,7 @@ const G2_GATES: Gates = {
   hasRadioLineIn: true,
   hasBalancedXlr: true,
   hasMicBias: true,
+  hasMicPttConfig: true,
 };
 
 // HL2: no codec, no radio jacks — the mic front-end flag is set but
@@ -50,6 +52,7 @@ const HL2_GATES: Gates = {
   hasRadioLineIn: false,
   hasBalancedXlr: false,
   hasMicBias: false,
+  hasMicPttConfig: false,
 };
 
 function seedAudio(
@@ -66,6 +69,8 @@ function seedAudio(
       source,
       micBoost: params?.micBoost ?? false,
       micBias: params?.micBias ?? false,
+      micPttEnabled: true,
+      pttOnTip: false,
       lineInGain: params?.lineInGain ?? 0,
     },
     loaded: true,

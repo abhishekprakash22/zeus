@@ -190,6 +190,13 @@ public sealed record BoardCapabilities(
     /// defaults OFF (a floating connector with bias can hang PTT). True for
     /// 100D/200D/7000DLE/8000DLE/G2/G2-1K.</summary>
     bool HasMicBias = false,
+    /// <summary>Mic-jack PTT wiring is operator-configurable (Saturn/Orion
+    /// front-mic circuit): PTT enable + tip/ring select ride P2 TxSpecific
+    /// byte-50 bits 2/3. True for the Saturn-class 0x0A boards with the
+    /// switchable mic jack (7000DLE / 8000DLE / G2 / G2-1K); false on boards
+    /// without the switching hardware (G2E, Red Pitaya, Anvelina) and on the
+    /// P1 fleet (the P2-only bits cannot reach them).</summary>
+    bool HasMicPttConfig = false,
     /// <summary>Hermes-Lite 2 exposes a 4-bit user GPIO (<c>user_dig_out</c>)
     /// on the IO/DB9 connector, driven over the Protocol-1 register 0x0a
     /// (wire 0x14) frame C3[3:0] → MCP23008 (Thetis-mi0bot

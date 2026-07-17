@@ -133,7 +133,12 @@ public sealed record AudioSourceSelection(
     TxAudioSource Source,
     bool MicBoost,
     bool MicBias,
-    byte LineInGain)
+    byte LineInGain,
+    // Mic-jack PTT config (Saturn/Orion switchable mic circuit). Appended with
+    // wire-neutral defaults: PTT enabled + Apache tip/ring (both byte-50 bits
+    // clear) — persisted selections from before this field parse unchanged.
+    bool MicPttEnabled = true,
+    bool PttOnTip = false)
 {
     /// <summary>Power-on default: Host audio (radio jacks suppressed), no
     /// boost/bias, gain 0 — byte-identical to today's wire output.</summary>

@@ -417,6 +417,8 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     // TxAudioSource (ExternalPortAudio in Zeus.Server.Hosting).
     public const byte MicControlLineIn   = 0x01; // bit0 — line-in select
     public const byte MicControlMicBoost = 0x02; // bit1 — mic 20 dB boost
+    public const byte MicControlMicPttDisable = 0x04; // bit2 — mic-jack PTT DISABLE (1 = radio ignores mic PTT)
+    public const byte MicControlPttOnTip = 0x08; // bit3 — tip/ring swap (1 = PTT on TIP; 0 = Apache default: PTT ring, mic+bias tip)
     public const byte MicControlMicBias  = 0x10; // bit4 — Orion mic bias enable
     public const byte MicControlXlr      = 0x20; // bit5 — balanced/XLR input
 

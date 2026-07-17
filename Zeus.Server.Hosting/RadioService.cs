@@ -3207,7 +3207,9 @@ public sealed class RadioService : IDisposable
             Source: resolved.Source,
             MicBoost: resolved.MicBoost,
             MicBias: resolved.MicBias,
-            LineInGain: resolved.LineInGain);
+            LineInGain: resolved.LineInGain,
+            MicPttEnabled: resolved.MicPttEnabled,
+            PttOnTip: resolved.PttOnTip);
 
         // P1 codec boards (Hermes-class): mic_boost / mic_linein on the 0x12
         // frame. HL2 is Host-only in v1 — the encoder returns all-clear, and
@@ -3270,7 +3272,14 @@ public sealed class RadioService : IDisposable
                 // RadioMic needs the stream codec (HL2's mic front-end is inert
                 // plumbing in v1). Drop bias on non-bias boards.
                 if (!caps.HasOnboardCodec) return AudioSourceSelection.Default;
-                return sel with { MicBias = sel.MicBias && caps.HasMicBias };
+                return sel with
+                {
+                    MicBias = sel.MicBias && caps.HasMicBias,
+                    // Boards without the switchable mic circuit are pinned to
+                    // the wire-neutral defaults (bits 2/3 clear).
+                    MicPttEnabled = !caps.HasMicPttConfig || sel.MicPttEnabled,
+                    PttOnTip = caps.HasMicPttConfig && sel.PttOnTip,
+                };
 
             case TxAudioSource.RadioLineIn:
                 if (!caps.HasOnboardCodec || !caps.HasRadioLineIn)
@@ -3281,7 +3290,13 @@ public sealed class RadioService : IDisposable
             case TxAudioSource.RadioBalancedXlr:
                 if (!caps.HasOnboardCodec || !caps.HasBalancedXlr)
                     return AudioSourceSelection.Default;
-                return sel with { MicBias = sel.MicBias && caps.HasMicBias, LineInGain = 0 };
+                return sel with
+                {
+                    MicBias = sel.MicBias && caps.HasMicBias,
+                    LineInGain = 0,
+                    MicPttEnabled = !caps.HasMicPttConfig || sel.MicPttEnabled,
+                    PttOnTip = caps.HasMicPttConfig && sel.PttOnTip,
+                };
 
             case TxAudioSource.Host:
             default:

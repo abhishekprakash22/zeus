@@ -80,7 +80,19 @@ public readonly record struct ExternalPortState(
     /// <summary>Line-in gain, 0..31 — parameter of
     /// <see cref="TxAudioSource.RadioLineIn"/>. Ignored under every other
     /// source.</summary>
-    byte LineInGain = 0)
+    byte LineInGain = 0,
+    /// <summary>Mic-jack PTT enable — parameter of
+    /// <see cref="TxAudioSource.RadioMic"/> / XLR on boards with
+    /// <see cref="BoardCapabilities.HasMicPttConfig"/>. TRUE by default: P2
+    /// TxSpecific byte-50 bit2 is a DISABLE flag, so the default emission is
+    /// byte-identical to before this parameter existed. Ignored under Host /
+    /// RadioLineIn.</summary>
+    bool MicPttEnabled = true,
+    /// <summary>Mic-jack tip/ring swap (byte-50 bit3). FALSE (default) =
+    /// Apache factory wiring — PTT on RING, mic + bias on TIP — and clears the
+    /// bit (byte-identical to before). TRUE swaps: PTT on TIP. Ignored under
+    /// Host / RadioLineIn.</summary>
+    bool PttOnTip = false)
 {
     /// <summary>Default state: ANT1 / ANT1, Host audio, no boost/bias, gain 0 —
     /// reproduces today's wire emission bit-for-bit on every board.</summary>
@@ -281,7 +293,9 @@ public sealed class Protocol2PortEncoder : IExternalPortEncoder
         // shared helper is the single source of the byte-50 bit math, computed
         // PURELY from the source — Host returns literal 0 with no param read.
         if (!_hasOnboardCodec) return 0;
-        return ExternalPortAudio.P2MicControlByte(state.Source, state.MicBoost, state.MicBias);
+        return ExternalPortAudio.P2MicControlByte(
+            state.Source, state.MicBoost, state.MicBias,
+            state.MicPttEnabled, state.PttOnTip);
     }
 
     public byte EncodeP2LineInGainByte(in ExternalPortState state)
@@ -355,25 +369,33 @@ internal static class ExternalPortAudio
     // TxSpecific byte-50 mic_control flags (Thetis network.c:1226-1233).
     private const byte LineInBit   = 0x01; // bit0 — line-in select
     private const byte MicBoostBit = 0x02; // bit1 — mic boost
+    private const byte MicPttDisableBit = 0x04; // bit2 — 1 = mic-jack PTT ignored
+    private const byte PttOnTipBit = 0x08; // bit3 — 1 = tip/ring swap (PTT on TIP)
     private const byte MicBiasBit  = 0x10; // bit4 — enable Orion mic bias
     private const byte XlrBit      = 0x20; // bit5 — balanced/XLR input (Saturn)
 
     /// <summary>P2 byte-50 mic_control as a pure function of the source.</summary>
-    public static byte P2MicControlByte(TxAudioSource source, bool micBoost, bool micBias) => source switch
+    public static byte P2MicControlByte(
+        TxAudioSource source, bool micBoost, bool micBias,
+        bool micPttEnabled = true, bool pttOnTip = false) => source switch
     {
         // Host: literal zero, no param read. The analog jacks are suppressed.
         TxAudioSource.Host => 0,
-        // RadioMic: boost (bit1) + bias (bit4) from the params, mic jack implied
-        // (no line-in / XLR bit).
+        // RadioMic: boost (bit1) + bias (bit4) + PTT config (bits 2/3) from the
+        // params, mic jack implied (no line-in / XLR bit). PTT bits default to
+        // enabled + Apache wiring (both clear) so legacy callers are
+        // byte-identical.
         TxAudioSource.RadioMic =>
-            (byte)((micBoost ? MicBoostBit : 0) | (micBias ? MicBiasBit : 0)),
+            (byte)((micBoost ? MicBoostBit : 0) | (micBias ? MicBiasBit : 0)
+                 | (micPttEnabled ? 0 : MicPttDisableBit) | (pttOnTip ? PttOnTipBit : 0)),
         // RadioLineIn: line-in select (bit0); gain rides byte 51. Mic params do
         // not apply.
         TxAudioSource.RadioLineIn => LineInBit,
-        // RadioBalancedXlr: XLR select (bit5) | optional boost/bias (the XLR
-        // front-end still honours the Orion mic-bias / boost stage on G2).
+        // RadioBalancedXlr: XLR select (bit5) | optional boost/bias + PTT config
+        // (the XLR front-end still honours the Orion mic stage on G2).
         TxAudioSource.RadioBalancedXlr =>
-            (byte)(XlrBit | (micBoost ? MicBoostBit : 0) | (micBias ? MicBiasBit : 0)),
+            (byte)(XlrBit | (micBoost ? MicBoostBit : 0) | (micBias ? MicBiasBit : 0)
+                 | (micPttEnabled ? 0 : MicPttDisableBit) | (pttOnTip ? PttOnTipBit : 0)),
         _ => 0,
     };
 

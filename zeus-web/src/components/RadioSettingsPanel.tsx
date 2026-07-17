@@ -454,6 +454,66 @@ export function RadioSettingsPanel() {
                 </div>
               ) : null}
 
+              {/* Mic-jack PTT enable — byte-50 bit2 (disable flag on the wire).
+                  Boards with the switchable Saturn/Orion mic circuit only. */}
+              {audio.hasMicPttConfig &&
+              (audio.source === 'RadioMic' ||
+                audio.source === 'RadioBalancedXlr') ? (
+                <div className="ps-field">
+                  <div className="ps-name">
+                    Mic PTT
+                    <em>
+                      Let the microphone's PTT switch key the radio. Turn OFF
+                      to ignore the mic-jack PTT line (use on-screen MOX, a
+                      footswitch, or CAT instead).
+                    </em>
+                  </div>
+                  <label className="ps-check">
+                    <input
+                      type="checkbox"
+                      checked={audio.micPttEnabled}
+                      disabled={audioInflight}
+                      onChange={(e) =>
+                        void updateAudio({ micPttEnabled: e.target.checked })
+                      }
+                    />
+                    <span className="ps-check-box" />
+                    <span>{audio.micPttEnabled ? 'On (default)' : 'Off'}</span>
+                  </label>
+                </div>
+              ) : null}
+
+              {/* PTT tip/ring select — byte-50 bit3. Default (off) is the
+                  Apache factory wiring: PTT on RING, mic + bias on TIP. */}
+              {audio.hasMicPttConfig &&
+              (audio.source === 'RadioMic' ||
+                audio.source === 'RadioBalancedXlr') ? (
+                <div className="ps-field">
+                  <div className="ps-name">
+                    PTT on Tip
+                    <em>
+                      Swap the mic jack's tip/ring assignment. OFF (default) =
+                      Apache wiring — PTT on ring, mic and bias on tip. Turn ON
+                      only for microphones wired with PTT on the tip.
+                    </em>
+                  </div>
+                  <label className="ps-check">
+                    <input
+                      type="checkbox"
+                      checked={audio.pttOnTip}
+                      disabled={audioInflight}
+                      onChange={(e) =>
+                        void updateAudio({ pttOnTip: e.target.checked })
+                      }
+                    />
+                    <span className="ps-check-box" />
+                    <span>
+                      {audio.pttOnTip ? 'PTT on tip (swapped)' : 'PTT on ring (default)'}
+                    </span>
+                  </label>
+                </div>
+              ) : null}
+
               {/* Line-in gain 0..31 — parameter of Radio Line In. */}
               {audio.source === 'RadioLineIn' ? (
                 <div className="ps-field">

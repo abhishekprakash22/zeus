@@ -13,6 +13,7 @@
 export type OrionMkIIVariant =
   | 'G2'
   | 'G2_1K'
+  | 'G2E'
   | 'Anan7000DLE'
   | 'Anan8000DLE'
   | 'OrionMkII'
@@ -22,6 +23,7 @@ export type OrionMkIIVariant =
 export const ORION_MKII_VARIANT_LABELS: Record<OrionMkIIVariant, string> = {
   G2: 'ANAN-G2 / G2 MkII (Saturn)',
   G2_1K: 'ANAN-G2-1K (1 kW)',
+  G2E: 'ANAN-G2E (network / headless)',
   Anan7000DLE: 'ANAN-7000DLE',
   Anan8000DLE: 'ANAN-8000DLE',
   OrionMkII: 'Apache OrionMkII (original)',

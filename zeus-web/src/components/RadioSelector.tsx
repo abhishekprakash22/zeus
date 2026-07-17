@@ -36,6 +36,7 @@ const BOARD_OPTIONS: ReadonlyArray<BoardKind> = [
 const VARIANT_OPTIONS: ReadonlyArray<OrionMkIIVariant> = [
   'G2',
   'G2_1K',
+  'G2E',
   'Anan7000DLE',
   'Anan8000DLE',
   'OrionMkII',

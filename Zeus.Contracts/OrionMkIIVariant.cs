@@ -67,4 +67,10 @@ public enum OrionMkIIVariant : byte
     /// disabled (DH1KLM note at <c>clsHardwareSpecific.cs:187</c>) for
     /// DIY PA / filter-board compatibility. Same bridge as G2.</summary>
     RedPitaya = 6,
+
+    /// <summary>Apache ANAN-G2E — headless network-attached Saturn-class
+    /// radio. G2 RF/DDC fingerprint but WITHOUT the switchable front-mic
+    /// circuit: no balanced XLR, no Orion mic bias, no mic-PTT/tip-ring
+    /// switching (the byte-50 mic bits are inert on this hardware).</summary>
+    G2E = 7,
 }

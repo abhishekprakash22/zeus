@@ -2122,9 +2122,12 @@ public sealed record AudioFrontEndDto(
     bool HasRadioLineIn,
     bool HasBalancedXlr,
     bool HasMicBias,
+    bool HasMicPttConfig,
     TxAudioSource Source,
     bool MicBoost,
     bool MicBias,
+    bool MicPttEnabled,
+    bool PttOnTip,
     int LineInGain);
 
 // Mutating version — sets the whole global TX-audio source. LineInGain is
@@ -2135,7 +2138,11 @@ public sealed record AudioFrontEndSetRequest(
     TxAudioSource Source,
     bool MicBoost,
     bool MicBias,
-    int LineInGain);
+    int LineInGain,
+    // Mic-jack PTT config (boards with HasMicPttConfig). Defaults preserve the
+    // pre-existing wire emission for clients that omit them.
+    bool MicPttEnabled = true,
+    bool PttOnTip = false);
 
 // Radio-side speaker output (Protocol-1 codec radios). Whether to send
 // demodulated RX audio down the EP2 frame's L/R slots so the radio's onboard

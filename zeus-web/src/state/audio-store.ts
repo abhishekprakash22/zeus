@@ -31,10 +31,15 @@ export interface AudioFrontEnd {
   hasRadioLineIn: boolean;
   hasBalancedXlr: boolean;
   hasMicBias: boolean;
+  hasMicPttConfig: boolean;
   // The resolved (board-clamped) source + its params.
   source: TxAudioSource;
   micBoost: boolean;
   micBias: boolean;
+  // Mic-jack PTT config (boards with hasMicPttConfig). Defaults are the
+  // Apache factory wiring: PTT enabled, PTT on ring / mic+bias on tip.
+  micPttEnabled: boolean;
+  pttOnTip: boolean;
   lineInGain: number;
 }
 
@@ -44,9 +49,12 @@ const DEFAULT_AUDIO: AudioFrontEnd = {
   hasRadioLineIn: false,
   hasBalancedXlr: false,
   hasMicBias: false,
+  hasMicPttConfig: false,
   source: 'Host',
   micBoost: false,
   micBias: false,
+  micPttEnabled: true,
+  pttOnTip: false,
   lineInGain: 0,
 };
 
@@ -75,9 +83,12 @@ function parse(raw: unknown): AudioFrontEnd {
     hasRadioLineIn: parseBool(r.hasRadioLineIn, false),
     hasBalancedXlr: parseBool(r.hasBalancedXlr, false),
     hasMicBias: parseBool(r.hasMicBias, false),
+    hasMicPttConfig: parseBool(r.hasMicPttConfig, false),
     source: parseSource(r.source),
     micBoost: parseBool(r.micBoost, false),
     micBias: parseBool(r.micBias, false),
+    micPttEnabled: parseBool(r.micPttEnabled, true),
+    pttOnTip: parseBool(r.pttOnTip, false),
     lineInGain: Math.min(31, Math.max(0, Math.round(gain))),
   };
 }
@@ -85,7 +96,7 @@ function parse(raw: unknown): AudioFrontEnd {
 // The mutable subset an operator can PUT (the gates are read-only / server-set).
 export type AudioFrontEndEdit = Pick<
   AudioFrontEnd,
-  'source' | 'micBoost' | 'micBias' | 'lineInGain'
+  'source' | 'micBoost' | 'micBias' | 'micPttEnabled' | 'pttOnTip' | 'lineInGain'
 >;
 
 export async function fetchAudioFrontEnd(
@@ -148,6 +159,8 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
       source: patch.source ?? prev.source,
       micBoost: patch.micBoost ?? prev.micBoost,
       micBias: patch.micBias ?? prev.micBias,
+      micPttEnabled: patch.micPttEnabled ?? prev.micPttEnabled,
+      pttOnTip: patch.pttOnTip ?? prev.pttOnTip,
       lineInGain: patch.lineInGain ?? prev.lineInGain,
     };
     set({ settings: { ...prev, ...edit }, inflight: true, error: null });

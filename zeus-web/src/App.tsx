@@ -184,6 +184,13 @@ export default function App() {
   const remoteMode = useMemo(() => isRemoteMode(), []);
   const adminRoute = useMemo(() => window.location.pathname.replace(/\/+$/, '') === '/admin', []);
   const appAccessAllowed = useUserAccessStore((s) => s.session?.accessAllowed === true);
+  // Startup-race guards for the access gate (local builds allow the
+  // un-authenticated session, so the gate should only ever appear for a REAL
+  // denial from user management — not because the first session fetch hasn't
+  // answered yet, and not because it failed while the server was still
+  // warming under a kiosk/autostart launch).
+  const accessChecked = useUserAccessStore((s) => s.checked);
+  const haveAccessSession = useUserAccessStore((s) => s.session != null);
   const pluginPolicyKey = useUserAccessStore((s) =>
     s.session
       ? JSON.stringify({
@@ -232,6 +239,20 @@ export default function App() {
     }, USER_ACCESS_REFRESH_MS);
     return () => window.clearInterval(id);
   }, [appShellEnabled, refreshAccessSession]);
+
+  // Startup race: the periodic refresh above only runs once access is
+  // allowed, so a failed FIRST session fetch (server still warming when the
+  // page loads — the kiosk/app-mode norm on the Pi) used to strand the login
+  // gate on screen until a manual reload. While we have NO session at all,
+  // retry every 3 s until one arrives. A session that explicitly denies
+  // access is a real denial and is not retried here.
+  useEffect(() => {
+    if (!accessChecked || haveAccessSession) return;
+    const id = window.setInterval(() => {
+      void refreshAccessSession();
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [accessChecked, haveAccessSession, refreshAccessSession]);
 
   useEffect(() => {
     if (!appShellEnabled) return;
@@ -1190,10 +1211,13 @@ export default function App() {
   }
 
   if (!appAccessAllowed) {
+    // Before the first session check completes (or while retrying a failed
+    // one) show a themed blank instead of flashing the QRZ/Zeus login gate —
+    // local sessions resolve to allowed a moment later.
     return (
       <>
         <ThemeApplier />
-        <QrzAccessGate />
+        {accessChecked && haveAccessSession ? <QrzAccessGate /> : null}
       </>
     );
   }

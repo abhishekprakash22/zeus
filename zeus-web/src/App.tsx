@@ -201,6 +201,30 @@ export default function App() {
     void refreshAccessSession();
   }, [refreshAccessSession]);
 
+  // First-composite nudge for Chromium --app / kiosk windows on the Pi
+  // (V3D): the freshly-created window's GPU surface can composite garbled
+  // until something forces a full repaint — operators had to minimise +
+  // maximise to clear it. ~1 s after mount (window size settled, first
+  // frames drawn) hide the app root for exactly one frame and dispatch a
+  // resize: the visibility toggle forces a full recomposite of every layer
+  // (the same thing minimise/maximise did) and the resize re-runs any
+  // size-derived canvas state. Imperceptible during startup; runs once.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const root = document.getElementById('root');
+      if (!root) return;
+      const prev = root.style.visibility;
+      root.style.visibility = 'hidden';
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          root.style.visibility = prev;
+          window.dispatchEvent(new Event('resize'));
+        });
+      });
+    }, 1000);
+    return () => window.clearTimeout(t);
+  }, []);
+
   useEffect(() => {
     if (!appShellEnabled) return;
     const id = window.setInterval(() => {

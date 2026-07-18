@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Zeus Kiosk
+Comment=OpenHPSDR Zeus full-screen console
+Exec=/home/pi/zeus-kiosk.sh
+X-GNOME-Autostart-enabled=true

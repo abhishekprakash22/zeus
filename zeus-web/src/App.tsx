@@ -77,6 +77,7 @@ import { ModeFavorites } from './components/toolbar/ModeFavorites';
 import { CtunButton } from './components/CtunButton';
 import { MoxButton } from './components/MoxButton';
 import { PreampButton } from './components/PreampButton';
+import { FullscreenButton } from './components/FullscreenButton';
 import { ProfileOverlayHost } from './components/ProfileOverlay';
 import { PsToggleButton } from './components/PsToggleButton';
 import { PaTempChip } from './components/PaTempChip';
@@ -1440,6 +1441,10 @@ export default function App() {
             <div className="ctrl-group topbar-control topbar-control--roger">
               <div className="label-xs ctrl-lbl">ROGER</div>
               <RogerBeepButton />
+            </div>
+            <div className="ctrl-group topbar-control topbar-control--fullscreen">
+              <div className="label-xs ctrl-lbl">VIEW</div>
+              <FullscreenButton />
             </div>
             {signalJammerEnabled && (
               <div className="ctrl-group topbar-control topbar-control--qrm">

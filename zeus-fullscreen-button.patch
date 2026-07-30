@@ -1,0 +1,70 @@
+diff --git a/zeus-web/src/App.tsx b/zeus-web/src/App.tsx
+index 8da0d40..2b1fdb9 100644
+--- a/zeus-web/src/App.tsx
++++ b/zeus-web/src/App.tsx
+@@ -77,6 +77,7 @@ import { ModeFavorites } from './components/toolbar/ModeFavorites';
+ import { CtunButton } from './components/CtunButton';
+ import { MoxButton } from './components/MoxButton';
+ import { PreampButton } from './components/PreampButton';
++import { FullscreenButton } from './components/FullscreenButton';
+ import { ProfileOverlayHost } from './components/ProfileOverlay';
+ import { PsToggleButton } from './components/PsToggleButton';
+ import { PaTempChip } from './components/PaTempChip';
+@@ -1441,6 +1442,10 @@ export default function App() {
+               <div className="label-xs ctrl-lbl">ROGER</div>
+               <RogerBeepButton />
+             </div>
++            <div className="ctrl-group topbar-control topbar-control--fullscreen">
++              <div className="label-xs ctrl-lbl">VIEW</div>
++              <FullscreenButton />
++            </div>
+             {signalJammerEnabled && (
+               <div className="ctrl-group topbar-control topbar-control--qrm">
+                 <div className="label-xs ctrl-lbl">TX TEST</div>
+diff --git a/zeus-web/src/components/FullscreenButton.tsx b/zeus-web/src/components/FullscreenButton.tsx
+new file mode 100644
+index 0000000..2c83b16
+--- /dev/null
++++ b/zeus-web/src/components/FullscreenButton.tsx
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++//
++// FullscreenButton — topbar toggle for browser full-screen (edge-to-edge, no
++// tabs / address bar) via the Fullscreen API. This is the operator-convenience
++// sibling of the launcher-based kiosk (installers/pi-kiosk): same visual
++// result, togglable at will, Esc also exits. For a LOCKED appliance (no
++// escape) keep using the --kiosk launcher — pages cannot enter that mode.
++// State tracks the fullscreenchange event so the label stays truthful when
++// the operator exits with Esc or F11 instead of the button.
++
++import { useEffect, useState } from 'react';
++
++export function FullscreenButton() {
++  const [full, setFull] = useState<boolean>(!!document.fullscreenElement);
++
++  useEffect(() => {
++    const onChange = () => setFull(!!document.fullscreenElement);
++    document.addEventListener('fullscreenchange', onChange);
++    return () => document.removeEventListener('fullscreenchange', onChange);
++  }, []);
++
++  const toggle = () => {
++    if (document.fullscreenElement) {
++      void document.exitFullscreen().catch(() => {});
++    } else {
++      void document.documentElement.requestFullscreen().catch(() => {});
++    }
++  };
++
++  return (
++    <button
++      type="button"
++      className={`btn sm${full ? ' active' : ''}`}
++      onClick={toggle}
++      title={full ? 'Exit full screen (Esc also works)' : 'Full screen — hide the browser chrome'}
++      aria-pressed={full}
++    >
++      {full ? 'EXIT FS' : 'FULL SCR'}
++    </button>
++  );
++}

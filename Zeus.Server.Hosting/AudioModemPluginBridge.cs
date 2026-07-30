@@ -14,15 +14,21 @@ using Zeus.Plugins.Host;
 namespace Zeus.Server;
 
 /// <summary>
-/// Publishes the single active plugin audio modem to the RX/TX hot paths.
-/// First active modem wins; extras are ignored with a warning. The hot paths
-/// read <see cref="Current"/> with a single volatile load and do not lock.
+/// Publishes the single active audio modem to the RX/TX hot paths.
+/// A plugin-hosted modem wins; the CORE modem (FreeDvModemService — the
+/// in-core FreeDV backend, same story as Digital/) is the fallback when no
+/// plugin modem is active, so a real org.openhpsdr.freedv plugin installed
+/// alongside takes over cleanly and uninstall falls back instead of leaving
+/// FreeDV dead. Extras beyond the first plugin modem are ignored with a
+/// warning. The hot paths read <see cref="Current"/> with a single volatile
+/// load plus one null-coalesce and do not lock.
 /// </summary>
 public sealed class AudioModemPluginBridge : IHostedService
 {
     private readonly PluginManager _manager;
     private readonly RadioService _radio;
     private readonly Func<DspPipelineService?>? _pipelineProvider;
+    private readonly IAudioModemPlugin? _coreModem;
     private readonly ILogger<AudioModemPluginBridge> _log;
     private IAudioModemPlugin? _current;
     private string? _currentId;
@@ -33,17 +39,28 @@ public sealed class AudioModemPluginBridge : IHostedService
         PluginManager manager,
         RadioService radio,
         ILogger<AudioModemPluginBridge> log,
-        Func<DspPipelineService?>? pipelineProvider = null)
+        Func<DspPipelineService?>? pipelineProvider = null,
+        IAudioModemPlugin? coreModem = null)
     {
         _manager = manager;
         _radio = radio;
         _pipelineProvider = pipelineProvider;
+        _coreModem = coreModem;
         _log = log;
     }
 
-    public IAudioModemPlugin? Current => Volatile.Read(ref _current);
+    public IAudioModemPlugin? Current => Volatile.Read(ref _current) ?? _coreModem;
 
-    public bool HasActiveModem => Current is not null;
+    /// <summary>
+    /// Gates FREEDV mode entry in RadioService. A plugin modem gates on
+    /// presence alone (unchanged semantics — its own /status carries the
+    /// native story); the core modem additionally requires libcodec2 to have
+    /// loaded, so a platform without the native falls back to USB instead of
+    /// keying an SSB rig with raw mic audio in a mode the operator believes
+    /// is digital.
+    /// </summary>
+    public bool HasActiveModem =>
+        Volatile.Read(ref _current) is not null || _coreModem?.NativeAvailable == true;
 
     public Task StartAsync(CancellationToken ct)
     {
@@ -108,6 +125,14 @@ public sealed class AudioModemPluginBridge : IHostedService
             _currentId = active.Loaded.Manifest.Id;
             Volatile.Write(ref _current, replacement);
             _log.LogInformation("Audio modem plugin {Id} active.", _currentId);
+            return;
+        }
+
+        // No replacement plugin — the core modem (if runnable) takes over and
+        // the operator stays in FREEDV without a mode bounce.
+        if (_coreModem?.NativeAvailable == true)
+        {
+            _log.LogInformation("Audio modem falling back to the in-core FreeDV modem.");
             return;
         }
 

@@ -102,18 +102,25 @@ describe('freedv-plugin-store', () => {
     expect(useFreeDvPluginStore.getState().installed).toBe(false);
   });
 
-  it('readiness and reasons require both installed and live', () => {
+  it('readiness gates on live alone (backend ships in core)', () => {
     useFreeDvPluginStore.setState({ installed: false, live: false });
     expect(isFreeDvPluginReady()).toBe(false);
-    expect(freeDvPluginUnavailableReason()).toBe('Install the FreeDV plugin from Settings / Plugins');
+    expect(freeDvPluginUnavailableReason()).toBe(
+      'FreeDV backend is not reachable — reconnect to Zeus',
+    );
 
+    // installed alone is not enough — the status route must answer.
     useFreeDvPluginStore.setState({ installed: true, live: false });
     expect(isFreeDvPluginReady()).toBe(false);
-    expect(freeDvPluginUnavailableReason()).toBe('Restart Zeus to activate the FreeDV plugin');
+
+    // live without an installed-list entry IS ready: the in-core backend is
+    // never in the installed-plugins list, mirroring the Digital suite.
+    useFreeDvPluginStore.setState({ installed: false, live: true });
+    expect(isFreeDvPluginReady()).toBe(true);
+    expect(freeDvPluginUnavailableReason()).toBeNull();
 
     useFreeDvPluginStore.setState({ installed: true, live: true });
     expect(isFreeDvPluginReady()).toBe(true);
-    expect(freeDvPluginUnavailableReason()).toBeNull();
   });
 
   it('re-probes on an app-WS reconnect', async () => {

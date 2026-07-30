@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// FreeDV plugin gate. The FreeDV mode entry is available only when the
-// org.openhpsdr.freedv backend plugin is installed and its status route is live.
+// FreeDV mode gate. The FreeDV backend now ships IN CORE (same in-core story
+// as the FT8 suite — see Zeus.Server.Hosting/FreeDv/), serving the plugin
+// route prefix /api/plugins/org.openhpsdr.freedv. The gate therefore mirrors
+// digital-plugin.ts: LIVE (GET /status answers 2xx) is what unlocks the
+// FREEDV mode entry. `installed` is kept as informational state — a real
+// org.openhpsdr.freedv plugin installed alongside still registers here and
+// its activation re-triggers the probe — but it no longer gates readiness,
+// because the in-core backend is never in the installed-plugins list.
 
 import { create } from 'zustand';
 import { FREEDV_PLUGIN_ID, probeFreeDvPlugin } from '../api/freedv-plugin';
@@ -34,15 +40,13 @@ export const useFreeDvPluginStore = create<FreeDvPluginState>((set) => ({
 }));
 
 export function isFreeDvPluginReady(): boolean {
-  const s = useFreeDvPluginStore.getState();
-  return s.installed && s.live;
+  return useFreeDvPluginStore.getState().live;
 }
 
 export function freeDvPluginUnavailableReason(): string | null {
   const s = useFreeDvPluginStore.getState();
-  if (s.installed && s.live) return null;
-  if (!s.installed) return 'Install the FreeDV plugin from Settings / Plugins';
-  return 'Restart Zeus to activate the FreeDV plugin';
+  if (s.live) return null;
+  return 'FreeDV backend is not reachable — reconnect to Zeus';
 }
 
 if (typeof window !== 'undefined') {

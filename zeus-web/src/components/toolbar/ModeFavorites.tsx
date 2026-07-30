@@ -65,7 +65,7 @@ export function ModeFavorites() {
   // re-enable live when the Zeus Digital plugin gate opens; the tooltip
   // distinguishes not-installed / restart-pending / WSPR's coming-soon.
   const digitalReady = useDigitalPluginStore((s) => s.installed && s.live);
-  const freeDvReady = useFreeDvPluginStore((s) => s.installed && s.live);
+  const freeDvReady = useFreeDvPluginStore((s) => s.live);
   const modeOptions = useMemo<readonly ToolbarOption[]>(
     () => [
       ...WDSP_MODE_OPTIONS.map<ToolbarOption>((option) => {

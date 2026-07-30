@@ -878,15 +878,29 @@ public static class ZeusHost
             sp.GetRequiredService<ILogger<LogbookPluginBridge>>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<LogbookPluginBridge>());
 
+        // FreeDV digital voice — IN CORE, not a plugin. Same story as the
+        // Digital/ FT8 suite: the org.openhpsdr.freedv plugin's registry is
+        // gone, so the modem (libcodec2 via Zeus.Server.Hosting/FreeDv/) ships
+        // in the binary and serves the plugin route prefix the frontend
+        // already targets. The host-side seams (pipeline inserts, tail drain,
+        // mode gate) are untouched — the core modem rides them through
+        // AudioModemPluginBridge's core-modem fallback below.
+        builder.Services.AddSingleton<Zeus.Server.Hosting.FreeDv.FreeDvSettingsStore>();
+        builder.Services.AddSingleton<Zeus.Server.Hosting.FreeDv.FreeDvModemService>();
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Zeus.Server.Hosting.FreeDv.FreeDvModemService>());
+
         // AudioModemPluginBridge publishes the one active IAudioModemPlugin
         // (FreeDV today) to the existing RX/TX insertion points. It also
         // follows live plugin activation/deactivation so uninstall cannot leave
-        // a dangling modem reference on the audio path.
+        // a dangling modem reference on the audio path. The in-core FreeDV
+        // modem is the fallback when no plugin modem is active.
         builder.Services.AddSingleton(sp => new AudioModemPluginBridge(
             sp.GetRequiredService<PluginManager>(),
             sp.GetRequiredService<RadioService>(),
             sp.GetRequiredService<ILogger<AudioModemPluginBridge>>(),
-            () => sp.GetService<DspPipelineService>()));
+            () => sp.GetService<DspPipelineService>(),
+            sp.GetRequiredService<Zeus.Server.Hosting.FreeDv.FreeDvModemService>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioModemPluginBridge>());
 
         // ChainOrderService — owns the canonical Audio Suite plugin
@@ -1317,6 +1331,10 @@ public static class ZeusHost
         // duplicate-route conflict surfaces at startup rather than silently
         // shadowing. Uninstall one or the other in that case.
         Zeus.Server.Hosting.Digital.DigitalEndpoints.MapDigitalEndpoints(app);
+        // Core FreeDV routes — same before-MapAll ordering and for the same
+        // reason: a real org.openhpsdr.freedv plugin installed alongside must
+        // surface a duplicate-route conflict at startup, not silently shadow.
+        Zeus.Server.Hosting.FreeDv.FreeDvEndpoints.MapFreeDvEndpoints(app);
 
         Zeus.Plugins.Host.PluginEndpoints.MapAll(app, pluginManager);
 

@@ -10,6 +10,28 @@ see the corresponding GitHub Release page.
 
 ---
 
+## [Unreleased]
+
+### 🎙️ FreeDV — digital voice RX + TX now ships in core
+
+- **FreeDV works out of the box — nothing to install.** The FreeDV modem
+  (Codec 2 / freedv_api, libcodec2 1.2.0) now ships inside Zeus, the same
+  in-core move the FT8/FT4 suite made after the plugin registry went away.
+  Select **FREEDV** from the mode row and Zeus runs the full digital-voice
+  chain: **700D and 700E receive and transmit** (700C / 1600 / 800XA also
+  selectable), SYNC lamp + live SNR, SNR squelch, the RX/TX text
+  sidechannel, submode **auto-detect scanning**, TX clipping + band-pass
+  filtering on the OFDM modes, and clean end-of-over tails (whole OFDM
+  frames on air — no mid-symbol PTT chop). The FreeDV band sideband
+  convention (LSB below 10 MHz, USB at/above, 60 m USB-only) and the USB
+  fallback when the modem is unavailable are unchanged. Modem settings
+  (submode, squelch, auto-detect, TX text) persist across restarts. A real
+  `org.openhpsdr.freedv` plugin, if ever installed, still takes precedence.
+  **RADEV1** remains gated until librade integration lands (see
+  `docs/designs/rade-v1-integration.md`); the **FreeDV Reporter** station
+  list / report-mode network client is a follow-up — the panel shows its
+  disconnected state and report-mode settings persist for when it lands.
+
 ## [0.10.9] — 2026-07-05
 
 > **📖 The Logbook grows up, and Zeus goes modular.** The headline is a completely reworked **Logbook**: pop it out onto its own monitor and it blooms into a full logging workspace — sortable table, live station-detail card, analytics dashboard, and an interactive globe — with **QSO editing, tags, QSL tracking, and LoTW upload/sync (TQSL)** built in. Around it, Zeus's big features keep moving into **installable plugins** (FT8/FT4 digital suite, FreeDV, and the Logbook engine itself), so the core stays lean and features update on their own schedule. Also in this release: a **0–60 MHz wideband display**, PureSignal fixes for the **ANAN-10E**, the Audio Suite in its **own OS window**, a first-launch **crash-report agreement**, a **macOS .pkg installer**, and a long list of transmit, audio, and stability fixes. **Note: this version is a one-time required update** — older installs will be prompted to move up to 0.10.9, after which updates go back to being optional.

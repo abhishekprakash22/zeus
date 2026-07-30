@@ -102,7 +102,7 @@ export function ModeBandwidth() {
   // Subscribe to the plugin gate so FT8/FT4 light up the moment the Zeus
   // Digital plugin goes installed+live (isDigitalEntryAvailable reads it).
   useDigitalPluginStore((s) => s.installed && s.live);
-  useFreeDvPluginStore((s) => s.installed && s.live);
+  useFreeDvPluginStore((s) => s.live);
 
   const selectMode = useCallback(
     (m: RxMode) => {

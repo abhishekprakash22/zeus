@@ -1343,6 +1343,8 @@ public static class ZeusHost
         // reason: a real org.openhpsdr.freedv plugin installed alongside must
         // surface a duplicate-route conflict at startup, not silently shadow.
         Zeus.Server.Hosting.FreeDv.FreeDvEndpoints.MapFreeDvEndpoints(app);
+        // Window-chrome prefs the kiosk launcher reads (fullscreen marker).
+        Zeus.Server.UiPrefsEndpoints.MapUiPrefsEndpoints(app);
 
         Zeus.Plugins.Host.PluginEndpoints.MapAll(app, pluginManager);
 

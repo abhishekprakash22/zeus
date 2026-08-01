@@ -209,13 +209,23 @@ zeus_run_service_with_browser() {
         if command -v "${app}" >/dev/null 2>&1; then
             profile_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Zeus/kiosk-profile"
             mkdir -p "${profile_dir}"
+            # Fullscreen restore: the frontend cannot re-enter the Fullscreen
+            # API at load (gesture-gated), but WE control the launch flags.
+            # The backend drops/removes this marker on every operator toggle
+            # (POST /api/ui/kiosk-fullscreen), so the kiosk comes back exactly
+            # as it was left — zero gestures. --start-fullscreen wins over
+            # --start-maximized in Chromium; both stay so exiting fullscreen
+            # lands on a maximized window, not a tiny default one.
+            local fsflag=""
+            [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/Zeus/kiosk-fullscreen" ] \
+                && fsflag="--start-fullscreen"
             # --start-maximized + explicit size: the throwaway profile means
             # Chromium cannot remember the window geometry between launches,
             # and a small default window trips the UI's responsive breakpoint
             # into the stacked mobile layout. Open big so the operator gets
             # the desktop layout (full panadapter) every time.
             "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
-                --start-maximized --window-size=1600,900 \
+                ${fsflag} --start-maximized --window-size=1600,900 \
                 --no-first-run --no-default-browser-check >/dev/null 2>&1 &
             browser_pid=$!
             # First one out (backend Exit button, or operator closing the

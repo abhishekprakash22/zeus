@@ -33,7 +33,7 @@ public static class UiPrefsEndpoints
 
         app.MapPost("/api/ui/kiosk-fullscreen", (KioskFullscreenRequest req, HttpContext ctx) =>
         {
-            if (LocalRequestGuard.RejectIfNotLocalSameOrigin(ctx) is { } rejection)
+            if (LocalRequestGuard.RejectIfNotLocalSameOrigin(ctx, "kiosk-fullscreen") is { } rejection)
                 return rejection;
             try
             {

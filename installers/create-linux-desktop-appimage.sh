@@ -75,11 +75,16 @@ ICON_SOURCE="${REPO_ROOT}/docs/pics/zeus.png"
 # installer correct meanwhile.)
 SPA_INDEX="${REPO_ROOT}/Zeus.Server.Hosting/wwwroot/index.html"
 if [ ! -d "${PUBLISH_DIR}" ] || [ -z "$(ls -A "${PUBLISH_DIR}" 2>/dev/null)" ]; then
-    if [ ! -f "${SPA_INDEX}" ]; then
-        echo "wwwroot missing — building the React frontend first (glob-evaluation ordering)..."
-        ( cd "${REPO_ROOT}/zeus-web" && npm ci && npm run build )
-        [ -f "${SPA_INDEX}" ] || { echo "ERROR: frontend build did not produce ${SPA_INDEX}"; exit 1; }
-    fi
+    # ALWAYS rebuild the SPA before publish — not just when wwwroot is
+    # missing. The glob trap has a second face: a STALE wwwroot at
+    # evaluation time makes publish ship the old bundle even though the
+    # csproj's BuildSpa regenerates it mid-publish (field-hit: a frontend
+    # gate change silently absent from a version-stamped AppImage). The
+    # pre-build makes the evaluated globs and the shipped bundle agree;
+    # the csproj's own publish-time rebuild then finds nothing to change.
+    echo "Building the React frontend (pre-publish, glob-evaluation ordering)..."
+    ( cd "${REPO_ROOT}/zeus-web" && npm ci && npm run build )
+    [ -f "${SPA_INDEX}" ] || { echo "ERROR: frontend build did not produce ${SPA_INDEX}"; exit 1; }
     echo "PUBLISH_DIR is missing — falling back to local publish for ${RID}..."
     dotnet publish "${REPO_ROOT}/OpenhpsdrZeus/OpenhpsdrZeus.csproj" \
         -c Release \

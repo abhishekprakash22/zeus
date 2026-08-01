@@ -76,6 +76,7 @@ import {
 } from '../api/radio';
 import { getAudioClient } from '../audio/audio-client';
 import { useConnectionStore } from '../state/connection-store';
+import { flushLayoutsBeforeQuit } from '../state/layout-store';
 import { useRadioStore } from '../state/radio-store';
 import { useTxAudioProfileStore } from '../state/tx-audio-profile-store';
 import { useTxStore } from '../state/tx-store';
@@ -1131,8 +1132,12 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
 
   const handleQuit = useCallback(() => {
     setPendingQuit(false);
-    // The process exits ~300 ms after acking, so the response may never land —
-    // fire and forget, swallowing the inevitable network error on teardown.
+    // Flush the workspace layout FIRST: the process exits ~300 ms after
+    // acking quit, so anything still inside the layout store's save debounce
+    // would otherwise die with it (workspace-reverts-after-Exit field bug).
+    flushLayoutsBeforeQuit();
+    // The response may never land — fire and forget, swallowing the
+    // inevitable network error on teardown.
     void quitApp().catch(() => {});
   }, []);
 

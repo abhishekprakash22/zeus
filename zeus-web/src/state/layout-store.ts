@@ -851,3 +851,19 @@ function postActiveLayout(radioKey: string, layoutId: string): Promise<unknown> 
 // Re-export EMPTY_WORKSPACE_LAYOUT so existing import sites don't need to
 // reach into ../layout/workspace separately.
 export { EMPTY_WORKSPACE_LAYOUT };
+
+/**
+ * Flush the active layout to the server RIGHT NOW, outside the 1 s debounce.
+ * Called before POST /api/app/quit: the backend exits ~300 ms after acking
+ * and the kiosk launcher then closes the window, so the normal beforeunload
+ * beacon fires against a dead server. Anything still inside the debounce
+ * window at that moment — i.e. the operator's final arrangement — was lost
+ * (field report: workspace reverts after Exit). Best-effort by design.
+ */
+export function flushLayoutsBeforeQuit(): void {
+  try {
+    useLayoutStore.getState().syncToServerBeforeUnload();
+  } catch {
+    /* teardown races are expected here */
+  }
+}

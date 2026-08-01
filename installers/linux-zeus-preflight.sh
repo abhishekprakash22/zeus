@@ -233,6 +233,13 @@ zeus_run_service_with_browser() {
             # everywhere we ship; fall back to backend-only wait if absent.
             wait -n "${backend_pid}" "${browser_pid}" 2>/dev/null \
                 || wait "${backend_pid}"
+            # If the BROWSER went first (operator closed the window), give the
+            # page's beforeunload layout beacon a moment to land before we
+            # take the backend down — killing it instantly loses whatever the
+            # operator arranged in the final save-debounce window.
+            if kill -0 "${backend_pid}" 2>/dev/null; then
+                sleep 1.5
+            fi
             zeus_kiosk_cleanup
             trap - EXIT INT TERM
             wait 2>/dev/null || true

@@ -205,7 +205,13 @@ zeus_run_service_with_browser() {
     for app in chromium-browser chromium google-chrome-stable google-chrome; do
         if command -v "${app}" >/dev/null 2>&1; then
             profile_dir="$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/zeus-kiosk.XXXXXX")"
+            # --start-maximized + explicit size: the throwaway profile means
+            # Chromium cannot remember the window geometry between launches,
+            # and a small default window trips the UI's responsive breakpoint
+            # into the stacked mobile layout. Open big so the operator gets
+            # the desktop layout (full panadapter) every time.
             "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
+                --start-maximized --window-size=1600,900 \
                 --no-first-run --no-default-browser-check >/dev/null 2>&1 &
             browser_pid=$!
             # First one out (backend Exit button, or operator closing the

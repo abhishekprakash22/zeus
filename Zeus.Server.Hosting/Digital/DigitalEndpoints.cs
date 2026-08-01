@@ -84,12 +84,33 @@ public static class DigitalEndpoints
         g.MapPost("/ft8/tx/halt", (DigitalService d) => { d.Halt(); return Results.Ok(d.BuildTxStatus()); });
 
         // ---- WSPR -----------------------------------------------------------
-        g.MapGet("/wspr", (DigitalService d) => Results.Ok(new { enabled = d.WsprEnabled }));
-        g.MapPost("/wspr/enable", (DigitalService d) => { d.EnableWspr(true); return Results.Ok(new { enabled = true }); });
-        g.MapPost("/wspr/disable", (DigitalService d) => { d.EnableWspr(false); return Results.Ok(new { enabled = false }); });
-        g.MapPost("/wspr/tx/arm", (ArmRequest req) => Results.Ok(new { enabled = req.Enabled }));
-        g.MapPost("/wspr/tx/halt", () => Results.Ok(new { ok = true }));
-        g.MapPost("/wspr/tx/settings", () => Results.Ok(new { ok = true }));
+        // Real backend (WsprService): 120 s slot decoder + autonomous beacon.
+        g.MapGet("/wspr", (WsprService w) => Results.Ok(w.StatusDto()));
+        g.MapPost("/wspr/enable", (WsprEnableRequest req, WsprService w, DigitalService d) =>
+        {
+            bool ok = w.Enable(req.Receiver ?? 0, req.DialFreqMhz ?? 14.0956);
+            d.EnableWspr(ok);
+            return Results.Ok(new { enabled = ok, nativeAvailable = w.NativeAvailable });
+        });
+        g.MapPost("/wspr/disable", (WsprService w, DigitalService d) =>
+        {
+            w.Disable();
+            w.Arm(false);          // never leave a beacon armed on a dead decoder
+            d.EnableWspr(false);
+            return Results.Ok(new { enabled = false });
+        });
+        g.MapPost("/wspr/tx/settings", (WsprTxSettingsRequest req, WsprService w) =>
+        {
+            w.TxSettings(req.Call, req.Grid4, req.DBm, req.AudioHz, req.TxPercent);
+            return Results.Ok(new { ok = true });
+        });
+        g.MapPost("/wspr/tx/arm", (ArmRequest req, WsprService w) =>
+            Results.Ok(new { enabled = w.Arm(req.Enabled) }));
+        g.MapPost("/wspr/tx/halt", (WsprService w) =>
+        {
+            w.Arm(false);
+            return Results.Ok(new { ok = true });
+        });
 
         // ---- config ---------------------------------------------------------
         g.MapPost("/config/identity", (IdentityRequest req, DigitalService d) =>

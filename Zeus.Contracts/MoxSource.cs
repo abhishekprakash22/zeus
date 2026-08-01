@@ -89,4 +89,12 @@ public enum MoxSource : byte
     /// arms PureSignal and never auto-keys on connect. NOT wire-compatible
     /// with byte 7 by design — see <see cref="Ft8"/>.</summary>
     Ft8Keyer = 10,
+
+    /// <summary>The in-core WSPR beacon keyer (<c>WsprService</c>) — the
+    /// autonomous 120 s even-slot beacon. Same release rule as
+    /// <see cref="Ft8Keyer"/>: only the beacon releases what it claimed and
+    /// <see cref="UI"/> remains the master override. Never arms PureSignal.
+    /// The beacon self-disarms on a 30-minute watchdog and any halt aborts
+    /// an in-flight transmission within one audio block.</summary>
+    WsprBeacon = 11,
 }

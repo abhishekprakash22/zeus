@@ -784,6 +784,14 @@ public static class ZeusHost
         // synthesizes GFSK via zeus_ft8_synth, keys MOX, streams into the TX
         // mic path. See Digital/Ft8KeyerService.cs.
         builder.Services.AddHostedService<Zeus.Server.Hosting.Digital.Ft8KeyerService>();
+
+        // WSPR in core — 120 s slot decoder (vendored K9AN wsprd via
+        // native/wspr) + autonomous beacon keyer. Completes the Digital
+        // suite; the frontend WSPR workspace/stores already speak this
+        // contract. See Digital/WsprService.cs.
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.WsprService>();
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Zeus.Server.Hosting.Digital.WsprService>());
         builder.Services.AddSingleton<ThemeSettingsStore>();
         builder.Services.AddSingleton<BottomPinStore>();
         builder.Services.AddSingleton<PanWfSplitStore>();

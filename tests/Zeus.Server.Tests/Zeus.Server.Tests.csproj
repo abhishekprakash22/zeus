@@ -13,6 +13,7 @@
          workflows override it cleanly: the PR gate selects "Category!=DspModernization"
          and the scheduled dsp-modernization-tests.yml selects "Category=DspModernization". -->
     <VSTestTestCaseFilter>Category!=DspModernization</VSTestTestCaseFilter>
+      <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

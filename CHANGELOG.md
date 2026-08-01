@@ -32,6 +32,21 @@ see the corresponding GitHub Release page.
   list / report-mode network client is a follow-up — the panel shows its
   disconnected state and report-mode settings persist for when it lands.
 
+### 📡 WSPR — receive and beacon, in core
+
+- **WSPR joins the in-core Digital suite.** Open the WSPR workspace and Zeus
+  runs the real thing end to end: **RX spots** every 120 s slot via the
+  vendored K9AN `wsprd` decoder (WSJT-X's own, `native/wspr`, GPL) with
+  bit-exact slot alignment off the digital clock, and an **autonomous TX
+  beacon** — arm it and Zeus rolls your TX % each even slot, keys MOX, and
+  streams the 162-symbol waveform (native WSJT-X message encoding, so the
+  bits on air are canonical). Safety first-class: HALT/disarm aborts
+  mid-signal within one audio block, per-transmission watchdog, band-change
+  and page-close disarm in the UI, and a 30-minute abandoned-beacon
+  auto-disarm as the backstop. Decoder + encoder + the full RX conversion
+  chain are loopback-validated in-tree. Follow-ups: wsprnet.org upload and
+  the propagation tracking map.
+
 ## [0.10.9] — 2026-07-05
 
 > **📖 The Logbook grows up, and Zeus goes modular.** The headline is a completely reworked **Logbook**: pop it out onto its own monitor and it blooms into a full logging workspace — sortable table, live station-detail card, analytics dashboard, and an interactive globe — with **QSO editing, tags, QSL tracking, and LoTW upload/sync (TQSL)** built in. Around it, Zeus's big features keep moving into **installable plugins** (FT8/FT4 digital suite, FreeDV, and the Logbook engine itself), so the core stays lean and features update on their own schedule. Also in this release: a **0–60 MHz wideband display**, PureSignal fixes for the **ANAN-10E**, the Audio Suite in its **own OS window**, a first-launch **crash-report agreement**, a **macOS .pkg installer**, and a long list of transmit, audio, and stability fixes. **Note: this version is a one-time required update** — older installs will be prompted to move up to 0.10.9, after which updates go back to being optional.

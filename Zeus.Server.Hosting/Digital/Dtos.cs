@@ -66,6 +66,23 @@ public sealed record TxStageRequest
     [JsonPropertyName("mode")] public string? Mode { get; init; }
 }
 
+/// <summary>POST /wspr/enable body.</summary>
+public sealed record WsprEnableRequest
+{
+    [JsonPropertyName("receiver")] public int? Receiver { get; init; }
+    [JsonPropertyName("dialFreqMhz")] public double? DialFreqMhz { get; init; }
+}
+
+/// <summary>POST /wspr/tx/settings body (WsprTxControl.tsx contract).</summary>
+public sealed record WsprTxSettingsRequest
+{
+    [JsonPropertyName("call")] public string? Call { get; init; }
+    [JsonPropertyName("grid4")] public string? Grid4 { get; init; }
+    [JsonPropertyName("dBm")] public int? DBm { get; init; }
+    [JsonPropertyName("audioHz")] public int? AudioHz { get; init; }
+    [JsonPropertyName("txPercent")] public double? TxPercent { get; init; }
+}
+
 public sealed record ArmRequest
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; init; }

@@ -28,9 +28,10 @@ export function isDigitalEntryKey(key: string): key is DigitalEntryKey {
   return (DIGITAL_ENTRY_KEYS as readonly string[]).includes(key);
 }
 
-/** WSPR is not ship-ready yet (untested; tracking map still pending). Gate it OFF
- *  in the UI so it cannot be engaged. FT8/FT4 unaffected. Flip to enable later. */
-export const DIGITAL_UNAVAILABLE: Partial<Record<DigitalEntryKey, true>> = { WSPR: true };
+/** Modes gated off until implemented (FreeDV-class future modes). WSPR shipped
+ * with the in-core backend (Digital/WsprService — decoder + beacon); the
+ * propagation tracking map remains a follow-up feature, not a gate. */
+export const DIGITAL_UNAVAILABLE: Partial<Record<DigitalEntryKey, true>> = {};
 
 /**
  * The single availability predicate every entry point consults (mode tile,

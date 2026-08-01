@@ -62,7 +62,24 @@ ICON_SOURCE="${REPO_ROOT}/docs/pics/zeus.png"
 # is missing or empty. CI's release.yml runs a single shared `dotnet publish`
 # step before any installer-script invocation, so this fallback is skipped
 # there.
+#
+# SPA-FIRST, ALWAYS: MSBuild expands the wwwroot content globs at project
+# EVALUATION, before any target runs — so on a tree where
+# Zeus.Server.Hosting/wwwroot doesn't exist yet (fresh clone; wwwroot is a
+# build artifact, not tracked), the csproj's BuildSpa target (BeforeTargets=
+# "Publish") builds the frontend too late: npm runs, wwwroot appears on disk,
+# but the publish file list was computed while it was empty and the output
+# ships WITHOUT the web app. The backend then serves 404 at / — a working
+# radio with no UI. Building the SPA before dotnet publish makes the glob see
+# it. (Root-cause fix belongs in OpenhpsdrZeus.csproj; this keeps the
+# installer correct meanwhile.)
+SPA_INDEX="${REPO_ROOT}/Zeus.Server.Hosting/wwwroot/index.html"
 if [ ! -d "${PUBLISH_DIR}" ] || [ -z "$(ls -A "${PUBLISH_DIR}" 2>/dev/null)" ]; then
+    if [ ! -f "${SPA_INDEX}" ]; then
+        echo "wwwroot missing — building the React frontend first (glob-evaluation ordering)..."
+        ( cd "${REPO_ROOT}/zeus-web" && npm ci && npm run build )
+        [ -f "${SPA_INDEX}" ] || { echo "ERROR: frontend build did not produce ${SPA_INDEX}"; exit 1; }
+    fi
     echo "PUBLISH_DIR is missing — falling back to local publish for ${RID}..."
     dotnet publish "${REPO_ROOT}/OpenhpsdrZeus/OpenhpsdrZeus.csproj" \
         -c Release \
@@ -71,6 +88,17 @@ if [ ! -d "${PUBLISH_DIR}" ] || [ -z "$(ls -A "${PUBLISH_DIR}" 2>/dev/null)" ]; 
         -p:PublishSingleFile=false \
         -p:UseAppHost=true \
         -o "${PUBLISH_DIR}"
+fi
+
+# HARD GATE: never assemble an AppImage whose backend has no web app. This is
+# exactly the failure mode that reached hardware once (styled 404 at the
+# radio) — cheap to catch here, expensive to catch at the rig.
+if [ ! -f "${PUBLISH_DIR}/wwwroot/index.html" ]; then
+    echo "ERROR: ${PUBLISH_DIR}/wwwroot/index.html is missing — the publish"
+    echo "       output has no frontend. Refusing to build a UI-less AppImage."
+    echo "       Build the SPA first (cd zeus-web && npm ci && npm run build),"
+    echo "       then re-run 'dotnet publish' and this script."
+    exit 1
 fi
 
 # Build AppDir layout per the AppImage convention

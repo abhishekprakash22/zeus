@@ -113,6 +113,26 @@ zeus_browser_forced() {
     esac
 }
 
+# Platform default for the native (Photino/WebKitGTK) window.
+#   return 0 → attempt the native window
+#   return 1 → default to the chromeless-browser (kiosk) UI instead
+# On aarch64 the native window is DISABLED BY DEFAULT: field testing on a
+# Saturn G2 (Raspberry Pi OS Trixie, Wayland/labwc, V3D, WebKitGTK 2.52)
+# shows Photino painting a blank white window even with every known render
+# workaround applied (DMA-BUF/compositing disables, Skia CPU rendering,
+# XWayland). The browser fallback opens a chromeless Chromium --app window
+# that is functionally identical, so kiosk-by-default is the working
+# experience rather than a degraded one. Set ZEUS_FORCE_NATIVE=1 to opt back
+# in (e.g. to re-test after a WebKitGTK upgrade, or on arm64 hardware with a
+# different GPU stack).
+zeus_native_window_viable() {
+    case "${ZEUS_FORCE_NATIVE:-}" in
+        1|[Tt]rue|[Yy]es) return 0 ;;
+    esac
+    [ "$(uname -m)" = "aarch64" ] && return 1
+    return 0
+}
+
 # Export best-known WebKitGTK rendering workarounds for platforms where the
 # GPU path is broken, BEFORE Photino creates its window. Everything here is
 # export-if-unset so an operator's explicit setting always wins.

@@ -132,7 +132,7 @@ cd "${HERE}/usr/bin"
 # workarounds are exported automatically before Photino starts.
 # shellcheck source=/dev/null
 . "./zeus-preflight.sh"
-if ! zeus_browser_forced && zeus_ensure_webkit; then
+if ! zeus_browser_forced && zeus_native_window_viable && zeus_ensure_webkit; then
     zeus_export_webview_render_workarounds
     exec ./OpenhpsdrZeus --desktop "$@"
 fi
@@ -165,13 +165,15 @@ REQUIREMENTS
   browser UI so Zeus still starts.
 
   RASPBERRY PI / ARM64 NOTE
-  On aarch64 the AppImage automatically applies the known WebKitGTK render
-  workarounds (DMA-BUF/compositing off, Skia CPU rendering, XWayland) before
-  opening the native window. If the window still opens blank/white on your
-  GPU stack, force the browser UI instead — it is functionally identical and
-  opens as a chromeless app window when a Chromium-family browser is present:
+  On aarch64 the AppImage opens as a chromeless browser (kiosk) window BY
+  DEFAULT instead of the native Photino window: WebKitGTK renders blank on
+  the Raspberry Pi GPU stack (verified on Pi OS Trixie / WebKitGTK 2.52 with
+  every known workaround applied), while the kiosk window is functionally
+  identical and renders correctly. No environment variable is needed.
 
-      ZEUS_FORCE_BROWSER=1 ./OpenhpsdrZeus-${VERSION}-linux-${APPIMAGE_ARCH}.AppImage
+  To re-try the native window (e.g. after a WebKitGTK upgrade):
+
+      ZEUS_FORCE_NATIVE=1 ./OpenhpsdrZeus-${VERSION}-linux-${APPIMAGE_ARCH}.AppImage
 
   WebKitGTK is intentionally NOT bundled — at ~150 MB it would more than
   triple the AppImage size and lock us to a specific WebKit release. As a
@@ -236,7 +238,7 @@ cd "${HERE}/usr/bin"
 # override and aarch64 render workarounds.
 # shellcheck source=/dev/null
 . "./zeus-preflight.sh"
-if ! zeus_browser_forced && zeus_ensure_webkit; then
+if ! zeus_browser_forced && zeus_native_window_viable && zeus_ensure_webkit; then
     zeus_export_webview_render_workarounds
     exec ./OpenhpsdrZeus --server "$@"
 fi

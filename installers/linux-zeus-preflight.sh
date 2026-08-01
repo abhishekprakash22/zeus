@@ -179,19 +179,43 @@ zeus_wait_for_backend() {
 # where WebKitGTK does not); falls back to the default browser. Expects the
 # current directory to contain ./OpenhpsdrZeus (the launchers cd there before
 # sourcing this file). Passes through any extra args.
+#
+# PHOTINO PARITY: the kiosk window and the backend share one lifetime, both
+# directions. The in-app Exit button (POST /api/app/quit) exits the backend ->
+# we close the window; the operator closing the window -> we stop the backend.
+# Without this the Exit button leaves a dead page on screen and looks broken.
+# The dedicated --user-data-dir matters twice over: it forces Chromium to run
+# as a process we own (otherwise --app hands off to any existing browser
+# session and instantly exits, leaving us nothing to supervise or kill), and
+# it keeps the kiosk window out of the operator's normal browser profile.
 zeus_run_service_with_browser() {
     echo "Starting OpenHPSDR Zeus in browser (service) mode on http://localhost:6060" >&2
     ./OpenhpsdrZeus "$@" &
-    local pid=$!
-    trap 'kill -TERM "${pid}" 2>/dev/null || true' EXIT INT TERM
+    local backend_pid=$!
+    local browser_pid=""
+    local profile_dir=""
+    zeus_kiosk_cleanup() {
+        kill -TERM "${backend_pid}" ${browser_pid:+"${browser_pid}"} 2>/dev/null || true
+        [ -n "${profile_dir}" ] && rm -rf "${profile_dir}"
+    }
+    trap zeus_kiosk_cleanup EXIT INT TERM
     zeus_wait_for_backend || true
     local url="http://localhost:6060"
     local app
     for app in chromium-browser chromium google-chrome-stable google-chrome; do
         if command -v "${app}" >/dev/null 2>&1; then
-            "${app}" --app="${url}" >/dev/null 2>&1 &
-            zeus_notify "OpenHPSDR Zeus is running at ${url}"
-            wait "${pid}"
+            profile_dir="$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/zeus-kiosk.XXXXXX")"
+            "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
+                --no-first-run --no-default-browser-check >/dev/null 2>&1 &
+            browser_pid=$!
+            # First one out (backend Exit button, or operator closing the
+            # window) takes the other with it. wait -n is bash >= 4.3 --
+            # everywhere we ship; fall back to backend-only wait if absent.
+            wait -n "${backend_pid}" "${browser_pid}" 2>/dev/null \
+                || wait "${backend_pid}"
+            zeus_kiosk_cleanup
+            trap - EXIT INT TERM
+            wait 2>/dev/null || true
             return
         fi
     done
@@ -203,5 +227,5 @@ zeus_run_service_with_browser() {
         fi
     done
     zeus_notify "OpenHPSDR Zeus is running in your web browser at ${url}"
-    wait "${pid}"
+    wait "${backend_pid}"
 }

@@ -102,23 +102,86 @@ Zeus will open in your web browser for now."
     return 1
 }
 
-# Browser/service-mode fallback: run the headless backend and open the default
-# browser at the local URL, so a missing GUI dependency still yields a working
-# Zeus. Expects the current directory to contain ./OpenhpsdrZeus (the launchers
-# cd there before sourcing this file). Passes through any extra args.
+# True (0) when the operator forces browser/service mode regardless of
+# WebKitGTK availability: ZEUS_FORCE_BROWSER=1|true|yes. Escape hatch for
+# platforms where WebKitGTK is installed but renders a blank (white) window —
+# seen on Raspberry Pi OS Trixie (Wayland/labwc + V3D) with WebKitGTK 2.52.
+zeus_browser_forced() {
+    case "${ZEUS_FORCE_BROWSER:-}" in
+        1|[Tt]rue|[Yy]es) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Export best-known WebKitGTK rendering workarounds for platforms where the
+# GPU path is broken, BEFORE Photino creates its window. Everything here is
+# export-if-unset so an operator's explicit setting always wins.
+#
+# Scope: aarch64 only. On the Pi's V3D/Wayland stack the accelerated WebKit
+# paths are what paint the notorious blank-white window; on x86_64 desktops
+# they work and disabling them would be a pointless performance regression.
+#   - WEBKIT_DISABLE_DMABUF_RENDERER / WEBKIT_DISABLE_COMPOSITING_MODE:
+#     the classic pre-Skia (< 2.52) switches; harmless no-ops on newer WebKit.
+#   - WEBKIT_SKIA_ENABLE_CPU_RENDERING: the 2.52+/Skia equivalent.
+#   - GDK_BACKEND=x11: only when a Wayland session also offers XWayland
+#     (both WAYLAND_DISPLAY and DISPLAY set) — GTK/WebKit via XWayland is the
+#     battle-tested path on Pi OS; never forced on pure-X or pure-Wayland
+#     setups where it would be wrong or redundant.
+zeus_export_webview_render_workarounds() {
+    [ "$(uname -m)" = "aarch64" ] || return 0
+    export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+    export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
+    export WEBKIT_SKIA_ENABLE_CPU_RENDERING="${WEBKIT_SKIA_ENABLE_CPU_RENDERING:-1}"
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DISPLAY:-}" ] && [ -z "${GDK_BACKEND:-}" ]; then
+        export GDK_BACKEND=x11
+    fi
+}
+
+# Wait (up to ~30 s) for the backend to answer on localhost:6060 before
+# opening a browser at it, so the operator never lands on a connection-refused
+# page during a slow cold start. Pure-bash /dev/tcp probe — no curl needed.
+zeus_wait_for_backend() {
+    local i
+    for i in $(seq 1 60); do
+        if (exec 3<>/dev/tcp/127.0.0.1/6060) 2>/dev/null; then
+            exec 3>&- 3<&- 2>/dev/null
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1   # not up yet (e.g. first-run FFTW wisdom bake) — open anyway
+}
+
+# Browser/service-mode fallback: run the headless backend and open a browser
+# at the local URL, so a missing/broken GUI dependency still yields a working
+# Zeus. Prefers a Chromium-family --app window (chromeless, looks and feels
+# like the native Photino window and renders correctly on the Pi GPU stack
+# where WebKitGTK does not); falls back to the default browser. Expects the
+# current directory to contain ./OpenhpsdrZeus (the launchers cd there before
+# sourcing this file). Passes through any extra args.
 zeus_run_service_with_browser() {
     echo "Starting OpenHPSDR Zeus in browser (service) mode on http://localhost:6060" >&2
     ./OpenhpsdrZeus "$@" &
     local pid=$!
     trap 'kill -TERM "${pid}" 2>/dev/null || true' EXIT INT TERM
-    sleep 2
+    zeus_wait_for_backend || true
+    local url="http://localhost:6060"
+    local app
+    for app in chromium-browser chromium google-chrome-stable google-chrome; do
+        if command -v "${app}" >/dev/null 2>&1; then
+            "${app}" --app="${url}" >/dev/null 2>&1 &
+            zeus_notify "OpenHPSDR Zeus is running at ${url}"
+            wait "${pid}"
+            return
+        fi
+    done
     local opener
     for opener in xdg-open gnome-open kde-open; do
         if command -v "${opener}" >/dev/null 2>&1; then
-            "${opener}" http://localhost:6060 >/dev/null 2>&1 &
+            "${opener}" "${url}" >/dev/null 2>&1 &
             break
         fi
     done
-    zeus_notify "OpenHPSDR Zeus is running in your web browser at http://localhost:6060"
+    zeus_notify "OpenHPSDR Zeus is running in your web browser at ${url}"
     wait "${pid}"
 }

@@ -126,10 +126,14 @@ HERE="$(dirname "$(readlink -f "${0}")")"
 export LD_LIBRARY_PATH="${HERE}/usr/bin/runtimes/linux-x64/native:${HERE}/usr/bin/runtimes/linux-arm64/native:${LD_LIBRARY_PATH}"
 cd "${HERE}/usr/bin"
 # Verify WebKitGTK before opening the Photino window; offer to install it /
-# fall back to the browser UI if it's missing.
+# fall back to the browser UI if it's missing. ZEUS_FORCE_BROWSER=1 skips the
+# native window entirely (escape hatch for platforms where WebKitGTK renders
+# blank — e.g. Raspberry Pi OS Trixie/Wayland). On aarch64 the known render
+# workarounds are exported automatically before Photino starts.
 # shellcheck source=/dev/null
 . "./zeus-preflight.sh"
-if zeus_ensure_webkit; then
+if ! zeus_browser_forced && zeus_ensure_webkit; then
+    zeus_export_webview_render_workarounds
     exec ./OpenhpsdrZeus --desktop "$@"
 fi
 zeus_run_service_with_browser "$@"
@@ -159,6 +163,15 @@ REQUIREMENTS
   The AppImage detects WebKitGTK automatically: if it's missing it offers to
   install it (when launched from a terminal) and otherwise falls back to the
   browser UI so Zeus still starts.
+
+  RASPBERRY PI / ARM64 NOTE
+  On aarch64 the AppImage automatically applies the known WebKitGTK render
+  workarounds (DMA-BUF/compositing off, Skia CPU rendering, XWayland) before
+  opening the native window. If the window still opens blank/white on your
+  GPU stack, force the browser UI instead — it is functionally identical and
+  opens as a chromeless app window when a Chromium-family browser is present:
+
+      ZEUS_FORCE_BROWSER=1 ./OpenhpsdrZeus-${VERSION}-linux-${APPIMAGE_ARCH}.AppImage
 
   WebKitGTK is intentionally NOT bundled — at ~150 MB it would more than
   triple the AppImage size and lock us to a specific WebKit release. As a
@@ -219,10 +232,12 @@ HERE="$(dirname "$(readlink -f "${0}")")"
 export LD_LIBRARY_PATH="${HERE}/usr/bin/runtimes/linux-x64/native:${HERE}/usr/bin/runtimes/linux-arm64/native:${LD_LIBRARY_PATH}"
 cd "${HERE}/usr/bin"
 # Server mode also opens a Photino (WebKitGTK) status window — same check,
-# same browser-UI fallback as desktop mode.
+# same browser-UI fallback as desktop mode, same ZEUS_FORCE_BROWSER=1
+# override and aarch64 render workarounds.
 # shellcheck source=/dev/null
 . "./zeus-preflight.sh"
-if zeus_ensure_webkit; then
+if ! zeus_browser_forced && zeus_ensure_webkit; then
+    zeus_export_webview_render_workarounds
     exec ./OpenhpsdrZeus --server "$@"
 fi
 zeus_run_service_with_browser "$@"

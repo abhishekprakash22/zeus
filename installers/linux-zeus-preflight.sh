@@ -188,6 +188,10 @@ zeus_wait_for_backend() {
 # as a process we own (otherwise --app hands off to any existing browser
 # session and instantly exits, leaving us nothing to supervise or kill), and
 # it keeps the kiosk window out of the operator's normal browser profile.
+# It is PERSISTENT (under the Zeus data dir), not a throwaway: the frontend
+# keeps per-display view state — panadapter dB window, zoom, layout — in the
+# browser's localStorage, and a fresh profile per launch wiped it, forcing
+# the operator to re-adjust scaling every session.
 zeus_run_service_with_browser() {
     echo "Starting OpenHPSDR Zeus in browser (service) mode on http://localhost:6060" >&2
     ./OpenhpsdrZeus "$@" &
@@ -196,7 +200,6 @@ zeus_run_service_with_browser() {
     local profile_dir=""
     zeus_kiosk_cleanup() {
         kill -TERM "${backend_pid}" ${browser_pid:+"${browser_pid}"} 2>/dev/null || true
-        [ -n "${profile_dir}" ] && rm -rf "${profile_dir}"
     }
     trap zeus_kiosk_cleanup EXIT INT TERM
     zeus_wait_for_backend || true
@@ -204,7 +207,8 @@ zeus_run_service_with_browser() {
     local app
     for app in chromium-browser chromium google-chrome-stable google-chrome; do
         if command -v "${app}" >/dev/null 2>&1; then
-            profile_dir="$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/zeus-kiosk.XXXXXX")"
+            profile_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Zeus/kiosk-profile"
+            mkdir -p "${profile_dir}"
             # --start-maximized + explicit size: the throwaway profile means
             # Chromium cannot remember the window geometry between launches,
             # and a small default window trips the UI's responsive breakpoint

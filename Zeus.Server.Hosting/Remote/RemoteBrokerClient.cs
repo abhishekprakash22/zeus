@@ -80,7 +80,16 @@ public sealed class RemoteBrokerClient : BackgroundService
                 continue;
             }
 
-            var identity = await TryGetIdentityAsync(stoppingToken);
+            // Self-hosted relays don't need (or want) QRZ identity: the broker
+            // is untrusted by design (ADR-0007 — SPAKE2+ is the real auth), so
+            // against an operator-owned relay a locally declared callsign is
+            // sufficient. ZEUS_REMOTE_CALLSIGN=<CALL> opts in; the QRZ session
+            // header is simply omitted. Without the env var, behaviour is
+            // unchanged (QRZ identity required, as the public broker enforces).
+            var localCall = Environment.GetEnvironmentVariable("ZEUS_REMOTE_CALLSIGN");
+            var identity = !string.IsNullOrWhiteSpace(localCall)
+                ? (localCall.Trim().ToUpperInvariant(), string.Empty)
+                : await TryGetIdentityAsync(stoppingToken);
             if (identity is null)
             {
                 await DelayQuietly(backoff, stoppingToken);
@@ -119,7 +128,8 @@ public sealed class RemoteBrokerClient : BackgroundService
     private async Task RunConnectionAsync(string callsign, string sessionKey, CancellationToken ct)
     {
         using var socket = new ClientWebSocket();
-        socket.Options.SetRequestHeader("X-QRZ-Session", sessionKey);
+        if (!string.IsNullOrEmpty(sessionKey))
+            socket.Options.SetRequestHeader("X-QRZ-Session", sessionKey);
         socket.Options.SetRequestHeader("X-QRZ-Callsign", callsign);
 
         _log.LogInformation("remote broker: connecting to {Url} as {Callsign}", _brokerUrl, callsign);

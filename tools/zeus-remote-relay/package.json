@@ -1,0 +1,11 @@
+{
+  "name": "zeus-remote-relay",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Self-hostable signaling rendezvous for Zeus remote operation (no cloud, no QRZ).",
+  "bin": { "zeus-remote-relay": "./server.mjs" },
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "ws": "^8.18.0" },
+  "engines": { "node": ">=18" }
+}

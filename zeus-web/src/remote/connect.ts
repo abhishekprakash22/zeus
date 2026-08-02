@@ -21,6 +21,19 @@ const ID_PROVER = new Uint8Array(0);
 const ID_VERIFIER = new Uint8Array(0);
 
 const DEFAULT_BROKER = 'https://remote.openhpsdrzeus.com';
+
+/** Resolve the broker origin for internet connects, in priority order:
+ *  1. explicit option, 2. `?broker=` URL param (self-hosted relays — lets a
+ *  single link carry the rendezvous), 3. the public broker. Exported for
+ *  RemoteGate/remote-client call sites. */
+export function resolveBrokerOrigin(explicit?: string): string {
+  if (explicit) return explicit;
+  try {
+    const q = new URLSearchParams(window.location.search).get('broker');
+    if (q) return q.startsWith('http') ? q : `https://${q}`;
+  } catch { /* non-browser context */ }
+  return DEFAULT_BROKER;
+}
 const DEFAULT_STUN: RTCIceServer[] = [{ urls: 'stun:stun.cloudflare.com:3478' }];
 
 export interface RemoteConnection {
@@ -98,7 +111,7 @@ export function connectRemote(opts: RemoteConnectOptions): Promise<RemoteConnect
  * fetching TURN credentials first (falls back to STUN if TURN is unconfigured).
  */
 export async function connectViaBroker(opts: BrokerConnectOptions): Promise<RemoteConnection> {
-  const brokerOrigin = opts.brokerOrigin ?? DEFAULT_BROKER;
+  const brokerOrigin = resolveBrokerOrigin(opts.brokerOrigin);
   const iceServers = await fetchIceServers(brokerOrigin);
   const signal: Signaler = (offerSdp) => brokerSignal(brokerOrigin, opts.callsign, offerSdp);
   return establish(

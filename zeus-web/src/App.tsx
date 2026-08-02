@@ -403,7 +403,21 @@ export default function App() {
   const radioLoaded = useRadioStore((s) => s.loaded);
   useEffect(() => {
     if (!appShellEnabled || !radioLoaded) return;
-    const key = radioConnected !== 'Unknown' ? radioConnected : 'default';
+    // Layouts are keyed per radio, and every workspace/tab edit saves under
+    // the CURRENTLY hydrated key. Hydrating under 'default' until the
+    // connection resolves meant anything the operator arranged before (or
+    // without) connecting was filed under a key the connected session never
+    // shows again — "my tab changes vanish on restart" (field bug). Remember
+    // the last radio and hydrate under ITS key from boot: pre-connect edits
+    // land in the right bucket, and connecting to the same radio is a no-op
+    // reload, which also removes the on-load layout flash. Connecting to a
+    // DIFFERENT radio still swaps to its own layouts, as designed.
+    let last = '';
+    try { last = localStorage.getItem('zeus.layouts.lastRadioKey') ?? ''; } catch { /* private mode */ }
+    const key = radioConnected !== 'Unknown' ? radioConnected : (last || 'default');
+    if (radioConnected !== 'Unknown') {
+      try { localStorage.setItem('zeus.layouts.lastRadioKey', radioConnected); } catch { /* ok */ }
+    }
     void loadLayoutsForRadio(key);
     void loadSavedLayoutsForRadio(key);
   }, [loadLayoutsForRadio, loadSavedLayoutsForRadio, radioConnected, radioLoaded, appShellEnabled]);

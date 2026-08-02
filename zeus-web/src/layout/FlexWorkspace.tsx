@@ -205,9 +205,9 @@ export function FlexWorkspace({
       }`}
     >
       {g2Frame && (
-        <span className="workspace-g2-badge" aria-hidden>
-          G2 · 1280×800
-        </span>
+        <div className="workspace-g2-frame" aria-hidden>
+          <span className="workspace-g2-badge">G2 · 1280×800</span>
+        </div>
       )}
       <WorkspaceCanvas
         tiles={workspace.tiles}

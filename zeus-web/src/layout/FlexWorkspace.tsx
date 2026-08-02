@@ -163,6 +163,30 @@ export function FlexWorkspace({
   // built-in display's 1280×800 so external-monitor layout work is WYSIWYG
   // for the front panel.
   const g2Frame = useG2WorkspaceStore((s) => s.g2Frame);
+  const g2RootRef = useRef<HTMLDivElement | null>(null);
+  // Integer-snapped centering: floor the left margin so the frame (and every
+  // canvas inside it) composites at a whole-pixel offset. Fractional offsets
+  // from `margin: 0 auto` put software compositing on the resample path —
+  // measurable CPU on the Pi. Re-snaps on window resize; cleans up when off.
+  useEffect(() => {
+    const el = g2RootRef.current;
+    if (!el) return;
+    if (!g2Frame) {
+      el.style.marginLeft = '';
+      el.style.marginRight = '';
+      return;
+    }
+    const snap = () => {
+      const parent = el.parentElement;
+      if (!parent) return;
+      const free = parent.clientWidth - el.offsetWidth;
+      el.style.marginLeft = `${Math.max(0, Math.floor(free / 2))}px`;
+      el.style.marginRight = '0';
+    };
+    snap();
+    window.addEventListener('resize', snap);
+    return () => window.removeEventListener('resize', snap);
+  }, [g2Frame]);
 
   const onLayoutChange = useCallback(
     (next: Layout) => {
@@ -200,6 +224,7 @@ export function FlexWorkspace({
   // empty container so it has measurable width when the tiles arrive.
   return (
     <div
+      ref={g2RootRef}
       className={`flex-workspace ${terminatorActive ? 'terminator' : ''}${
         g2Frame ? ' flex-workspace--g2' : ''
       }`}

@@ -36,7 +36,13 @@
   height: 800px;
   max-width: 100%;
   max-height: 100%;
-  margin: 0 auto;
+  /* Centering margin is set from JS, integer-snapped: `margin: 0 auto`
+   * resolves to a FRACTIONAL x-offset whenever (containerW − 1280) is odd,
+   * and a canvas layer composited at a half-pixel offset forces the Pi's
+   * software rasterizer to bilinear-resample every canvas every frame
+   * instead of fast-path blitting — the residual CPU delta the overlay fix
+   * didn't remove (field video: whole-frame paint wash). */
+  margin: 0;
   contain: layout size;
 }
 

@@ -43,7 +43,14 @@
    * instead of fast-path blitting — the residual CPU delta the overlay fix
    * didn't remove (field video: whole-frame paint wash). */
   margin: 0;
-  contain: layout size;
+  /* NO containment. `contain: layout size` was speculative armor against the
+   * original resize loop, but it establishes a stacking context around the
+   * whole subtree — and on the Pi's software compositor that DEFEATS the
+   * canvases' individual layer isolation, merging every panel into one
+   * repaint region (quantified from the field paint-flash video: interior
+   * flash fraction 0.883 across the entire box vs 0.126 at the border —
+   * the merged-layer signature). The loop's real cause was the percentage
+   * sizing, already eliminated by fixed-px geometry above. */
 }
 
 /* The frame chrome lives on its OWN compositor layer, not as an outline on

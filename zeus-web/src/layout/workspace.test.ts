@@ -250,3 +250,32 @@ describe('placeTileInPage (pagination bounds)', () => {
     expect(placeTileInPage('hero', [], 6, 6)).toMatchObject({ x: 0, y: 0 });
   });
 });
+
+describe('tile interior scroll persistence (field bug: parser dropped it)', () => {
+  it('scroll survives a serialize → parse round-trip', () => {
+    const ws = parseWorkspaceLayout({
+      schemaVersion: 8,
+      tiles: [
+        { uid: 'a', panelId: 'vfo', x: 0, y: 0, w: 6, h: 8, scroll: { t: 142, l: 0 } },
+        { uid: 'b', panelId: 'meters', x: 6, y: 0, w: 6, h: 8 },
+      ],
+    });
+    expect(ws.tiles[0]?.scroll).toEqual({ t: 142, l: 0 });
+    expect(ws.tiles[1]?.scroll).toBeUndefined();
+    // and through JSON (what layoutJson actually stores)
+    const again = parseWorkspaceLayout(JSON.parse(JSON.stringify(ws)));
+    expect(again.tiles[0]?.scroll).toEqual({ t: 142, l: 0 });
+  });
+
+  it('zero / malformed scroll is dropped', () => {
+    const ws = parseWorkspaceLayout({
+      schemaVersion: 8,
+      tiles: [
+        { uid: 'a', panelId: 'vfo', x: 0, y: 0, w: 6, h: 8, scroll: { t: 0, l: 0 } },
+        { uid: 'b', panelId: 'vfo', x: 6, y: 0, w: 6, h: 8, scroll: { t: 'x', l: 1 } },
+      ],
+    });
+    expect(ws.tiles[0]?.scroll).toBeUndefined();
+    expect(ws.tiles[1]?.scroll).toBeUndefined();
+  });
+});

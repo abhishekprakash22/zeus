@@ -948,17 +948,25 @@ function useTileScrollPersistence(
   const ref = useRef<HTMLDivElement | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // The tile body itself is overflow:hidden — each PANEL owns its scrolling
+  // (all-panels.css). So: listen in the CAPTURE phase (scroll doesn't bubble,
+  // but ancestors' capture listeners do see descendants' scroll events) and
+  // read the event TARGET; restore by finding the first genuinely scrollable
+  // descendant. One scroller per tile is the supported shape (VFO chip list,
+  // meter stacks); exotic multi-scroller panels keep their first.
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const root = ref.current;
+    if (!root) return;
     const t = saved?.t ?? 0;
     const l = saved?.l ?? 0;
     if (t === 0 && l === 0) return;
     let cancelled = false;
     const attempt = () => {
       if (cancelled || !ref.current) return;
-      ref.current.scrollTop = t;
-      ref.current.scrollLeft = l;
+      const el = findScrollable(ref.current);
+      if (!el) return;
+      el.scrollTop = t;
+      el.scrollLeft = l;
     };
     attempt();
     const retries = [120, 400, 1000].map((ms) => setTimeout(attempt, ms));
@@ -966,24 +974,49 @@ function useTileScrollPersistence(
       cancelled = true;
       retries.forEach(clearTimeout);
     };
-    // Restore only on tile identity change — not on every saved-value echo
-    // of our own capture, which would fight the operator mid-scroll.
+    // Restore only on tile identity change — not on echoes of our own capture.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
 
-  const onScroll = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      const el = ref.current;
-      if (!el) return;
-      useLayoutStore
-        .getState()
-        .updateTileScroll(uid, { t: Math.round(el.scrollTop), l: Math.round(el.scrollLeft) });
-    }, 400);
-  }, [uid]);
+  const onScroll = useCallback(
+    (e: { target: EventTarget | null }) => {
+      const el = e.target as HTMLElement | null;
+      if (!el || typeof el.scrollTop !== 'number') return;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        useLayoutStore
+          .getState()
+          .updateTileScroll(uid, { t: Math.round(el.scrollTop), l: Math.round(el.scrollLeft) });
+      }, 400);
+    },
+    [uid],
+  );
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   return { ref, onScroll };
+}
+
+/** Breadth-first search (capped) for the first descendant that can actually
+ *  scroll: real overflow and an auto/scroll overflow-y. */
+function findScrollable(root: HTMLElement): HTMLElement | null {
+  const queue: HTMLElement[] = [root];
+  let visited = 0;
+  while (queue.length > 0 && visited < 120) {
+    const el = queue.shift()!;
+    visited++;
+    if (
+      el.scrollHeight > el.clientHeight + 2 ||
+      el.scrollWidth > el.clientWidth + 2
+    ) {
+      const oy = getComputedStyle(el).overflowY;
+      const ox = getComputedStyle(el).overflowX;
+      if (oy === 'auto' || oy === 'scroll' || ox === 'auto' || ox === 'scroll') return el;
+    }
+    for (const c of el.children) {
+      if (c instanceof HTMLElement) queue.push(c);
+    }
+  }
+  return null;
 }
 
 // Memoised so a parent re-render (e.g. another tile's drag updating the
@@ -1052,7 +1085,7 @@ const PanelTile = memo(function PanelTile({
         workspaceLocked={workspaceLocked}
         onToggleLock={handleToggleLock}
       />
-      <div className="workspace-tile-body" ref={bodyRef} onScroll={onBodyScroll}>
+      <div className="workspace-tile-body" ref={bodyRef} onScrollCapture={onBodyScroll}>
         {!def.fillNative &&
         (def.scaleToFit === true ||
           (def.designW !== undefined && def.designH !== undefined)) ? (

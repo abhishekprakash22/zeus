@@ -330,6 +330,15 @@ export function parseWorkspaceLayout(raw: unknown): WorkspaceLayout {
         ? { instanceConfig: tile.instanceConfig }
         : {}),
       ...(tile.locked === true ? { locked: true } : {}),
+      // Interior scroll (px) — preserved verbatim. The serializer writes it;
+      // this whitelist previously dropped it on every hydrate, which made
+      // scroll persistence save-only (field bug: "tab scroll not saved").
+      ...(tile.scroll &&
+      Number.isFinite(tile.scroll.t) &&
+      Number.isFinite(tile.scroll.l) &&
+      (tile.scroll.t > 0 || tile.scroll.l > 0)
+        ? { scroll: { t: Math.max(0, tile.scroll.t), l: Math.max(0, tile.scroll.l) } }
+        : {}),
       // Pixel value — preserved verbatim, never scaled by GRID_SCALE.
       ...(typeof tile.lockedHeightPx === 'number' &&
       Number.isFinite(tile.lockedHeightPx) &&

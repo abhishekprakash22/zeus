@@ -21,14 +21,25 @@
  * a big monitor are WYSIWYG for the front panel. Centered + outlined when
  * the window is larger; effectively invisible on the G2 screen itself. */
 .flex-workspace--g2 {
-  flex: 0 0 auto;
-  width: min(100%, 1280px);
-  height: min(100%, 800px);
-  max-width: 1280px;
-  max-height: 800px;
+  /* FIXED integer geometry + containment. The first cut used
+   * min(100%, …) percentages, and a %-sized box inside a flex chain can
+   * put Chromium into continuous layout re-resolution — the workspace's
+   * ResizeObserver then fires every frame and the grid math re-runs
+   * endlessly (field report: substantial CPU as soon as the frame was
+   * enabled). Absolute px sizes make the frame's geometry independent of
+   * both ancestors and content; `contain` stops interior invalidations
+   * (canvas repaints, RGL churn) from propagating out. max-* only bites
+   * when the window is genuinely smaller (the G2's own screen), where the
+   * base flex sizing takes over anyway. */
+  flex: 0 0 800px;
+  width: 1280px;
+  height: 800px;
+  max-width: 100%;
+  max-height: 100%;
   margin: 0 auto;
   outline: 1px dashed var(--accent-line, rgba(46, 142, 255, 0.55));
   outline-offset: -1px;
+  contain: layout size;
 }
 
 .workspace-g2-badge {

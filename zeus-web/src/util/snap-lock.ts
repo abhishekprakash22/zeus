@@ -55,6 +55,7 @@ const SNAP_LOCK_DEADBAND_HZ = 40;
 // lurch across a gap to an adjacent carrier.
 const SNAP_LOCK_MAX_STEP_HZ = 80;
 // Minimum spacing between committed retunes.
+const SNAP_LOCK_MEASURE_INTERVAL_MS = 160; // ~6 Hz estimator cadence
 const SNAP_LOCK_COMMIT_INTERVAL_MS = 250;
 // Consecutive frames with the locked signal in the noise before we let go.
 const SNAP_LOCK_RELEASE_MISS_FRAMES = 25;
@@ -170,6 +171,7 @@ let anchorLevelDb: number | undefined;
 let missFrames = 0;
 let commandedHz = 0;
 let lastCommitMs = 0;
+let lastMeasureMs = 0;
 let lockMode = useConnectionStore.getState().mode;
 let unsubFrames: (() => void) | null = null;
 let unsubVfo: (() => void) | null = null;
@@ -253,6 +255,15 @@ function onFrame(s: DisplayState): void {
     return;
   }
   if (!s.panValid || !s.panDb || s.hzPerPixel <= 0) return;
+
+  // THROTTLE (field report: SNAP raised CPU): the estimator pass below walks
+  // the capture window through signal-estimator on every display frame
+  // (~25 Hz). QSB/drift tracking needs a few hertz — the commit path is
+  // separately gated by SNAP_LOCK_COMMIT_INTERVAL_MS anyway. Guards above
+  // stay per-frame (cheap store reads; release must be immediate).
+  const tNow = now();
+  if (tNow - lastMeasureMs < SNAP_LOCK_MEASURE_INTERVAL_MS) return;
+  lastMeasureMs = tNow;
 
   const measure = measureSnapLock(
     s.panDb,

@@ -26,7 +26,7 @@ import { useDisplaySettingsStore } from '../state/display-settings-store';
 // Recompute is throttled to ~8 Hz: markers don't need the 30 Hz frame rate, and
 // the spectrum surfaces deliberately keep React out of the per-frame path. The
 // number of marker divs is bounded by PEAK_MAX_COUNT in the estimator.
-const RECOMPUTE_MIN_INTERVAL_MS = 120;
+const RECOMPUTE_MIN_INTERVAL_MS = 200; // Pi CPU budget: markers don't need >5 Hz
 
 type Snapshot = { peaks: DetectedPeak[]; centerHz: number; spanHz: number };
 
@@ -52,7 +52,19 @@ export function PeakMarkerOverlay() {
       }
       const centerHz = Number(s.centerHz);
       const spanHz = s.panDb.length * s.hzPerPixel;
-      setSnap({ peaks: detectPeaks(s.panDb, centerHz, s.hzPerPixel), centerHz, spanHz });
+      const peaks = detectPeaks(s.panDb, centerHz, s.hzPerPixel);
+      // Skip the React churn when nothing moved: same peak set + same view →
+      // no setState, no reconcile of N marker divs (Pi CPU budget).
+      setSnap((prev) => {
+        if (
+          prev.centerHz === centerHz &&
+          prev.spanHz === spanHz &&
+          prev.peaks.length === peaks.length &&
+          prev.peaks.every((pk, i) => pk.hz === peaks[i]!.hz && pk.snrDb === peaks[i]!.snrDb)
+        )
+          return prev;
+        return { peaks, centerHz, spanHz };
+      });
     };
     const unsub = useDisplayStore.subscribe((state, prev) => {
       if (state.lastSeq === prev.lastSeq) return;

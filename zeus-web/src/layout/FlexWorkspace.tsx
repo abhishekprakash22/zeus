@@ -920,6 +920,58 @@ interface PanelTileProps {
   onToggleTileLock: (uid: string, locked: boolean) => void;
 }
 
+
+/** Persist + restore a tile body's interior scroll (field bug: panels whose
+ *  content overflows the tile — VFO chip list, meter stacks — reopened at
+ *  scrollTop 0 every launch, hiding what the operator had scrolled into
+ *  view). Capture is debounced 400 ms through the layout store's normal
+ *  mutation path (so it rides the existing save debounce + quit flush);
+ *  restore retries briefly because panel content mounts after the tile. */
+function useTileScrollPersistence(
+  uid: string,
+  saved: { t: number; l: number } | undefined,
+) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const t = saved?.t ?? 0;
+    const l = saved?.l ?? 0;
+    if (t === 0 && l === 0) return;
+    let cancelled = false;
+    const attempt = () => {
+      if (cancelled || !ref.current) return;
+      ref.current.scrollTop = t;
+      ref.current.scrollLeft = l;
+    };
+    attempt();
+    const retries = [120, 400, 1000].map((ms) => setTimeout(attempt, ms));
+    return () => {
+      cancelled = true;
+      retries.forEach(clearTimeout);
+    };
+    // Restore only on tile identity change — not on every saved-value echo
+    // of our own capture, which would fight the operator mid-scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  const onScroll = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      useLayoutStore
+        .getState()
+        .updateTileScroll(uid, { t: Math.round(el.scrollTop), l: Math.round(el.scrollLeft) });
+    }, 400);
+  }, [uid]);
+
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  return { ref, onScroll };
+}
+
 // Memoised so a parent re-render (e.g. another tile's drag updating the
 // store) doesn't reconcile every panel's subtree. Effective only because
 // the store preserves per-tile object identity across unrelated mutations
@@ -932,6 +984,10 @@ const PanelTile = memo(function PanelTile({
   onToggleTileLock,
 }: PanelTileProps) {
   const def = getPanelDef(tile.panelId);
+  const { ref: bodyRef, onScroll: onBodyScroll } = useTileScrollPersistence(
+    tile.uid,
+    tile.scroll,
+  );
   if (!def) {
     return (
       <UnavailablePanelTile
@@ -982,7 +1038,7 @@ const PanelTile = memo(function PanelTile({
         workspaceLocked={workspaceLocked}
         onToggleLock={handleToggleLock}
       />
-      <div className="workspace-tile-body">
+      <div className="workspace-tile-body" ref={bodyRef} onScroll={onBodyScroll}>
         {!def.fillNative &&
         (def.scaleToFit === true ||
           (def.designW !== undefined && def.designH !== undefined)) ? (

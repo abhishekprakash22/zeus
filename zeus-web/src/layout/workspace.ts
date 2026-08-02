@@ -66,6 +66,12 @@ export interface WorkspaceTile {
    *  uses this in v1 (carries MetersPanelConfig). Forward-compatible:
    *  unknown panels' instanceConfig is preserved verbatim across save/load. */
   instanceConfig?: unknown;
+  /** Persisted interior scroll position of the tile body (px). Panels whose
+   *  content overflows their tile (VFO chip list, meter stacks) otherwise
+   *  reopen scrolled to the top and hide what the operator scrolled into
+   *  view — restart amnesia for in-panel state (field bug). Debounce-written
+   *  by the tile wrapper; absent = top. */
+  scroll?: { t: number; l: number };
   /** When true, the tile is pinned to its current grid space. */
   locked?: boolean;
   /** Legacy: on-screen pixel height captured when a tile was locked under the

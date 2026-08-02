@@ -216,6 +216,8 @@ interface LayoutState {
 
   // Back-compat surface (still used by SettingsMenu before #241 lands the
   // LeftLayoutBar). resetLayout calls resetActiveLayout.
+  /** Persist a tile body's interior scroll position (debounced by callers). */
+  updateTileScroll: (uid: string, scroll: { t: number; l: number }) => void;
   resetLayout: () => void;
 }
 
@@ -709,6 +711,22 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       t.uid === uid ? { ...t, instanceConfig } : t,
     );
     applyWorkspaceMutationForLayout(set, get, layoutId, { ...workspace, tiles });
+  },
+
+  updateTileScroll: (uid, scroll) => {
+    const { workspace, activeLayoutId } = get();
+    const tile = workspace.tiles.find((t) => t.uid === uid);
+    if (!tile) return;
+    const prev = tile.scroll ?? { t: 0, l: 0 };
+    if (prev.t === scroll.t && prev.l === scroll.l) return;
+    const tiles = workspace.tiles.map((t) =>
+      t.uid === uid
+        ? scroll.t === 0 && scroll.l === 0
+          ? (({ scroll: _drop, ...rest }) => rest)(t)
+          : { ...t, scroll }
+        : t,
+    );
+    applyWorkspaceMutationForLayout(set, get, activeLayoutId, { ...workspace, tiles });
   },
 
   resetLayout: () => get().resetActiveLayout(),

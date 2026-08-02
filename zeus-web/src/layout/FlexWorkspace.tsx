@@ -33,6 +33,7 @@ import {
   type LayoutItem,
 } from 'react-grid-layout';
 import { absoluteStrategy } from 'react-grid-layout/core';
+import { useG2WorkspaceStore } from '../state/g2-workspace-store';
 import { Plus, Puzzle, Settings } from 'lucide-react';
 import { useWorkspace } from './WorkspaceContext';
 import { parseLayoutOrDefault, useLayoutStore } from '../state/layout-store';
@@ -158,6 +159,10 @@ export function FlexWorkspace({
     [workspace.tiles],
   );
   const workspaceLocked = workspace.locked === true;
+  // G2 front-panel frame (settings → Display): constrain the canvas to the
+  // built-in display's 1280×800 so external-monitor layout work is WYSIWYG
+  // for the front panel.
+  const g2Frame = useG2WorkspaceStore((s) => s.g2Frame);
 
   const onLayoutChange = useCallback(
     (next: Layout) => {
@@ -194,7 +199,16 @@ export function FlexWorkspace({
   // Brief loading state while the server fetch resolves. We render the
   // empty container so it has measurable width when the tiles arrive.
   return (
-    <div className={`flex-workspace ${terminatorActive ? 'terminator' : ''}`}>
+    <div
+      className={`flex-workspace ${terminatorActive ? 'terminator' : ''}${
+        g2Frame ? ' flex-workspace--g2' : ''
+      }`}
+    >
+      {g2Frame && (
+        <span className="workspace-g2-badge" aria-hidden>
+          G2 · 1280×800
+        </span>
+      )}
       <WorkspaceCanvas
         tiles={workspace.tiles}
         workspaceLocked={workspaceLocked}

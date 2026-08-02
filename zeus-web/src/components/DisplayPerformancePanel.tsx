@@ -6,6 +6,7 @@
 //                         Christian Suarez (N9WAR), and contributors.
 
 import type { CSSProperties } from 'react';
+import { useG2WorkspaceStore } from '../state/g2-workspace-store';
 import {
   DISPLAY_DECIMATION_MAX,
   DISPLAY_DECIMATION_MIN,
@@ -27,6 +28,8 @@ export function DisplayPerformancePanel() {
   const setDisplayMaxFrameRateHz = useDisplaySettingsStore((s) => s.setDisplayMaxFrameRateHz);
   const setDisplayDecimation = useDisplaySettingsStore((s) => s.setDisplayDecimation);
   const setWaterfallUpdatePeriod = useDisplaySettingsStore((s) => s.setWaterfallUpdatePeriod);
+  const g2Frame = useG2WorkspaceStore((s) => s.g2Frame);
+  const setG2Frame = useG2WorkspaceStore((s) => s.setG2Frame);
   const waterfallDelayMs =
     (1000 / Math.max(1, displayMaxFrameRateHz)) * Math.max(1, waterfallUpdatePeriod);
 
@@ -123,6 +126,24 @@ export function DisplayPerformancePanel() {
         <span style={hint}>
           Waterfall delay: {waterfallDelayMs.toFixed(1)} ms. Higher FPS and lower decimation increase display load.
         </span>
+      </div>
+      <div style={sectionHead}>
+        <h3 style={sectionH3}>Workspace Frame</h3>
+        <p style={sectionP}>
+          Constrain the workspace to the ANAN-G2 front panel (1280×800) so layouts
+          arranged on this screen match the radio&apos;s built-in display exactly.
+        </p>
+      </div>
+      <div style={card}>
+        <div style={controlRow}>
+          <label style={label} htmlFor="g2-workspace-frame">G2 workspace · 1280×800</label>
+          <input
+            id="g2-workspace-frame"
+            type="checkbox"
+            checked={g2Frame}
+            onChange={(ev) => setG2Frame(ev.target.checked)}
+          />
+        </div>
       </div>
     </section>
   );

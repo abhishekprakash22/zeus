@@ -148,6 +148,21 @@ export function AboutPanel() {
         <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-1)' }}>
           OpenHPSDR Zeus is a cross-platform SDR client for OpenHPSDR Protocol-1 and Protocol-2 radios.
         </p>
+        <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-1)' }}>
+          This build: the <strong>freedv-in-core</strong> branch — FreeDV (700D/700E) and WSPR
+          RX/beacon in core, self-hosted remote operation (no cloud, no QRZ), and Raspberry Pi
+          appliance hardening (kiosk, persistence, GPU tuning). Source:{' '}
+          <a
+            href="https://github.com/abhishekprakash22/zeus/tree/freedv-in-core"
+            onClick={openExternalLink('https://github.com/abhishekprakash22/zeus/tree/freedv-in-core')}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--accent)', textDecoration: 'underline' }}
+          >
+            github.com/abhishekprakash22/zeus
+          </a>
+          .
+        </p>
         <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-2)' }}>
           Copyright © 2025-2026 Brian Keating (EI6LF), Douglas J. Cerrato (KB2UKA), Christian
           Suarez (N9WAR), and contributors.

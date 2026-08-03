@@ -82,7 +82,6 @@ import { ProfileOverlayHost } from './components/ProfileOverlay';
 import { PsToggleButton } from './components/PsToggleButton';
 import { PaTempChip } from './components/PaTempChip';
 import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
-import { QrzStatusPill } from './components/QrzStatusPill';
 import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
@@ -1575,7 +1574,6 @@ export default function App() {
             <span className="v mono">{connected ? (endpoint ?? '—') : '—'}</span>
           </span>
           <RotatorStatusPill />
-          <QrzStatusPill />
           {/* Reset acts on the active layout's tile arrangement. Disabled
               while the Settings view is showing (no active workspace to
               mutate). Add Panel now lives inside the workspace surface. */}

@@ -43,7 +43,16 @@
 // Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
 // License for details.
 
-// R32F history texture sized width × HISTORY_ROWS with a rolling writeRow
+// R16F history texture sized width × HISTORY_ROWS with a rolling writeRow
+// (R16F, not R32F — field-verified on the Pi 5: as the history fills with
+// real spectrum, texture-cache hit rate collapses and per-frame sample
+// BANDWIDTH becomes the dominant GPU cost — measured as a session-long
+// creep from ~25-30% to 50-55% GPU that vanished entirely with the
+// waterfall removed and slowed in proportion to the row interval. Half-float
+// halves that bandwidth for visually identical dB rendering across the
+// ~90 dB display window, and is linearly filterable in core WebGL2.
+// Uploads stay Float32Array/FLOAT — WebGL2 converts on upload, one row per
+// tick, negligible.)
 // index. Each incoming row is uploaded via texSubImage2D into the next ring
 // slot and the fragment shader reads with a rolling vertical offset so the
 // newest row always sits at the top.
@@ -147,7 +156,7 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
   // filtering on floats needs OES_texture_float_linear. Both are requested
   // for effect — we don't consume the extension objects directly.
   const colorExt = gl.getExtension('EXT_color_buffer_float');
-  const floatExt = gl.getExtension('OES_texture_float_linear');
+  const floatExt = gl.getExtension('OES_texture_float_linear'); // informational only now
   // LINEAR filtering on a FLOAT (R32F) texture is ONLY legal when
   // OES_texture_float_linear is present. Without it, sampling the history with
   // gl.LINEAR makes the texture "incomplete" and the fragment shader's
@@ -157,7 +166,12 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
   // or weak GPU frequently omits this extension. Fall back to NEAREST so the
   // waterfall still renders — we lose only sub-pixel-smooth horizontal glide,
   // not the data.
-  const histMagFilter = floatExt ? gl.LINEAR : gl.NEAREST;
+  // History is R16F (see below): LINEAR filtering on half-float textures is
+  // core WebGL2 — no OES_texture_float_linear needed. This both restores
+  // smooth sampling on GPUs that omit the extension (the Pi's V3D — the
+  // long-standing "float_linear unsupported → NEAREST fallback" notice) and
+  // is moot for the bandwidth story below.
+  const histMagFilter = gl.LINEAR;
   const dbg = gl.getExtension('WEBGL_debug_renderer_info');
   const caps: WfGlCaps = {
     floatLinear: !!floatExt,
@@ -171,7 +185,7 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
   console.info(
     `[waterfall] gl caps: float_linear=${caps.floatLinear} ` +
       `color_buffer_float=${caps.colorBufferFloat} ` +
-      `magFilter=${floatExt ? 'LINEAR' : 'NEAREST(fallback)'} gpu=${caps.gpu}`,
+      `magFilter=LINEAR(R16F core) gpu=${caps.gpu}`,
   );
 
   const drawProg = buildProgram(gl, WF_VS, WF_FS);
@@ -289,7 +303,7 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
     gl.texImage2D(
       gl.TEXTURE_2D,
       0,
-      gl.R32F,
+      gl.R16F,
       w,
       HISTORY_ROWS,
       0,

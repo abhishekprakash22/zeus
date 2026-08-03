@@ -227,16 +227,21 @@ EOF
 # in OUTPUT_DIR; otherwise grab the upstream continuous release. CI runs
 # with --appimage-extract-and-run so we don't need FUSE2 in the runner.
 APPIMAGETOOL=""
+# appimagetool must match the HOST arch (it's the tool that runs here; the
+# TARGET runtime it embeds is chosen separately via ARCH= below). The old
+# hardcoded x86_64 download exited 126 ('cannot execute') the first time this
+# script ran on a native aarch64 runner (fork release CI).
+TOOL_ARCH="$(uname -m)"
 if command -v appimagetool &>/dev/null; then
     APPIMAGETOOL="$(command -v appimagetool)"
-elif [ -x "${OUTPUT_DIR}/appimagetool-x86_64.AppImage" ]; then
-    APPIMAGETOOL="${OUTPUT_DIR}/appimagetool-x86_64.AppImage"
+elif [ -x "${OUTPUT_DIR}/appimagetool-${TOOL_ARCH}.AppImage" ]; then
+    APPIMAGETOOL="${OUTPUT_DIR}/appimagetool-${TOOL_ARCH}.AppImage"
 else
-    echo "Downloading appimagetool..."
-    curl -fsSL -o "${OUTPUT_DIR}/appimagetool-x86_64.AppImage" \
-        "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
-    chmod +x "${OUTPUT_DIR}/appimagetool-x86_64.AppImage"
-    APPIMAGETOOL="${OUTPUT_DIR}/appimagetool-x86_64.AppImage"
+    echo "Downloading appimagetool (${TOOL_ARCH})..."
+    curl -fsSL -o "${OUTPUT_DIR}/appimagetool-${TOOL_ARCH}.AppImage" \
+        "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${TOOL_ARCH}.AppImage"
+    chmod +x "${OUTPUT_DIR}/appimagetool-${TOOL_ARCH}.AppImage"
+    APPIMAGETOOL="${OUTPUT_DIR}/appimagetool-${TOOL_ARCH}.AppImage"
 fi
 
 OUTPUT_APPIMAGE="${OUTPUT_DIR}/OpenhpsdrZeus-${VERSION}-linux-${APPIMAGE_ARCH}.AppImage"

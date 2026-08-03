@@ -32,6 +32,7 @@ concurrency:
 
 jobs:
   nightly:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build + publish nightly
     # Pin the reusable workflow to @develop, NOT a local `./` path. A local path
     # resolves release.yml at the CALLER's commit — which for a scheduled run is

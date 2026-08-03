@@ -59,6 +59,7 @@ on:
 
 jobs:
   determine-version:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Determine version
     runs-on: ubuntu-latest
     outputs:
@@ -188,6 +189,7 @@ jobs:
   # for the per-arch CRT linkage / vcpkg triplet / WDSP_WITH_NR4 reasoning.
 
   build-native-windows:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build native WDSP (windows-${{ matrix.arch }})
     needs: determine-version
     # Pinned: windows-latest rolled past the VS 2022 image ~2026-06-10 and the
@@ -315,6 +317,7 @@ jobs:
           path: Zeus.Plugins.Host/runtimes/win-${{ matrix.arch }}/native/
 
   build-native-linux:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build native WDSP (linux-x64)
     needs: determine-version
     # Pinned to ubuntu-22.04 (glibc 2.35) to match release.yml's linux build
@@ -399,6 +402,7 @@ jobs:
           path: staged/linux-x64/
 
   build-native-macos:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build native WDSP (osx-arm64)
     needs: determine-version
     runs-on: macos-latest  # Apple Silicon — matches release.yml macos-arm64 host
@@ -502,6 +506,7 @@ jobs:
           path: staged/osx-arm64/
 
   build-native-linux-arm64:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build native WDSP (linux-arm64, cross-compile)
     needs: determine-version
     # Cross-compile on the ubuntu-22.04 x64 runner using aarch64-linux-gnu-gcc
@@ -616,6 +621,7 @@ jobs:
   # its publish payload so the manual ships *inside* each installer. Built fresh
   # from the chapter sources each release — no PDF binary committed to git.
   build-manual:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build operator's manual PDF
     needs: determine-version
     runs-on: ubuntu-latest
@@ -646,6 +652,7 @@ jobs:
           if-no-files-found: error
 
   build-release:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: Build (${{ matrix.config.os }})
     needs:
       - determine-version

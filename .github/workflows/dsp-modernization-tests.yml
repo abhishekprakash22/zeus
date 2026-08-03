@@ -21,6 +21,7 @@ on:
 
 jobs:
   dsp-modernization-tests:
+    if: github.repository == 'OpenHPSDR-Zeus-org/openhpsdr-zeus'
     name: DSP modernization tests (ubuntu-latest)
     runs-on: ubuntu-latest
     steps:

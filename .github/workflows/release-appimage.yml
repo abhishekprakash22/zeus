@@ -1,0 +1,84 @@
+# Build and publish the Linux arm64 AppImages + the updater manifest on every
+# version tag, so a fork can self-update from its own GitHub Releases.
+#
+#   git tag v0.14.0 && git push origin v0.14.0
+#     -> Release "v0.14.0" with:
+#          OpenhpsdrZeus-0.14.0-linux-aarch64.AppImage
+#          OpenhpsdrZeus-Server-0.14.0-linux-aarch64.AppImage
+#          latest.json        (RepoUpdateService manifest schema)
+#
+# The appliance then points the STOCK updater at the stable alias URL:
+#   ZEUS_UPDATE_MANIFEST_URL=https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+# `releases/latest/download/<asset>` always redirects to the newest release,
+# so the URL never changes across versions. The manifest is produced by the
+# same tools/update-download-manifest.mjs the upstream pipeline uses, so the
+# fields (version/assets/url/size/sha256) match RepoUpdateService exactly and
+# the release guards (sha256 verification) stay effective.
+
+name: release-appimage
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Native arm64 runner — the existing installer script runs unmodified.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Resolve version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build AppImages (linux-arm64)
+        env:
+          # appimagetool is itself an AppImage; runners have no FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          bash installers/create-linux-desktop-appimage.sh \
+            "${{ steps.ver.outputs.version }}" linux-arm64
+          ls -la installers/output/*.AppImage
+
+      - name: Generate updater manifest (latest.json)
+        env:
+          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          ZEUS_DOWNLOAD_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p /tmp/release-artifacts
+          cp installers/output/*.AppImage /tmp/release-artifacts/
+          echo '{}' > /tmp/empty-manifest.json
+          node tools/update-download-manifest.mjs \
+            /tmp/release-artifacts /tmp/empty-manifest.json /tmp/release-artifacts/latest.json
+          # The tool emits upstream's CDN layout (…/versions/X.Y.Z/<file>);
+          # GitHub release assets are flat under the release tag. Rewrite each
+          # asset url to ${DOWNLOAD_BASE_URL}/<filename>.
+          node -e '
+            const fs = require("fs");
+            const p = "/tmp/release-artifacts/latest.json";
+            const m = JSON.parse(fs.readFileSync(p, "utf8"));
+            const base = process.env.DOWNLOAD_BASE_URL.replace(/\/$/, "");
+            for (const a of m.assets) a.url = base + "/" + a.filename;
+            fs.writeFileSync(p, JSON.stringify(m, null, 2));
+          '
+          cat /tmp/release-artifacts/latest.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            /tmp/release-artifacts/*.AppImage
+            /tmp/release-artifacts/latest.json
+          generate_release_notes: true

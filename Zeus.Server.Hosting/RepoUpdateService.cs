@@ -40,7 +40,14 @@ public sealed partial class RepoUpdateService
     // The production download manifest. Published from `main` only (see
     // publish-downloads.yml + tools/update-download-manifest.mjs). `latest.json`
     // is the newest version entry; overridable for tests / staging via env.
-    internal const string DefaultManifestUrl = "https://downloads.openhpsdrzeus.com/latest.json";
+    // Fork default: this branch releases from its own GitHub (see
+    // .github/workflows/release-appimage.yml); the stable latest-release
+    // alias below always redirects to the newest tag's latest.json, so a
+    // plain double-clicked AppImage self-updates from the fork with zero
+    // configuration. ZEUS_UPDATE_MANIFEST_URL still overrides (including
+    // back to upstream's https://downloads.openhpsdrzeus.com/latest.json).
+    internal const string DefaultManifestUrl =
+        "https://github.com/abhishekprakash22/zeus/releases/latest/download/latest.json";
 
     // Operator-facing landing page used when no platform asset is present in the
     // manifest (e.g. an arch we don't yet build) — "Update now" then opens this.

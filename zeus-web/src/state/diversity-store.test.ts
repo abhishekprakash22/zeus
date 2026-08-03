@@ -12,7 +12,7 @@ function mockFetch() {
   const calls: unknown[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn((url: string, init?: RequestInit) => {
+    vi.fn((_url: string, init?: RequestInit) => {
       calls.push(JSON.parse(String(init?.body ?? '{}')));
       return Promise.resolve(new Response('{}'));
     }),

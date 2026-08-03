@@ -75,6 +75,7 @@ import { UrlEmbedPanel } from './panels/UrlEmbedPanel';
 import { LanBrowserPanel } from './panels/LanBrowserPanel';
 import { ChatPanel } from './panels/ChatPanel';
 import { LightningMapPanel } from './panels/LightningMapPanel';
+import { DiversityPanel } from '../components/DiversityPanel';
 
 export type PanelCategory =
   | 'spectrum'
@@ -241,6 +242,18 @@ export const PANELS: Record<string, PanelDef> = {
     fillNative: true,
     minW: 4,
     minH: 6,
+  },
+  diversity: {
+    id: 'diversity',
+    name: 'Diversity · Null Steering',
+    category: 'meters',
+    tags: ['diversity', 'null', 'combiner', 'qrm', 'rx2', 'phase'],
+    component: DiversityPanel,
+    // Fixed vertical stack (toolbar / pad / readout / memory strip) sized by
+    // its own CSS; the pad canvas fills whatever the tile gives it.
+    fillNative: true,
+    minW: 4,
+    minH: 8,
   },
   smeter: {
     id: 'smeter',

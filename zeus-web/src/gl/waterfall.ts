@@ -166,12 +166,15 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
   // or weak GPU frequently omits this extension. Fall back to NEAREST so the
   // waterfall still renders — we lose only sub-pixel-smooth horizontal glide,
   // not the data.
-  // History is R16F (see below): LINEAR filtering on half-float textures is
-  // core WebGL2 — no OES_texture_float_linear needed. This both restores
-  // smooth sampling on GPUs that omit the extension (the Pi's V3D — the
-  // long-standing "float_linear unsupported → NEAREST fallback" notice) and
-  // is moot for the bandwidth story below.
-  const histMagFilter = gl.LINEAR;
+  // NEAREST, deliberately — even though R16F makes LINEAR legal in core
+  // WebGL2. Field-measured on the Pi 5 (V3D): LINEAR is 4 fetches + lerp per
+  // sample, quadrupling fetch traffic and SWAMPING the 2× half-float saving —
+  // enabling it doubled GPU load across the board (25-30%→55-60% at session
+  // start). On bandwidth-bound GPUs the filter, not the texel size, is the
+  // dominant knob. NEAREST R16F is half the bandwidth of the original
+  // NEAREST R32F, which is the whole optimization. (A quality toggle for
+  // desktop-class GPUs can flip this later.)
+  const histMagFilter = gl.NEAREST;
   const dbg = gl.getExtension('WEBGL_debug_renderer_info');
   const caps: WfGlCaps = {
     floatLinear: !!floatExt,
@@ -185,7 +188,7 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
   console.info(
     `[waterfall] gl caps: float_linear=${caps.floatLinear} ` +
       `color_buffer_float=${caps.colorBufferFloat} ` +
-      `magFilter=LINEAR(R16F core) gpu=${caps.gpu}`,
+      `magFilter=NEAREST(R16F, bandwidth) gpu=${caps.gpu}`,
   );
 
   const drawProg = buildProgram(gl, WF_VS, WF_FS);

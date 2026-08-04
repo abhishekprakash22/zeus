@@ -1,0 +1,6 @@
+DeepCW neural CW decoder — model_en.onnx, model_en.json and the
+preprocessing/CTC contract are the work of the DeepCW project (e04),
+https://github.com/e04/deepcw-engine, licensed AGPL-3.0-or-later.
+Zeus (GPL-2.0-or-later) combines with this work under GPLv3 §13; the
+complete corresponding source of this build is published at the fork
+repository. ONNX Runtime Web (MIT) © Microsoft.

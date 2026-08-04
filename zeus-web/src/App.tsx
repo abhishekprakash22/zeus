@@ -87,6 +87,8 @@ import { QrzAccessGate } from './components/QrzAccessGate';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
 import { DiversityWindow, DiversityToggleButton } from './components/DiversityWindow';
 import { SplitButton, RitButton } from './components/RitSplitButtons';
+import { CwDecodeController } from './components/CwDecodeController';
+import { CwDecodeWindow, CwDecodeToggleButton } from './components/CwDecodeWindow';
 import { RogerBeepButton } from './components/RogerBeepButton';
 import { RotatorStatusPill } from './components/RotatorStatusPill';
 import type { SettingsTabId } from './components/SettingsMenu';
@@ -1273,6 +1275,11 @@ export default function App() {
           disengages an active null. */}
       <DiversityWindow />
 
+      {/* Neural CW decoder (DeepCW): headless controller taps the RX audio
+          bus while enabled; the pop-out shows the streaming transcript. */}
+      <CwDecodeController />
+      <CwDecodeWindow />
+
       {/* Diversity pop-out — summoned by the transport DIV button; the
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
@@ -1586,6 +1593,7 @@ export default function App() {
               returns when a memory feature actually exists. */}
           <SplitButton />
           <RitButton />
+          <CwDecodeToggleButton />
         </div>
         <div className="transport-status">
           <WorkspaceZoomControls />

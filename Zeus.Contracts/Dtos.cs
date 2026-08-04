@@ -1125,6 +1125,11 @@ public sealed record StateDto(
     bool PsAuto = true,             // continuous adapt by default once armed
     bool PsSingle = false,          // one-shot SetPSControl(1,1,0,0)
     bool PsAutoAttenuate = true,
+    // Fork-retained (WDSP 2.0 made these calcc-internal; the settings/API
+    // shape stays so persisted profiles and clients keep round-tripping —
+    // see the layer-1 commit's compat decision):
+    bool PsPtol = false,            // false = strict 0.4; true = relax 0.8
+    string PsIntsSpiPreset = "16/256",
     double PsMoxDelaySec = 0.2,
     double PsLoopDelaySec = 0.0,
     double PsAmpDelayNs = 150.0,

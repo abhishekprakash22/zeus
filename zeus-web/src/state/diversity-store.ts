@@ -35,6 +35,9 @@ export interface DiversityState {
   phaseDeg: number; // 0..360
   sourceRx: number; // source receiver index (default 1 = RX2/ADC1)
   mems: (DiversityMemory | null)[];
+  /** Pop-out visibility (console DIV button / Escape). Not persisted. */
+  panelOpen: boolean;
+  setPanelOpen: (open: boolean) => void;
   setEnabled: (on: boolean) => void;
   setSourceRx: (rx: number) => void;
   setWeight: (gain: number, phaseDeg: number) => void;
@@ -142,7 +145,9 @@ export const useDiversityStore = create<DiversityState>((set, get) => ({
   phaseDeg: 0,
   sourceRx: 1,
   mems: loadMems(),
+  panelOpen: false,
 
+  setPanelOpen: (open) => set({ panelOpen: open }),
   setEnabled: (on) => {
     set({ enabled: on });
     post(buildDiversityPayload(get()));

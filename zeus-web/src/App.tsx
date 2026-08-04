@@ -85,6 +85,7 @@ import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
 import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
+import { DiversityWindow, DiversityToggleButton } from './components/DiversityWindow';
 import { RogerBeepButton } from './components/RogerBeepButton';
 import { RotatorStatusPill } from './components/RotatorStatusPill';
 import type { SettingsTabId } from './components/SettingsMenu';
@@ -1265,6 +1266,16 @@ export default function App() {
         <FreeDvWindow />
         <ProfileOverlayHost />
         <DigitalWindow />
+
+      {/* Diversity pop-out — summoned by the transport DIV button; the
+          combiner itself is backend state, so closing the window never
+          disengages an active null. */}
+      <DiversityWindow />
+
+      {/* Diversity pop-out — summoned by the transport DIV button; the
+          combiner itself is backend state, so closing the window never
+          disengages an active null. */}
+      <DiversityWindow />
       </div>
       </SpectrumWheelActionsContext.Provider>
       </WorkspaceContext.Provider>
@@ -1543,6 +1554,16 @@ export default function App() {
           null when no digital mode is engaged. */}
       <DigitalWindow />
 
+      {/* Diversity pop-out — summoned by the transport DIV button; the
+          combiner itself is backend state, so closing the window never
+          disengages an active null. */}
+      <DiversityWindow />
+
+      {/* Diversity pop-out — summoned by the transport DIV button; the
+          combiner itself is backend state, so closing the window never
+          disengages an active null. */}
+      <DiversityWindow />
+
       {/* Transport — MOX/TUN + audio + mic + macro buttons on the left,
           PA/PRE chips, then the per-radio status (radio IP, rotator, QRZ)
           and layout reset on the right. This is the single bottom-pinned
@@ -1558,6 +1579,8 @@ export default function App() {
           <MicMeter />
           <div className="transport-sep hide-mobile" />
           <CtunButton />
+          <DiversityToggleButton />
+          <DiversityToggleButton />
           <button type="button" className="btn ghost hide-mobile">SPLIT</button>
           <button type="button" className="btn ghost hide-mobile">RIT</button>
           <button type="button" className="btn ghost hide-mobile">SAVE MEM</button>

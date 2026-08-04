@@ -25,19 +25,12 @@ import { useConnectionStore } from '../state/connection-store';
 const GMAX = 2;
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 
-interface TrailPoint {
-  phase: number;
-  gain: number;
-  dbm: number;
-}
-
 export function DiversityPanel() {
   const st = useDiversityStore();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [armSave, setArmSave] = useState(false);
-  // trail + rolling meter window live in refs — redrawn per frame, never state
-  const trail = useRef<TrailPoint[]>([]);
+  // rolling meter window lives in a ref — read per frame, never state
   const meterWin = useRef<{ min: number; max: number }>({ min: -100, max: -60 });
   const glide = useRef<{ phase: number; gain: number } | null>(null);
   const dragging = useRef(false);
@@ -146,10 +139,6 @@ export function DiversityPanel() {
       if (Number.isFinite(dbm)) {
         win.min = Math.min(win.min * 0.999 + dbm * 0.001, dbm);
         win.max = Math.max(win.max * 0.999 + dbm * 0.001, dbm);
-        if (s.enabled && (dragging.current || glide.current)) {
-          trail.current.push({ phase: s.phaseDeg, gain: s.gain, dbm });
-          if (trail.current.length > 900) trail.current.shift();
-        }
       }
       const quiet = (v: number) =>
         win.max - win.min < 3 ? 0.5 : clamp((win.max - v) / (win.max - win.min), 0, 1);
@@ -175,15 +164,6 @@ export function DiversityPanel() {
       g.fillText('g=1', cx + R * 0.5 + 3, cy - 3);
       g.fillText('g=2', cx + R + 3, cy - 3);
       g.fillText('0°', cx - 6, cy - R - 4);
-      // heat-trail
-      for (const p of trail.current) {
-        const u = quiet(p.dbm);
-        const [x, y] = toXY(c, p.phase, p.gain);
-        g.fillStyle = `rgba(${(57 + (255 - 57) * (1 - u)) | 0},${u > 0.5 ? 217 : 150},${
-          u > 0.5 ? 138 : 90
-        },${0.1 + 0.25 * u})`;
-        g.fillRect(x - 2, y - 2, 4, 4);
-      }
       // memory diamonds
       s.mems.forEach((m) => {
         if (!m) return;

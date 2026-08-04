@@ -1580,10 +1580,10 @@ export default function App() {
           <div className="transport-sep hide-mobile" />
           <CtunButton />
           <DiversityToggleButton />
-          <DiversityToggleButton />
-          <button type="button" className="btn ghost hide-mobile">SPLIT</button>
-          <button type="button" className="btn ghost hide-mobile">RIT</button>
-          <button type="button" className="btn ghost hide-mobile">SAVE MEM</button>
+          {/* SPLIT / RIT / SAVE MEM removed: upstream placeholder buttons with
+              no handlers — never functional. The transport wrap made them
+              visible on the kiosk and they read as broken (field report).
+              Reintroduce individually when each feature actually exists. */}
         </div>
         <div className="transport-status">
           <WorkspaceZoomControls />

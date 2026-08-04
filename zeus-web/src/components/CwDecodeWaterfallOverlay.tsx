@@ -42,7 +42,6 @@ export function CwDecodeWaterfallOverlay() {
   const overlayEnabled = useCwDecodeStore((s) => s.overlayEnabled);
   const status = useCwDecodeStore((s) => s.status);
   const transcript = useCwDecodeStore((s) => s.transcript);
-  const recentChars = useCwDecodeStore((s) => s.recentChars);
   const lastCharAt = useCwDecodeStore((s) => s.lastCharAt);
   const setPanelOpen = useCwDecodeStore((s) => s.setPanelOpen);
   const vfoHz = useConnectionStore((s) => s.vfoHz);
@@ -74,14 +73,43 @@ export function CwDecodeWaterfallOverlay() {
         <span className="cwdec-callout-tail" />
       </div>
       <div className="cwdec-ride" style={{ left: `${leftPct}%` }}>
-        {recentChars.map((c) =>
-          c.ch === ' ' ? null : (
-            <span key={c.id} className="cwdec-ride-ch">
-              {c.ch}
-            </span>
-          ),
-        )}
-      </div>
+              </div>
+    </div>
+  );
+}
+
+
+/** Mode B, correctly homed (field report: chars fell out of the pan and
+ *  vanished behind the waterfall canvas). This layer mounts INSIDE
+ *  WaterfallSurface, so inset:0 is exactly the waterfall for every renderer
+ *  (WebGL and the WebGPU heightfield) and every layout (single, grid,
+ *  stitched): decoded characters are born at the top of the waterfall at the
+ *  tuned signal's x-position and ride down OVER the scroll, as designed. */
+export function CwDecodeDriftLayer({ receiver }: { receiver?: number }) {
+  const enabled = useCwDecodeStore((s) => s.enabled);
+  const overlayEnabled = useCwDecodeStore((s) => s.overlayEnabled);
+  const recentChars = useCwDecodeStore((s) => s.recentChars);
+  const vfoHz = useConnectionStore((s) => s.vfoHz);
+  const { centerHz, spanHz } = usePanGeometry();
+
+  if ((receiver ?? 0) !== 0) return null;
+  if (!enabled || !overlayEnabled || spanHz <= 0) return null;
+  const frac = (vfoHz - (centerHz - spanHz / 2)) / spanHz;
+  if (frac < 0.02 || frac > 0.98) return null;
+
+  return (
+    <div className="cwdec-ovl cwdec-drift-layer" aria-hidden>
+      {recentChars.map((c) =>
+        c.ch === ' ' ? null : (
+          <span
+            key={c.id}
+            className="cwdec-fall"
+            style={{ left: `calc(${frac * 100}% + 10px)` }}
+          >
+            {c.ch}
+          </span>
+        ),
+      )}
     </div>
   );
 }

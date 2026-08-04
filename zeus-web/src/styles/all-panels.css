@@ -1837,6 +1837,8 @@
 .cwdec-ride-ch { position: absolute; left: 8px; top: 0;
   font: bold 11px var(--font-mono, monospace); color: #39d98a;
   animation: cwdecFall 9s linear forwards; will-change: transform, opacity; }
+.cwdec-drift-layer { z-index: 12; overflow: hidden; }
+.cwdec-drift-layer .cwdec-fall { top: 2px; }
 @keyframes cwdecFall {
   0%   { transform: translateY(0);      opacity: .95; }
   100% { transform: translateY(240px);  opacity: 0; }

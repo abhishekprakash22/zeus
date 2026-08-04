@@ -23,6 +23,7 @@
 
 import { useState, type ComponentProps } from 'react';
 import { Waterfall } from './Waterfall';
+import { CwDecodeDriftLayer } from './CwDecodeWaterfallOverlay';
 import { WaterfallHeightfield } from './WaterfallHeightfield';
 import { isWebGpuWaterfallEnabled } from '../gl/webgpu/flag';
 import { useCapabilitiesStore } from '../state/capabilities-store';
@@ -57,18 +58,26 @@ export function WaterfallSurface(props: WaterfallProps) {
     isWebGpuWaterfallEnabled(!preferLowPowerWaterfall) &&
     !heightfieldUnavailable;
 
-  if (useHeightfield) {
-    return (
-      <WaterfallHeightfield
-        receiver={props.receiver}
-        stitched={props.stitched}
-        foreground={props.foreground}
-        touchMode={props.touchMode}
-        tuneReceiver={props.tuneReceiver}
-        dbScale={props.dbScale}
-        onUnavailable={() => setHeightfieldUnavailable(true)}
-      />
-    );
-  }
-  return <Waterfall {...props} />;
+  // The drift layer needs a positioned box that is EXACTLY the waterfall,
+  // whichever renderer draws it — hence the wrapper here rather than inside
+  // either renderer. min sizes 0 keep flex/grid parents' sizing untouched.
+  const surface = useHeightfield ? (
+    <WaterfallHeightfield
+      receiver={props.receiver}
+      stitched={props.stitched}
+      foreground={props.foreground}
+      touchMode={props.touchMode}
+      tuneReceiver={props.tuneReceiver}
+      dbScale={props.dbScale}
+      onUnavailable={() => setHeightfieldUnavailable(true)}
+    />
+  ) : (
+    <Waterfall {...props} />
+  );
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', minWidth: 0, minHeight: 0 }}>
+      {surface}
+      <CwDecodeDriftLayer receiver={typeof props.receiver === 'number' ? props.receiver : 0} />
+    </div>
+  );
 }

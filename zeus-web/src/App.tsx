@@ -1274,9 +1274,6 @@ export default function App() {
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
       <DiversityWindow />
-
-      {/* Neural CW decoder (DeepCW): headless controller taps the RX audio
-          bus while enabled; the pop-out shows the streaming transcript. */}
       <CwDecodeController />
       <CwDecodeWindow />
 
@@ -1284,6 +1281,8 @@ export default function App() {
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
       <DiversityWindow />
+      <CwDecodeController />
+      <CwDecodeWindow />
       </div>
       </SpectrumWheelActionsContext.Provider>
       </WorkspaceContext.Provider>
@@ -1566,11 +1565,15 @@ export default function App() {
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
       <DiversityWindow />
+      <CwDecodeController />
+      <CwDecodeWindow />
 
       {/* Diversity pop-out — summoned by the transport DIV button; the
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
       <DiversityWindow />
+      <CwDecodeController />
+      <CwDecodeWindow />
 
       {/* Transport — MOX/TUN + audio + mic + macro buttons on the left,
           PA/PRE chips, then the per-radio status (radio IP, rotator, QRZ)

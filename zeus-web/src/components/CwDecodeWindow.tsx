@@ -74,7 +74,24 @@ export function CwDecodeWindow() {
   return (
     <div
       className="cwdec-window"
-      style={{ left: pos.x, top: pos.y, width: WIDTH }}
+      style={{
+        // Critical layout inlined: the pop-out must be a fixed overlay even
+        // if a stale service-worker cache serves last release's stylesheet
+        // (the exact failure that made v0.15.10's window invisible — it
+        // rendered unstyled in page flow, below the fold).
+        position: 'fixed',
+        left: pos.x,
+        top: pos.y,
+        width: WIDTH,
+        zIndex: 420,
+        background: '#101318',
+        border: '1px solid #31353d',
+        borderRadius: 8,
+        boxShadow: '0 12px 40px rgba(0,0,0,.55)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
       role="dialog"
       aria-label="Neural CW decoder"
     >
@@ -116,18 +133,13 @@ export function CwDecodeWindow() {
  *  decoding is live even if the window is closed. */
 export function CwDecodeToggleButton() {
   const enabled = useCwDecodeStore((s) => s.enabled);
-  const open = useCwDecodeStore((s) => s.panelOpen);
   const setEnabled = useCwDecodeStore((s) => s.setEnabled);
-  const setPanelOpen = useCwDecodeStore((s) => s.setPanelOpen);
   return (
     <button
       type="button"
       className={`btn ghost cwdec-toggle ${enabled ? 'engaged' : ''}`}
-      title="Neural CW decoder (DeepCW) — decodes the tuned signal's audio"
-      onClick={() => {
-        if (!enabled) setEnabled(true);
-        else setPanelOpen(!open);
-      }}
+      title="Neural CW decoder (DeepCW) — press to start/stop decoding the tuned signal"
+      onClick={() => setEnabled(!enabled)}
     >
       CW⌁
     </button>

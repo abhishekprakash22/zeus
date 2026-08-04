@@ -35,8 +35,10 @@ export const useCwDecodeStore = create<CwDecodeState>((set) => ({
   error: null,
   transcript: '',
   lastCharAt: 0,
+  // ON opens the panel; OFF closes it too — the transport button is a true
+  // toggle (press = on+window, press again = fully off).
   setEnabled: (on) =>
-    set((s) => ({ enabled: on, panelOpen: on ? true : s.panelOpen, status: on ? s.status : 'off' })),
+    set((s) => ({ enabled: on, panelOpen: on, status: on ? s.status : 'off' })),
   setPanelOpen: (open) => set({ panelOpen: open }),
   setStatus: (status, error = null) => set({ status, error }),
   appendChars: (text) =>

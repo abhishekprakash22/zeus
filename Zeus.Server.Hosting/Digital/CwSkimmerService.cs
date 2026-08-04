@@ -441,7 +441,9 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
                     _sin[b * _fftLen + n] = (float)Math.Sin(a);
                 }
 
-            var opts = new SessionOptions { IntraOpNumThreads = 2 };
+            // Fully qualified: ASP.NET's Microsoft.AspNetCore.Builder also
+            // exports a SessionOptions and both namespaces are in scope.
+            var opts = new Microsoft.ML.OnnxRuntime.SessionOptions { IntraOpNumThreads = 2 };
             _session = new InferenceSession(_modelPath, opts);
             ModelAvailable = true;
             _log.LogInformation("cw-skim: model loaded from {Path}", _modelPath);

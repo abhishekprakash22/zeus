@@ -283,6 +283,7 @@ export type AdcProtectionConfigDto = {
   warningThreshold: number;
   magnitudeSoftLimit: number;
   releaseHoldMs: number;
+  predictive: boolean;
 };
 
 export const ADC_PROTECTION_CONFIG_DEFAULT: AdcProtectionConfigDto = {
@@ -295,6 +296,7 @@ export const ADC_PROTECTION_CONFIG_DEFAULT: AdcProtectionConfigDto = {
   warningThreshold: 3,
   magnitudeSoftLimit: 0,
   releaseHoldMs: 2000,
+  predictive: true,
 };
 
 export type AdcProtectionStatusDto = {
@@ -2380,6 +2382,10 @@ function normalizeAdcProtectionConfig(raw: unknown): AdcProtectionConfigDto {
       typeof r.enabled === 'boolean'
         ? r.enabled
         : ADC_PROTECTION_CONFIG_DEFAULT.enabled,
+    predictive:
+      typeof r.predictive === 'boolean'
+        ? r.predictive
+        : ADC_PROTECTION_CONFIG_DEFAULT.predictive,
     attackMs:
       typeof r.attackMs === 'number'
         ? r.attackMs

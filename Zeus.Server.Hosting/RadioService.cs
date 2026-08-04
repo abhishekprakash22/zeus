@@ -254,6 +254,51 @@ public sealed class RadioService : IDisposable
     private int _adcOverloadLevel;          // 0..5, Thetis-style "red lamp" counter
     private bool _overloadSeenInWindow;     // any overload since last tick
     private byte _lastAdcOverloadBits;
+    // Predictive S-ATT window state (engine parity). Window flags accumulate
+    // between policy ticks; the max magnitude drives the whole-dB step.
+    private bool _hardOverloadSeenInWindow;
+    private bool _softMagnitudeSeenInWindow;
+    private bool _validMagnitudeSeenInWindow;
+    private ushort _maxMagnitudeSeenInWindow;
+    private bool _predictiveMagnitudeControlActive;
+    private long _lastAttAttackMs = long.MinValue;
+
+    // Adaptive default zones (raw 16-bit magnitude): attack just under the
+    // clip point, target -2 dB, release -5 dB — station-engine constants.
+    private const int AdaptiveAttackMagnitude = 26_029;
+    private const int AdaptiveTargetMagnitude = 20_676;
+    private const int AdaptiveReleaseMagnitude = 14_638;
+
+    private static int MagnitudeAttackStepDb(int maxMagnitude, int targetMagnitude, int floor)
+    {
+        if (maxMagnitude <= 0 || targetMagnitude <= 0 || maxMagnitude <= targetMagnitude)
+            return floor;
+        // Smallest whole decibel that seats the observed peak at/below Target.
+        double excessDb = 20.0 * Math.Log10(maxMagnitude / (double)targetMagnitude);
+        return Math.Max(floor, (int)Math.Ceiling(excessDb));
+    }
+
+    private static (int Attack, int Target, int Release) AdcMagnitudeZones(int configuredSoftLimit)
+    {
+        if (configuredSoftLimit <= 0)
+            return (AdaptiveAttackMagnitude, AdaptiveTargetMagnitude, AdaptiveReleaseMagnitude);
+        // Operator override: hysteresis expressed in dB so it scales over the
+        // full ADC range; Ceiling so an exact 2/5 dB boundary never costs a
+        // spurious extra whole-dB step.
+        int attack = configuredSoftLimit;
+        int target = Math.Max(1, (int)Math.Ceiling(attack * Math.Pow(10.0, -2.0 / 20.0)));
+        int release = Math.Max(1, (int)Math.Ceiling(attack * Math.Pow(10.0, -5.0 / 20.0)));
+        return (attack, target, release);
+    }
+
+    private void ResetAdcProtectionWindowNoLock()
+    {
+        _overloadSeenInWindow = false;
+        _hardOverloadSeenInWindow = false;
+        _softMagnitudeSeenInWindow = false;
+        _validMagnitudeSeenInWindow = false;
+        _maxMagnitudeSeenInWindow = 0;
+    }
     private ushort? _lastAdc0MaxMagnitude;
     private ushort? _lastAdc1MaxMagnitude;
     private ushort _adc0MaxMagnitudeAtOverload;
@@ -563,7 +608,8 @@ public sealed class RadioService : IDisposable
             MaxOffsetDb: rsSnap?.AdcProtectionMaxOffsetDb ?? 31,
             WarningThreshold: rsSnap?.AdcProtectionWarningThreshold ?? 3,
             MagnitudeSoftLimit: rsSnap?.AdcProtectionMagnitudeSoftLimit ?? 0,
-            ReleaseHoldMs: rsSnap?.AdcProtectionReleaseHoldMs ?? 2000));
+            ReleaseHoldMs: rsSnap?.AdcProtectionReleaseHoldMs ?? 2000,
+            Predictive: rsSnap?.AdcProtectionPredictive ?? true));
 
         // Restore per-mode-family filter memory from snapshot if available so
         // an AM→USB mode-switch at startup recalls the last SSB width, not the
@@ -2504,7 +2550,8 @@ public sealed class RadioService : IDisposable
                 MaxOffsetDb: req.MaxOffsetDb ?? _adcProtection.MaxOffsetDb,
                 WarningThreshold: req.WarningThreshold ?? _adcProtection.WarningThreshold,
                 MagnitudeSoftLimit: req.MagnitudeSoftLimit ?? _adcProtection.MagnitudeSoftLimit,
-                ReleaseHoldMs: req.ReleaseHoldMs ?? _adcProtection.ReleaseHoldMs));
+                ReleaseHoldMs: req.ReleaseHoldMs ?? _adcProtection.ReleaseHoldMs,
+                Predictive: req.Predictive ?? _adcProtection.Predictive));
 
             if (next != _adcProtection)
             {
@@ -4481,6 +4528,7 @@ public sealed class RadioService : IDisposable
                 TxFilterHighHz = snap.TxFilterHighHz,
                 FilterPresetName = snap.FilterPresetName,
                 AutoAttEnabled = snap.AutoAttEnabled,
+                AdcProtectionPredictive = adcProtection.Predictive,
                 AdcProtectionAttackMs = adcProtection.AttackMs,
                 AdcProtectionReleaseMs = adcProtection.ReleaseMs,
                 AdcProtectionAttackStepDb = adcProtection.AttackStepDb,
@@ -4921,9 +4969,126 @@ public sealed class RadioService : IDisposable
                 _adc1MaxMagnitudeAtOverload = adc1;
 
             if (!_state.AutoAttEnabled) return;
-            if (_mox) return;   // TX-side ATT is owned by a different code path
+            if (_mox)
+            {
+                // TX-side ATT is owned by a different code path. Telemetry
+                // arriving around a TX/RX transition can describe the old
+                // signal path — reset the window so it can neither attack nor
+                // release RX S-ATT (engine parity).
+                ResetAdcProtectionWindowNoLock();
+                _lastTickMs = long.MinValue;
+                return;
+            }
 
             var cfg = _adcProtection;
+            bool haveMagnitude = adc0MaxMagnitude.HasValue || adc1MaxMagnitude.HasValue;
+
+            if (cfg.Predictive && haveMagnitude)
+            {
+                // ---- Predictive S-ATT (engine parity): act on the raw ADC
+                // peak BEFORE the clip point, with zoned hysteresis and
+                // smallest-whole-dB steps. ----
+                // The single front-panel S-ATT control belongs to the primary
+                // RX: route telemetry through that receiver's physical ADC
+                // instead of OR-ing unrelated ADCs.
+                byte protectedAdc = ReceiverAdcSource(_state, 0) == 1 ? (byte)1 : (byte)0;
+                bool protectedHardOverload = (overloadBits & (1 << protectedAdc)) != 0;
+                ushort? protectedMagnitude = protectedAdc == 1 ? adc1MaxMagnitude : adc0MaxMagnitude;
+                bool validMagnitude = protectedMagnitude is > 0;
+                var zones = AdcMagnitudeZones(cfg.MagnitudeSoftLimit);
+                bool magnitudeSoftHit = validMagnitude && protectedMagnitude!.Value >= zones.Attack;
+
+                if (protectedHardOverload) { _overloadSeenInWindow = true; _hardOverloadSeenInWindow = true; }
+                if (magnitudeSoftHit) { _overloadSeenInWindow = true; _softMagnitudeSeenInWindow = true; }
+                if (validMagnitude) _validMagnitudeSeenInWindow = true;
+                _maxMagnitudeSeenInWindow = Math.Max(_maxMagnitudeSeenInWindow, protectedMagnitude ?? (ushort)0);
+
+                // First threat after quiet is handled immediately; every actual
+                // attack step shares one cooldown so threshold chatter can't
+                // rail the attenuator.
+                bool attackCooldownElapsed = _lastAttAttackMs == long.MinValue
+                    || nowMs - _lastAttAttackMs >= cfg.AttackMs;
+                bool immediateAttackDue = (protectedHardOverload || magnitudeSoftHit) && attackCooldownElapsed;
+                if (_lastTickMs == long.MinValue)
+                {
+                    _lastTickMs = nowMs;
+                    if (!immediateAttackDue) return;
+                }
+                else if (!immediateAttackDue)
+                {
+                    int predIntervalMs = _overloadSeenInWindow ? cfg.AttackMs : cfg.ReleaseMs;
+                    if (nowMs - _lastTickMs < predIntervalMs) return;
+                    _lastTickMs = nowMs;
+                }
+                else
+                {
+                    _lastTickMs = nowMs;
+                }
+
+                bool hardSeen = _hardOverloadSeenInWindow;
+                bool softSeen = _softMagnitudeSeenInWindow;
+                bool validSeen = _validMagnitudeSeenInWindow;
+                ushort maxSeen = _maxMagnitudeSeenInWindow;
+                ResetAdcProtectionWindowNoLock();
+
+                bool attackZone = hardSeen || softSeen;
+                bool holdZone = !attackZone && validSeen && maxSeen >= zones.Release;
+
+                if (attackZone)
+                {
+                    _lastOverloadMs = nowMs;
+                    if (validSeen) _predictiveMagnitudeControlActive = true;
+                    _adcOverloadLevel = Math.Min(5, _adcOverloadLevel + 1);
+
+                    // Cap by the remaining hardware range: auto shares the
+                    // physical attenuator with the manual S-ATT baseline.
+                    int maxDynamicOffset = Math.Min(cfg.MaxOffsetDb, HpsdrAtten.MaxDb - _atten.ClampedDb);
+                    if (_attOffsetDb < maxDynamicOffset)
+                    {
+                        int previousOffset = _attOffsetDb;
+                        int attackDb = cfg.AttackStepDb;
+                        if (validSeen)
+                            attackDb = MagnitudeAttackStepDb(maxSeen, zones.Target, attackDb);
+                        if (hardSeen)
+                            attackDb = Math.Max(4, attackDb); // hard overload = immediate rescue
+                        _attOffsetDb = Math.Min(maxDynamicOffset, _attOffsetDb + attackDb);
+                        if (_attOffsetDb > previousOffset)
+                            _lastAttAttackMs = nowMs;
+                    }
+                }
+                else if (holdZone)
+                {
+                    // Hysteresis band between Release and Attack: do not pump
+                    // the attenuator; every in-band observation restarts the
+                    // release hold.
+                    _lastOverloadMs = nowMs;
+                    if (_attOffsetDb > 0) _predictiveMagnitudeControlActive = true;
+                    if (_adcOverloadLevel > 0) _adcOverloadLevel--;
+                }
+                else if (!validSeen && _predictiveMagnitudeControlActive && _attOffsetDb > 0)
+                {
+                    // Once valid magnitude established predictive control, a
+                    // zero/missing word is loss of telemetry, not evidence of
+                    // a quiet ADC: freeze the offset until a valid
+                    // below-release sample permits controlled release.
+                    if (_adcOverloadLevel > 0) _adcOverloadLevel--;
+                }
+                else
+                {
+                    if (_adcOverloadLevel > 0) _adcOverloadLevel--;
+                    bool predHoldElapsed = _lastOverloadMs == long.MinValue
+                        || (nowMs - _lastOverloadMs) >= cfg.ReleaseHoldMs;
+                    if (predHoldElapsed && _attOffsetDb > 0)
+                        _attOffsetDb = Math.Max(0, _attOffsetDb - cfg.ReleaseStepDb);
+                    if (_attOffsetDb == 0)
+                        _predictiveMagnitudeControlActive = false;
+                }
+            }
+            else
+            {
+            // ---- Legacy hard-overload ramp (Predictive off, or no magnitude
+            // telemetry — Protocol 1 lands here and keeps the existing
+            // protection unchanged). ----
             bool magnitudeSoftHit = cfg.MagnitudeSoftLimit > 0
                 && ((adc0MaxMagnitude ?? 0) >= cfg.MagnitudeSoftLimit
                     || (adc1MaxMagnitude ?? 0) >= cfg.MagnitudeSoftLimit);
@@ -4971,6 +5136,7 @@ public sealed class RadioService : IDisposable
                     || (nowMs - _lastOverloadMs) >= cfg.ReleaseHoldMs;
                 if (holdElapsed && _attOffsetDb > 0)
                     _attOffsetDb = Math.Max(0, _attOffsetDb - cfg.ReleaseStepDb);
+            }
             }
 
             int effective = Math.Clamp(_atten.ClampedDb + _attOffsetDb, HpsdrAtten.MinDb, HpsdrAtten.MaxDb);

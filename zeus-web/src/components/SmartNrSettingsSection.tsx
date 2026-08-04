@@ -33,6 +33,8 @@ export function SmartNrSettingsSection() {
     aggressiveness,
     autoBlankerEnabled,
     autoNotchEnabled,
+    filterScoped,
+    weakSignalEvidence,
     maxBlankerThreshold,
     dwellSamples,
     status,
@@ -111,6 +113,24 @@ export function SmartNrSettingsSection() {
           />
           <span className="sig-switch-track" aria-hidden="true" />
           <span>Notch Helpers</span>
+        </label>
+        <label className="sig-switch" title="Judge NR evidence only inside the RX filter passband, so strong stations elsewhere on the pan can't steer it.">
+          <input
+            type="checkbox"
+            checked={filterScoped}
+            onChange={(e) => setSettings({ filterScoped: e.currentTarget.checked })}
+          />
+          <span className="sig-switch-track" aria-hidden="true" />
+          <span>In-Filter Judge</span>
+        </label>
+        <label className="sig-switch" title="Accumulate weak-signal evidence over time so a faint persistent carrier is recognized.">
+          <input
+            type="checkbox"
+            checked={weakSignalEvidence}
+            onChange={(e) => setSettings({ weakSignalEvidence: e.currentTarget.checked })}
+          />
+          <span className="sig-switch-track" aria-hidden="true" />
+          <span>Weak-Sig Evidence</span>
         </label>
         <button type="button" className="sig-reset-btn" onClick={resetSettings}>
           Reset

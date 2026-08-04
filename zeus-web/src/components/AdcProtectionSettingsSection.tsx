@@ -199,6 +199,19 @@ export function AdcProtectionSettingsSection() {
           <span className="sig-switch-track" aria-hidden="true" />
           <span>{draft.enabled ? 'Enabled' : 'Disabled'}</span>
         </label>
+          <label className="sig-switch" title="Act on the raw ADC peak before the clip point (P2 magnitude telemetry, zoned hold band, smallest-whole-dB steps). Off = legacy hard-overload ramp only.">
+            <input
+              type="checkbox"
+              checked={draft.predictive}
+              disabled={!draft.enabled}
+              onChange={(e) => {
+                dirty.current = true;
+                setDraft((prev) => ({ ...prev, predictive: e.currentTarget.checked }));
+              }}
+            />
+            <span className="sig-switch-track" aria-hidden="true" />
+            <span>Predictive (pre-clip)</span>
+          </label>
         <button type="button" className="sig-reset-btn" onClick={reset}>
           Reset
         </button>

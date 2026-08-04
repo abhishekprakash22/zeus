@@ -32,6 +32,8 @@ import { useSmartNrStore } from '../state/smart-nr-store';
 import { useTxStore } from '../state/tx-store';
 
 const SAMPLE_INTERVAL_MS = 1500;
+// Weak-signal evidence envelope (module-lifetime; resets with the page).
+const evidenceRef: { ema: Float32Array | null; out: Float32Array | null } = { ema: null, out: null };
 const PROFILE_SWITCH_DWELL_SAMPLES = 6;
 const APPLY_COOLDOWN_MS = 15000;
 const DSP_CAPABILITY_REFRESH_MS = 30000;
@@ -197,6 +199,63 @@ export function SmartNrController() {
       };
 
       const display = useDisplayStore.getState();
+      // Signal Intelligence: judge inside the RX filter passband. Slice the
+      // pan bins to [vfo+filterLow, vfo+filterHigh] so a strong station
+      // elsewhere on the panadapter cannot steer the NR decision for the
+      // signal actually being worked. Falls back to the full pan when the
+      // window is degenerate (<8 bins) or geometry is unknown.
+      let spectrumForNr = display.panValid ? display.panDb : null;
+      let filterWindow: { i0: number; i1: number; fullLen: number } | null = null;
+      if (
+        settings.filterScoped &&
+        spectrumForNr &&
+        display.hzPerPixel > 0 &&
+        display.width > 1
+      ) {
+        const startHz = Number(display.centerHz) - (display.width / 2) * display.hzPerPixel;
+        const loHz = conn.vfoHz + Math.min(conn.filterLowHz, conn.filterHighHz);
+        const hiHz = conn.vfoHz + Math.max(conn.filterLowHz, conn.filterHighHz);
+        const fullLen = spectrumForNr.length;
+        const clampBin = (v: number) => Math.max(0, Math.min(fullLen, Math.round(v)));
+        const i0 = clampBin((loHz - startHz) / display.hzPerPixel);
+        const i1 = clampBin((hiHz - startHz) / display.hzPerPixel);
+        if (i1 - i0 >= 8) {
+          filterWindow = { i0, i1, fullLen };
+          spectrumForNr = spectrumForNr.subarray(i0, i1);
+        }
+      }
+      // Signal Intelligence: weak-signal evidence accumulates over time — a
+      // per-bin fast-rise / slow-decay envelope over the confidence map, so a
+      // faint carrier persisting a few dB above the noise earns recognition
+      // that a single frame's SNR would not.
+      const rawConfidence = getSignalConfidence();
+      let confidenceForNr = rawConfidence;
+      if (settings.weakSignalEvidence && rawConfidence) {
+        if (!evidenceRef.ema || evidenceRef.ema.length !== rawConfidence.length)
+          evidenceRef.ema = new Float32Array(rawConfidence.length);
+        const ema = evidenceRef.ema;
+        const out = (!evidenceRef.out || evidenceRef.out.length !== rawConfidence.length)
+          ? (evidenceRef.out = new Float32Array(rawConfidence.length))
+          : evidenceRef.out;
+        for (let i = 0; i < rawConfidence.length; i++) {
+          const v = rawConfidence[i]!;
+          const e = ema[i]!;
+          ema[i] = v > e ? e + 0.25 * (v - e) : e + 0.06 * (v - e);
+          out[i] = Math.max(v, ema[i]!);
+        }
+        confidenceForNr = out;
+      }
+      // Slice every bin-aligned input with the same filter window so indices
+      // stay coherent inside the recommender.
+      const stationarityRaw = getSignalStationarity();
+      let stationarityForNr = stationarityRaw;
+      if (filterWindow && spectrumForNr) {
+        const { i0, i1, fullLen } = filterWindow;
+        const sliceAligned = (a: Float32Array | null) =>
+          a && a.length === fullLen ? a.subarray(i0, i1) : a;
+        confidenceForNr = sliceAligned(confidenceForNr);
+        stationarityForNr = sliceAligned(stationarityRaw);
+      }
       const rxMeters = useRxMetersStore.getState();
       const rx = analyzeRxChain(
         {
@@ -215,10 +274,10 @@ export function SmartNrController() {
         },
       );
       const rec = recommendSmartNr({
-        spectrum: display.panValid ? display.panDb : null,
+        spectrum: spectrumForNr,
         floor: getNoiseFloor(),
-        confidence: getSignalConfidence(),
-        stationarity: getSignalStationarity(),
+        confidence: confidenceForNr,
+        stationarity: stationarityForNr,
         rx: {
           signalDbm: rx.signalDbm,
           adcHeadroomDb: rx.adcHeadroomDb,

@@ -1876,7 +1876,11 @@ public sealed record AdcProtectionConfig(
     int MaxOffsetDb = 31,
     int WarningThreshold = 3,
     int MagnitudeSoftLimit = 0,
-    int ReleaseHoldMs = 2000);
+    int ReleaseHoldMs = 2000,
+    // Predictive S-ATT: act on P2 raw ADC max-magnitude *before* the clip
+    // point (zoned hysteresis, smallest-whole-dB steps). false = legacy
+    // hard-overload-only ramp. Engine parity (station-engine RadioService).
+    bool Predictive = true);
 
 public sealed record AdcProtectionSetRequest(
     bool? Enabled = null,
@@ -1887,7 +1891,8 @@ public sealed record AdcProtectionSetRequest(
     int? MaxOffsetDb = null,
     int? WarningThreshold = null,
     int? MagnitudeSoftLimit = null,
-    int? ReleaseHoldMs = null);
+    int? ReleaseHoldMs = null,
+    bool? Predictive = null);
 
 public sealed record AdcProtectionStatusDto(
     AdcProtectionConfig Config,

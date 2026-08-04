@@ -53,6 +53,8 @@ export type SmartNrSettings = {
   aggressiveness: number;
   autoBlankerEnabled: boolean;
   autoNotchEnabled: boolean;
+  filterScoped: boolean;
+  weakSignalEvidence: boolean;
   maxBlankerThreshold: number;
   dwellSamples: number;
 };
@@ -72,6 +74,13 @@ const DEFAULT_SETTINGS: SmartNrSettings = {
   aggressiveness: SMART_NR_DEFAULT_AGGRESSIVENESS,
   autoBlankerEnabled: true,
   autoNotchEnabled: true,
+  // Signal Intelligence refinements (both default ON):
+  // filterScoped — judge NR evidence only inside the RX filter passband, so a
+  // strong station elsewhere on the pan can't steer the working signal's NR.
+  // weakSignalEvidence — accumulate confidence over time so a faint carrier a
+  // few dB up is recognized on persistence, not single-frame SNR.
+  filterScoped: true,
+  weakSignalEvidence: true,
   maxBlankerThreshold: SMART_NR_DEFAULT_MAX_BLANKER_THRESHOLD,
   dwellSamples: 5,
 };
@@ -91,6 +100,8 @@ function normalizeSettings(raw: Partial<SmartNrSettings> = {}): SmartNrSettings 
     ),
     autoBlankerEnabled: raw.autoBlankerEnabled !== false,
     autoNotchEnabled: raw.autoNotchEnabled !== false,
+    filterScoped: raw.filterScoped !== false,
+    weakSignalEvidence: raw.weakSignalEvidence !== false,
     maxBlankerThreshold: clampFinite(
       raw.maxBlankerThreshold,
       SMART_NR_MIN_BLANKER_THRESHOLD,
@@ -131,6 +142,8 @@ function pickSettings(state: SmartNrState): SmartNrSettings {
     autoNotchEnabled: state.autoNotchEnabled,
     maxBlankerThreshold: state.maxBlankerThreshold,
     dwellSamples: state.dwellSamples,
+    filterScoped: state.filterScoped,
+    weakSignalEvidence: state.weakSignalEvidence,
   };
 }
 

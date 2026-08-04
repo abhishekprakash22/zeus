@@ -86,7 +86,13 @@ if [ ! -d "${PUBLISH_DIR}" ] || [ -z "$(ls -A "${PUBLISH_DIR}" 2>/dev/null)" ]; 
     ( cd "${REPO_ROOT}/zeus-web" && npm ci && npm run build )
     [ -f "${SPA_INDEX}" ] || { echo "ERROR: frontend build did not produce ${SPA_INDEX}"; exit 1; }
     echo "PUBLISH_DIR is missing — falling back to local publish for ${RID}..."
+    # Stamp the assemblies with the release version so the server's
+    # AssemblyInformationalVersion (what the Updates tab and the update
+    # guards report as "installed") matches the tag instead of the
+    # Directory.Build.props in-development fallback (field report: Updates
+    # tab stuck on 0.10.9 across every fork release).
     dotnet publish "${REPO_ROOT}/OpenhpsdrZeus/OpenhpsdrZeus.csproj" \
+        -p:VersionPrefix="${VERSION}" \
         -c Release \
         -r "${RID}" \
         --self-contained true \

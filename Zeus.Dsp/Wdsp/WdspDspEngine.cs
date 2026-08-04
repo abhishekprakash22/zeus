@@ -2006,25 +2006,13 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 // `SetChannelState`, so they're safe to run unconditionally at
                 // TXA open time.
                 NativeMethods.SetPSFeedbackRate(id, _psFeedbackRateHz);
-                // pihpsdr semantic (transmitter.c:2517): ps_ptol=0 (default) → 0.8
-                // strict; ps_ptol=1 → 0.4 relaxed. Same convention in Thetis
-                // PSForm.designer.cs.
-                NativeMethods.SetPSPtol(id, _psPtol ? 0.4 : 0.8);
-                // pihpsdr/Thetis defaults: PinMode=1, MapMode=1 (transmitter.c:
-                // 1041-1042 ps_map=1 / ps_pin=1; PSForm.designer.cs chkPSPin /
-                // chkPSMap = Checked = true).
-                NativeMethods.SetPSPinMode(id, 1);
-                NativeMethods.SetPSMapMode(id, 1);
-                // calcc rx_scale + coefficient IIR smoothing (alpha 0.9). ON for the
-                // P2 profile so continuous automode converges to a STEADY correction
-                // instead of applying each raw pass-to-pass fit — the latter makes
-                // the predistorted two-tone visibly jump on the TX panadapter and
-                // holds IMD short of its settled depth (#559, G2). DeskHPSDR ships
-                // this on for SATURN/new-protocol. OFF on P1/HL2 to keep the
-                // mi0bot-matched behaviour. _txaCfirRun is the existing P2-profile
-                // discriminator (CFIR runs only on P2; see above).
-                NativeMethods.SetPSStabilize(id, _txaCfirRun ? 1 : 0);
-                NativeMethods.SetPSIntsAndSpi(id, _psInts, _psSpi);
+                // WDSP 2.0: the PS tuning cluster (Ptol / PinMode / MapMode /
+                // Stabilize / IntsAndSpi) is gone from the native surface —
+                // calcc manages tolerance, pin/map and coefficient smoothing
+                // internally (the station-engine reference makes no such
+                // calls). The historical rationale for each knob (pihpsdr
+                // transmitter.c:2517 ptol, ps_pin/ps_map defaults, #559 CFIR
+                // stabilize) is preserved in git history at this site.
                 NativeMethods.SetPSMoxDelay(id, _psMoxDelaySec);
                 NativeMethods.SetPSLoopDelay(id, _psLoopDelaySec);
                 _ = NativeMethods.SetPSTXDelay(id, _psAmpDelayNs * 1e-9);
@@ -2811,10 +2799,9 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
 
             if (ptol != _psPtol)
             {
-                _psPtol = ptol;
-                // ptol=true → relax 0.4; ptol=false → strict 0.8
-                // (pihpsdr transmitter.c:2517 / Thetis PSForm.cs).
-                if (id >= 0) NativeMethods.SetPSPtol(id, ptol ? 0.4 : 0.8);
+                _psPtol = ptol; // WDSP 2.0: tolerance is calcc-internal now;
+                                // retained as state so the API/log shape and
+                                // persisted settings stay compatible.
             }
             if (moxDelaySec != _psMoxDelaySec)
             {
@@ -2843,13 +2830,14 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 _psHwPeak = hwPeak;
                 if (id >= 0) NativeMethods.SetPSHWPeak(id, hwPeak);
             }
-            // Only call SetPSIntsAndSpi when the values actually changed —
-            // it's a heavy restart inside calcc.c (allocates new buffers).
-            if (ints > 0 && spi > 0 && (ints != _psInts || spi != _psSpi))
+            // WDSP 2.0: ints/spi are calcc-internal (SetPSIntsAndSpi removed
+            // from the native surface). Values are kept as state for API/log
+            // compatibility; the equality-guard rationale (heavy calcc restart)
+            // lives in git history.
+            if (ints > 0 && spi > 0)
             {
                 _psInts = ints;
                 _psSpi = spi;
-                if (id >= 0) NativeMethods.SetPSIntsAndSpi(id, ints, spi);
             }
         }
         _log.LogInformation(

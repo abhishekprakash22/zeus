@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
-// Copyright (C) 2025-2026 Brian Keating (EI6LF),
-//                         Douglas J. Cerrato (KB2UKA),
+// Copyright (C) 2025-2026 Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
 // This program is free software: you can redistribute it and/or modify it
@@ -270,6 +269,10 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void DestroyAnalyzer(int disp);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void ResetPixelBuffers(int disp);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -829,7 +832,7 @@ internal static partial class NativeMethods
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SetTXAPHROTCorner(int channel, double corner);
+    internal static partial void SetTXAPHROTCorner(int channel, double frequency);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -838,6 +841,30 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void SetTXAPHROTReverse(int channel, int reverse);
+
+    // WDSP SetTXAPHROTAutoMode: 1 enables the live PHROT corner optimizer.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetTXAPHROTAutoMode(int channel, int autoMode);
+
+    // WDSP SetTXAPHROTAutoReset: restart optimizer from the WDSP default corner.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetTXAPHROTAutoReset(int channel);
+
+    // WDSP GetTXAPHROTAsymmetry: linear envelope peaks, ratios, current fc, step.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void GetTXAPHROTAsymmetry(
+        int channel,
+        out double in_pos,
+        out double in_neg,
+        out double in_ratio,
+        out double out_pos,
+        out double out_neg,
+        out double out_ratio,
+        out double current_fc,
+        out double auto_step);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -920,7 +947,7 @@ internal static partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial double GetTXAMeter(int channel, int mt);
 
-    // FFTW wisdom: builds or loads cached plans from `directory/wdspWisdom00`.
+    // FFTW wisdom: builds or loads cached plans from `directory/wdspWisdom01`.
     // Returns 0 if plans were loaded from file (fast), 1 if newly built and
     // saved (slow — FFTW_PATIENT runs sizes 64..262144). Must be called once
     // before the first OpenChannel so FFTW reuses the cached plans instead of
@@ -959,28 +986,6 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void SetPSHWPeak(int channel, double peak);
-
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SetPSPtol(int channel, double ptol);
-
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SetPSPinMode(int channel, int pin);
-
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SetPSMapMode(int channel, int map);
-
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SetPSStabilize(int channel, int stbl);
-
-    // SetPSIntsAndSpi is a heavy restart, not a setter (calcc.c:1132-1151).
-    // Only safe to call when not actively calibrating.
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void SetPSIntsAndSpi(int channel, int ints, int spi);
 
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

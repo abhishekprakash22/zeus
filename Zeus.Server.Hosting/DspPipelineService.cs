@@ -4453,15 +4453,17 @@ public class DspPipelineService : BackgroundService,
             || s.PsAmpDelayNs != _appliedPsAmpDelayNs
             || s.PsIntsSpiPreset != _appliedPsIntsSpiPreset))
         {
-            (int ints, int spi) = ParseIntsSpi(s.PsIntsSpiPreset);
+            // WDSP 2.0: SetPsAdvanced narrowed to the four knobs the core
+            // still exposes — ptol and ints/spi are calcc-internal now. The
+            // fork keeps PsPtol/PsIntsSpiPreset in StateDto for settings/API
+            // round-trip compatibility; they are tracked below but no longer
+            // forwarded (the change-detection guard above still fires on them
+            // so the log/applied-state stays coherent).
             engine.SetPsAdvanced(
-                s.PsPtol,
                 s.PsMoxDelaySec,
                 s.PsLoopDelaySec,
                 s.PsAmpDelayNs,
-                s.PsHwPeak,
-                ints,
-                spi);
+                s.PsHwPeak);
             _appliedPsPtol = s.PsPtol;
             _appliedPsMoxDelaySec = s.PsMoxDelaySec;
             _appliedPsLoopDelaySec = s.PsLoopDelaySec;
@@ -4731,16 +4733,6 @@ public class DspPipelineService : BackgroundService,
         }
     }
 
-    private static (int Ints, int Spi) ParseIntsSpi(string preset)
-    {
-        if (string.IsNullOrWhiteSpace(preset)) return (16, 256);
-        var slash = preset.IndexOf('/');
-        if (slash <= 0) return (16, 256);
-        if (!int.TryParse(preset.AsSpan(0, slash), out int ints)) return (16, 256);
-        if (!int.TryParse(preset.AsSpan(slash + 1), out int spi)) return (16, 256);
-        if (ints <= 0 || spi <= 0) return (16, 256);
-        return (ints, spi);
-    }
 
     private void ApplyStateToNewChannel(IDspEngine engine, int channelId)
     {

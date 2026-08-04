@@ -1815,3 +1815,29 @@
 .cwdec-foot { padding: 4px 10px; font: 9px var(--font-mono, monospace);
   color: var(--fg-2, #7d8694); border-top: 1px solid #23262d; }
 .cwdec-toggle.engaged { color: #39d98a; border-color: #2a6b4c; }
+
+/* ---- DeepCW waterfall overlay (single-channel) ---- */
+.cwdec-ovl { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.cwdec-callout { position: absolute; top: 8px; transform: translateX(-50%);
+  min-width: 140px; max-width: 230px; pointer-events: auto; cursor: pointer;
+  background: rgba(12,15,20,.92); border: 1px solid #2a6b4c; border-radius: 6px;
+  padding: 3px 7px 4px; font: 10.5px var(--font-mono, monospace);
+  box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+.cwdec-callout.fresh { border-color: #39d98a; }
+.cwdec-callout-head { display: flex; gap: 6px; align-items: center;
+  font-weight: 700; font-size: 9.5px; letter-spacing: .06em; color: #eaf4ff; }
+.cwdec-callout-dot { width: 6px; height: 6px; border-radius: 50%; background: #31353d; }
+.cwdec-callout-dot.on { background: #39d98a; box-shadow: 0 0 5px #39d98a; }
+.cwdec-callout-txt { margin-top: 2px; color: #2a8a5f; white-space: nowrap;
+  overflow: hidden; direction: rtl; text-align: left; }
+.cwdec-callout.fresh .cwdec-callout-txt { color: #39d98a; }
+.cwdec-callout-tail { position: absolute; left: 50%; bottom: -7px;
+  transform: translateX(-50%); width: 1px; height: 7px; background: #2a6b4c; }
+.cwdec-ride { position: absolute; top: 54px; width: 0; height: 60%; }
+.cwdec-ride-ch { position: absolute; left: 8px; top: 0;
+  font: bold 11px var(--font-mono, monospace); color: #39d98a;
+  animation: cwdecFall 9s linear forwards; will-change: transform, opacity; }
+@keyframes cwdecFall {
+  0%   { transform: translateY(0);      opacity: .95; }
+  100% { transform: translateY(240px);  opacity: 0; }
+}

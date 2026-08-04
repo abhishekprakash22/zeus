@@ -43,6 +43,8 @@ export function CwDecodeWindow() {
   const lastCharAt = useCwDecodeStore((s) => s.lastCharAt);
   const setPanelOpen = useCwDecodeStore((s) => s.setPanelOpen);
   const setEnabled = useCwDecodeStore((s) => s.setEnabled);
+  const overlayEnabled = useCwDecodeStore((s) => s.overlayEnabled);
+  const setOverlayEnabled = useCwDecodeStore((s) => s.setOverlayEnabled);
   const clear = useCwDecodeStore((s) => s.clear);
   const settingsViewOpen = useLayoutStore((s) => s.settingsViewOpen);
   const [pos, setPos] = useState({ x: 24, y: 96 });
@@ -120,6 +122,15 @@ export function CwDecodeWindow() {
           {status === 'loading' ? 'loading model…' : status === 'error' ? 'error' : status}
         </span>
         <span className="dw-spacer" />
+        <button
+          type="button"
+          className={`cwdec-btn ${overlayEnabled ? 'on' : ''}`}
+          data-no-drag
+          title="Show the decode callout on the waterfall at the tuned frequency"
+          onClick={() => setOverlayEnabled(!overlayEnabled)}
+        >
+          WF
+        </button>
         <button type="button" className="cwdec-btn" data-no-drag onClick={clear}>
           CLEAR
         </button>

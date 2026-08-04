@@ -5687,3 +5687,14 @@
   row-gap: 2px;
   min-width: 0;
 }
+
+/* SPLIT / RIT transport controls */
+.split-toggle.engaged, .rit-toggle.engaged { color: #ffb13c; border-color: #8f6f14; }
+.rit-cluster { display: inline-flex; align-items: center; gap: 4px; }
+.rit-chip { display: inline-flex; align-items: center; gap: 2px;
+  font: 600 10.5px var(--font-mono, monospace); background: #14181f;
+  border: 1px solid #31353d; border-radius: 5px; padding: 1px 4px; }
+.rit-chip button { background: none; border: none; color: #7d8694;
+  cursor: pointer; font-size: 12px; padding: 0 3px; }
+.rit-chip button:hover { color: #d7dde6; }
+.rit-chip .rit-val { color: #ffb13c; min-width: 42px; text-align: center; }

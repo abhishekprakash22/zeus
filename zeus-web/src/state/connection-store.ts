@@ -141,6 +141,14 @@ export type ConnectionState = {
   // reads this to skip the view-centre nudge so the dial marker roams instead
   // of recentring. Server-authoritative; toggled via the CTUN transport button.
   ctunEnabled: boolean;
+  // RIT (Receiver Incremental Tuning): server-authoritative offset on RX1's
+  // demod without moving the dial. ±99999 Hz (Thetis udRIT). Toggled/stepped
+  // via the transport RIT control -> POST /api/rx/rit.
+  ritEnabled: boolean;
+  ritHz: number;
+  // SPLIT (Thetis semantics): TX carrier follows VFO B instead of A.
+  // Toggled via the transport SPLIT button -> POST /api/tx/vfo.
+  splitEnabled: boolean;
   // Hardware NCO / panadapter centre. The frequency-axis ruler drag moves this
   // without touching vfoHz so the operator can pan to off-screen spectrum.
   radioLoHz: number;
@@ -253,6 +261,9 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   connectedProtocol: null,
   preampOn: false,
   ctunEnabled: false,
+  ritEnabled: false,
+  ritHz: 0,
+  splitEnabled: false,
   radioLoHz: 14_200_000,
   cwPitchHz: 600,
   nr: { ...NR_CONFIG_DEFAULT },
@@ -321,6 +332,9 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         adcOverloadWarning: s.adcOverloadWarning,
         preampOn: s.preampOn,
         ctunEnabled: s.ctunEnabled,
+        ritEnabled: s.ritEnabled,
+        ritHz: s.ritHz,
+        splitEnabled: s.splitEnabled,
         radioLoHz: s.radioLoHz,
         cwPitchHz: s.cwPitchHz,
         nr: s.nr,

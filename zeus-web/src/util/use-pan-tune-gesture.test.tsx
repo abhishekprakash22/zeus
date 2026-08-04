@@ -245,6 +245,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
       vfoHz: 14_200_000,
       receivers: [rxEntry(0, 14_200_000), rxEntry(1, 14_200_000)],
       ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       zoomLevel: 4,
     });
     useDisplayStore.setState({
@@ -421,6 +424,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
     useConnectionStore.setState({
       mode: 'USB',
       ctunEnabled: true,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: 14_200_000,
       receivers: [rxEntry(0, 14_200_000), rxEntry(1, 7_200_000)],
     });
@@ -466,6 +472,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
     useConnectionStore.setState({
       mode: 'USB',
       ctunEnabled: true,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: tunedHz,
       radioLoHz: startLoHz,
       zoomLevel: 4,
@@ -566,6 +575,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
       mode: 'CWU',
       cwPitchHz: 700,
       ctunEnabled: true,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: 14_205_000,
       radioLoHz: 14_200_000,
       zoomLevel: 4,
@@ -595,6 +607,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
   it('drags the RX2 surface by posting VFO B instead of VFO A', async () => {
     useConnectionStore.setState({
       ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: 14_200_000,
       receivers: [rxEntry(0, 14_200_000), rxEntry(1, 7_200_000)],
     });
@@ -639,6 +654,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
   it('can drag-pan RX1 by posting radio LO instead of VFO A', async () => {
     useConnectionStore.setState({
       ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: 14_205_000,
       radioLoHz: 14_200_000,
     });
@@ -676,6 +694,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
   it('still click-tunes when ruler-pan drag mode does not move past slop', async () => {
     useConnectionStore.setState({
       ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: 14_200_000,
       radioLoHz: 14_200_000,
     });
@@ -710,6 +731,9 @@ describe('usePanTuneGesture mobile touch mode', () => {
   it('keeps optimistic VFO B during stale untrusted state polls', async () => {
     useConnectionStore.setState({
       ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
       vfoHz: 14_200_000,
       receivers: [rxEntry(0, 14_200_000), rxEntry(1, 7_200_000)],
     });

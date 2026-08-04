@@ -86,6 +86,7 @@ import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
 import { DiversityWindow, DiversityToggleButton } from './components/DiversityWindow';
+import { SplitButton, RitButton } from './components/RitSplitButtons';
 import { RogerBeepButton } from './components/RogerBeepButton';
 import { RotatorStatusPill } from './components/RotatorStatusPill';
 import type { SettingsTabId } from './components/SettingsMenu';
@@ -1580,10 +1581,11 @@ export default function App() {
           <div className="transport-sep hide-mobile" />
           <CtunButton />
           <DiversityToggleButton />
-          {/* SPLIT / RIT / SAVE MEM removed: upstream placeholder buttons with
-              no handlers — never functional. The transport wrap made them
-              visible on the kiosk and they read as broken (field report).
-              Reintroduce individually when each feature actually exists. */}
+          {/* SPLIT + RIT: the real implementations (backends were already
+              shipped; the old upstream stubs here had no handlers). SAVE MEM
+              returns when a memory feature actually exists. */}
+          <SplitButton />
+          <RitButton />
         </div>
         <div className="transport-status">
           <WorkspaceZoomControls />

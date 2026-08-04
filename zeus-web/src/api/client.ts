@@ -455,6 +455,9 @@ export type RadioStateDto = {
   // the display on the tuned frequency. Toggled via setCtun → POST
   // /api/radio/ctun. See docs/prd/panfall_behavior.md.
   ctunEnabled: boolean;
+  ritEnabled: boolean;
+  ritHz: number;
+  splitEnabled: boolean;
   // ---- Multi-DDC receivers array (wire v2) ----
   // Canonical per-receiver list: index 0 = RX1, 1 = RX2, >= 2 = extra DDCs.
   // Optional until the frontend migrates off the flat RX1/RX2 fields; the
@@ -2589,6 +2592,9 @@ export function normalizeState(raw: unknown): RadioStateDto {
     cwPitchHz: typeof r.cwPitchHz === 'number' ? r.cwPitchHz : 600,
     // Legacy server without the field → CTUN off (classic recenter-on-click).
     ctunEnabled: typeof r.ctunEnabled === 'boolean' ? r.ctunEnabled : false,
+    ritEnabled: typeof r.ritEnabled === 'boolean' ? r.ritEnabled : false,
+    ritHz: typeof r.ritHz === 'number' ? r.ritHz : 0,
+    splitEnabled: typeof r.splitEnabled === 'boolean' ? r.splitEnabled : false,
     // ---- Multi-DDC receivers array (wire v2) ----
     // A v1 server omits these. Leave them undefined (not []/0) so applyState's
     // `s.receivers ?? prev.receivers` keeps the store's prior values instead of

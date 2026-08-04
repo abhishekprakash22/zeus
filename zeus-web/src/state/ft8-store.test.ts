@@ -13,6 +13,9 @@ const PRIOR_SNAPSHOT = {
   filterHighHz: -300,
   vfoHz: 14_200_000, // band A (20 m phone) — the operator's pre-FT8 dial
   ctunEnabled: false,
+  ritEnabled: false,
+  ritHz: 0,
+  splitEnabled: false,
   radioLoHz: 14_200_000,
   zoomLevel: 1,
 };

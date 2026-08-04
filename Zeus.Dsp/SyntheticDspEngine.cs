@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
-// Copyright (C) 2025-2026 Brian Keating (EI6LF),
-//                         Douglas J. Cerrato (KB2UKA),
+// Copyright (C) 2025-2026 Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
 // This program is free software: you can redistribute it and/or modify it
@@ -135,6 +134,10 @@ public sealed class SyntheticDspEngine : IDspEngine
         ArgumentNullException.ThrowIfNull(cfg);
     }
 
+    public void ResetTxPhaseRotatorAuto(int channelId) { /* synthetic has no TX phase stage */ }
+
+    public TxPhaseRotatorAsymmetry? GetTxPhaseRotatorAsymmetry(int channelId) => null;
+
     public void SetRxDisplayFastAttack(int channelId, bool fast) { /* synthetic has no display averaging */ }
 
     public void SetRxAfGainDb(int channelId, double db) { /* synthetic has no audio path */ }
@@ -165,6 +168,8 @@ public sealed class SyntheticDspEngine : IDspEngine
     {
         ValidateZoomLevel(level);
     }
+
+    public void ResetDisplayPixelBuffers() { }
 
     public const int MinZoomLevel = 1;
     // Cap at 32× — at AnalyzerFftSize=16384 that leaves 512 bins after the
@@ -213,6 +218,8 @@ public sealed class SyntheticDspEngine : IDspEngine
     // mirrors WDSP so tests that round-trip through the interface can assume
     // the same buffering shape.
     public void SetTxMode(RxMode mode) { }
+    public void SetTxDigitalBypass(bool bypass) { }
+    public void SetTxRogerBeepBypass(bool bypass) { }
     public void SetTxFilter(int lowHz, int highHz) { }
     public void SetRxBandpassWindow(int channelId, BandpassWindow window) { }
     public void SetTxBandpassWindow(BandpassWindow window) { }
@@ -230,10 +237,11 @@ public sealed class SyntheticDspEngine : IDspEngine
     // PureSignal — synthetic has no TXA / calcc / iqc. All setters and the
     // feedback pump are no-ops; GetPsStageMeters returns the silent record.
     public void SetPsEnabled(bool enabled) { }
+    public void SetPsMox(bool moxOn) { }
     public void SetPsControl(bool autoCal, bool singleCal) { }
     public void SetPsHold(bool hold) { }
-    public void SetPsAdvanced(bool ptol, double moxDelaySec, double loopDelaySec,
-                              double ampDelayNs, double hwPeak, int ints, int spi) { }
+    public void SetPsAdvanced(double moxDelaySec, double loopDelaySec,
+                              double ampDelayNs, double hwPeak) { }
     public void SetPsHwPeak(double hwPeak) { }
     public void FeedPsFeedbackBlock(ReadOnlySpan<float> txI, ReadOnlySpan<float> txQ,
                                     ReadOnlySpan<float> rxI, ReadOnlySpan<float> rxQ) { }

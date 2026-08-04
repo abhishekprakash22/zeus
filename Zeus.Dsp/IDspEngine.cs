@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
-// Copyright (C) 2025-2026 Brian Keating (EI6LF),
-//                         Douglas J. Cerrato (KB2UKA),
+// Copyright (C) 2025-2026 Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
 // This program is free software: you can redistribute it and/or modify it
@@ -151,8 +150,18 @@ public interface IDspEngine : IDisposable
     /// Drives WDSP's TXA PHROT all-pass stage: run flag, corner frequency,
     /// stage count, and explicit microphone polarity reverse. Reverse is kept
     /// independent from the run flag because Thetis allows phase reversal even
-    /// when phase rotation itself is disabled. No-op on Synthetic.</summary>
+    /// when phase rotation itself is disabled. AutoMode enables WDSP's live
+    /// corner-frequency optimizer. No-op on Synthetic.</summary>
     void SetTxPhaseRotator(int channelId, TxPhaseRotatorConfig cfg);
+
+    /// <summary>Restart WDSP's TXA PHROT auto-optimizer from its default corner
+    /// frequency. No-op when no TX channel is open or on Synthetic.</summary>
+    void ResetTxPhaseRotatorAuto(int channelId);
+
+    /// <summary>Read display-ready TXA PHROT waveform-asymmetry telemetry. The
+    /// engine converts WDSP's linear envelope peaks to dB and native ratios to
+    /// percent. Returns null when no TX channel is open or on Synthetic.</summary>
+    TxPhaseRotatorAsymmetry? GetTxPhaseRotatorAsymmetry(int channelId);
 
     /// <summary>
     /// Briefly tighten the RX display's averaging time-constant after a
@@ -221,6 +230,11 @@ public interface IDspEngine : IDisposable
     /// is not open.</summary>
     void ConfigureTxDisplayAnalyzer(int fftSize, int windowType, double avgTauSec);
 
+    /// <summary>Clear RX/TX analyzer pixel and averaging buffers after a TX/RX
+    /// display-source transition. Mirrors Thetis's ResetPixelBuffers-on-MOX
+    /// behavior. No-op on Synthetic.</summary>
+    void ResetDisplayPixelBuffers();
+
     /// <summary>PureSignal-feedback panadapter / waterfall pixels in dBm,
     /// sourced from a separate WDSP analyzer fed with the post-PA loopback
     /// IQ pumped through <see cref="FeedPsFeedbackBlock"/>. Returns false
@@ -263,6 +277,17 @@ public interface IDspEngine : IDisposable
     /// SetTXAMode internally on WdspDspEngine; no-op for Synthetic and when no
     /// TXA is open.</summary>
     void SetTxMode(RxMode mode);
+
+    /// <summary>Zeus-level digital TX mode is active (DIGU/DIGL/FreeDV): gate
+    /// the TX CFC master + phase rotator run flags off while preserving
+    /// operator-configured settings. No-op for Synthetic and when no TXA is
+    /// open.</summary>
+    void SetTxDigitalBypass(bool bypass);
+
+    /// <summary>Temporarily bypass speech-only TX processing while a synthesized
+    /// roger beep is clocked through TXA. Implementations must preserve the
+    /// independent mode-owned digital bypass state when this window closes.</summary>
+    void SetTxRogerBeepBypass(bool bypass) { }
 
     /// <summary>Set TXA bandpass (SetTXABandpassFreqs). <paramref name="lowHz"/>
     /// / <paramref name="highHz"/> are signed Hz around baseband — LSB-style
@@ -349,6 +374,12 @@ public interface IDspEngine : IDisposable
     /// </summary>
     void SetPsEnabled(bool enabled);
 
+    /// <summary>Tell calcc whether radio MOX is actually asserted. This is
+    /// deliberately separate from <see cref="SetMox"/> so callers can bring
+    /// TXA up before wire MOX, then start PureSignal's MOX delay timer only
+    /// after the hardware keying edge.</summary>
+    void SetPsMox(bool moxOn);
+
     /// <summary>Cal-mode select. <paramref name="autoCal"/> = continuous
     /// adaptation; <paramref name="singleCal"/> = one-shot collect-then-stay.
     /// At most one of the two should be true; if both, single takes
@@ -366,12 +397,9 @@ public interface IDspEngine : IDisposable
     /// </summary>
     void SetPsHold(bool hold);
 
-    /// <summary>Apply timing + hardware-peak + ints/spi settings as a batch
-    /// (each call internally guards against the heavy
-    /// <c>SetPSIntsAndSpi</c> path firing when the values haven't changed).
-    /// </summary>
-    void SetPsAdvanced(bool ptol, double moxDelaySec, double loopDelaySec,
-                      double ampDelayNs, double hwPeak, int ints, int spi);
+    /// <summary>Apply timing + hardware-peak settings as a batch.</summary>
+    void SetPsAdvanced(double moxDelaySec, double loopDelaySec,
+                      double ampDelayNs, double hwPeak);
 
     /// <summary>Set just the hardware-peak. Called from RadioService at
     /// connect time once the protocol/board is known so the right value

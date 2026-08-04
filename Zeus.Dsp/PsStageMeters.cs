@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
-// Copyright (C) 2025-2026 Brian Keating (EI6LF),
-//                         Douglas J. Cerrato (KB2UKA),
+// Copyright (C) 2025-2026 Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
 // This program is free software: you can redistribute it and/or modify it
@@ -45,8 +44,8 @@ namespace Zeus.Dsp;
 /// gates AutoAttenuate's <c>timer2code</c> on this counter incrementing
 /// (<c>CalibrationAttemptsChanged</c>) — only step the attenuator after
 /// calcc has finished a fit, otherwise the loop changes the envelope mid-
-/// calc and cm jumps trigger info[6]=0x40 (cm changed too much) every
-/// iteration, forcing perpetual LRESET.</param>
+/// calc and can trigger the WDSP 2.00 <c>info[6]</c> scheck mask, forcing
+/// rejected fits and repeated reset cycles.</param>
 public readonly record struct PsStageMeters(
     float FeedbackLevel,
     byte CalState,

@@ -17,9 +17,9 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
     private readonly Dictionary<int, int> _channelMap = new();
     private int _disposed;
 
-    public OfflinePreviewDspEngine(ILogger<WdspDspEngine>? logger = null)
+    public OfflinePreviewDspEngine(ILogger<WdspDspEngine>? logger = null, int rxAnalyzerFftSize = 16_384)
     {
-        _tx = new WdspDspEngine(logger);
+        _tx = new WdspDspEngine(logger, rxAnalyzerFftSize);
     }
 
     public int OpenChannel(int sampleRateHz, int pixelWidth)
@@ -129,6 +129,15 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
         _tx.SetTxPhaseRotator(TxChannelFor(channelId), cfg);
     }
 
+    public void ResetTxPhaseRotatorAuto(int channelId)
+    {
+        _control.ResetTxPhaseRotatorAuto(channelId);
+        _tx.ResetTxPhaseRotatorAuto(TxChannelFor(channelId));
+    }
+
+    public TxPhaseRotatorAsymmetry? GetTxPhaseRotatorAsymmetry(int channelId) =>
+        _tx.GetTxPhaseRotatorAsymmetry(TxChannelFor(channelId));
+
     public void SetRxDisplayFastAttack(int channelId, bool fast)
     {
         _control.SetRxDisplayFastAttack(channelId, fast);
@@ -183,6 +192,8 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
     public void ConfigureTxDisplayAnalyzer(int fftSize, int windowType, double avgTauSec) =>
         _tx.ConfigureTxDisplayAnalyzer(fftSize, windowType, avgTauSec);
 
+    public void ResetDisplayPixelBuffers() => _tx.ResetDisplayPixelBuffers();
+
     public int OpenTxChannel(int outputRateHz = 48_000) => _tx.OpenTxChannel(outputRateHz);
 
     public void SetMox(bool moxOn) => _tx.SetMox(moxOn);
@@ -192,6 +203,9 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
     public RxStageMeters GetRxStageMeters(int channelId) => RxStageMeters.Silent;
 
     public void SetTxMode(RxMode mode) => _tx.SetTxMode(mode);
+
+    public void SetTxDigitalBypass(bool bypass) => _tx.SetTxDigitalBypass(bypass);
+    public void SetTxRogerBeepBypass(bool bypass) => _tx.SetTxRogerBeepBypass(bypass);
 
     public void SetTxFilter(int lowHz, int highHz) => _tx.SetTxFilter(lowHz, highHz);
 
@@ -223,19 +237,18 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
 
     public void SetPsEnabled(bool enabled) => _tx.SetPsEnabled(enabled);
 
+    public void SetPsMox(bool moxOn) => _tx.SetPsMox(moxOn);
+
     public void SetPsControl(bool autoCal, bool singleCal) => _tx.SetPsControl(autoCal, singleCal);
 
     public void SetPsHold(bool hold) => _tx.SetPsHold(hold);
 
     public void SetPsAdvanced(
-        bool ptol,
         double moxDelaySec,
         double loopDelaySec,
         double ampDelayNs,
-        double hwPeak,
-        int ints,
-        int spi) =>
-        _tx.SetPsAdvanced(ptol, moxDelaySec, loopDelaySec, ampDelayNs, hwPeak, ints, spi);
+        double hwPeak) =>
+        _tx.SetPsAdvanced(moxDelaySec, loopDelaySec, ampDelayNs, hwPeak);
 
     public void SetPsHwPeak(double hwPeak) => _tx.SetPsHwPeak(hwPeak);
 
@@ -266,7 +279,7 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
 
     public bool IsTxMonitorOn => _tx.IsTxMonitorOn;
 
-    public void SetTxAudioPluginHandler(WdspDspEngine.TxAudioBlockHandler? handler) =>
+    public void SetTxAudioPluginHandler(TxAudioPluginHandler? handler) =>
         _tx.SetTxAudioPluginHandler(handler);
 
     public bool HasTxAudioPluginHandler => _tx.HasTxAudioPluginHandler;

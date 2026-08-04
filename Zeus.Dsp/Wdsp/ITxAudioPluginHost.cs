@@ -7,6 +7,6 @@ namespace Zeus.Dsp.Wdsp;
 /// </summary>
 public interface ITxAudioPluginHost
 {
-    void SetTxAudioPluginHandler(WdspDspEngine.TxAudioBlockHandler? handler);
+    void SetTxAudioPluginHandler(TxAudioPluginHandler? handler);
     bool HasTxAudioPluginHandler { get; }
 }

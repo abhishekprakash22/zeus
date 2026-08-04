@@ -100,6 +100,18 @@ const WORKSPACE_GRID_MARGIN_PX = 3;
 // observed (e.g. ~300 px transient on a 1900 px container).
 const SETTLE_WINDOW_MS = 3000;
 const RETRACT_GROWTH_RATIO = 1.4;
+// The mirror transient: a kiosk Pi boots chromium while HDMI/KMS is still
+// negotiating, so the window briefly reports a LARGER mode (1920-class
+// default) before the panel's native mode (e.g. the G2's 1280x800) applies.
+// The latch would freeze that phantom width and size cells for a screen that
+// never arrives — the workspace overflows the real display until the operator
+// rescales, and every reboot re-races (field report, ANAN-G2E kiosk). So the
+// retract is symmetric: a substantial SHRINK below the latch also unlatches.
+// Display-mode settling can outlast the 3 s desktop window, so the shrink
+// direction gets a longer one; relatching from a genuine user shrink inside
+// that window is harmless (pitch recomputes, panel grid positions keep).
+const RETRACT_SHRINK_RATIO = 1 / RETRACT_GROWTH_RATIO;
+const SHRINK_SETTLE_WINDOW_MS = 20_000;
 
 type GridInteraction = 'drag' | 'resize' | null;
 
@@ -479,7 +491,13 @@ function WorkspaceGridCanvas({
   useEffect(() => {
     if (frozenWidth > 0) {
       const elapsedMs = performance.now() - mountAtMsRef.current;
-      if (elapsedMs < SETTLE_WINDOW_MS && width > frozenWidth * RETRACT_GROWTH_RATIO) {
+      const grewPastLatch =
+        elapsedMs < SETTLE_WINDOW_MS && width > frozenWidth * RETRACT_GROWTH_RATIO;
+      const shrankPastLatch =
+        elapsedMs < SHRINK_SETTLE_WINDOW_MS &&
+        width > 0 &&
+        width < frozenWidth * RETRACT_SHRINK_RATIO;
+      if (grewPastLatch || shrankPastLatch) {
         setFrozenWidth(0);
       }
       return;

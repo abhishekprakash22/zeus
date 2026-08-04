@@ -35,6 +35,7 @@ import { useSpottingStore } from './spotting-store';
 import { useWsjtxStore } from './wsjtx-store';
 import { useFt8Store, type Ft8DecodeBatch } from './ft8-store';
 import { useWsprStore, type WsprSpotBatch } from './wspr-store';
+import { useCwSkimStore } from './cw-skim-store';
 import { useFt8TxStore, type Ft8TxStatus } from './ft8-tx-store';
 
 interface DigitalPluginState {
@@ -204,6 +205,13 @@ function syncEventStream(): void {
           useWsprStore.getState().ingest(JSON.parse(json) as WsprSpotBatch);
         } catch (err) {
           warnOnce('sse-wspr-spot-parse', 'wsprspot event parse failed', err);
+        }
+      },
+      onCwSkim: (json) => {
+        try {
+          useCwSkimStore.getState().ingest(JSON.parse(json));
+        } catch (err) {
+          warnOnce('sse-cwskim-parse', 'cwskim event parse failed', err);
         }
       },
       onTxStatus: (json) => {

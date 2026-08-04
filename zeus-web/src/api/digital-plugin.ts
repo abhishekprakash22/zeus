@@ -120,6 +120,7 @@ export interface DigitalEventsHandlers {
   onConnectionChange?: (connected: boolean) => void;
   onFt8Decode?: (json: string) => void;
   onWsprSpot?: (json: string) => void;
+  onCwSkim?: (json: string) => void;
   onTxStatus?: (json: string) => void;
 }
 
@@ -158,6 +159,7 @@ export function openDigitalEvents(h: DigitalEventsHandlers): () => void {
     };
     es.addEventListener('ft8decode', (ev) => h.onFt8Decode?.((ev as MessageEvent<string>).data));
     es.addEventListener('wsprspot', (ev) => h.onWsprSpot?.((ev as MessageEvent<string>).data));
+    es.addEventListener('cwskim', (ev) => h.onCwSkim?.((ev as MessageEvent<string>).data));
     es.addEventListener('txstatus', (ev) => h.onTxStatus?.((ev as MessageEvent<string>).data));
   };
 

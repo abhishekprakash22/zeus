@@ -86,6 +86,16 @@ public static class DigitalEndpoints
         // ---- WSPR -----------------------------------------------------------
         // Real backend (WsprService): 120 s slot decoder + autonomous beacon.
         g.MapGet("/wspr", (WsprService w) => Results.Ok(w.StatusDto()));
+
+        // ---- CW skimmer (DeepCW phase 2) ----
+        g.MapGet("/cwskim", (CwSkimmerService cw) => Results.Ok(cw.StatusDto()));
+        g.MapPost("/cwskim/enable", (CwSkimEnableRequest req, CwSkimmerService cw) =>
+            Results.Ok(new { ok = cw.Enable(req.Receiver ?? 0) }));
+        g.MapPost("/cwskim/disable", (CwSkimmerService cw) =>
+        {
+            cw.Disable();
+            return Results.Ok(new { ok = true });
+        });
         g.MapPost("/wspr/enable", (WsprEnableRequest req, WsprService w, DigitalService d) =>
         {
             bool ok = w.Enable(req.Receiver ?? 0, req.DialFreqMhz ?? 14.0956);

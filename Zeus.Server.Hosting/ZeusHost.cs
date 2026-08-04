@@ -790,6 +790,9 @@ public static class ZeusHost
         // suite; the frontend WSPR workspace/stores already speak this
         // contract. See Digital/WsprService.cs.
         builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.WsprService>();
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.CwSkimmerService>();
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Zeus.Server.Hosting.Digital.CwSkimmerService>());
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.WsprService>());
         builder.Services.AddSingleton<ThemeSettingsStore>();

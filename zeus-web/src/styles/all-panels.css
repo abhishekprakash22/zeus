@@ -1841,3 +1841,7 @@
   0%   { transform: translateY(0);      opacity: .95; }
   100% { transform: translateY(240px);  opacity: 0; }
 }
+
+/* ---- CW skimmer lanes (phase 2) ---- */
+.cwskim-lane { pointer-events: auto; cursor: pointer; }
+.cwskim-lane .cwdec-callout-head span:last-child { letter-spacing: 0; }

@@ -73,6 +73,7 @@ import { SpotOverlay } from './SpotOverlay';
 import { ChatRosterOverlay } from './ChatRosterOverlay';
 import { PeakMarkerOverlay } from './PeakMarkerOverlay';
 import { CwDecodeWaterfallOverlay } from './CwDecodeWaterfallOverlay';
+import { CwSkimmerLanes } from './CwSkimmerLanes';
 import { NotchOverlay } from './NotchOverlay';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
 import { WidebandViewportControls } from './WidebandViewportControls';
@@ -570,6 +571,7 @@ export function Panadapter({
           <ChatRosterOverlay />
           <PeakMarkerOverlay />
           <CwDecodeWaterfallOverlay />
+          <CwSkimmerLanes />
           <NotchOverlay interactive resizable containerRef={containerRef} />
           <ImdReadings />
         </>

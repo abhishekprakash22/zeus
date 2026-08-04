@@ -5778,6 +5778,30 @@ export function setCtun(
   );
 }
 
+const CW_SKIM_BASE = '/api/plugins/org.openhpsdr.digital/cwskim';
+
+export interface CwSkimStatusDto {
+  enabled: boolean;
+  modelAvailable: boolean;
+  receiver: number;
+}
+
+export function getCwSkimStatus(signal?: AbortSignal): Promise<CwSkimStatusDto> {
+  return jsonFetch(CW_SKIM_BASE, { signal }, (raw) => raw as CwSkimStatusDto);
+}
+
+export function postCwSkim(enabled: boolean, receiver = 0): Promise<unknown> {
+  return jsonFetch(
+    enabled ? `${CW_SKIM_BASE}/enable` : `${CW_SKIM_BASE}/disable`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enabled ? JSON.stringify({ receiver }) : '{}',
+    },
+    (raw) => raw,
+  );
+}
+
 export function setVfo(
   hz: number,
   signal?: AbortSignal,

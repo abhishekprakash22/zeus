@@ -46,6 +46,7 @@ public sealed class EventHub
     public void PublishFt8Decode(Ft8DecodeBatch batch) => Publish("ft8decode", batch);
     public void PublishTxStatus(Ft8TxStatus status) => Publish("txstatus", status);
     public void PublishWsprSpot(object spot) => Publish("wsprspot", spot);
+    public void PublishCwSkim(object payload) => Publish("cwskim", payload);
 
     private void Publish<T>(string eventName, T payload)
     {

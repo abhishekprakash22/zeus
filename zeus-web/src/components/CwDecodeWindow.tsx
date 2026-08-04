@@ -12,6 +12,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCwDecodeStore } from '../state/cw-decode-store';
+import { useCwSkimStore } from '../state/cw-skim-store';
+import { getCwSkimStatus, postCwSkim } from '../api/client';
 import { useLayoutStore } from '../state/layout-store';
 
 const WIDTH = 380;
@@ -134,6 +136,7 @@ export function CwDecodeWindow() {
         <button type="button" className="cwdec-btn" data-no-drag onClick={clear}>
           CLEAR
         </button>
+        <SkimButton />
         <button
           type="button"
           className={`cwdec-btn ${enabled ? 'on' : ''}`}
@@ -155,6 +158,32 @@ export function CwDecodeWindow() {
         neural decode of the tuned RX audio · e04 DeepCW engine (AGPL-3.0)
       </div>
     </div>
+  );
+}
+
+/** SKIM: toggles the Pi-side multi-channel skimmer (CwSkimmerService). The
+ *  waterfall lanes render from its SSE roster whether or not the local
+ *  single-channel decoder is running. */
+function SkimButton() {
+  const skimEnabled = useCwSkimStore((s) => s.enabled);
+  const setSkimEnabled = useCwSkimStore((s) => s.setEnabled);
+  return (
+    <button
+      type="button"
+      className={`cwdec-btn ${skimEnabled ? 'on' : ''}`}
+      data-no-drag
+      title="Multi-channel skimmer on the radio: decode every CW signal in the passband as waterfall lanes"
+      onClick={() => {
+        const next = !skimEnabled;
+        setSkimEnabled(next);
+        void postCwSkim(next)
+          .then(() => getCwSkimStatus())
+          .then((st) => setSkimEnabled(st.enabled))
+          .catch(() => setSkimEnabled(!next));
+      }}
+    >
+      SKIM
+    </button>
   );
 }
 

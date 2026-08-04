@@ -53,6 +53,11 @@ public enum WisdomPhase : byte
     Idle = 0,
     Building = 1,
     Ready = 2,
+
+    // Additive on the wire: clients built before Failed existed map any
+    // phase other than 1 (Building) or 2 (Ready) to Idle, which is an
+    // acceptable degradation. (WDSP 2.0 port; engine parity.)
+    Failed = 3,
 }
 
 // [0x15][phase:u8][statusUtf8…]. Phase byte is mandatory; status string is

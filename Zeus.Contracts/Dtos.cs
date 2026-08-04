@@ -872,7 +872,8 @@ public sealed record TxPhaseRotatorConfig(
     bool Enabled = false,
     int CornerHz = TxPhaseRotatorConfig.DefaultCornerHz,
     int Stages = TxPhaseRotatorConfig.DefaultStages,
-    bool Reverse = false)
+    bool Reverse = false,
+    bool AutoMode = false)
 {
     public const int MinCornerHz = 20;
     public const int MaxCornerHz = 2000;
@@ -885,13 +886,6 @@ public sealed record TxPhaseRotatorConfig(
         new(Enabled: true, CornerHz: DefaultCornerHz, Stages: DefaultStages, Reverse: reverse);
 }
 
-/// <summary>
-/// WDSP 2.0 PHROT telemetry: measured positive/negative envelope levels and
-/// asymmetry percentages at the rotator's input and output, plus the current
-/// corner and the auto-mode step. Ported verbatim from
-/// Zeus-SDR/station-engine Zeus.Contracts (the Zeus.Dsp 2.0 layer returns it
-/// from the phase-rotator asymmetry probe).
-/// </summary>
 public sealed record TxPhaseRotatorAsymmetry(
     double InPosDb,
     double InNegDb,
@@ -1032,14 +1026,14 @@ public sealed record StateDto(
     // operator's choice follows any client connecting to this radio. Defaulted
     // so legacy state frames (no field) deserialize unchanged.
     int WorkspaceZoomPct = 100,
-    // Auto-attenuator control loop. When on (default), the server raises
-    // AttOffsetDb by 1 per ~100 ms window in which any ADC-overload bit was
-    // seen, and decays it by 1 per clean window. Ported from Thetis
-    // console.cs:22167 (handleOverload).
+    // Auto-attenuator control loop. When on (default), the server qualifies
+    // clipped-bit reports with Thetis's leaky counter, applies a bounded rescue
+    // step, and releases only after the configured clean hold. A configured P2
+    // magnitude limit can act before the clipped-bit report arrives.
     bool AutoAttEnabled = true,
     int AttOffsetDb = 0,
     // Red-lamp flag derived from Thetis' overload-level counter
-    // (+2 per overload cycle, -1 per clean, clamped 0..5, warn when >3).
+    // (+1 per overload cycle, -1 per clean, clamped 0..5, warn when >3).
     bool AdcOverloadWarning = false,
     // Currently active filter preset slot name (e.g. "F6", "VAR1"). Null when
     // the filter was set by a drag edit without a named slot context.
@@ -1081,7 +1075,7 @@ public sealed record StateDto(
     // TX Leveler max-gain ceiling in dB. Range [0, 20] (Thetis parity) — 0
     // disables the headroom entirely; Thetis's stock default is 15
     // (radio.cs:2979 tx_leveler_max_gain = 15.0). Default 8.0 matches
-    // WdspDspEngine.DefaultLevelerMaxGainDb (Brian's HL2 starting point;
+    // WdspDspEngine.DefaultLevelerMaxGainDb (the established HL2 starting point;
     // softer than Thetis stock). Persisted server-side; previously
     // localStorage-only on the client and reverted on every restart. Wire
     // name matches the existing /api/tx/leveler-max-gain endpoint response.
@@ -1102,10 +1096,10 @@ public sealed record StateDto(
     double? AgcThresholdDbm = null,
 
     // ---- PureSignal predistortion (TXA-side; WDSP calcc/iqc stages) ----
-    // PsEnabled is the master arm bit. Persisted server-side as a standing
-    // operator preference so PS stays armed across restarts until changed.
-    // Actual transmit/keying actions (MOX/TUN/TwoToneEnabled) remain
-    // session-only.
+    // PsEnabled is the process-lifetime master arm bit and is never persisted.
+    // Every new server process starts disarmed; only an explicit operator
+    // POST to /api/tx/ps can arm it. Actual transmit/keying actions
+    // (MOX/TUN/TwoToneEnabled) are likewise session-only.
     bool PsEnabled = false,
     // PsMonitorEnabled — operator-facing "Monitor PA output" toggle
     // (issue #121). When true AND PsEnabled AND PS has converged
@@ -1130,7 +1124,6 @@ public sealed record StateDto(
     bool TxMonitorEnabled = false,
     bool PsAuto = true,             // continuous adapt by default once armed
     bool PsSingle = false,          // one-shot SetPSControl(1,1,0,0)
-    bool PsPtol = false,            // false = strict 0.4; true = relax 0.8
     bool PsAutoAttenuate = true,
     double PsMoxDelaySec = 0.2,
     double PsLoopDelaySec = 0.0,
@@ -1159,7 +1152,6 @@ public sealed record StateDto(
     // the bare-HPSDR / P2 step attenuator floors at 0. Max is 31 everywhere.
     int PsTxFeedbackAttenuationDbMin = 0,
     PsFeedbackSource PsFeedbackSource = PsFeedbackSource.Internal,
-    string PsIntsSpiPreset = "16/256",
     double PsFeedbackLevel = 0.0,   // info[4] read-back, 0..256
     byte PsCalState = 0,            // info[15] enum
     bool PsCorrecting = false,      // info[14]
@@ -1192,6 +1184,10 @@ public sealed record StateDto(
     // instead of pushing its own localStorage default back over the wire.
     // Default 0 mirrors RadioService._drivePct seed.
     int DrivePct = 0,
+    // Station-wide ceiling for normal DRV and TUN. Persisted with radio state;
+    // carried here so every frontend sees the authoritative rail.
+    // Default 100 preserves legacy state frames.
+    int DriveMaxPct = 100,
     // Independent TUN drive slider 0..100. Same persistence pattern as
     // DrivePct. Default 10 mirrors RadioService._tunePct seed — a 0 default
     // would make pressing TUN appear to do nothing on first key.
@@ -1216,11 +1212,18 @@ public sealed record StateDto(
     // the radio before it drops off the air (issue #1294). Zeus keys only via
     // the software MOX bit, and the browser mic path carries measurable
     // buffering, so without a tail the end of the last word is cut on release.
-    // 0..500, default 0 = no behaviour change. Voice modes only — CW is
+    // 0..5000, default 0 = no behaviour change. Voice modes only — CW is
     // excluded so a blanket hold cannot key dead carrier past the last dit.
     // Only UI-sourced releases arm the tail; hardware / MIDI / plugin drops
     // release immediately. Persisted to LiteDB, same pattern as DrivePct.
     int TxMoxTailDelayMs = 0,
+
+    // ---- RX resume delay after TX ----
+    // Milliseconds to keep RX audio/display muted after MOX falls before the
+    // receive chain fades back in. This is the operator-facing release timing
+    // knob for post-TX splash/clicks; default 200 ms preserves the fixed mute
+    // window Zeus used before exposing the setting.
+    int TxPostTxRxMuteDelayMs = 200,
 
     // ---- TX timeout (PA protection) ----
     // Maximum length of a single MOX or TUN transmission in seconds. When
@@ -1348,9 +1351,10 @@ public sealed record StateDto(
     // ---- Multi-DDC TX target ----
     // Authoritative transmit target as a receiver index (0 = RX1/VFO A, 1 = RX2/
     // VFO B, >= 2 = an extra DDC). TxVfo stays the legacy A/B projection;
-    // RadioService.TxFrequencyHz resolves the carrier from this index so TX can
-    // key on any receiver's VFO. Ephemeral — resets to RX1 each session (never
-    // auto-transmit on a receiver the operator can't see after a restart).
+    // RadioFrequencyResolver.TxFrequencyHz resolves the carrier from this index
+    // so TX can key on any receiver's VFO. Ephemeral — resets to RX1 each
+    // session (never auto-transmit on a receiver the operator can't see after a
+    // restart).
     int TxReceiverIndex = 0,
 
     // ---- Diversity combiner (Thetis DiversityForm / WDSP xdivEXT) ----
@@ -1384,7 +1388,12 @@ public sealed record StateDto(
     // Old-school end-of-over roger beep. Appended to avoid shifting older
     // positional StateDto construction sites. Default OFF preserves existing
     // transmit behaviour until the operator explicitly enables it.
-    bool RogerBeepEnabled = false);
+    bool RogerBeepEnabled = false,
+
+    // RX1's per-receiver split projection. RX2+ carry the same fields directly
+    // on ReceiverDto. Session-only: a process always starts in simplex.
+    bool SplitEnabled = false,
+    long SplitTxHz = 0);
 
 /// <summary>Canonical CW constants shared between backend and wire DTOs.
 /// Single source of truth — CwOffset (server-side) and StateDto both

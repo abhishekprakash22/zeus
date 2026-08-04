@@ -110,8 +110,20 @@ const RETRACT_GROWTH_RATIO = 1.4;
 // Display-mode settling can outlast the 3 s desktop window, so the shrink
 // direction gets a longer one; relatching from a genuine user shrink inside
 // that window is harmless (pitch recomputes, panel grid positions keep).
-const RETRACT_SHRINK_RATIO = 1 / RETRACT_GROWTH_RATIO;
-const SHRINK_SETTLE_WINDOW_MS = 20_000;
+// v0.15.14's bounded shrink-retract (ratio 1/1.4 within 20 s) proved
+// insufficient in the field: the kiosk's oversized transient can be SMALLER
+// than that ratio (side rails and panels mount after connect, so the
+// container starts wider by roughly a rail's width — ~10-15%, not 33%) and
+// display-mode settling can outlast any fixed window. So the shrink
+// direction is now an INVARIANT, not a heuristic: the latch's contract is
+// "the 24 base columns fit the width I was captured from" — whenever the
+// live width sits STABLY below the latched width, that premise is void and
+// the pitch re-derives from reality, at any time after mount. The stability
+// debounce rides out scrollbar jitter and mid-animation readings; growth
+// keeps the existing behavior (columns are added, pitch untouched) so the
+// desktop feel and the #1146 fix are unchanged.
+const NARROW_RELATCH_RATIO = 0.98;
+const NARROW_STABLE_MS = 2_000;
 
 type GridInteraction = 'drag' | 'resize' | null;
 
@@ -491,14 +503,16 @@ function WorkspaceGridCanvas({
   useEffect(() => {
     if (frozenWidth > 0) {
       const elapsedMs = performance.now() - mountAtMsRef.current;
-      const grewPastLatch =
-        elapsedMs < SETTLE_WINDOW_MS && width > frozenWidth * RETRACT_GROWTH_RATIO;
-      const shrankPastLatch =
-        elapsedMs < SHRINK_SETTLE_WINDOW_MS &&
-        width > 0 &&
-        width < frozenWidth * RETRACT_SHRINK_RATIO;
-      if (grewPastLatch || shrankPastLatch) {
+      if (elapsedMs < SETTLE_WINDOW_MS && width > frozenWidth * RETRACT_GROWTH_RATIO) {
         setFrozenWidth(0);
+        return;
+      }
+      if (width > 0 && width < frozenWidth * NARROW_RELATCH_RATIO) {
+        // Narrower than the latch: unlatch once the narrow width proves
+        // stable. The effect re-runs on every width change, cancelling the
+        // timer, so only a settled narrow width relatches.
+        const id = window.setTimeout(() => setFrozenWidth(0), NARROW_STABLE_MS);
+        return () => window.clearTimeout(id);
       }
       return;
     }

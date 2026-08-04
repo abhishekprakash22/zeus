@@ -4912,14 +4912,21 @@
 .transport {
   display: flex;
   align-items: center;
+  /* Wrap instead of overlap: on narrow kiosk widths the right-hand status
+   * cluster (ZOOM etc.) used to paint over the tail of the primary cluster
+   * (field report: CTUN and DIV hidden behind the zoom controls). With wrap
+   * the bar grows to a second row only when content genuinely doesn't fit;
+   * wide screens keep the single 38px row exactly as before. */
+  flex-wrap: wrap;
+  row-gap: 2px;
   gap: 6px;
-  padding: 0 14px;
+  padding: 2px 14px;
   background: var(--bg-0);
   border: 0;
   border-top: 1px solid var(--line);
   border-radius: 0;
   box-shadow: none;
-  height: 38px;
+  min-height: 38px;
   /* Issue #1107 — scaled together with .topbar by the operator's workspace
      zoom (set on .app via --zeus-chrome-zoom). The .app grid row this lives
      in is `auto` so the row tracks the zoomed height instead of pinning at
@@ -5424,7 +5431,7 @@
   html:not([data-force-desktop="1"]) .smeter-scale { height: 40px; padding: 4px; }
 
   html:not([data-force-desktop="1"]) .transport {
-    height: 44px;
+    min-height: 44px;
     padding: 0 6px;
     gap: 4px;
     min-width: 0;
@@ -5670,3 +5677,13 @@
    The static domed-glass specular (the GlassDome / MeterGlass / LiquidMetal-
    Frame dome layer and .meter-bar::before) is kept; the drift band elements
    and their @keyframes are gone from the render components and this file. == */
+
+
+/* Companion to .transport flex-wrap: the clusters themselves may wrap so no
+ * single long cluster can force an overlap. */
+.transport-primary,
+.transport-status {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-width: 0;
+}

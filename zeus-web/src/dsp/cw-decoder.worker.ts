@@ -18,7 +18,7 @@
 // emitted text, re-anchor silently (the transcript favors availability over
 // retroactive edits — same trade CW Skimmer makes).
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/wasm';
 
 interface Meta {
   chars: string[]; blank_index: number; sample_rate: number;

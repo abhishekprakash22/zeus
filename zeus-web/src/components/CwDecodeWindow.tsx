@@ -16,7 +16,25 @@ import { useLayoutStore } from '../state/layout-store';
 
 const WIDTH = 380;
 
+let windowClaimed = false;
+
+/** First mounted instance wins; duplicates (a render branch mounts this
+ *  pattern twice) render nothing instead of stacking identical windows. */
+function useWindowClaim(): boolean {
+  const [primary, setPrimary] = useState(false);
+  useEffect(() => {
+    if (windowClaimed) return;
+    windowClaimed = true;
+    setPrimary(true);
+    return () => {
+      windowClaimed = false;
+    };
+  }, []);
+  return primary;
+}
+
 export function CwDecodeWindow() {
+  const primary = useWindowClaim();
   const open = useCwDecodeStore((s) => s.panelOpen);
   const enabled = useCwDecodeStore((s) => s.enabled);
   const status = useCwDecodeStore((s) => s.status);
@@ -68,7 +86,7 @@ export function CwDecodeWindow() {
     if (drag.current?.id === e.pointerId) drag.current = null;
   }, []);
 
-  if (!open || settingsViewOpen) return null;
+  if (!primary || !open || settingsViewOpen) return null;
   const fresh = Date.now() - lastCharAt < 1500;
 
   return (

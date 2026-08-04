@@ -10,15 +10,29 @@
 // the frame's samples may be a view onto the WS receive buffer), and land
 // decoded characters in the store. Renders nothing.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { getAudioBus, type AudioFrameSubscriber } from '../audio/audio-bus';
 import { useCwDecodeStore } from '../state/cw-decode-store';
 
+let controllerClaimed = false;
+
 export function CwDecodeController() {
   const enabled = useCwDecodeStore((s) => s.enabled);
+  // The App mounts this beside every DiversityWindow instance, and one render
+  // branch contains two of those — without a claim, two controllers spawn two
+  // workers and double the inference load. First mount wins; others no-op.
+  const [primary, setPrimary] = useState(false);
+  useEffect(() => {
+    if (controllerClaimed) return;
+    controllerClaimed = true;
+    setPrimary(true);
+    return () => {
+      controllerClaimed = false;
+    };
+  }, []);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !primary) return;
     const store = useCwDecodeStore.getState();
     store.setStatus('loading');
     const worker = new Worker(new URL('../dsp/cw-decoder.worker.ts', import.meta.url), {
@@ -47,7 +61,7 @@ export function CwDecodeController() {
       setTimeout(() => worker.terminate(), 200);
       useCwDecodeStore.getState().setStatus('off');
     };
-  }, [enabled]);
+  }, [enabled, primary]);
 
   return null;
 }

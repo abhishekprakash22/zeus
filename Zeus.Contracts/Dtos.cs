@@ -885,6 +885,23 @@ public sealed record TxPhaseRotatorConfig(
         new(Enabled: true, CornerHz: DefaultCornerHz, Stages: DefaultStages, Reverse: reverse);
 }
 
+/// <summary>
+/// WDSP 2.0 PHROT telemetry: measured positive/negative envelope levels and
+/// asymmetry percentages at the rotator's input and output, plus the current
+/// corner and the auto-mode step. Ported verbatim from
+/// Zeus-SDR/station-engine Zeus.Contracts (the Zeus.Dsp 2.0 layer returns it
+/// from the phase-rotator asymmetry probe).
+/// </summary>
+public sealed record TxPhaseRotatorAsymmetry(
+    double InPosDb,
+    double InNegDb,
+    double InAsymmetryPct,
+    double OutPosDb,
+    double OutNegDb,
+    double OutAsymmetryPct,
+    double CurrentCornerHz,
+    double AutoStep);
+
 // A notch filter (MNF) — a band the operator paints, or Signal Intelligence
 // auto-detects, to remove EMF/birdies from the RX audio via WDSP's notch
 // database (nbp.c). CenterHz/WidthHz are ABSOLUTE RF in Hz (WDSP repositions

@@ -51,7 +51,24 @@ export function CwDecodeController() {
       .then((meta) => worker.postMessage({ type: 'init', modelUrl: '/deepcw/model_en.onnx', ortBase: '/deepcw/ort/', meta }))
       .catch((err) => useCwDecodeStore.getState().setStatus('error', String(err)));
     const onFrame: AudioFrameSubscriber = (frame) => {
-      const samples = frame.samples.slice(); // MUST copy: view onto WS buffer
+      // frame.samples is INTERLEAVED (frame.channels wide). Feeding stereo as
+      // mono halves the effective speed and pitch — the exact bug behind the
+      // 'decoding junk' field report (a 600 Hz note arrived at 300 Hz, below
+      // the model's 400 Hz window, at double the element length). Downmix to
+      // mono here; also halves the transfer.
+      const ch = Math.max(1, frame.channels);
+      let samples: Float32Array;
+      if (ch === 1) {
+        samples = frame.samples.slice(); // MUST copy: view onto WS buffer
+      } else {
+        const n = Math.floor(frame.samples.length / ch);
+        samples = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          let acc = 0;
+          for (let c = 0; c < ch; c++) acc += frame.samples[i * ch + c]!;
+          samples[i] = acc / ch;
+        }
+      }
       worker.postMessage({ type: 'pcm', samples, sampleRate: frame.sampleRateHz }, [samples.buffer]);
     };
     const unsub = getAudioBus().subscribe(onFrame);

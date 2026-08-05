@@ -159,6 +159,53 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
 
     // ---- audio ---------------------------------------------------------------
 
+    // Anti-alias lowpass state: 4th-order Butterworth (two cascaded biquads,
+    // streaming) at 1350 Hz, applied at the SOURCE rate before decimation.
+    // Interpolating 48 kHz straight down to 3200 Hz folds 1.6-24 kHz into the
+    // model band (2.0-2.8 kHz lands exactly inside 400-1200 Hz) — the same
+    // aliasing bug the browser worker shipped with, fixed in both places.
+    private int _lpfRate;
+    private readonly double[] _lpfState = new double[8];
+    private readonly double[][] _lpfCoef = new double[2][];
+
+    private void DesignLpf(int rate)
+    {
+        _lpfRate = rate;
+        Array.Clear(_lpfState);
+        double[] qs = { 0.5411961, 1.3065630 };
+        for (int i = 0; i < 2; i++)
+        {
+            double w0 = 2 * Math.PI * 1350.0 / rate;
+            double alpha = Math.Sin(w0) / (2 * qs[i]);
+            double cosW = Math.Cos(w0);
+            double b0 = (1 - cosW) / 2, b1 = 1 - cosW, b2 = (1 - cosW) / 2;
+            double a0 = 1 + alpha, a1 = -2 * cosW, a2 = 1 - alpha;
+            _lpfCoef[i] = new[] { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+        }
+    }
+
+    private void LowpassInPlace(Span<float> x, int rate)
+    {
+        if (rate <= 3600) return;
+        if (_lpfRate != rate) DesignLpf(rate);
+        for (int stage = 0; stage < 2; stage++)
+        {
+            var c = _lpfCoef[stage]!;
+            int o = stage * 4;
+            double x1 = _lpfState[o], x2 = _lpfState[o + 1], y1 = _lpfState[o + 2], y2 = _lpfState[o + 3];
+            for (int i = 0; i < x.Length; i++)
+            {
+                double xi = x[i];
+                double yi = c[0] * xi + c[1] * x1 + c[2] * x2 - c[3] * y1 - c[4] * y2;
+                x2 = x1; x1 = xi; y2 = y1; y1 = yi;
+                x[i] = (float)yi;
+            }
+            _lpfState[o] = x1; _lpfState[o + 1] = x2; _lpfState[o + 2] = y1; _lpfState[o + 3] = y2;
+        }
+    }
+
+    private readonly float[] _lpfScratch = new float[8192];
+
     private void OnRxAudio(int receiver, int sampleRateHz, ReadOnlyMemory<float> samples)
     {
         if (!_enabled || receiver != _receiver || sampleRateHz <= 0) return;
@@ -166,16 +213,24 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
         double step = (double)sampleRateHz / ModelRateHz;
         lock (_lock)
         {
+            // Filter on a scratch copy (the source memory belongs to the
+            // pipeline), preserving streaming filter state across blocks.
+            Span<float> work = src.Length <= _lpfScratch.Length
+                ? _lpfScratch.AsSpan(0, src.Length)
+                : new float[src.Length];
+            src.CopyTo(work);
+            LowpassInPlace(work, sampleRateHz);
+
             double pos = _resamplePos;
-            while (pos < src.Length - 1)
+            while (pos < work.Length - 1)
             {
                 int i = (int)pos;
                 double f = pos - i;
-                _ring[(int)(_ringWrite % RingLen)] = (float)(src[i] * (1 - f) + src[i + 1] * f);
+                _ring[(int)(_ringWrite % RingLen)] = (float)(work[i] * (1 - f) + work[i + 1] * f);
                 _ringWrite++;
                 pos += step;
             }
-            _resamplePos = pos - src.Length;   // carry into the next block
+            _resamplePos = pos - work.Length;   // carry into the next block
         }
     }
 

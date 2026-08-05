@@ -129,10 +129,16 @@ public sealed partial class RepoUpdateService
 
             // Exec bit, then the atomic swap — same directory, same filesystem.
             SetApply("swapping", 100, version);
-            File.SetUnixFileMode(tmpPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            // CA1416: the whole apply path is Linux-only in practice (it exists
+            // because $APPIMAGE does), but the analyzer wants the platform
+            // stated in a guard it can verify.
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(tmpPath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
             File.Move(tmpPath, appImagePath, overwrite: true);
 
             // Hand off: a detached shell waits for THIS process to release the

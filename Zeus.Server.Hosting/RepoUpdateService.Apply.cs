@@ -18,8 +18,13 @@
 
 using System.Diagnostics;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging;
 
-namespace Zeus.Server.Hosting;
+// NOTE: RepoUpdateService is declared in `namespace Zeus.Server` even though
+// it lives in the Hosting project — the partial must match or it silently
+// becomes an unrelated class (the v0.15.22 CI failure: eight 'no definition'
+// errors, all one namespace).
+namespace Zeus.Server;
 
 public sealed partial class RepoUpdateService
 {

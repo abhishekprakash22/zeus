@@ -35,7 +35,13 @@ let session: ort.InferenceSession | null = null;
 let meta: Meta | null = null;
 let ring = new Float32Array(0);
 let ringRate = 3200;
-let emitted = '';
+// Time-anchored streaming: `absWritten` counts every 3200 Hz sample ever
+// appended, so each decoded character maps (via its CTC frame) to an absolute
+// position in the stream. Emit each moment of audio exactly once — the
+// string-prefix anchor this replaces re-emitted most of the window every time
+// it slid (the field report's echoed phrases: 'GOT IN THNE GOT IN THE WAY').
+let absWritten = 0;
+let lastEmittedPos = -1;
 let timer: ReturnType<typeof setInterval> | null = null;
 let busy = false;
 
@@ -123,16 +129,18 @@ function spectrogram(audio: Float32Array, m: Meta): { data: Float32Array; frames
   return { data: out, frames };
 }
 
-function ctcGreedy(logProbs: Float32Array, frames: number, classes: number, m: Meta): string {
-  let prev = -1; let text = '';
+function ctcGreedy(
+  logProbs: Float32Array, frames: number, classes: number, m: Meta,
+): { text: string; framePos: number[] } {
+  let prev = -1; let text = ''; const framePos: number[] = [];
   for (let t = 0; t < frames; t++) {
     let best = 0, bestV = -Infinity;
     const o = t * classes;
     for (let c = 0; c < classes; c++) { const v = logProbs[o + c]!; if (v > bestV) { bestV = v; best = c; } }
-    if (best !== prev && best !== m.blank_index) text += m.chars[best] ?? '';
+    if (best !== prev && best !== m.blank_index) { text += m.chars[best] ?? ''; framePos.push(t); }
     prev = best;
   }
-  return text;
+  return { text, framePos };
 }
 
 async function tick(): Promise<void> {
@@ -145,23 +153,26 @@ async function tick(): Promise<void> {
     const out = await session.run({ spectrogram: input });
     const lp = out['log_probs']!;
     const [, T, C] = lp.dims as number[];
-    const full = ctcGreedy(lp.data as Float32Array, T!, C!, meta);
-    // stable region: drop chars produced by the trailing VOLATILE_SEC
-    const stableFrac = Math.max(0, 1 - (VOLATILE_SEC * meta.sample_rate) / ring.length);
-    const stable = full.slice(0, Math.floor(full.length * stableFrac));
-    if (stable.length > 0) {
-      if (emitted.length === 0 || stable.startsWith(emitted)) {
-        const fresh = stable.slice(emitted.length);
-        if (fresh) { emitted = stable; postMessage({ type: 'chars', text: fresh }); }
-      } else {
-        // Window slid past our anchor or the net revised history: re-anchor on
-        // the longest suffix of `emitted` that prefixes `stable`.
-        let k = Math.min(emitted.length, stable.length);
-        while (k > 0 && !stable.startsWith(emitted.slice(emitted.length - k))) k--;
-        const fresh = stable.slice(k);
-        emitted = stable;
-        if (fresh) postMessage({ type: 'chars', text: fresh });
-      }
+    const { text: full, framePos } = ctcGreedy(lp.data as Float32Array, T!, C!, meta);
+    // Map each character's CTC frame to an absolute sample position and emit
+    // strictly by time: chars past the last-emitted position, up to the
+    // volatile boundary. A one-hop guard band absorbs frame jitter between
+    // successive decodes of the same audio.
+    const windowStartAbs = absWritten - ring.length;
+    const stableEndAbs = absWritten - VOLATILE_SEC * meta.sample_rate;
+    const guard = meta.hop_length;
+    let fresh = '';
+    let newest = lastEmittedPos;
+    for (let i = 0; i < full.length; i++) {
+      const pos = windowStartAbs + framePos[i]! * meta.hop_length;
+      if (pos <= lastEmittedPos + guard) continue;
+      if (pos > stableEndAbs) break;
+      fresh += full[i]!;
+      newest = pos;
+    }
+    if (fresh) {
+      lastEmittedPos = newest;
+      postMessage({ type: 'chars', text: fresh });
     }
   } catch (err) {
     postMessage({ type: 'error', message: String(err) });
@@ -191,6 +202,7 @@ onmessage = async (e: MessageEvent) => {
     const raw = msg.samples as Float32Array;
     lowpassInPlace(raw, msg.sampleRate as number);
     const chunk = resampleTo(raw, msg.sampleRate as number, ringRate);
+    absWritten += chunk.length;
     const maxLen = WINDOW_SEC * ringRate;
     const merged = new Float32Array(Math.min(maxLen, ring.length + chunk.length));
     const keep = merged.length - chunk.length;
@@ -199,7 +211,7 @@ onmessage = async (e: MessageEvent) => {
     ring = merged;
   } else if (msg.type === 'stop') {
     if (timer) clearInterval(timer);
-    session = null; ring = new Float32Array(0); emitted = '';
+    session = null; ring = new Float32Array(0); absWritten = 0; lastEmittedPos = -1;
     close();
   }
 };

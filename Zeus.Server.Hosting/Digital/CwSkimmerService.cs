@@ -80,7 +80,7 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
         public double SnrDb;
         public long LastSeenMs;
         public long LastInferMs;
-        public string Emitted = "";
+        public double LastEmittedPos = -1;   // absolute 3200 Hz sample position
         public bool Active = true;
     }
 
@@ -368,34 +368,37 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
         }
         if (due is null) return;
 
-        float[] window = SnapshotTail(ModelRateHz * WindowSeconds);
+        long absWritten;
+        float[] window;
+        lock (_lock) absWritten = Math.Min(_ringWrite, long.MaxValue);
+        window = SnapshotTail(ModelRateHz * WindowSeconds);
         if (window.Length < ModelRateHz * 4) return;
 
         BandpassInPlace(window, due.PitchHz);
-        string full = Decode(window);
-        // Stable-prefix streaming, per channel (same contract as the browser
-        // worker): the trailing VolatileSeconds of audio produce revisable
-        // characters — emit only what has stabilized beyond them.
-        double stableFrac = Math.Max(0, 1 - VolatileSeconds * ModelRateHz / window.Length);
-        string stable = full[..Math.Min(full.Length, (int)(full.Length * stableFrac))];
-        string delta = "";
+        var (full, framePos) = Decode(window);
+        // Time-anchored streaming (same fix as the browser worker): each
+        // character maps via its CTC frame to an absolute sample position;
+        // emit each moment of audio exactly once. The string-prefix anchor
+        // this replaces re-emitted most of the window whenever it slid,
+        // echoing phrases into the transcript.
+        double windowStartAbs = absWritten - window.Length;
+        double stableEndAbs = absWritten - VolatileSeconds * ModelRateHz;
+        double guard = _hopLen;
+        var fresh = new System.Text.StringBuilder();
+        double newest = due.LastEmittedPos;
+        for (int i = 0; i < full.Length; i++)
+        {
+            double pos = windowStartAbs + framePos[i] * (double)_hopLen;
+            if (pos <= due.LastEmittedPos + guard) continue;
+            if (pos > stableEndAbs) break;
+            fresh.Append(full[i]);
+            newest = pos;
+        }
+        string delta;
         lock (_lock)
         {
-            if (stable.Length > 0)
-            {
-                if (due.Emitted.Length == 0 || stable.StartsWith(due.Emitted, StringComparison.Ordinal))
-                {
-                    delta = stable[due.Emitted.Length..];
-                    due.Emitted = stable;
-                }
-                else
-                {
-                    int k = Math.Min(due.Emitted.Length, stable.Length);
-                    while (k > 0 && !stable.StartsWith(due.Emitted[^k..], StringComparison.Ordinal)) k--;
-                    delta = stable[k..];
-                    due.Emitted = stable;
-                }
-            }
+            delta = fresh.ToString();
+            if (delta.Length > 0) due.LastEmittedPos = newest;
         }
         if (delta.Length > 0)
         {
@@ -522,9 +525,10 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
             d.Length > 0 && File.Exists(Path.Combine(d, "model_en.onnx")));
     }
 
-    private string Decode(float[] audio)
+    private (string Text, int[] FramePos) Decode(float[] audio)
     {
-        if (_session is null || _cos is null || _sin is null || _hann is null) return "";
+        if (_session is null || _cos is null || _sin is null || _hann is null)
+            return ("", Array.Empty<int>());
         int pad = _fftLen / 2;
         int padded = audio.Length + pad * 2;
         var buf = new float[padded];
@@ -561,6 +565,7 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
         var lp = results.First(r => r.Name == "log_probs").AsTensor<float>();
         int T = lp.Dimensions[1], C = lp.Dimensions[2];
         var sb = new System.Text.StringBuilder();
+        var pos = new List<int>();
         int prev = -1;
         for (int t = 0; t < T; t++)
         {
@@ -572,10 +577,13 @@ public sealed class CwSkimmerService : IHostedService, IDisposable
                 if (v > bestV) { bestV = v; best = c; }
             }
             if (best != prev && best != _blankIndex && best < _vocab.Length)
+            {
                 sb.Append(_vocab[best]);
+                pos.Add(t);
+            }
             prev = best;
         }
-        return sb.ToString();
+        return (sb.ToString(), pos.ToArray());
     }
 
     // ---- lifecycle -----------------------------------------------------------

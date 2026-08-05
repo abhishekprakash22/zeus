@@ -5802,6 +5802,25 @@ export function postCwSkim(enabled: boolean, receiver = 0): Promise<unknown> {
   );
 }
 
+export interface UpdateApplyStatusDto {
+  phase: 'idle' | 'downloading' | 'verifying' | 'swapping' | 'restarting' | 'failed' | 'unsupported';
+  percent: number;
+  targetVersion: string | null;
+  error: string | null;
+}
+
+export function postUpdateApply(): Promise<{ ok: boolean; status: UpdateApplyStatusDto }> {
+  return jsonFetch(
+    '/api/system/update/apply',
+    { method: 'POST' },
+    (raw) => raw as { ok: boolean; status: UpdateApplyStatusDto },
+  );
+}
+
+export function getUpdateApplyStatus(signal?: AbortSignal): Promise<UpdateApplyStatusDto> {
+  return jsonFetch('/api/system/update/apply', { signal }, (raw) => raw as UpdateApplyStatusDto);
+}
+
 export function setVfo(
   hz: number,
   signal?: AbortSignal,

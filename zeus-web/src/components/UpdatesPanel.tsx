@@ -15,7 +15,13 @@
 // source manually with scripts/update.*.
 
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { fetchUpdateStatus, type RepoUpdateStatus } from '../api/client';
+import {
+  fetchUpdateStatus,
+  getUpdateApplyStatus,
+  postUpdateApply,
+  type RepoUpdateStatus,
+  type UpdateApplyStatusDto,
+} from '../api/client';
 
 const labelStyle: CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--fg-2)' };
 const valueStyle: CSSProperties = { fontSize: 12, color: 'var(--fg-1)', fontFamily: 'monospace' };
@@ -73,6 +79,59 @@ export function UpdatesPanel() {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [apply, setApply] = useState<UpdateApplyStatusDto | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  // In-place install driver: kick the server-side apply, poll its phase, and
+  // when the server dies for the restart, keep probing until it's back — then
+  // hard-reload so the SPA matches the new build.
+  const doInstall = useCallback(() => {
+    setApplying(true);
+    setResult(null);
+    void postUpdateApply()
+      .then(async ({ ok, status: st }) => {
+        setApply(st);
+        if (!ok) {
+          setApplying(false);
+          setResult(st.error ?? 'In-place update is not available on this install.');
+          return;
+        }
+        let missedPolls = 0;
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 800));
+          try {
+            const cur = await getUpdateApplyStatus();
+            setApply(cur);
+            missedPolls = 0;
+            if (cur.phase === 'failed' || cur.phase === 'unsupported') {
+              setApplying(false);
+              setResult(cur.error ?? 'Update failed.');
+              return;
+            }
+          } catch {
+            // Server going away during 'restarting' is the plan working.
+            missedPolls++;
+            if (missedPolls >= 2) {
+              setApply({ phase: 'restarting', percent: 100, targetVersion: null, error: null });
+              for (;;) {
+                await new Promise((r) => setTimeout(r, 1200));
+                try {
+                  await fetchUpdateStatus(false);
+                  window.location.reload();
+                  return;
+                } catch {
+                  /* still rebooting */
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        setApplying(false);
+        setResult(String(err));
+      });
+  }, []);
 
   const check = useCallback(async (fetch: boolean) => {
     setChecking(true);
@@ -216,18 +275,27 @@ export function UpdatesPanel() {
             <button
               type="button"
               className="btn sm active"
-              disabled={!canUpdate || checking}
-              onClick={() => doUpdate()}
+              disabled={!canUpdate || checking || applying}
+              onClick={() => (action === 'download' ? doInstall() : doUpdate())}
               title={
                 action === 'download'
-                  ? 'Open the latest Zeus download for this platform'
+                  ? 'Download, verify, and install the update in place, then restart Zeus'
                   : action === 'openRelease'
                     ? 'Open the Zeus downloads page'
                     : 'Already up to date'
               }
             >
-              UPDATE NOW
+              {applying ? 'INSTALLING...' : action === 'download' ? 'INSTALL & RESTART' : 'UPDATE NOW'}
             </button>
+            {apply && applying && (
+              <span style={{ fontSize: 11, opacity: 0.85 }}>
+                {apply.phase === 'downloading'
+                  ? `downloading… ${apply.percent.toFixed(0)}%`
+                  : apply.phase === 'restarting'
+                    ? 'restarting Zeus… this page will reload'
+                    : `${apply.phase}…`}
+              </span>
+            )}
           </div>
 
           {result && (

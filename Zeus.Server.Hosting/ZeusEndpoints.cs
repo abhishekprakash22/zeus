@@ -298,6 +298,13 @@ public static class ZeusEndpoints
         app.MapGet("/api/system/update",
             async (RepoUpdateService updates, bool? fetch, CancellationToken ct) =>
                 Results.Ok(await updates.GetStatusAsync(fetch ?? true, ct)));
+        app.MapPost("/api/system/update/apply", (RepoUpdateService svc) =>
+        {
+            bool ok = svc.BeginApply();
+            return Results.Ok(new { ok, status = svc.GetApplyStatus() });
+        });
+        app.MapGet("/api/system/update/apply", (RepoUpdateService svc) =>
+            Results.Ok(svc.GetApplyStatus()));
 
         // Native RX audio (miniaudio) — desktop-mode mute control. The
         // Mute/Unmute button in the Photino window POSTs here to silence

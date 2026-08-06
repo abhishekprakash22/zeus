@@ -1380,7 +1380,11 @@ public static class ZeusHost
         var users = app.Services.GetRequiredService<UserManagementStore>();
         _ = users.GetSession(qrzService.GetStatus());
 
-        app.Services.GetRequiredService<RepoUpdateService>().InitializePackagedStartupGuards();
+        var repoUpdate = app.Services.GetRequiredService<RepoUpdateService>();
+        repoUpdate.InitializePackagedStartupGuards();
+        // Every boot, make sure the Desktop launcher exists and points at the
+        // live AppImage (survives deletion; covers manual installs too).
+        repoUpdate.EnsureDesktopShortcut();
     }
 
     static void PrintBanner(

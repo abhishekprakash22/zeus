@@ -72,6 +72,87 @@ public sealed partial class RepoUpdateService
         return true;
     }
 
+    private const string ShortcutMarker = "X-Zeus-Managed=true";
+
+    /// <summary>Best-effort: make sure a Desktop launcher exists and points at
+    /// the live AppImage. Runs after every applied update and once at startup,
+    /// so the shortcut survives deletion, path moves, and manual installs.
+    /// A launcher without our marker (user-customized) is never touched.</summary>
+    public void EnsureDesktopShortcut()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows()) return;
+            string? appImage = Environment.GetEnvironmentVariable("APPIMAGE");
+            if (string.IsNullOrWhiteSpace(appImage) || !File.Exists(appImage)) return;
+
+            string? desktop = ResolveDesktopDir();
+            if (desktop is null || !Directory.Exists(desktop)) return;
+
+            string launcher = Path.Combine(desktop, "openhpsdr-zeus.desktop");
+            if (File.Exists(launcher))
+            {
+                string existing = File.ReadAllText(launcher);
+                if (!existing.Contains(ShortcutMarker, StringComparison.Ordinal))
+                    return;                       // the operator made this their own
+                if (existing.Contains($"Exec=\"{appImage}\"", StringComparison.Ordinal))
+                    return;                       // already correct
+            }
+
+            string content =
+                "[Desktop Entry]\n" +
+                "Type=Application\n" +
+                "Name=OpenHPSDR Zeus\n" +
+                "Comment=Software-defined radio (self-updating AppImage)\n" +
+                $"Exec=\"{appImage}\"\n" +
+                "Icon=radio\n" +
+                "Terminal=false\n" +
+                "Categories=HamRadio;Network;AudioVideo;\n" +
+                ShortcutMarker + "\n";
+            File.WriteAllText(launcher, content);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(launcher,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            }
+            _log.LogInformation("desktop shortcut ensured at {Path}", launcher);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "desktop shortcut ensure skipped");
+        }
+    }
+
+    /// <summary>XDG_DESKTOP_DIR from ~/.config/user-dirs.dirs when present,
+    /// else ~/Desktop.</summary>
+    private static string? ResolveDesktopDir()
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrEmpty(home)) return null;
+        try
+        {
+            string cfg = Path.Combine(home, ".config", "user-dirs.dirs");
+            if (File.Exists(cfg))
+            {
+                foreach (var line in File.ReadLines(cfg))
+                {
+                    var t = line.Trim();
+                    if (!t.StartsWith("XDG_DESKTOP_DIR=", StringComparison.Ordinal)) continue;
+                    string v = t["XDG_DESKTOP_DIR=".Length..].Trim('"');
+                    v = v.Replace("$HOME", home, StringComparison.Ordinal);
+                    if (v.Length > 0) return v;
+                }
+            }
+        }
+        catch
+        {
+            // fall through to the default
+        }
+        return Path.Combine(home, "Desktop");
+    }
+
     private async Task ApplyAsync(string appImagePath)
     {
         try
@@ -140,6 +221,8 @@ public sealed partial class RepoUpdateService
                     UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
             }
             File.Move(tmpPath, appImagePath, overwrite: true);
+
+            EnsureDesktopShortcut();
 
             // Hand off: a detached shell waits for THIS process to release the
             // listen port, then execs the new image with the same working dir.

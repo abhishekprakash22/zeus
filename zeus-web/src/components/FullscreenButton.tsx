@@ -18,6 +18,7 @@
 // the button label stays truthful via the fullscreenchange event either way.
 
 import { useCallback, useEffect, useState } from 'react';
+import { G2_FRAME_H, G2_FRAME_W, useG2WorkspaceStore } from '../state/g2-workspace-store';
 
 const PREF_KEY = 'zeus.fullscreen.preferred';
 
@@ -59,15 +60,12 @@ export function FullscreenButton() {
     let armed = true;
     const restore = () => {
       if (!armed) return;
-      // Refuse to re-enter while the window geometry is still stale
-      // (viewport larger than the screen): entering fullscreen from that
-      // state would recreate the oversized surface and loop the watchdog.
-      // Stay armed — a later tap, after the compositor settles, succeeds.
-      if (
-        window.innerWidth > window.screen.width * 1.02 ||
-        window.innerHeight > window.screen.height * 1.02
-      )
-        return;
+      // Field evidence (G2 kiosk): requestFullscreen from the oversized
+      // windowed state IS the cure — chromium re-configures the surface
+      // against the true output. The earlier stale-geometry refusal here
+      // was defending against a loop this platform doesn't have, and it
+      // blocked the recovery. Re-enter unconditionally; the watchdog's
+      // cycle cap (below) is the loop protection.
       armed = false;
       cleanup();
       if (!document.fullscreenElement && readPref())
@@ -97,16 +95,25 @@ export function FullscreenButton() {
   // impossible state (viewport larger than the screen while fullscreen),
   // exit automatically, and re-arm the first-gesture restore — so one tap
   // anywhere re-enters fullscreen at the settled, correct size.
+  // Truth anchor for "the surface is bigger than the glass". Field evidence:
+  // the boot-stale geometry is COHERENT inside the browser — viewport AND
+  // window.screen both report the transient large mode, so comparing them
+  // detects nothing. When the operator has declared the physical panel (the
+  // G2 1280x800 frame option), compare against THAT; otherwise fall back to
+  // window.screen (which still catches the incoherent variant).
+  const g2Frame = useG2WorkspaceStore((s) => s.g2Frame);
   useEffect(() => {
     let strikes = 0;
+    let cycles = 0; // loop protection: give up after a few auto-exits
     const id = window.setInterval(() => {
       if (!document.fullscreenElement) {
         strikes = 0;
         return;
       }
+      const physW = g2Frame ? G2_FRAME_W : window.screen.width;
+      const physH = g2Frame ? G2_FRAME_H : window.screen.height;
       const oversize =
-        window.innerWidth > window.screen.width * 1.02 ||
-        window.innerHeight > window.screen.height * 1.02;
+        window.innerWidth > physW * 1.02 || window.innerHeight > physH * 1.02;
       if (!oversize) {
         strikes = 0;
         return;
@@ -114,14 +121,28 @@ export function FullscreenButton() {
       strikes++;
       if (strikes < 2) return; // two consecutive seconds = not a transient
       strikes = 0;
+      if (cycles >= 3) return; // stop cycling; the manual button remains
+      cycles++;
       console.info(
-        '[fullscreen] surface larger than screen (%dx%d > %dx%d) — exiting stale fullscreen; next tap re-enters',
-        window.innerWidth, window.innerHeight, window.screen.width, window.screen.height,
+        '[fullscreen] surface %dx%d exceeds physical %dx%d (screen reports %dx%d) — exiting stale fullscreen; next tap re-enters',
+        window.innerWidth, window.innerHeight, physW, physH,
+        window.screen.width, window.screen.height,
       );
       void document.exitFullscreen().catch(() => {});
       armRestore();
     }, 1000);
     return () => window.clearInterval(id);
+  }, [armRestore, g2Frame]);
+
+  // Manual Esc parity: any exit from fullscreen while the preference is
+  // still 'on' arms the one-tap restore — so even a hand-pressed Esc is
+  // followed by tap-to-re-enter, never drag-to-find-the-button.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement && readPref()) armRestore();
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
   }, [armRestore]);
 
   const toggle = () => {

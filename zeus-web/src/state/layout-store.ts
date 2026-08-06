@@ -101,6 +101,11 @@ interface LayoutState {
   // setActiveLayout(...) clears this so picking a layout returns to the
   // workspace.
   settingsViewOpen: boolean;
+  /** Workspace Setup Mode: the field is pinned to the visible screen, tiles
+   *  may overlap (no repair shove), and off-screen tiles are pulled back into
+   *  view for hand-arranging. Session-only. */
+  workspaceSetupMode: boolean;
+  setWorkspaceSetupMode: (on: boolean) => void;
   settingsInitialTab?: string;
   setSettingsView: (open: boolean, tab?: string) => void;
 
@@ -292,6 +297,9 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       settingsViewOpen: open,
       settingsInitialTab: open ? tab : undefined,
     }),
+
+  workspaceSetupMode: false,
+  setWorkspaceSetupMode: (on) => set({ workspaceSetupMode: on }),
 
   loadForRadio: async (radioKey) => {
     const safeKey = radioKey || 'default';

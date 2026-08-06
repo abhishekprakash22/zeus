@@ -637,9 +637,19 @@ function WorkspaceGridCanvas({
 
   // With constant cells the render geometry equals the stored geometry, so
   // persistence is a straight passthrough to the store (no reconcile pass).
+  // Workspace Setup Mode (field report, G2 fixed screens): adding a too-big
+  // panel used to shove the field larger than the screen — tiles vanished off
+  // the edge. In setup mode the field is pinned to the visible screen, tiles
+  // are allowed to OVERLAP (the repair shove is suspended), and everything
+  // off-screen is clamped back into view so the operator can resize and
+  // arrange by hand. Leaving setup mode runs one overlap repair to restore
+  // the normal invariant.
+  const setupMode = useLayoutStore((s) => s.workspaceSetupMode);
+  const setSetupMode = useLayoutStore((s) => s.setWorkspaceSetupMode);
+
   const persist = useCallback(
-    (next: Layout) => onLayoutChange(repairLayoutOverlaps(next)),
-    [onLayoutChange],
+    (next: Layout) => onLayoutChange(setupMode ? next : repairLayoutOverlaps(next)),
+    [onLayoutChange, setupMode],
   );
 
   // Rows that fit the live workspace area (the measured container, which sits
@@ -658,6 +668,35 @@ function WorkspaceGridCanvas({
           Math.floor((containerHeight + rowMargin) / (rowHeight + rowMargin)),
         )
       : 0;
+
+  // Setup-mode transitions. Entering: clamp every tile fully into the visible
+  // field (shrink to fit, then pull inside) and persist RAW — overlaps stand,
+  // nothing is off-screen. Leaving: one overlap repair restores the invariant.
+  const prevSetupRef = useRef(false);
+  useEffect(() => {
+    if (setupMode === prevSetupRef.current) return;
+    prevSetupRef.current = setupMode;
+    if (!isPrimary || cols <= 0) return;
+    const current: Layout = rglLayouts.lg ?? [];
+    if (setupMode) {
+      if (visibleRows <= 0) return;
+      const clamped = current.map((it) => {
+        const w = Math.max(1, Math.min(it.w, cols));
+        const h = Math.max(1, Math.min(it.h, visibleRows));
+        return {
+          ...it,
+          w,
+          h,
+          x: Math.max(0, Math.min(it.x, cols - w)),
+          y: Math.max(0, Math.min(it.y, visibleRows - h)),
+        };
+      });
+      onLayoutChange(clamped);
+    } else {
+      onLayoutChange(repairLayoutOverlaps(current));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setupMode]);
 
   // Report the visible field size (grid cells) to the store so the add-panel
   // flow places a new panel within the current view (and overlaps at the origin
@@ -901,7 +940,7 @@ function WorkspaceGridCanvas({
         <ResponsiveGridLayout
           className={`all-panels-grid${
             gridInteraction ? ' all-panels-grid--interacting' : ''
-          }`}
+          }${setupMode ? ' all-panels-grid--setup' : ''}`}
           width={gridWidth}
           breakpoints={{ lg: 0 }}
           cols={{ lg: cols }}
@@ -978,6 +1017,20 @@ function WorkspaceGridCanvas({
             );
           })}
         </ResponsiveGridLayout>
+      )}
+      {isPrimary && (
+        <button
+          type="button"
+          className={`ws-setup-chip${setupMode ? ' on' : ''}`}
+          title={
+            setupMode
+              ? 'Leave Setup Mode — overlapping tiles will be tidied apart'
+              : 'Setup Mode: pin the workspace to the screen, pull off-screen tiles back into view, and allow overlap while you arrange'
+          }
+          onClick={() => setSetupMode(!setupMode)}
+        >
+          {setupMode ? 'DONE' : 'SETUP'}
+        </button>
       )}
     </div>
   );

@@ -1847,3 +1847,14 @@
 /* ---- CW skimmer lanes (phase 2) ---- */
 .cwskim-lane { pointer-events: auto; cursor: pointer; }
 .cwskim-lane .cwdec-callout-head span:last-child { letter-spacing: 0; }
+
+/* ---- Workspace Setup Mode ---- */
+.all-panels-grid--setup { outline: 2px dashed #ffb13c66; outline-offset: -2px; }
+.all-panels-grid--setup .react-grid-item { opacity: 0.92; }
+.ws-setup-chip { position: absolute; right: 10px; bottom: 10px; z-index: 60;
+  font: 700 10px var(--font-mono, monospace); letter-spacing: .08em;
+  background: #1a1e25; color: #d7dde6; border: 1px solid #31353d;
+  border-radius: 5px; padding: 4px 10px; cursor: pointer; opacity: .75; }
+.ws-setup-chip:hover { opacity: 1; }
+.ws-setup-chip.on { background: linear-gradient(#c98a2b,#8a5c14);
+  border-color: #ffb13c; color: #fff; opacity: 1; }

@@ -17,7 +17,7 @@
 // Esc / F11 exits count as the operator's decision and update the preference —
 // the button label stays truthful via the fullscreenchange event either way.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 const PREF_KEY = 'zeus.fullscreen.preferred';
 
@@ -53,8 +53,9 @@ export function FullscreenButton() {
   // First-gesture restore: if the operator preferred full screen last session
   // and we're not in it (plain-browser launch, or the kiosk flag was
   // unavailable), the first click or keypress anywhere re-enters it, once.
-  useEffect(() => {
-    if (!readPref() || document.fullscreenElement) return;
+  // armRestore is reusable: the stale-fullscreen watchdog below re-arms it
+  // after an automatic exit.
+  const armRestore = useCallback(() => {
     let armed = true;
     const restore = () => {
       if (!armed) return;
@@ -71,6 +72,48 @@ export function FullscreenButton() {
     window.addEventListener('keydown', restore, true);
     return cleanup;
   }, []);
+
+  useEffect(() => {
+    if (!readPref() || document.fullscreenElement) return;
+    return armRestore();
+  }, [armRestore]);
+
+  // Stale-fullscreen watchdog (G2 kiosk field report): fullscreen engaged
+  // while the compositor was still settling the display mode leaves the
+  // fullscreen surface LARGER than the physical screen — the window itself
+  // overflows the panel, and no amount of workspace math can fix a window
+  // that is bigger than the display. The browser keeps the stale geometry
+  // until fullscreen is re-entered. We cannot re-enter programmatically
+  // (requestFullscreen is gesture-gated by design), but we CAN detect the
+  // impossible state (viewport larger than the screen while fullscreen),
+  // exit automatically, and re-arm the first-gesture restore — so one tap
+  // anywhere re-enters fullscreen at the settled, correct size.
+  useEffect(() => {
+    let strikes = 0;
+    const id = window.setInterval(() => {
+      if (!document.fullscreenElement) {
+        strikes = 0;
+        return;
+      }
+      const oversize =
+        window.innerWidth > window.screen.width * 1.02 ||
+        window.innerHeight > window.screen.height * 1.02;
+      if (!oversize) {
+        strikes = 0;
+        return;
+      }
+      strikes++;
+      if (strikes < 2) return; // two consecutive seconds = not a transient
+      strikes = 0;
+      console.info(
+        '[fullscreen] surface larger than screen (%dx%d > %dx%d) — exiting stale fullscreen; next tap re-enters',
+        window.innerWidth, window.innerHeight, window.screen.width, window.screen.height,
+      );
+      void document.exitFullscreen().catch(() => {});
+      armRestore();
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [armRestore]);
 
   const toggle = () => {
     if (document.fullscreenElement) {

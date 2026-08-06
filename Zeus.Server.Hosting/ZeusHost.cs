@@ -1382,6 +1382,9 @@ public static class ZeusHost
 
         var repoUpdate = app.Services.GetRequiredService<RepoUpdateService>();
         repoUpdate.InitializePackagedStartupGuards();
+        // Remember the AppImage's path while we can see it, so a future run
+        // launched from the bare inner binary can still self-update.
+        repoUpdate.RecordAppImagePath();
         // Every boot, make sure the Desktop launcher exists and points at the
         // live AppImage (survives deletion; covers manual installs too).
         repoUpdate.EnsureDesktopShortcut();

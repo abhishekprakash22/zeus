@@ -57,12 +57,14 @@ public sealed partial class RepoUpdateService
             if (_applyTask is { IsCompleted: false }) return true; // already running
         }
 
-        string? appImage = Environment.GetEnvironmentVariable("APPIMAGE");
-        if (string.IsNullOrWhiteSpace(appImage) || !File.Exists(appImage))
+        string? appImage = ResolveAppImagePath();
+        if (appImage is null)
         {
-            // Service-mode tarball or a source checkout: nothing safe to swap.
+            // Service-mode tarball or a source checkout with no remembered
+            // image: nothing safe to swap.
             SetApply("unsupported", 0, error:
-                "not running from an AppImage ($APPIMAGE unset) — update the install manually");
+                "no AppImage found to update — launch Zeus from the .AppImage once "
+                + "(or set ZEUS_APPIMAGE_PATH), then this button can update it");
             return false;
         }
 
@@ -74,6 +76,63 @@ public sealed partial class RepoUpdateService
 
     private const string ShortcutMarker = "X-Zeus-Managed=true";
 
+    /// <summary>Where the AppImage path is remembered between runs, so a Zeus
+    /// launched from the bare inner binary (extracted AppRun, wrapper script —
+    /// $APPIMAGE unset) can still update the real image. XDG-aware.</summary>
+    private static string AppImagePathFile()
+    {
+        string cfg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+        return Path.Combine(cfg, "openhpsdr-zeus", "appimage-path");
+    }
+
+    /// <summary>Called at startup: when running under the AppImage runtime,
+    /// remember where the image lives for future bare-binary runs.</summary>
+    public void RecordAppImagePath()
+    {
+        try
+        {
+            string? appImage = ResolveAppImagePath();
+            if (appImage is null) return;
+            string file = AppImagePathFile();
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            if (!File.Exists(file) || File.ReadAllText(file).Trim() != appImage)
+                File.WriteAllText(file, appImage + "\n");
+        }
+        catch
+        {
+            // best-effort memory, never fatal
+        }
+    }
+
+    /// <summary>$APPIMAGE, else ZEUS_APPIMAGE_PATH, else the path recorded by
+    /// a previous AppImage-launched run — validated to still exist.</summary>
+    private static string? ResolveAppImagePath()
+    {
+        foreach (string? candidate in new[]
+        {
+            Environment.GetEnvironmentVariable("APPIMAGE"),
+            Environment.GetEnvironmentVariable("ZEUS_APPIMAGE_PATH"),
+        })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate)) return candidate;
+        }
+        try
+        {
+            string file = AppImagePathFile();
+            if (File.Exists(file))
+            {
+                string remembered = File.ReadAllText(file).Trim();
+                if (remembered.Length > 0 && File.Exists(remembered)) return remembered;
+            }
+        }
+        catch
+        {
+            // fall through
+        }
+        return null;
+    }
+
     /// <summary>Best-effort: make sure a Desktop launcher exists and points at
     /// the live AppImage. Runs after every applied update and once at startup,
     /// so the shortcut survives deletion, path moves, and manual installs.
@@ -83,8 +142,8 @@ public sealed partial class RepoUpdateService
         try
         {
             if (OperatingSystem.IsWindows()) return;
-            string? appImage = Environment.GetEnvironmentVariable("APPIMAGE");
-            if (string.IsNullOrWhiteSpace(appImage) || !File.Exists(appImage)) return;
+            string? appImage = ResolveAppImagePath();
+            if (appImage is null) return;
 
             string? desktop = ResolveDesktopDir();
             if (desktop is null || !Directory.Exists(desktop)) return;

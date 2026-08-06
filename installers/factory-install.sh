@@ -50,12 +50,31 @@ if [ "${1:-}" != "" ] && [ -f "${1:-}" ]; then
   cp "$1" "$APP_PATH.staging"
 else
   command -v curl >/dev/null || die "curl is required"
+  command -v python3 >/dev/null || die "python3 is required (present on Raspberry Pi OS)"
   say "fetching manifest: $MANIFEST_URL"
   MANIFEST="$(curl -fsSL "$MANIFEST_URL")" || die "manifest fetch failed"
-  # Pull the aarch64 AppImage entry (url + sha256) with POSIX tools.
-  URL=$(printf '%s' "$MANIFEST" | tr ',' '\n' | grep -o '"url"[^"]*"[^"]*aarch64[^"]*\.AppImage"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
-  SHA=$(printf '%s' "$MANIFEST" | tr ',{' '\n\n' | grep -A2 'aarch64.*AppImage' | grep -o '"sha256"[^"]*"[0-9a-f]*"' | head -1 | grep -o '[0-9a-f]\{64\}')
-  [ -n "$URL" ] || die "no aarch64 AppImage in manifest"
+  # Parse with a real JSON parser — the first release of this script parsed
+  # with grep, guessed the schema wrong, and set -e killed it SILENTLY at the
+  # failed assignment before its own error message could fire. Every
+  # extraction below is set -e-safe and fails loudly.
+  PARSED="$(printf '%s' "$MANIFEST" | python3 -c '
+import json, sys
+m = json.load(sys.stdin)
+assets = m.get("assets") or (m.get("versions") or [{}])[0].get("assets") or []
+for a in assets:
+    name = (a.get("filename") or "").lower()
+    if name.endswith(".appimage") and ("aarch64" in name or a.get("arch") in ("arm64", "aarch64")):
+        print(a.get("url") or "")
+        print(a.get("sha256") or "")
+        print(m.get("latest") or m.get("version") or "")
+        break
+' 2>/dev/null)" || true
+  [ -n "$PARSED" ] || die "could not parse manifest (schema mismatch?) — inspect: $MANIFEST_URL"
+  URL=$(printf '%s\n' "$PARSED" | sed -n 1p)
+  SHA=$(printf '%s\n' "$PARSED" | sed -n 2p)
+  VER=$(printf '%s\n' "$PARSED" | sed -n 3p)
+  [ -n "$URL" ] || die "manifest has no aarch64 AppImage asset — inspect: $MANIFEST_URL"
+  [ -n "$VER" ] && say "latest release: $VER"
   say "downloading: $URL"
   curl -fL --progress-bar -o "$APP_PATH.staging" "$URL"
   if [ -n "${SHA:-}" ]; then

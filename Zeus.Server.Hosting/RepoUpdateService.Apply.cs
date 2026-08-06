@@ -178,13 +178,15 @@ public sealed partial class RepoUpdateService
             if (desktop is null || !Directory.Exists(desktop)) return;
 
             string launcher = Path.Combine(desktop, "openhpsdr-zeus.desktop");
+            string icon = InstallBrandingIcon() ?? "radio";
             if (File.Exists(launcher))
             {
                 string existing = File.ReadAllText(launcher);
                 if (!existing.Contains(ShortcutMarker, StringComparison.Ordinal))
                     return;                       // the operator made this their own
-                if (existing.Contains($"Exec=\"{appImage}\"", StringComparison.Ordinal))
-                    return;                       // already correct
+                if (existing.Contains($"Exec=\"{appImage}\"", StringComparison.Ordinal)
+                    && existing.Contains($"Icon={icon}", StringComparison.Ordinal))
+                    return;                       // already correct, artwork included
             }
 
             string content =
@@ -193,7 +195,7 @@ public sealed partial class RepoUpdateService
                 "Name=OpenHPSDR Zeus\n" +
                 "Comment=Software-defined radio (self-updating AppImage)\n" +
                 $"Exec=\"{appImage}\"\n" +
-                "Icon=radio\n" +
+                $"Icon={icon}\n" +
                 "Terminal=false\n" +
                 "Categories=HamRadio;Network;AudioVideo;\n" +
                 ShortcutMarker + "\n";
@@ -210,6 +212,38 @@ public sealed partial class RepoUpdateService
         catch (Exception ex)
         {
             _log.LogDebug(ex, "desktop shortcut ensure skipped");
+        }
+    }
+
+    /// <summary>Install the Zeus branding icon (shipped in wwwroot/branding
+    /// beside the SPA) into the user's icon directory and return its path for
+    /// the launcher's Icon= line — or null when unavailable (the caller falls
+    /// back to a theme icon). Copies only when missing or changed, so the
+    /// icon refreshes when a release ships new artwork.</summary>
+    private string? InstallBrandingIcon()
+    {
+        try
+        {
+            string[] candidates =
+            {
+                Path.Combine(AppContext.BaseDirectory, "wwwroot", "branding", "zeus-logo.png"),
+                Path.Combine(AppContext.BaseDirectory, "..", "zeus-web", "public", "branding", "zeus-logo.png"),
+                Path.Combine(Directory.GetCurrentDirectory(), "zeus-web", "public", "branding", "zeus-logo.png"),
+            };
+            string? src = candidates.FirstOrDefault(File.Exists);
+            if (src is null) return null;
+
+            string dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME")
+                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+            string dst = Path.Combine(dataHome, "icons", "openhpsdr-zeus.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            if (!File.Exists(dst) || new FileInfo(dst).Length != new FileInfo(src).Length)
+                File.Copy(src, dst, overwrite: true);
+            return dst;
+        }
+        catch
+        {
+            return null;
         }
     }
 

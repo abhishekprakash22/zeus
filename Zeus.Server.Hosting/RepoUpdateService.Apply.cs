@@ -105,6 +105,35 @@ public sealed partial class RepoUpdateService
         }
     }
 
+    /// <summary>Rollback sentinel: written just before the update restart,
+    /// removed by the NEW instance at startup as its proof of life. If the
+    /// handoff shell still sees it after the timeout, the new build never
+    /// came up — it restores the .bak and relaunches the previous version.
+    /// </summary>
+    private static string PendingSentinelFile() =>
+        Path.Combine(Path.GetDirectoryName(AppImagePathFile())!, "update-pending");
+
+    /// <summary>Called at startup: confirm a just-applied update so the
+    /// handoff supervisor stands down, and log the outcome. Safe no-op when
+    /// no update is pending.</summary>
+    public void ConfirmPendingUpdate()
+    {
+        try
+        {
+            string sentinel = PendingSentinelFile();
+            if (!File.Exists(sentinel)) return;
+            string version = File.ReadAllText(sentinel).Trim();
+            File.Delete(sentinel);
+            _log.LogInformation(
+                "self-update: new instance up — update {Version} confirmed, rollback disarmed",
+                version.Length > 0 ? version : "(unknown)");
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "self-update: pending-update confirmation failed");
+        }
+    }
+
     /// <summary>$APPIMAGE, else ZEUS_APPIMAGE_PATH, else the path recorded by
     /// a previous AppImage-launched run — validated to still exist.</summary>
     private static string? ResolveAppImagePath()
@@ -230,6 +259,28 @@ public sealed partial class RepoUpdateService
             string tmpPath = appImagePath + ".next";
             long expected = status.ReleaseAssetSizeBytes ?? -1;
 
+            // Disk-space gate BEFORE the first byte: the download needs the
+            // asset's size plus headroom (the .bak costs nothing — it's a
+            // same-filesystem rename of the existing file).
+            try
+            {
+                long need = (expected > 0 ? expected : 300L * 1024 * 1024) + 64L * 1024 * 1024;
+                var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(appImagePath)) ?? "/");
+                long free = drive.AvailableFreeSpace;
+                if (free < need)
+                {
+                    SetApply("failed", 0, version,
+                        $"not enough disk space: {free / (1024 * 1024)} MB free, " +
+                        $"{need / (1024 * 1024)} MB needed for the download");
+                    return;
+                }
+            }
+            catch
+            {
+                // If the platform can't answer, proceed — the write will fail
+                // loudly on a genuinely full disk.
+            }
+
             var http = _httpClientFactory.CreateClient("ZeusUpdates");
             using (var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead)
                 .ConfigureAwait(false))
@@ -279,7 +330,19 @@ public sealed partial class RepoUpdateService
                     UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
                     UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
             }
+            // Keep the previous image as .bak (same-directory rename — free,
+            // atomic, and the running process keeps its open handle), then
+            // promote the verified download.
+            string bakPath = appImagePath + ".bak";
+            File.Move(appImagePath, bakPath, overwrite: true);
             File.Move(tmpPath, appImagePath, overwrite: true);
+
+            // Arm the rollback: sentinel present = new instance not yet
+            // confirmed. The new build's startup deletes it (proof of life);
+            // the handoff shell rolls back if it survives the timeout.
+            string sentinel = PendingSentinelFile();
+            Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+            File.WriteAllText(sentinel, (version ?? "") + "\n");
 
             EnsureDesktopShortcut();
 
@@ -287,10 +350,30 @@ public sealed partial class RepoUpdateService
             // listen port, then execs the new image with the same working dir.
             SetApply("restarting", 100, version);
             _log.LogInformation("self-update: swapped {Path} to v{Version}; restarting", appImagePath, version);
+            // Supervising handoff ($0=image, $1=sentinel, $2=bak): wait for
+            // this process to free the port, start the new image, then watch
+            // the sentinel. Removed within the timeout -> new build confirmed,
+            // supervisor exits. Still present -> the new build never came up:
+            // kill it, restore the .bak, relaunch the previous version.
+            const string supervise =
+                "sleep 2\n" +
+                "\"$0\" &\n" +
+                "NEW=$!\n" +
+                "i=0\n" +
+                "while [ $i -lt 120 ]; do\n" +
+                "  [ ! -e \"$1\" ] && exit 0\n" +
+                "  sleep 1\n" +
+                "  i=$((i+1))\n" +
+                "done\n" +
+                "kill $NEW 2>/dev/null\n" +
+                "sleep 2\n" +
+                "[ -e \"$2\" ] && mv -f \"$2\" \"$0\"\n" +
+                "rm -f \"$1\"\n" +
+                "exec \"$0\"\n";
             var psi = new ProcessStartInfo
             {
                 FileName = "/bin/sh",
-                ArgumentList = { "-c", $"sleep 2; exec \"$0\"", appImagePath },
+                ArgumentList = { "-c", supervise, appImagePath, sentinel, bakPath },
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(appImagePath) ?? "/",
             };

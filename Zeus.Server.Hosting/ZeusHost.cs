@@ -1385,6 +1385,9 @@ public static class ZeusHost
         // Remember the AppImage's path while we can see it, so a future run
         // launched from the bare inner binary can still self-update.
         repoUpdate.RecordAppImagePath();
+        // Proof of life for a just-applied update: removing the sentinel
+        // stands the rollback supervisor down.
+        repoUpdate.ConfirmPendingUpdate();
         // Every boot, make sure the Desktop launcher exists and points at the
         // live AppImage (survives deletion; covers manual installs too).
         repoUpdate.EnsureDesktopShortcut();

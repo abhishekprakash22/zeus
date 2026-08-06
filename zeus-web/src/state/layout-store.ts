@@ -165,6 +165,10 @@ interface LayoutState {
     toLayoutId: string,
     uid: string,
   ) => string | null;
+  /** Send a tile to the shared "Second Screen" layout (created on first use),
+   *  for display in a detached window on another monitor. Returns that
+   *  layout's id (open the window with it), or null on failure. */
+  detachTileToSecondScreen: (fromLayoutId: string, uid: string) => string | null;
   /** Remove the tile with the given uid. */
   removeTile: (uid: string) => void;
   /** Remove a tile from a specific layout without making it active. */
@@ -525,6 +529,18 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     };
     applyWorkspaceMutationForLayout(set, get, layoutId, next);
     return uid;
+  },
+
+  detachTileToSecondScreen: (fromLayoutId, uid) => {
+    const SECOND_SCREEN_NAME = 'Second Screen';
+    let target = get().layouts.find((l) => l.name === SECOND_SCREEN_NAME);
+    if (!target) {
+      get().addLayout(SECOND_SCREEN_NAME);
+      target = get().layouts.find((l) => l.name === SECOND_SCREEN_NAME);
+    }
+    if (!target) return null;
+    const moved = get().moveTileToLayout(fromLayoutId, target.id, uid);
+    return moved != null ? target.id : null;
   },
 
   moveTileToLayout: (fromLayoutId, toLayoutId, uid) => {

@@ -65,6 +65,10 @@ import {
 } from './layout-tab-dnd';
 import { ScaleToFitTile } from './ScaleToFitTile';
 import { TileChrome } from './TileChrome';
+import {
+  currentDetachedWorkspaceLayoutId as detachedWindowLayoutId,
+  openWorkspaceWindow,
+} from './workspace-windows';
 import { ConfirmDialog } from './ConfirmDialog';
 import { TerminatorLines } from '../components/design/TerminatorLines';
 import { MeterGroupPanel } from '../components/meter-group/MeterGroupPanel';
@@ -1158,6 +1162,18 @@ const PanelTile = memo(function PanelTile({
   }
   const handleRemove = () => onRequestRemoveTile(tile.uid, def.name);
   const handleToggleLock = () => onToggleTileLock(tile.uid, tile.locked !== true);
+  // Send-to-second-screen: only offered in the MAIN window (a tile already in
+  // a detached window has nowhere further to go), and moves the tile into the
+  // shared 'Second Screen' layout, opening/refreshing its window.
+  const inDetachedWindow = detachedWindowLayoutId() !== null;
+  const handleDetach = inDetachedWindow
+    ? undefined
+    : () => {
+        const st = useLayoutStore.getState();
+        const from = layoutId || st.activeLayoutId;
+        const targetId = st.detachTileToSecondScreen(from, tile.uid);
+        if (targetId) openWorkspaceWindow(targetId, 'Second Screen');
+      };
   const tileLocked = tile.locked === true;
   const effectiveLocked = workspaceLocked || tileLocked;
   // Headerless panels own their entire tile surface and draw their own
@@ -1194,6 +1210,7 @@ const PanelTile = memo(function PanelTile({
         locked={tileLocked}
         workspaceLocked={workspaceLocked}
         onToggleLock={handleToggleLock}
+        onDetach={handleDetach}
       />
       <div className="workspace-tile-body" ref={bodyRef} onScrollCapture={onBodyScroll}>
         {!def.fillNative &&

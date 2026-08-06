@@ -10,7 +10,7 @@
 // inside the panel body don't initiate a drag, so the panel's own controls
 // keep working.
 
-import { GripVertical, LockKeyhole, LockKeyholeOpen, X } from 'lucide-react';
+import { ExternalLink, GripVertical, LockKeyhole, LockKeyholeOpen, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 export interface TileChromeProps {
@@ -22,6 +22,10 @@ export interface TileChromeProps {
   locked?: boolean;
   workspaceLocked?: boolean;
   onToggleLock?: () => void;
+  /** When set, renders a "send to second screen" button that moves this tile
+   *  into the detached Second Screen window (8-inch G2 panels are small; the
+   *  wideband and extra receivers can live on another monitor). */
+  onDetach?: () => void;
 }
 
 export function TileChrome({
@@ -31,6 +35,7 @@ export function TileChrome({
   locked = false,
   workspaceLocked = false,
   onToggleLock,
+  onDetach,
 }: TileChromeProps) {
   const effectiveLocked = locked || workspaceLocked;
   return (
@@ -46,6 +51,22 @@ export function TileChrome({
         {title}
       </span>
       {rightSlot}
+      {onDetach ? (
+        <button
+          type="button"
+          className="workspace-tile-detach"
+          aria-label={`Send ${title} to second screen`}
+          title="Send to second screen (opens the Second Screen window — drag it to another monitor)"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDetach();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <ExternalLink size={12} />
+        </button>
+      ) : null}
       {onToggleLock ? (
         <TileLockButton
           locked={locked}

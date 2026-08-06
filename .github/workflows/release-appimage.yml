@@ -20,6 +20,15 @@ name: release-appimage
 on:
   push:
     tags: ["v*"]
+  # Manual crank handle: GitHub has (twice in one day) failed to create runs
+  # for delivered tag-push events. Dispatch builds and RELEASES the given
+  # existing tag by hand: Actions -> this workflow -> Run workflow -> tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release (e.g. v0.15.36)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -39,9 +48,17 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # On dispatch, build the TAG's tree (not the branch head) so the
+      # release matches what the tag names.
+      - name: Check out dispatched tag
+        if: github.event_name == 'workflow_dispatch'
+        run: git checkout "refs/tags/${{ inputs.tag }}"
+
       - name: Resolve version from tag
         id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build AppImages (linux-arm64)
         env:
@@ -78,6 +95,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           files: |
             /tmp/release-artifacts/*.AppImage
             /tmp/release-artifacts/latest.json

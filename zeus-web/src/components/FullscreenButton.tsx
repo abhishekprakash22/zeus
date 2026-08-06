@@ -59,6 +59,15 @@ export function FullscreenButton() {
     let armed = true;
     const restore = () => {
       if (!armed) return;
+      // Refuse to re-enter while the window geometry is still stale
+      // (viewport larger than the screen): entering fullscreen from that
+      // state would recreate the oversized surface and loop the watchdog.
+      // Stay armed — a later tap, after the compositor settles, succeeds.
+      if (
+        window.innerWidth > window.screen.width * 1.02 ||
+        window.innerHeight > window.screen.height * 1.02
+      )
+        return;
       armed = false;
       cleanup();
       if (!document.fullscreenElement && readPref())

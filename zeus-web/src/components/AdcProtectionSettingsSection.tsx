@@ -204,10 +204,16 @@ export function AdcProtectionSettingsSection() {
               type="checkbox"
               checked={draft.predictive}
               disabled={!draft.enabled}
-              onChange={(e) => {
-                dirty.current = true;
-                setDraft((prev) => ({ ...prev, predictive: e.currentTarget.checked }));
-              }}
+              onChange={(e) =>
+                // Read the event SYNCHRONOUSLY and go through update() like
+                // every other control. The original handler read
+                // e.currentTarget inside the setDraft updater — which runs
+                // during the render pass, after React nulls currentTarget —
+                // throwing in render and tripping the Settings error
+                // boundary (field photo). It also bypassed commit(), so the
+                // toggle never persisted.
+                update({ predictive: e.currentTarget.checked }, true)
+              }
             />
             <span className="sig-switch-track" aria-hidden="true" />
             <span>Predictive (pre-clip)</span>

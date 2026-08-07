@@ -651,6 +651,12 @@ public class DspPipelineService : BackgroundService,
     /// clock) paces the producer and the playback stays glitch-free. Used by
     /// <see cref="Zeus.Plugins.Contracts.Audio.IAudioPlaybackSink.PlayLocal"/>.
     /// </summary>
+    // Recorder-playback solo: while true, the RX contribution is cleared
+    // before the monitor mix so playback is heard alone. Set/cleared by the
+    // RecorderService around a local playback.
+    private bool _monitorSolo;
+    public void SetMonitorSolo(bool solo) => Volatile.Write(ref _monitorSolo, solo);
+
     public bool EnqueueMonitorAudio(ReadOnlySpan<float> samples)
     {
         if (samples.Length == 0) return true;
@@ -7028,7 +7034,17 @@ public class DspPipelineService : BackgroundService,
                 // the mute-exempt lane below. Not skipping here would sum recorder
                 // into the RX frame that the sink then drops => recorder inaudible.
                 if (!rxAudioMuted)
+                {
+                    // Recorder-playback SOLO (field report: band audio under the
+                    // clip): while the Recorder is playing a file, the operator
+                    // is listening to the RECORDING — replace the RX block with
+                    // silence before the monitor mix, exactly the MON button's
+                    // semantics (monitoring means hearing only the monitored
+                    // thing). One volatile read when idle.
+                    if (Volatile.Read(ref _monitorSolo))
+                        audioBuf.AsSpan(0, audioSampleCount).Clear();
                     MixMonitorInject(audioBuf.AsSpan(0, audioSampleCount));
+                }
                 LimitRxAudioBuffer(audioBuf.AsSpan(0, audioSampleCount));
                 double finalAudioRms = Rms(audioBuf.AsSpan(0, audioSampleCount));
                 double finalAudioPeak = PeakAbs(audioBuf.AsSpan(0, audioSampleCount));

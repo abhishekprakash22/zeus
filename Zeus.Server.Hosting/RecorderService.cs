@@ -164,6 +164,7 @@ public sealed class RecorderService : IDisposable
             _playTotalSec = durSec;
             _playStartedMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var ct = _playCts.Token;
+            _pipeline.SetMonitorSolo(true);   // hear the recording, not the band
             _ = Task.Run(() => PlayLocalPump(audio, ct));
         }
         return true;
@@ -221,6 +222,7 @@ public sealed class RecorderService : IDisposable
         }
         finally
         {
+            _pipeline.SetMonitorSolo(false);
             lock (_playLock)
             {
                 _playCts?.Dispose();

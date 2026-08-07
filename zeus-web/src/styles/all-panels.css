@@ -1864,3 +1864,7 @@
   color: var(--fg-2, #7d8694); padding: 2px 4px; display: inline-flex;
   align-items: center; border-radius: 3px; }
 .workspace-tile-detach:hover { color: #4ea6ff; background: #ffffff12; }
+
+/* ---- TX monitor (MON) ---- */
+.mon-toggle.engaged { box-shadow: 0 0 8px #ffb13c88; border-color: #ffb13c;
+  color: #ffd28a; }

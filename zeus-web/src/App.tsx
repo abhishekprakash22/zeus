@@ -80,6 +80,7 @@ import { PreampButton } from './components/PreampButton';
 import { FullscreenButton } from './components/FullscreenButton';
 import { ProfileOverlayHost } from './components/ProfileOverlay';
 import { PsToggleButton } from './components/PsToggleButton';
+import { TxMonitorButton } from './components/TxMonitorButton';
 import { PaTempChip } from './components/PaTempChip';
 import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
 import { AdminPage } from './components/AdminPage';
@@ -1584,6 +1585,7 @@ export default function App() {
         <div className="transport-primary">
           <MoxButton />
           <TunButton />
+          <TxMonitorButton />
           <PsToggleButton />
           <div className="transport-sep" />
           <AudioToggle />

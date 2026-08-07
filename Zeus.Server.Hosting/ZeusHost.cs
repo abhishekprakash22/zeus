@@ -1344,6 +1344,49 @@ public static class ZeusHost
         // shadowing. Uninstall one or the other in that case.
         Zeus.Server.Hosting.Digital.DigitalEndpoints.MapDigitalEndpoints(app);
 
+        // ---- Pi shutdown (the appliance's last rite) ----
+        // Clean power-off from the glass: systemctl poweroff runs as the
+        // session user (polkit permits the active local session on Raspberry
+        // Pi OS), with loginctl and sudo -n as fallbacks. Refused while TX is
+        // keyed by anyone — the station never powers off mid-transmission.
+        app.MapPost("/api/system/shutdown", (TxService tx, ILogger<Program> log) =>
+        {
+            if (!OperatingSystem.IsLinux())
+                return Results.BadRequest(new { ok = false, error = "shutdown is only supported on the radio (Linux) host" });
+            if (tx.MoxOwner is not null)
+                return Results.BadRequest(new { ok = false, error = "TX is keyed — unkey before shutting down" });
+            log.LogWarning("shutdown requested from the UI — powering off");
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(800);   // let the HTTP response reach the client
+                foreach (var (cmd, args) in new[]
+                {
+                    ("systemctl", "poweroff"),
+                    ("loginctl", "poweroff"),
+                    ("sudo", "-n shutdown -h now"),
+                })
+                {
+                    try
+                    {
+                        var pr = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = cmd,
+                            Arguments = args,
+                            UseShellExecute = false,
+                        });
+                        if (pr is not null)
+                        {
+                            await pr.WaitForExitAsync();
+                            if (pr.ExitCode == 0) return;
+                        }
+                    }
+                    catch { /* try the next */ }
+                }
+                log.LogError("shutdown: every poweroff path failed (polkit?)");
+            });
+            return Results.Ok(new { ok = true });
+        });
+
         // ---- Recorder (station audio -> WAV on the Pi) ----
         var recG = app.MapGroup("/api/recorder");
         recG.MapGet("", (RecorderService r) => Results.Ok(r.StatusDto()));

@@ -5821,6 +5821,14 @@ export function getUpdateApplyStatus(signal?: AbortSignal): Promise<UpdateApplyS
   return jsonFetch('/api/system/update/apply', { signal }, (raw) => raw as UpdateApplyStatusDto);
 }
 
+export function shutdownPi(): Promise<{ ok: boolean; error?: string }> {
+  return jsonFetch(
+    '/api/system/shutdown',
+    { method: 'POST' },
+    (raw) => raw as { ok: boolean; error?: string },
+  );
+}
+
 // ---- Recorder ------------------------------------------------------------
 export interface RecorderStatusDto {
   recording: boolean;

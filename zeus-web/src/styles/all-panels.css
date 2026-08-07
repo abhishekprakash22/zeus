@@ -1898,3 +1898,7 @@
   border: 1px solid #ff525266; border-radius: 6px; padding: 6px 8px;
   margin-bottom: 8px; animation: recPulse 1.6s ease-in-out infinite; }
 .rec-tx-btn.armed { background: #6b1414; border-color: #ff5252; color: #ffd7d7; }
+
+/* ---- Pi shutdown (connect popup) ---- */
+.shutdown-btn { font-size: 10px; }
+.shutdown-btn.armed { background: #6b1414; border-color: #ff5252; color: #ffd7d7; }

@@ -5,7 +5,8 @@
 //                         Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { shutdownPi } from '../api/client';
 import { BOARD_LABELS, type BoardKind } from '../api/radio';
 import {
   ORION_MKII_VARIANT_LABELS,
@@ -284,6 +285,62 @@ export function RadioSelector() {
           ? 'Selected board wins for drive / ATT / filters.'
           : 'Seeds PA defaults. Saved calibration is preserved.'}
       </span>
+
+      <ShutdownButton />
     </div>
+  );
+}
+
+/** Clean Pi power-off from the connect popup — the appliance's last rite.
+ * House two-press discipline (SHUT DOWN -> SURE?, self-disarming after 3 s)
+ * because this button turns the station off; the server refuses while TX is
+ * keyed. After acceptance the UI announces the shutdown and stops — the next
+ * thing this screen shows is the boot after the power button. */
+function ShutdownButton() {
+  const [armed, setArmed] = useState(false);
+  const [state, setState] = useState<'idle' | 'down' | 'error'>('idle');
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!armed) return;
+    const id = window.setTimeout(() => setArmed(false), 3000);
+    return () => window.clearTimeout(id);
+  }, [armed]);
+
+  if (state === 'down')
+    return <span style={{ fontSize: 10, color: 'var(--tx)' }}>· shutting down — safe to power off when the screen goes dark</span>;
+
+  return (
+    <>
+      {state === 'error' && (
+        <span style={{ fontSize: 10, color: 'var(--tx)' }}>· {err}</span>
+      )}
+      <button
+        type="button"
+        className={`btn ghost shutdown-btn ${armed ? 'armed' : ''}`}
+        title="Shut down the radio's Raspberry Pi cleanly. Two presses: arm, then power off. Refused while transmitting."
+        onClick={() => {
+          if (!armed) {
+            setArmed(true);
+            return;
+          }
+          setArmed(false);
+          void shutdownPi()
+            .then((r) => {
+              if (r.ok) setState('down');
+              else {
+                setErr(r.error ?? 'refused');
+                setState('error');
+              }
+            })
+            .catch(() => {
+              setErr('request failed');
+              setState('error');
+            });
+        }}
+      >
+        {armed ? 'SURE?' : '⏻ SHUT DOWN'}
+      </button>
+    </>
   );
 }

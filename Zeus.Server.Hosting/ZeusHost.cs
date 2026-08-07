@@ -1349,8 +1349,9 @@ public static class ZeusHost
         // session user (polkit permits the active local session on Raspberry
         // Pi OS), with loginctl and sudo -n as fallbacks. Refused while TX is
         // keyed by anyone — the station never powers off mid-transmission.
-        app.MapPost("/api/system/shutdown", (TxService tx, ILogger<Program> log) =>
+        app.MapPost("/api/system/shutdown", (TxService tx, ILoggerFactory lf) =>
         {
+            var log = lf.CreateLogger("Zeus.Shutdown");
             if (!OperatingSystem.IsLinux())
                 return Results.BadRequest(new { ok = false, error = "shutdown is only supported on the radio (Linux) host" });
             if (tx.MoxOwner is not null)

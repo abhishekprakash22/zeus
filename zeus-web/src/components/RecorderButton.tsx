@@ -13,11 +13,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   deleteRecording,
+  fetchKeyerStatus,
   fetchRecorderStatus,
   fetchRecordings,
+  keyerPlay,
+  keyerStop,
   recordingUrl,
+  saveReplay,
   startRecorder,
   stopRecorder,
+  type KeyerStatusDto,
   type RecorderStatusDto,
   type RecordingFileDto,
 } from '../api/client';
@@ -45,6 +50,8 @@ export function RecorderButton() {
   const [source, setSource] = useState<(typeof SOURCES)[number]['id']>('rx');
   const [files, setFiles] = useState<RecordingFileDto[]>([]);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [keyer, setKeyer] = useState<KeyerStatusDto | null>(null);
+  const [armTx, setArmTx] = useState<string | null>(null); // two-press confirm
   const anchorRef = useRef<HTMLSpanElement | null>(null);
 
   const refreshStatus = useCallback(() => {
@@ -68,6 +75,23 @@ export function RecorderButton() {
   useEffect(() => {
     if (open) refreshFiles();
   }, [open, refreshFiles]);
+
+  // Keyer status while the popover is open or a transmission is running.
+  useEffect(() => {
+    if (!open && !keyer?.playing) return;
+    const tick = () => void fetchKeyerStatus().then(setKeyer).catch(() => undefined);
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [open, keyer?.playing]);
+
+  // The TX confirm disarms itself: an armed button left alone goes back
+  // to safe after 3 s — a stray touchscreen tap must never transmit.
+  useEffect(() => {
+    if (!armTx) return;
+    const id = window.setTimeout(() => setArmTx(null), 3000);
+    return () => window.clearTimeout(id);
+  }, [armTx]);
 
   const toggleRecord = () => {
     if (status?.recording) {
@@ -127,6 +151,27 @@ export function RecorderButton() {
                 </label>
               ))}
             </div>
+            <div className="rec-pop-replay">
+              <span title="Always listening: save the RX audio you just heard">REPLAY</span>
+              {[10, 30, 60].map((sec) => (
+                <button
+                  key={sec}
+                  type="button"
+                  className="cwdec-btn"
+                  onClick={() => void saveReplay(sec).then(() => refreshFiles())}
+                >
+                  {sec}s
+                </button>
+              ))}
+            </div>
+            {keyer?.playing ? (
+              <div className="rec-pop-keyer">
+                ON AIR: {keyer.fileName} · {Math.ceil(keyer.remainSec)}s left
+                <button type="button" className="cwdec-btn" onClick={() => void keyerStop()}>
+                  STOP TX
+                </button>
+              </div>
+            ) : null}
             {status?.error ? <div className="rec-pop-err">{status.error}</div> : null}
             <div className="rec-pop-files">
               {files.length === 0 ? (
@@ -151,6 +196,21 @@ export function RecorderButton() {
                       <a className="cwdec-btn" href={recordingUrl(f.name)} download>
                         SAVE
                       </a>
+                      <button
+                        type="button"
+                        className={`cwdec-btn rec-tx-btn ${armTx === f.name ? 'armed' : ''}`}
+                        title="Transmit this recording through the TX chain (voice keyer). Two presses: arm, then send."
+                        onClick={() => {
+                          if (armTx === f.name) {
+                            setArmTx(null);
+                            void keyerPlay(f.name).then((r) => setKeyer(r.keyer));
+                          } else {
+                            setArmTx(f.name);
+                          }
+                        }}
+                      >
+                        {armTx === f.name ? 'SURE?' : 'TX'}
+                      </button>
                       <button
                         type="button"
                         className="cwdec-btn"

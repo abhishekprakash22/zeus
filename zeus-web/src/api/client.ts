@@ -5872,6 +5872,44 @@ export function recordingUrl(name: string): string {
   return `/api/recorder/files/${encodeURIComponent(name)}`;
 }
 
+export interface KeyerStatusDto {
+  playing: boolean;
+  fileName: string | null;
+  remainSec: number;
+}
+
+export function saveReplay(seconds: number): Promise<{ ok: boolean; name?: string }> {
+  return jsonFetch(
+    '/api/recorder/replay',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ seconds }),
+    },
+    (raw) => raw as { ok: boolean; name?: string },
+  );
+}
+
+export function fetchKeyerStatus(signal?: AbortSignal): Promise<KeyerStatusDto> {
+  return jsonFetch('/api/recorder/keyer', { signal }, (raw) => raw as KeyerStatusDto);
+}
+
+export function keyerPlay(name: string): Promise<{ ok: boolean; keyer: KeyerStatusDto }> {
+  return jsonFetch(
+    '/api/recorder/keyer/play',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    },
+    (raw) => raw as { ok: boolean; keyer: KeyerStatusDto },
+  );
+}
+
+export function keyerStop(): Promise<unknown> {
+  return jsonFetch('/api/recorder/keyer/stop', { method: 'POST' }, (raw) => raw);
+}
+
 export function deleteRecording(name: string): Promise<unknown> {
   return jsonFetch(
     `/api/recorder/files/${encodeURIComponent(name)}`,

@@ -33,7 +33,23 @@ public sealed class RecorderService : IDisposable
     private readonly DspPipelineService _pipeline;
     private readonly TxAudioIngest _txIngest;
     private readonly RadioService _radio;
+    private readonly TxService _tx;
     private readonly ILogger<RecorderService> _log;
+
+    // ---- instant-replay ring: always taps RX, last RingSeconds of audio ----
+    private const int RingSeconds = 60;
+    private readonly object _ringLock = new();
+    private short[] _ring = Array.Empty<short>();
+    private int _ringWrite;
+    private long _ringTotal;
+    private int _ringRate;
+
+    // ---- voice keyer ----
+    private readonly object _keyerLock = new();
+    private CancellationTokenSource? _keyerCts;
+    private string _keyerFile = "";
+    private double _keyerTotalSec;
+    private long _keyerStartedMs;
 
     private readonly object _lock = new();
     private FileStream? _file;
@@ -47,12 +63,199 @@ public sealed class RecorderService : IDisposable
 
     public RecorderService(
         DspPipelineService pipeline, TxAudioIngest txIngest,
-        RadioService radio, ILogger<RecorderService> log)
+        RadioService radio, TxService tx, ILogger<RecorderService> log)
     {
         _pipeline = pipeline;
         _txIngest = txIngest;
         _radio = radio;
+        _tx = tx;
         _log = log;
+        // The replay ring listens from birth: "what did he just say?" only
+        // works if the recorder was already listening before you asked.
+        _pipeline.RxAudioAvailable += OnRingBlock;
+    }
+
+    private void OnRingBlock(int receiver, int rateHz, ReadOnlyMemory<float> samples)
+    {
+        if (receiver != 0) return;
+        lock (_ringLock)
+        {
+            if (_ringRate != rateHz || _ring.Length == 0)
+            {
+                _ringRate = rateHz;
+                _ring = new short[Math.Max(1, RingSeconds * rateHz)];
+                _ringWrite = 0;
+                _ringTotal = 0;
+            }
+            var x = samples.Span;
+            for (int i = 0; i < x.Length; i++)
+            {
+                float v = Math.Clamp(x[i], -1f, 1f);
+                _ring[_ringWrite] = (short)MathF.Round(v * 32767f);
+                _ringWrite = (_ringWrite + 1) % _ring.Length;
+            }
+            _ringTotal += x.Length;
+        }
+    }
+
+    /// <summary>Dump the last <paramref name="seconds"/> of RX audio from the
+    /// always-on ring to a WAV in the recordings dir. Returns the file name.</summary>
+    public string? SaveReplay(int seconds)
+    {
+        seconds = Math.Clamp(seconds, 1, RingSeconds);
+        short[] snap;
+        int rate;
+        lock (_ringLock)
+        {
+            if (_ringRate == 0 || _ringTotal == 0) { SetError("replay ring is empty"); return null; }
+            rate = _ringRate;
+            int want = (int)Math.Min((long)seconds * rate, Math.Min(_ringTotal, _ring.Length));
+            snap = new short[want];
+            int start = (_ringWrite - want + _ring.Length * 2) % _ring.Length;
+            for (int i = 0; i < want; i++)
+                snap[i] = _ring[(start + i) % _ring.Length];
+        }
+        try
+        {
+            string dir = RecordingsDir();
+            Directory.CreateDirectory(dir);
+            var snapState = _radio.Snapshot();
+            string freq = (snapState.VfoHz / 1e6).ToString("0.000",
+                System.Globalization.CultureInfo.InvariantCulture);
+            string name = $"{DateTime.Now:yyyyMMdd-HHmmss}_replay{seconds}s_{freq}MHz_{Sanitize(snapState.Mode.ToString())}.wav";
+            string path = Path.Combine(dir, name);
+            using var f = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+            WriteWavHeader(f, rate);
+            var bytes = new byte[snap.Length * 2];
+            Buffer.BlockCopy(snap, 0, bytes, 0, bytes.Length);
+            f.Write(bytes);
+            PatchWavHeader(f, rate, bytes.Length);
+            return name;
+        }
+        catch (Exception ex) { SetError(ex.Message); return null; }
+    }
+
+    // ---- voice keyer: a recording, through the real TX chain, on the air ----
+
+    public object KeyerStatus()
+    {
+        lock (_keyerLock)
+        {
+            bool playing = _keyerCts is not null;
+            double elapsed = playing
+                ? (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _keyerStartedMs) / 1000.0
+                : 0;
+            return new
+            {
+                playing,
+                fileName = playing ? _keyerFile : null,
+                remainSec = playing ? Math.Max(0, _keyerTotalSec - elapsed) : 0,
+            };
+        }
+    }
+
+    /// <summary>Key MOX (MoxSource.Plugin — the slot documented for voice
+    /// keyers), stream the named WAV through TxAudioIngest as 20 ms mic
+    /// blocks, unkey at the end. Refuses if MOX is already keyed by anyone.</summary>
+    public bool KeyerPlay(string name)
+    {
+        string? path = SafePath(name);
+        if (path is null || !File.Exists(path)) { SetError("no such recording"); return false; }
+        float[] audio;
+        double durSec;
+        try
+        {
+            (audio, durSec) = LoadWavAs48kMono(path);
+        }
+        catch (Exception ex) { SetError($"cannot read WAV: {ex.Message}"); return false; }
+        lock (_keyerLock)
+        {
+            if (_keyerCts is not null) { SetError("keyer already playing"); return false; }
+            if (_tx.MoxOwner is not null) { SetError("TX is already keyed"); return false; }
+            if (!_tx.TrySetMox(true, MoxSource.Plugin, out var err))
+            {
+                SetError(err ?? "MOX refused");
+                return false;
+            }
+            _keyerCts = new CancellationTokenSource();
+            _keyerFile = Path.GetFileName(path);
+            _keyerTotalSec = durSec;
+            _keyerStartedMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var ct = _keyerCts.Token;
+            _ = Task.Run(() => KeyerPump(audio, ct));
+        }
+        _log.LogInformation("keyer: transmitting {File} ({Sec:0.0}s)", name, durSec);
+        return true;
+    }
+
+    public void KeyerStop()
+    {
+        lock (_keyerLock) _keyerCts?.Cancel();
+    }
+
+    private async Task KeyerPump(float[] audio, CancellationToken ct)
+    {
+        const int block = 960;                    // 20 ms @ 48 kHz — TxAudioIngest's unit
+        var bytes = new byte[block * 4];
+        try
+        {
+            long t0 = Environment.TickCount64;
+            int sent = 0;
+            for (int off = 0; off + block <= audio.Length && !ct.IsCancellationRequested; off += block)
+            {
+                Buffer.BlockCopy(audio, off * 4, bytes, 0, bytes.Length);
+                _txIngest.OnMicPcmBytesFromWav(bytes);
+                sent++;
+                long due = t0 + sent * 20L;
+                long wait = due - Environment.TickCount64;
+                if (wait > 0) await Task.Delay((int)wait, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            lock (_keyerLock)
+            {
+                _keyerCts?.Dispose();
+                _keyerCts = null;
+                _keyerFile = "";
+            }
+            if (_tx.MoxOwner == MoxSource.Plugin)
+                _tx.TrySetMox(false, MoxSource.Plugin, out _);
+            _log.LogInformation("keyer: done, MOX released");
+        }
+    }
+
+    private static (float[] audio, double durSec) LoadWavAs48kMono(string path)
+    {
+        byte[] all = File.ReadAllBytes(path);
+        if (all.Length < 44) throw new InvalidDataException("too short");
+        int rate = BitConverter.ToInt32(all, 24);
+        short channels = BitConverter.ToInt16(all, 22);
+        short bits = BitConverter.ToInt16(all, 34);
+        if (bits != 16 || channels < 1) throw new InvalidDataException($"need 16-bit PCM (got {bits}-bit, {channels} ch)");
+        int n = (all.Length - 44) / 2 / channels;
+        var mono = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            int acc = 0;
+            for (int c = 0; c < channels; c++)
+                acc += BitConverter.ToInt16(all, 44 + (i * channels + c) * 2);
+            mono[i] = acc / (channels * 32768f);
+        }
+        if (rate == 48000) return (mono, n / 48000.0);
+        // linear resample to the ingest rate
+        int outN = (int)((long)n * 48000 / Math.Max(1, rate));
+        var res = new float[outN];
+        for (int i = 0; i < outN; i++)
+        {
+            double srcPos = (double)i * rate / 48000;
+            int i0 = (int)srcPos;
+            double frac = srcPos - i0;
+            float a = mono[Math.Min(i0, n - 1)];
+            float b = mono[Math.Min(i0 + 1, n - 1)];
+            res[i] = (float)(a + (b - a) * frac);
+        }
+        return (res, outN / 48000.0);
     }
 
     public static string RecordingsDir()
@@ -311,5 +514,10 @@ public sealed class RecorderService : IDisposable
         f.Flush();
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        _pipeline.RxAudioAvailable -= OnRingBlock;
+        KeyerStop();
+        Stop();
+    }
 }

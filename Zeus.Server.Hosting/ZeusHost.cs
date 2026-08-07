@@ -1364,6 +1364,21 @@ public static class ZeusHost
         });
         recG.MapDelete("/files/{name}", (string name, RecorderService r) =>
             r.DeleteFile(name) ? Results.Ok(new { ok = true }) : Results.NotFound());
+        recG.MapPost("/replay", (ReplaySaveRequest req, RecorderService r) =>
+        {
+            string? name = r.SaveReplay(req.Seconds is > 0 ? req.Seconds.Value : 30);
+            return name is not null
+                ? Results.Ok(new { ok = true, name })
+                : Results.Ok(new { ok = false, status = r.StatusDto() });
+        });
+        recG.MapGet("/keyer", (RecorderService r) => Results.Ok(r.KeyerStatus()));
+        recG.MapPost("/keyer/play", (KeyerPlayRequest req, RecorderService r) =>
+            Results.Ok(new { ok = r.KeyerPlay(req.Name ?? ""), status = r.StatusDto(), keyer = r.KeyerStatus() }));
+        recG.MapPost("/keyer/stop", (RecorderService r) =>
+        {
+            r.KeyerStop();
+            return Results.Ok(new { ok = true });
+        });
         // Core FreeDV routes — same before-MapAll ordering and for the same
         // reason: a real org.openhpsdr.freedv plugin installed alongside must
         // surface a duplicate-route conflict at startup, not silently shadow.
@@ -1483,3 +1498,6 @@ public static class ZeusHost
 }
 
 public sealed record RecorderStartRequest(string? Source);
+
+public sealed record ReplaySaveRequest(int? Seconds);
+public sealed record KeyerPlayRequest(string? Name);

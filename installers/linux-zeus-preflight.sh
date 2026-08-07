@@ -233,17 +233,34 @@ zeus_run_service_with_browser() {
             # six-commit fullscreen saga, closed here). Detect the current
             # output mode; fall back to 1280x800 — desktop-layout wide,
             # and never larger than any panel this ships on.
-            local kiosk_w=1280 kiosk_h=800 kiosk_mode=""
+            # TRANSFORM-AWARE (field report: window opened 800x1280 on the
+            # 1280x800 panel): many small panels are PORTRAIT-NATIVE — the
+            # hardware mode is 800x1280 and the compositor rotates it to
+            # landscape with a 90-degree transform. wlr-randr's mode line
+            # reports the NATIVE mode, not the logical size, so a
+            # transform-blind read sizes the window sideways. Read the
+            # transform and swap axes for 90/270. The xrandr fallback reads
+            # the connected header's logical geometry, which already
+            # includes rotation.
+            local kiosk_w=1280 kiosk_h=800 kiosk_mode="" kiosk_xform=""
             if command -v wlr-randr >/dev/null 2>&1; then
                 kiosk_mode=$(wlr-randr 2>/dev/null | awk '/current/{print $1; exit}')
+                kiosk_xform=$(wlr-randr 2>/dev/null | awk '/Transform:/{print $2; exit}')
             fi
             if [ -z "${kiosk_mode}" ] && command -v xrandr >/dev/null 2>&1; then
-                kiosk_mode=$(xrandr 2>/dev/null | awk '/\*/{print $1; exit}')
+                kiosk_mode=$(xrandr 2>/dev/null | awk '/ connected/{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+x[0-9]+\+/){split($i,a,"+"); print a[1]; exit}}')
             fi
             case "${kiosk_mode}" in
                 [0-9]*x[0-9]*)
                     kiosk_w=${kiosk_mode%x*}
                     kiosk_h=${kiosk_mode#*x}
+                    ;;
+            esac
+            case "${kiosk_xform}" in
+                90|270|flipped-90|flipped-270)
+                    local kiosk_tmp=${kiosk_w}
+                    kiosk_w=${kiosk_h}
+                    kiosk_h=${kiosk_tmp}
                     ;;
             esac
             "${app}" --app="${url}" --user-data-dir="${profile_dir}" \

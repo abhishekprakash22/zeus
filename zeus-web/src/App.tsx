@@ -1399,18 +1399,48 @@ export default function App() {
       <header className="topbar" style={{ position: 'relative', zIndex: 300 }}>
         <div className="brand">
           <div className="brand-mark">
+            {/* The 2026 mark, glyph-only at header scale: the slate tile and
+                the twin square-wave pulses of the rebrand (wordmark omitted —
+                the brand text sits right beside it). The invisible top rect
+                keeps the classic bolt-click unlock alive on the same spot. */}
             <svg className="brand-mark-logo" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                className="brand-mark-wave brand-mark-wave--top"
-                d="M3.2 8.2c1.55-1.2 3.1-1.2 4.65 0l.75.58c1.55 1.2 3.1 1.2 4.65 0l.75-.58c1.55-1.2 3.1-1.2 4.65 0l1.15.88"
-              />
-              <path
-                className="brand-mark-wave brand-mark-wave--bottom"
-                d="M3.2 15.8c1.55 1.2 3.1 1.2 4.65 0l.75-.58c1.55-1.2 3.1-1.2 4.65 0l.75.58c1.55 1.2 3.1 1.2 4.65 0l1.15-.88"
-              />
-              <path
+              <defs>
+                <linearGradient id="zeusbrand-trace" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stopColor="#2f7fd0" />
+                  <stop offset=".5" stopColor="#4ea6ff" />
+                  <stop offset="1" stopColor="#8fd6ff" />
+                </linearGradient>
+              </defs>
+              <rect x="1" y="1" width="22" height="22" rx="5.4" fill="#10141b" stroke="#2a3341" strokeWidth=".8" />
+              <g clipPath="none">
+                <path
+                  d="M1.6 10.9 H5.6 V4.9 H12.4 V10.9 H16.4 V7.1 H22.4"
+                  fill="none" stroke="#1d5c9c" strokeWidth=".95"
+                  strokeLinejoin="round" strokeLinecap="round" opacity=".85"
+                />
+                <path
+                  d="M1.6 12.9 H4.1 V6.4 H9.9 V12.9 H14 V8.7 H19.9 V12.9 H22.4"
+                  fill="none" stroke="url(#zeusbrand-trace)" strokeWidth="1.15"
+                  strokeLinejoin="round" strokeLinecap="round"
+                />
+                <circle cx="4.1" cy="12.9" r=".5" fill="#bfe6ff" />
+                <circle cx="9.9" cy="6.4" r=".5" fill="#bfe6ff" />
+                <circle cx="14" cy="12.9" r=".5" fill="#bfe6ff" />
+                <circle cx="19.9" cy="8.7" r=".5" fill="#bfe6ff" />
+                <g opacity=".5">
+                  <rect x="2.4" y="16.6" width="2.6" height=".7" fill="#123b66" />
+                  <rect x="6" y="16.2" width="1.4" height="1.1" fill="#1d5c9c" />
+                  <rect x="8.4" y="16.5" width="2.2" height=".8" fill="#123b66" />
+                  <rect x="11.6" y="16" width="1" height="1.3" fill="#2f7fd0" />
+                  <rect x="13.6" y="16.4" width="2" height=".9" fill="#16497e" />
+                  <rect x="16.6" y="16.2" width="1.2" height="1.1" fill="#1d5c9c" />
+                  <rect x="18.8" y="16.6" width="2.8" height=".7" fill="#123b66" />
+                </g>
+              </g>
+              <rect
                 className="brand-mark-bolt"
-                d="M13.4 2.5 7 12.1h4.15l-1.2 9.4L17 10.55h-4.25l.65-8.05Z"
+                x="1" y="1" width="22" height="22" rx="5.4"
+                fill="transparent" stroke="none"
                 onClick={registerBoltClick}
               />
             </svg>

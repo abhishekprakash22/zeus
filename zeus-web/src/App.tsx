@@ -1440,7 +1440,13 @@ export default function App() {
               <rect
                 className="brand-mark-bolt"
                 x="1" y="1" width="22" height="22" rx="5.4"
-                fill="transparent" stroke="none"
+                // Inline STYLE, not attributes: the stylesheet paints
+                // .brand-mark-bolt (the old bolt's fill lives in CSS, and CSS
+                // outranks SVG presentation attributes) — the 'transparent'
+                // attribute lost and the click layer rendered as a solid
+                // white tile over the whole mark. style={} outranks the
+                // stylesheet; the class stays for the cursor affordance.
+                style={{ fill: 'transparent', stroke: 'none' }}
                 onClick={registerBoltClick}
               />
             </svg>

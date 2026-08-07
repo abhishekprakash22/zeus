@@ -1868,3 +1868,27 @@
 /* ---- TX monitor (MON) ---- */
 .mon-toggle.engaged { box-shadow: 0 0 8px #ffb13c88; border-color: #ffb13c;
   color: #ffd28a; }
+
+/* ---- Recorder ---- */
+.rec-cluster { display: inline-flex; align-items: center; gap: 2px; }
+.rec-toggle.engaged { box-shadow: 0 0 9px #ff5252aa; border-color: #ff5252;
+  color: #ffb3b3; animation: recPulse 1.6s ease-in-out infinite; }
+@keyframes recPulse { 50% { box-shadow: 0 0 3px #ff525266; } }
+.rec-more { padding: 2px 4px; font-size: 9px; }
+.rec-popover { position: fixed; right: 12px; bottom: 56px; z-index: 460;
+  width: 340px; max-height: 62vh; overflow: auto; background: #14181f;
+  border: 1px solid #2a3341; border-radius: 8px; padding: 10px;
+  font: 12px var(--font-mono, monospace); color: #d7dde6;
+  box-shadow: 0 8px 30px #000a; }
+.rec-pop-head { display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; letter-spacing: .08em; margin-bottom: 8px; }
+.rec-pop-src { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.rec-pop-src label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.rec-pop-err { color: #ffb3b3; margin: 6px 0; }
+.rec-pop-empty { opacity: .6; padding: 8px 0; }
+.rec-pop-file { border-top: 1px solid #232a35; padding: 7px 0; }
+.rec-pop-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-pop-file-meta { opacity: .65; font-size: 11px; margin: 2px 0 4px; }
+.rec-pop-file-actions { display: flex; gap: 6px; }
+.rec-pop-file-actions a.cwdec-btn { text-decoration: none; }
+.rec-pop-audio { width: 100%; margin-top: 6px; height: 30px; }

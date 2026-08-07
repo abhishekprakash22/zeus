@@ -81,6 +81,7 @@ import { FullscreenButton } from './components/FullscreenButton';
 import { ProfileOverlayHost } from './components/ProfileOverlay';
 import { PsToggleButton } from './components/PsToggleButton';
 import { TxMonitorButton } from './components/TxMonitorButton';
+import { RecorderButton } from './components/RecorderButton';
 import { PaTempChip } from './components/PaTempChip';
 import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
 import { AdminPage } from './components/AdminPage';
@@ -1599,6 +1600,7 @@ export default function App() {
           <SplitButton />
           <RitButton />
           <CwDecodeToggleButton />
+          <RecorderButton />
         </div>
         <div className="transport-status">
           <WorkspaceZoomControls />

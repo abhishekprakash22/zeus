@@ -5821,6 +5821,65 @@ export function getUpdateApplyStatus(signal?: AbortSignal): Promise<UpdateApplyS
   return jsonFetch('/api/system/update/apply', { signal }, (raw) => raw as UpdateApplyStatusDto);
 }
 
+// ---- Recorder ------------------------------------------------------------
+export interface RecorderStatusDto {
+  recording: boolean;
+  source: string;
+  fileName: string | null;
+  elapsedSec: number;
+  bytes: number;
+  error: string | null;
+}
+
+export interface RecordingFileDto {
+  name: string;
+  bytes: number;
+  createdUtc: string;
+  durationSec: number;
+}
+
+export function fetchRecorderStatus(signal?: AbortSignal): Promise<RecorderStatusDto> {
+  return jsonFetch('/api/recorder', { signal }, (raw) => raw as RecorderStatusDto);
+}
+
+export function startRecorder(
+  source: string,
+): Promise<{ ok: boolean; status: RecorderStatusDto }> {
+  return jsonFetch(
+    '/api/recorder/start',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source }),
+    },
+    (raw) => raw as { ok: boolean; status: RecorderStatusDto },
+  );
+}
+
+export function stopRecorder(): Promise<{ ok: boolean; status: RecorderStatusDto }> {
+  return jsonFetch(
+    '/api/recorder/stop',
+    { method: 'POST' },
+    (raw) => raw as { ok: boolean; status: RecorderStatusDto },
+  );
+}
+
+export function fetchRecordings(signal?: AbortSignal): Promise<RecordingFileDto[]> {
+  return jsonFetch('/api/recorder/files', { signal }, (raw) => raw as RecordingFileDto[]);
+}
+
+export function recordingUrl(name: string): string {
+  return `/api/recorder/files/${encodeURIComponent(name)}`;
+}
+
+export function deleteRecording(name: string): Promise<unknown> {
+  return jsonFetch(
+    `/api/recorder/files/${encodeURIComponent(name)}`,
+    { method: 'DELETE' },
+    (raw) => raw,
+  );
+}
+
 export function setVfo(
   hz: number,
   signal?: AbortSignal,

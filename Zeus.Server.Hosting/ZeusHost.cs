@@ -770,6 +770,7 @@ public static class ZeusHost
         // optional ctor param is injected and the startup scalar overlay runs.
         builder.Services.AddSingleton<TxAudioProfileStore>();
         builder.Services.AddSingleton<RepoUpdateService>();
+        builder.Services.AddSingleton<RecorderService>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1342,6 +1343,27 @@ public static class ZeusHost
         // duplicate-route conflict surfaces at startup rather than silently
         // shadowing. Uninstall one or the other in that case.
         Zeus.Server.Hosting.Digital.DigitalEndpoints.MapDigitalEndpoints(app);
+
+        // ---- Recorder (station audio -> WAV on the Pi) ----
+        var recG = app.MapGroup("/api/recorder");
+        recG.MapGet("", (RecorderService r) => Results.Ok(r.StatusDto()));
+        recG.MapPost("/start", (RecorderStartRequest req, RecorderService r) =>
+            Results.Ok(new { ok = r.Start(req.Source ?? "rx"), status = r.StatusDto() }));
+        recG.MapPost("/stop", (RecorderService r) =>
+        {
+            r.Stop();
+            return Results.Ok(new { ok = true, status = r.StatusDto() });
+        });
+        recG.MapGet("/files", (RecorderService r) => Results.Ok(r.ListFiles()));
+        recG.MapGet("/files/{name}", (string name, RecorderService r) =>
+        {
+            string? path = r.SafePath(name);
+            return path is not null && File.Exists(path)
+                ? Results.File(path, "audio/wav", enableRangeProcessing: true)
+                : Results.NotFound();
+        });
+        recG.MapDelete("/files/{name}", (string name, RecorderService r) =>
+            r.DeleteFile(name) ? Results.Ok(new { ok = true }) : Results.NotFound());
         // Core FreeDV routes — same before-MapAll ordering and for the same
         // reason: a real org.openhpsdr.freedv plugin installed alongside must
         // surface a duplicate-route conflict at startup, not silently shadow.
@@ -1459,3 +1481,5 @@ public static class ZeusHost
         return b[0] == 100 && b[1] >= 64 && b[1] <= 127;
     }
 }
+
+public sealed record RecorderStartRequest(string? Source);

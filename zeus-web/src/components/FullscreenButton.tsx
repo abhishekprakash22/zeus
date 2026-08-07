@@ -69,13 +69,23 @@ export function FullscreenButton() {
       armed = false;
       cleanup();
       if (!document.fullscreenElement && readPref())
-        void document.documentElement.requestFullscreen().catch(() => {});
+        void document.documentElement.requestFullscreen().catch((err) =>
+          // A silent catch here hid the real failure for days: on the G2
+          // touchscreen, taps were rejected for missing user activation and
+          // nobody ever heard about it. Rejections now speak.
+          console.info('[fullscreen] re-enter rejected: %s', (err as Error)?.message ?? err),
+        );
     };
     const cleanup = () => {
-      window.removeEventListener('pointerdown', restore, true);
+      window.removeEventListener('pointerup', restore, true);
       window.removeEventListener('keydown', restore, true);
     };
-    window.addEventListener('pointerdown', restore, true);
+    // pointerUP, not pointerdown: Chromium grants transient user activation
+    // on keydown / mousedown / pointerup / touchend. A mouse tap worked only
+    // because mousedown rode along; a TOUCHSCREEN tap delivers pointerdown
+    // with no activation yet, so requestFullscreen was rejected — silently —
+    // on every tap of the G2 panel ('tap does nothing after Esc').
+    window.addEventListener('pointerup', restore, true);
     window.addEventListener('keydown', restore, true);
     return cleanup;
   }, []);

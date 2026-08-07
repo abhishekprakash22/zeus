@@ -224,8 +224,30 @@ zeus_run_service_with_browser() {
             # and a small default window trips the UI's responsive breakpoint
             # into the stacked mobile layout. Open big so the operator gets
             # the desktop layout (full panadapter) every time.
+            #
+            # The size must come from the PANEL, never a constant: the old
+            # hardcoded 1600,900 decreed an oversize window on the G2's
+            # 1280x800 — --start-fullscreen then fullscreened that decree,
+            # and no amount of in-page fullscreen logic could shrink a
+            # window whose size was fixed on its own command line (the
+            # six-commit fullscreen saga, closed here). Detect the current
+            # output mode; fall back to 1280x800 — desktop-layout wide,
+            # and never larger than any panel this ships on.
+            local kiosk_w=1280 kiosk_h=800 kiosk_mode=""
+            if command -v wlr-randr >/dev/null 2>&1; then
+                kiosk_mode=$(wlr-randr 2>/dev/null | awk '/current/{print $1; exit}')
+            fi
+            if [ -z "${kiosk_mode}" ] && command -v xrandr >/dev/null 2>&1; then
+                kiosk_mode=$(xrandr 2>/dev/null | awk '/\*/{print $1; exit}')
+            fi
+            case "${kiosk_mode}" in
+                [0-9]*x[0-9]*)
+                    kiosk_w=${kiosk_mode%x*}
+                    kiosk_h=${kiosk_mode#*x}
+                    ;;
+            esac
             "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
-                ${fsflag} --start-maximized --window-size=1600,900 \
+                ${fsflag} --start-maximized --window-size="${kiosk_w},${kiosk_h}" \
                 --no-first-run --no-default-browser-check >/dev/null 2>&1 &
             browser_pid=$!
             # First one out (backend Exit button, or operator closing the

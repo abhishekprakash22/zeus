@@ -209,16 +209,18 @@ zeus_run_service_with_browser() {
         if command -v "${app}" >/dev/null 2>&1; then
             profile_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Zeus/kiosk-profile"
             mkdir -p "${profile_dir}"
-            # Fullscreen restore: the frontend cannot re-enter the Fullscreen
-            # API at load (gesture-gated), but WE control the launch flags.
-            # The backend drops/removes this marker on every operator toggle
-            # (POST /api/ui/kiosk-fullscreen), so the kiosk comes back exactly
-            # as it was left — zero gestures. --start-fullscreen wins over
-            # --start-maximized in Chromium; both stay so exiting fullscreen
-            # lands on a maximized window, not a tiny default one.
+            # Browser-level fullscreen is RETIRED (field report: with
+            # --start-fullscreen the session covers the taskbar for its whole
+            # life and no in-app control can exit it — the FULL SCR checkbox
+            # governs ELEMENT fullscreen, a different mechanism the window
+            # flag ignores). The launch is now maximized only: labwc keeps
+            # the taskbar/desktop reachable above a maximized window, and the
+            # app's own preferred-fullscreen (marker below still honored by
+            # the frontend pref) re-enters element fullscreen on the first
+            # tap — reversibly, so unchecking FULL SCR actually returns the
+            # desktop. Cost: one tap at boot instead of zero; the price of a
+            # fullscreen the operator can always leave.
             local fsflag=""
-            [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/Zeus/kiosk-fullscreen" ] \
-                && fsflag="--start-fullscreen"
             # --start-maximized + explicit size: the throwaway profile means
             # Chromium cannot remember the window geometry between launches,
             # and a small default window trips the UI's responsive breakpoint

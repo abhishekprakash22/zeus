@@ -18,7 +18,11 @@
 using System.Text;
 using Zeus.Contracts;
 
-namespace Zeus.Server.Hosting;
+// NAMESPACE TRAP (second bite — see RepoUpdateService.Apply's commit): files
+// in the Hosting PROJECT live in `namespace Zeus.Server`, not
+// Zeus.Server.Hosting. ZeusHost resolves types unqualified from Zeus.Server;
+// declaring Hosting here produced 8x CS0246 at CI.
+namespace Zeus.Server;
 
 public sealed class RecorderService : IDisposable
 {

@@ -71,7 +71,9 @@ jobs:
 
       - name: Generate updater manifest (latest.json)
         env:
-          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          # On dispatch, ref_name is the BRANCH — the manifest must point at
+          # the release tag's download path or every updater would 404.
+          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           ZEUS_DOWNLOAD_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           mkdir -p /tmp/release-artifacts

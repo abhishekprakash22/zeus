@@ -1371,6 +1371,14 @@ public static class ZeusHost
                 ? Results.Ok(new { ok = true, name })
                 : Results.Ok(new { ok = false, status = r.StatusDto() });
         });
+        recG.MapPost("/play", (KeyerPlayRequest req, RecorderService r) =>
+            Results.Ok(new { ok = r.PlayLocalFile(req.Name ?? ""), play = r.PlayLocalStatus() }));
+        recG.MapPost("/play/stop", (RecorderService r) =>
+        {
+            r.PlayLocalStop();
+            return Results.Ok(new { ok = true });
+        });
+        recG.MapGet("/play", (RecorderService r) => Results.Ok(r.PlayLocalStatus()));
         recG.MapGet("/keyer", (RecorderService r) => Results.Ok(r.KeyerStatus()));
         recG.MapPost("/keyer/play", (KeyerPlayRequest req, RecorderService r) =>
             Results.Ok(new { ok = r.KeyerPlay(req.Name ?? ""), status = r.StatusDto(), keyer = r.KeyerStatus() }));

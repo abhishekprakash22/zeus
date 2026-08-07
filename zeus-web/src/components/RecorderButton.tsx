@@ -14,11 +14,14 @@ import { createPortal } from 'react-dom';
 import {
   deleteRecording,
   fetchKeyerStatus,
+  fetchPlayStatus,
   fetchRecorderStatus,
   fetchRecordings,
   keyerPlay,
   keyerStop,
+  playRecordingOnRadio,
   recordingUrl,
+  stopRadioPlayback,
   saveReplay,
   startRecorder,
   stopRecorder,
@@ -49,7 +52,7 @@ export function RecorderButton() {
   const [open, setOpen] = useState(false);
   const [source, setSource] = useState<(typeof SOURCES)[number]['id']>('rx');
   const [files, setFiles] = useState<RecordingFileDto[]>([]);
-  const [playing, setPlaying] = useState<string | null>(null);
+  const [play, setPlay] = useState<KeyerStatusDto | null>(null);
   const [keyer, setKeyer] = useState<KeyerStatusDto | null>(null);
   const [armTx, setArmTx] = useState<string | null>(null); // two-press confirm
   const anchorRef = useRef<HTMLSpanElement | null>(null);
@@ -76,14 +79,17 @@ export function RecorderButton() {
     if (open) refreshFiles();
   }, [open, refreshFiles]);
 
-  // Keyer status while the popover is open or a transmission is running.
+  // Keyer + radio-playback status while the popover is open or either runs.
   useEffect(() => {
-    if (!open && !keyer?.playing) return;
-    const tick = () => void fetchKeyerStatus().then(setKeyer).catch(() => undefined);
+    if (!open && !keyer?.playing && !play?.playing) return;
+    const tick = () => {
+      void fetchKeyerStatus().then(setKeyer).catch(() => undefined);
+      void fetchPlayStatus().then(setPlay).catch(() => undefined);
+    };
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [open, keyer?.playing]);
+  }, [open, keyer?.playing, play?.playing]);
 
   // The TX confirm disarms itself: an armed button left alone goes back
   // to safe after 3 s — a stray touchscreen tap must never transmit.
@@ -189,9 +195,16 @@ export function RecorderButton() {
                       <button
                         type="button"
                         className="cwdec-btn"
-                        onClick={() => setPlaying((p) => (p === f.name ? null : f.name))}
+                        title="Play through the radio's speakers (mixed into RX audio)"
+                        onClick={() => {
+                          if (play?.playing && play.fileName === f.name) {
+                            void stopRadioPlayback().then(() => setPlay(null));
+                          } else {
+                            void playRecordingOnRadio(f.name).then((r) => setPlay(r.play));
+                          }
+                        }}
                       >
-                        {playing === f.name ? 'STOP' : 'PLAY'}
+                        {play?.playing && play.fileName === f.name ? 'STOP' : 'PLAY'}
                       </button>
                       <a className="cwdec-btn" href={recordingUrl(f.name)} download>
                         SAVE
@@ -214,20 +227,12 @@ export function RecorderButton() {
                       <button
                         type="button"
                         className="cwdec-btn"
-                        onClick={() =>
-                          void deleteRecording(f.name).then(() => {
-                            if (playing === f.name) setPlaying(null);
-                            refreshFiles();
-                          })
-                        }
+                        onClick={() => void deleteRecording(f.name).then(refreshFiles)}
                       >
                         DEL
                       </button>
                     </div>
-                    {playing === f.name && (
-                      // eslint-disable-next-line jsx-a11y/media-has-caption
-                      <audio src={recordingUrl(f.name)} autoPlay controls className="rec-pop-audio" />
-                    )}
+
                   </div>
                 ))
               )}

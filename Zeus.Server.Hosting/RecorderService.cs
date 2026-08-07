@@ -44,6 +44,13 @@ public sealed class RecorderService : IDisposable
     private long _ringTotal;
     private int _ringRate;
 
+    // ---- local playback (through the RADIO's speakers via the RX bus) ----
+    private readonly object _playLock = new();
+    private CancellationTokenSource? _playCts;
+    private string _playFile = "";
+    private double _playTotalSec;
+    private long _playStartedMs;
+
     // ---- voice keyer ----
     private readonly object _keyerLock = new();
     private CancellationTokenSource? _keyerCts;
@@ -133,6 +140,94 @@ public sealed class RecorderService : IDisposable
             return name;
         }
         catch (Exception ex) { SetError(ex.Message); return null; }
+    }
+
+    /// <summary>Play a recording locally THROUGH THE RADIO: 48 k mono floats
+    /// fed into the pipeline's monitor-audio queue, which mixes into the RX
+    /// audio block — so playback reaches every sink RX audio reaches,
+    /// including the radio's own speaker. (The popover's original browser
+    /// &lt;audio&gt; played out the PI's audio device — connected to nothing
+    /// on a G2.) Never touches MOX.</summary>
+    public bool PlayLocalFile(string name)
+    {
+        string? path = SafePath(name);
+        if (path is null || !File.Exists(path)) { SetError("no such recording"); return false; }
+        float[] audio;
+        double durSec;
+        try { (audio, durSec) = LoadWavAs48kMono(path); }
+        catch (Exception ex) { SetError($"cannot read WAV: {ex.Message}"); return false; }
+        lock (_playLock)
+        {
+            _playCts?.Cancel();
+            _playCts = new CancellationTokenSource();
+            _playFile = Path.GetFileName(path);
+            _playTotalSec = durSec;
+            _playStartedMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var ct = _playCts.Token;
+            _ = Task.Run(() => PlayLocalPump(audio, ct));
+        }
+        return true;
+    }
+
+    public void PlayLocalStop()
+    {
+        lock (_playLock) _playCts?.Cancel();
+    }
+
+    public object PlayLocalStatus()
+    {
+        lock (_playLock)
+        {
+            bool playing = _playCts is not null;
+            double elapsed = playing
+                ? (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _playStartedMs) / 1000.0
+                : 0;
+            return new
+            {
+                playing,
+                fileName = playing ? _playFile : null,
+                remainSec = playing ? Math.Max(0, _playTotalSec - elapsed) : 0,
+            };
+        }
+    }
+
+    private async Task PlayLocalPump(float[] audio, CancellationToken ct)
+    {
+        const int chunk = 4800;                   // 100 ms @ 48 k
+        try
+        {
+            long t0 = Environment.TickCount64;
+            int sent = 0;
+            for (int off = 0; off < audio.Length && !ct.IsCancellationRequested; off += chunk)
+            {
+                int n = Math.Min(chunk, audio.Length - off);
+                // Backlog-respecting: if the mixer queue is deep, yield a beat
+                // rather than overflow it; if the enqueue is refused, retry
+                // the same chunk after a short wait.
+                while (!ct.IsCancellationRequested && _pipeline.MonitorBacklog > 48000 / 2)
+                    await Task.Delay(50, CancellationToken.None);
+                if (ct.IsCancellationRequested) break;
+                if (!_pipeline.EnqueueMonitorAudio(audio.AsSpan(off, n)))
+                {
+                    await Task.Delay(50, CancellationToken.None);
+                    off -= chunk;                 // retry this chunk
+                    continue;
+                }
+                sent++;
+                long due = t0 + sent * 100L;
+                long wait = due - Environment.TickCount64;
+                if (wait > 0) await Task.Delay((int)wait, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            lock (_playLock)
+            {
+                _playCts?.Dispose();
+                _playCts = null;
+                _playFile = "";
+            }
+        }
     }
 
     // ---- voice keyer: a recording, through the real TX chain, on the air ----
@@ -517,6 +612,7 @@ public sealed class RecorderService : IDisposable
     public void Dispose()
     {
         _pipeline.RxAudioAvailable -= OnRingBlock;
+        PlayLocalStop();
         KeyerStop();
         Stop();
     }

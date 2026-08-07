@@ -5906,6 +5906,28 @@ export function keyerPlay(name: string): Promise<{ ok: boolean; keyer: KeyerStat
   );
 }
 
+export function playRecordingOnRadio(
+  name: string,
+): Promise<{ ok: boolean; play: KeyerStatusDto }> {
+  return jsonFetch(
+    '/api/recorder/play',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    },
+    (raw) => raw as { ok: boolean; play: KeyerStatusDto },
+  );
+}
+
+export function fetchPlayStatus(signal?: AbortSignal): Promise<KeyerStatusDto> {
+  return jsonFetch('/api/recorder/play', { signal }, (raw) => raw as KeyerStatusDto);
+}
+
+export function stopRadioPlayback(): Promise<unknown> {
+  return jsonFetch('/api/recorder/play/stop', { method: 'POST' }, (raw) => raw);
+}
+
 export function keyerStop(): Promise<unknown> {
   return jsonFetch('/api/recorder/keyer/stop', { method: 'POST' }, (raw) => raw);
 }

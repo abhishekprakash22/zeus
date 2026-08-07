@@ -44,6 +44,7 @@
 // License for details.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ShutdownButton } from './ShutdownButton';
 import {
   connect as apiConnect,
   connectP2 as apiConnectP2,
@@ -1285,15 +1286,17 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
             OpenHPSDR · Protocol 1 / 2 / 3
           </span>
         </div>
-        <button
-          type="button"
-          onClick={() => setPendingQuit(true)}
-          className="btn sm"
-          style={{ marginLeft: 'auto' }}
-          title="Close Zeus"
-        >
-          Exit
-        </button>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+          <ShutdownButton />
+          <button
+            type="button"
+            onClick={() => setPendingQuit(true)}
+            className="btn sm"
+            title="Close Zeus"
+          >
+            Exit
+          </button>
+        </span>
       </div>
       <div style={{ height: 180 }} />
 

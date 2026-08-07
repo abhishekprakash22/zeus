@@ -52,12 +52,13 @@ jobs:
       # release matches what the tag names.
       - name: Check out dispatched tag
         if: github.event_name == 'workflow_dispatch'
-        # actions/checkout makes a shallow, tagless clone — the tag must be
-        # fetched explicitly or the checkout dies with a pathspec error
-        # (the bare 'exit code 1' of the first hand-cranked run).
-        run: |
-          git fetch --no-tags --depth 1 origin "+refs/tags/${{ inputs.tag }}:refs/tags/${{ inputs.tag }}"
-          git checkout "refs/tags/${{ inputs.tag }}"
+        # Let the checkout action do this natively: hand-rolled git in a
+        # shallow actions/checkout clone produced exit 1 (tagless clone),
+        # then exit 128 (git's own error class) across two hand-cranked
+        # runs. The action handles tag refs and shallow bookkeeping itself.
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: Resolve version from tag
         id: ver

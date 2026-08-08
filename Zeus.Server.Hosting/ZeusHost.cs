@@ -771,6 +771,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<TxAudioProfileStore>();
         builder.Services.AddSingleton<RepoUpdateService>();
         builder.Services.AddSingleton<RecorderService>();
+        builder.Services.AddSingleton<SaturnXdmaProbe>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a

@@ -1173,6 +1173,7 @@ public static class ZeusEndpoints
             IRadioDiscovery p1Discovery,
             Zeus.Protocol2.Discovery.IRadioDiscovery p2Discovery,
             Protocol3PresenceProbe p3Presence,
+            SaturnXdmaProbe xdmaProbe,
             HttpContext ctx) =>
         {
             var timeout = TimeSpan.FromMilliseconds(1500);
@@ -1198,7 +1199,35 @@ public static class ZeusEndpoints
             var p3Infos = p3Task.Result
                 .Where(r => !knownIps.Contains(r.Ip))
                 .Select(MapP3);
-            return p1Infos.Concat(p2Infos).Concat(p3Infos).ToArray();
+            // Saturn on the local PCIe bus (G2 / G2 Ultra internal Pi):
+            // discovered the piHPSDR way — XDMA node + FPGA identity
+            // registers. Phase 1 surfaces the board; data flows via the
+            // network personality (p2app) until the native transport lands.
+            var xdma = xdmaProbe.Probe();
+            var xdmaInfos = xdma is null
+                ? Array.Empty<RadioInfo>()
+                : new[]
+                {
+                    new RadioInfo(
+                        MacAddress: "pcie:xdma0",
+                        IpAddress: "localhost (PCIe/XDMA)",
+                        BoardId: "Saturn",
+                        FirmwareVersion: xdma.MajorVersion > 0
+                            ? $"{xdma.MajorVersion}.{xdma.MinorVersion}"
+                            : $"0.{xdma.MinorVersion}",
+                        Busy: false,
+                        Details: new Dictionary<string, string>
+                        {
+                            ["transport"] = "xdma",
+                            ["pcbVersion"] = xdma.PcbVersion.ToString(),
+                            ["userVersion"] = xdma.UserVersion.ToString(),
+                            ["status"] = !xdma.KnownConfig ? "unknown FPGA config"
+                                : !xdma.ClocksOk ? "clocks missing"
+                                : "detected — native PCIe transport arrives in a later release; connect via the network entry",
+                        }),
+                };
+
+            return p1Infos.Concat(p2Infos).Concat(p3Infos).Concat(xdmaInfos).ToArray();
 
             static RadioInfo MapP1(DiscoveredRadio r) => new(
                 MacAddress: r.Mac.ToString(),

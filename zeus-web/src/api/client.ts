@@ -5853,6 +5853,28 @@ export function fetchFpgaImages(signal?: AbortSignal): Promise<FpgaImageDto[]> {
   return jsonFetch('/api/fpga/images', { signal }, (raw) => raw as FpgaImageDto[]);
 }
 
+export interface FpgaCompareDto {
+  ok: boolean;
+  error?: string;
+  match?: boolean;
+  primaryBlank?: boolean;
+  runningVersion?: string;
+  userVersion?: number;
+  note?: string;
+}
+
+export function compareFpgaImage(url: string): Promise<FpgaCompareDto> {
+  return jsonFetch(
+    '/api/fpga/compare',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    },
+    (raw) => raw as FpgaCompareDto,
+  );
+}
+
 export function startFpgaFlash(
   url: string,
 ): Promise<{ ok: boolean; error?: string; status?: FpgaFlashStatusDto }> {

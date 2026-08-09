@@ -12,9 +12,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  compareFpgaImage,
   fetchFpgaImages,
   fetchFpgaStatus,
   startFpgaFlash,
+  type FpgaCompareDto,
   type FpgaFlashStatusDto,
   type FpgaImageDto,
 } from '../api/client';
@@ -32,6 +34,7 @@ export function FpgaFlashSection() {
   const [chosen, setChosen] = useState<string>('');
   const [confirm, setConfirm] = useState('');
   const [err, setErr] = useState('');
+  const [cmp, setCmp] = useState<FpgaCompareDto | null>(null);
 
   const refresh = useCallback(() => {
     void fetchFpgaStatus().then(setStatus).catch(() => undefined);
@@ -104,12 +107,39 @@ export function FpgaFlashSection() {
                     onChange={() => {
                       setChosen(img.url);
                       setConfirm('');
+                      setCmp(null);
                     }}
                   />
                   {img.name}
                   <span className="fpga-size">{(img.size / (1024 * 1024)).toFixed(1)} MB</span>
                 </label>
               ))}
+            </div>
+          )}
+
+          {chosen && (
+            <div className="fpga-cmp-row">
+              <button
+                type="button"
+                className="cwdec-btn"
+                title="Read the primary slot's header and compare it byte-for-byte with this image"
+                onClick={() =>
+                  void compareFpgaImage(chosen)
+                    .then(setCmp)
+                    .catch(() => setCmp({ ok: false, error: 'compare failed' }))
+                }
+              >
+                CHECK AGAINST INSTALLED
+              </button>
+              {cmp &&
+                (cmp.ok ? (
+                  <span className={cmp.match ? 'fpga-done' : 'fpga-note'}>
+                    {cmp.match ? '✓ ' : ''}
+                    {cmp.note} · running gateware {cmp.runningVersion}
+                  </span>
+                ) : (
+                  <span className="fpga-err">· {cmp.error}</span>
+                ))}
             </div>
           )}
 

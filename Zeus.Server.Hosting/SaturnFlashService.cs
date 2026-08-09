@@ -74,6 +74,57 @@ public sealed class SaturnFlashService
         _log = log;
     }
 
+    /// <summary>Compare the primary slot's first 4 KB against the first
+    /// 4 KB of a shelf bitstream (ranged GET). Xilinx bitstreams carry their
+    /// build identity in the header, so a byte-exact head match means "this
+    /// image is what's in the primary slot" without filename heuristics.
+    /// Also reports the RUNNING gateware version from the identity registers
+    /// — which reflects the flash only after a power-cycle.</summary>
+    public async Task<object> CompareAsync(string url)
+    {
+        var probe = _probe.Probe();
+        if (!OperatingSystem.IsLinux() || probe is null)
+            return new { ok = false, error = "no Saturn on the local PCIe bus" };
+        lock (_lock)
+        {
+            if (_phase is not ("idle" or "done" or "error"))
+                return new { ok = false, error = "a flash job is running" };
+        }
+        const int HeadBytes = 4096;
+        byte[] shelfHead;
+        using (var client = _http.CreateClient())
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(0, HeadBytes - 1);
+            using var resp = await client.SendAsync(req);
+            resp.EnsureSuccessStatusCode();
+            shelfHead = await resp.Content.ReadAsByteArrayAsync();
+        }
+        var flashHead = new byte[Math.Min(HeadBytes, shelfHead.Length)];
+        using (var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            SpiInit(fs);
+            Command(fs, CmdRead4, PrimaryAddr, ReadOnlySpan<byte>.Empty, flashHead.Length, flashHead);
+        }
+        bool match = flashHead.AsSpan().SequenceEqual(shelfHead.AsSpan(0, flashHead.Length));
+        bool blank = flashHead.All(b => b == 0xFF);
+        return new
+        {
+            ok = true,
+            match,
+            primaryBlank = blank,
+            runningVersion = probe.MajorVersion > 0
+                ? $"{probe.MajorVersion}.{probe.MinorVersion}"
+                : $"0.{probe.MinorVersion}",
+            userVersion = probe.UserVersion,
+            note = match
+                ? "this image is already in the primary slot"
+                : blank
+                    ? "primary slot is blank"
+                    : "primary slot holds a different image",
+        };
+    }
+
     public object Status()
     {
         lock (_lock)

@@ -1375,6 +1375,8 @@ public static class ZeusHost
                 .ToArray();
             return Results.Ok(list);
         });
+        fpgaG.MapPost("/compare", async (FpgaFlashRequest req, SaturnFlashService f) =>
+            Results.Ok(await f.CompareAsync(req.Url ?? "")));
         fpgaG.MapPost("/flash", (FpgaFlashRequest req, SaturnFlashService f) =>
             f.Start(req.Url ?? "", out var refusal)
                 ? Results.Ok(new { ok = true, status = f.Status() })

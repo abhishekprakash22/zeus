@@ -41,6 +41,7 @@ import { useEasterEggStore } from '../state/easter-egg-store';
 import { PsSettingsPanel } from './PsSettingsPanel';
 import { TxAudioToolsPanel } from './TxAudioToolsPanel';
 import { DspSettingsPanel } from './DspSettingsPanel';
+import { CwSettingsPanel } from './CwSettingsPanel';
 import { PluginsPanel } from '../plugins/components/PluginsPanel';
 import { HamClockSettingsPanel } from './HamClockSettingsPanel';
 import { KiwiSettingsPanel } from './KiwiSettingsPanel';
@@ -68,6 +69,7 @@ export type SettingsTabId =
   | 'zeus-digital'
   | 'server'
   | 'radio'
+  | 'cw'
   | 'receivers'
   | 'calibration'
   | 'updates'
@@ -79,6 +81,7 @@ const TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
   { id: 'ps', label: 'PURESIGNAL' },
   { id: 'tx-audio', label: 'AUDIO TOOLS' },
   { id: 'dsp', label: 'DSP' },
+  { id: 'cw', label: 'CW' },
   { id: 'bandplan', label: 'BAND PLAN' },
   { id: 'qrz', label: 'QRZ' },
   { id: 'rotator', label: 'ROTATOR' },
@@ -211,6 +214,7 @@ export function SettingsView({ initialTab, onClose }: Props) {
           {activeTab === 'ps' && <PsSettingsPanel />}
           {activeTab === 'tx-audio' && <TxAudioToolsPanel />}
           {activeTab === 'dsp' && <DspSettingsPanel />}
+          {activeTab === 'cw' && <CwSettingsPanel />}
           {activeTab === 'bandplan' && <BandPlanEditor />}
           {activeTab === 'qrz' && <QrzSettingsPanel />}
           {activeTab === 'rotator' && <RotatorSettingsPanel />}

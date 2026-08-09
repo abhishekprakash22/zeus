@@ -55,45 +55,6 @@ export function CwPanel() {
         maxMacros={MAX_MACROS}
         status={status}
       />
-
-      {/* GPIO paddle — piHPSDR-style, paddle plugged into the computer.
-          Wiring: DOT->GPIO(dot pin), DASH->GPIO(dash pin), common->GND;
-          internal pull-ups, contacts active-low. Disabled by default. */}
-      <div className="cw-paddle-row">
-        <label title="Enable the software iambic keyer fed by a paddle on this computer's GPIO header (Raspberry Pi). The radio's own key jack does not need this.">
-          <input
-            type="checkbox"
-            checked={settings.paddleGpioEnabled}
-            onChange={(e) => void patchSettings({ paddleGpioEnabled: e.currentTarget.checked })}
-          />
-          PADDLE ON GPIO
-        </label>
-        <label>
-          DOT
-          <input
-            type="number" min={0} max={27} value={settings.paddleDotPin}
-            disabled={!settings.paddleGpioEnabled}
-            onChange={(e) => void patchSettings({ paddleDotPin: Number(e.currentTarget.value) })}
-          />
-        </label>
-        <label>
-          DASH
-          <input
-            type="number" min={0} max={27} value={settings.paddleDashPin}
-            disabled={!settings.paddleGpioEnabled}
-            onChange={(e) => void patchSettings({ paddleDashPin: Number(e.currentTarget.value) })}
-          />
-        </label>
-        <label title="Swap dot and dash contacts">
-          <input
-            type="checkbox"
-            checked={settings.paddleSwap}
-            disabled={!settings.paddleGpioEnabled}
-            onChange={(e) => void patchSettings({ paddleSwap: e.currentTarget.checked })}
-          />
-          SWAP
-        </label>
-      </div>
     </div>
   );
 }

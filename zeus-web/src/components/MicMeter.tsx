@@ -44,6 +44,7 @@
 // License for details.
 
 import { useRef } from 'react';
+import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
 import { useMicPeakStore } from '../audio/mic-peak-store';
 import { useCapabilitiesStore } from '../state/capabilities-store';
@@ -123,6 +124,8 @@ export function MicMeter() {
     : fraction;
   const clipping = effectiveDbfs >= CLIP_WARN_DBFS;
 
+  const connected = useConnectionStore((s2) => s2.status === 'Connected');
+
   if (err) {
     // Browsers refuse getUserMedia on a non-secure context (anything other
     // than https:// or http://localhost). A plain http:// LAN IP like
@@ -145,6 +148,31 @@ export function MicMeter() {
           <span className="label-xs">MIC</span>
           <span className="chip tx">
             <span className="v">needs HTTPS</span>
+          </span>
+        </div>
+      );
+    }
+    // No browser microphone on this device. On the G2 / G2 Ultra that is
+    // the NORMAL configuration: the operator's mic is the front-panel jack
+    // into the Saturn's onboard codec, arriving over the protocol's mic
+    // stream (RadioMicReceiver -> TxAudioIngest) — a first-class TX source
+    // that needs nothing from this computer. Shouting 'mic unavailable' at
+    // that setup condemned the exact configuration the radio was designed
+    // for (field report). When the radio is connected, say what is true.
+    if (connected) {
+      return (
+        <div
+          className="knob-group"
+          title={
+            'No microphone on this computer — TX audio uses the radio\u2019s ' +
+            'front-panel mic through the onboard codec (protocol mic stream). ' +
+            'Plug a USB or headset mic into this computer to use a local one instead.'
+          }
+          style={{ minWidth: 150 }}
+        >
+          <span className="label-xs">MIC</span>
+          <span className="chip">
+            <span className="v">front-panel mic</span>
           </span>
         </div>
       );

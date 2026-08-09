@@ -151,7 +151,11 @@ public sealed class CwSettingsStore : IDisposable
                 Macros: SanitizeStored(entry.Macros),
                 SidetoneGainDb: entry.SidetoneGainDb,
                 SidetoneHz: entry.SidetoneHz,
-                KeyerMode: entry.KeyerMode);
+                KeyerMode: entry.KeyerMode,
+                PaddleGpioEnabled: entry.PaddleGpioEnabled,
+                PaddleDotPin: entry.PaddleDotPin,
+                PaddleDashPin: entry.PaddleDashPin,
+                PaddleSwap: entry.PaddleSwap);
         }
     }
 

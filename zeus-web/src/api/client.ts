@@ -5829,6 +5829,44 @@ export function shutdownPi(): Promise<{ ok: boolean; error?: string }> {
   );
 }
 
+// ---- Saturn FPGA flash ----------------------------------------------------
+export interface FpgaFlashStatusDto {
+  phase: string;
+  progress: number;
+  detail: string;
+  error: string | null;
+  primaryAddrHex: string;
+  saturnPresent: boolean;
+}
+
+export interface FpgaImageDto {
+  name: string;
+  size: number;
+  url: string;
+}
+
+export function fetchFpgaStatus(signal?: AbortSignal): Promise<FpgaFlashStatusDto> {
+  return jsonFetch('/api/fpga/flash', { signal }, (raw) => raw as FpgaFlashStatusDto);
+}
+
+export function fetchFpgaImages(signal?: AbortSignal): Promise<FpgaImageDto[]> {
+  return jsonFetch('/api/fpga/images', { signal }, (raw) => raw as FpgaImageDto[]);
+}
+
+export function startFpgaFlash(
+  url: string,
+): Promise<{ ok: boolean; error?: string; status?: FpgaFlashStatusDto }> {
+  return jsonFetch(
+    '/api/fpga/flash',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    },
+    (raw) => raw as { ok: boolean; error?: string; status?: FpgaFlashStatusDto },
+  );
+}
+
 // ---- Recorder ------------------------------------------------------------
 export interface RecorderStatusDto {
   recording: boolean;

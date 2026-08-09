@@ -1911,3 +1911,26 @@
 .cw-paddle-row label { display: inline-flex; gap: 6px; align-items: center; }
 .cw-paddle-row input[type="number"] { width: 52px; }
 .cw-step { min-width: 30px; min-height: 30px; font-size: 14px; line-height: 1; }
+
+/* ---- FPGA firmware (Updates tab) ---- */
+.fpga-flash { margin-top: 22px; border-top: 1px solid #232a35; padding-top: 14px; }
+.fpga-head { font: 700 11px var(--font-mono, monospace); letter-spacing: .08em;
+  opacity: .75; margin-bottom: 8px; }
+.fpga-note { font-size: 11px; opacity: .7; line-height: 1.5; margin-bottom: 10px; max-width: 560px; }
+.fpga-dim { opacity: .5; }
+.fpga-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.fpga-img { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; cursor: pointer; }
+.fpga-size { opacity: .55; font-size: 11px; }
+.fpga-arm { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap;
+  font-size: 12px; }
+.fpga-arm input[type="text"] { width: 90px; text-transform: uppercase; }
+.fpga-fire:disabled { opacity: .4; }
+.fpga-fire:not(:disabled) { background: #6b1414; border-color: #ff5252; color: #ffd7d7; }
+.fpga-progress { margin: 12px 0; }
+.fpga-phase { font-size: 12px; margin-bottom: 6px; }
+.fpga-bar { height: 10px; background: #1a1e25; border: 1px solid #2a3341; border-radius: 5px;
+  overflow: hidden; max-width: 420px; }
+.fpga-bar-fill { height: 100%; background: linear-gradient(90deg,#2f7fd0,#8fd6ff);
+  transition: width .6s ease; }
+.fpga-done { color: #9fe6a0; font-size: 12px; }
+.fpga-err { color: #ffb3b3; font-size: 12px; }

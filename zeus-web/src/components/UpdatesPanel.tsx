@@ -15,6 +15,7 @@
 // source manually with scripts/update.*.
 
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { FpgaFlashSection } from './FpgaFlashSection';
 import {
   fetchUpdateStatus,
   getUpdateApplyStatus,
@@ -308,6 +309,8 @@ export function UpdatesPanel() {
           </div>
         </div>
       )}
+
+      <FpgaFlashSection />
     </div>
   );
 }

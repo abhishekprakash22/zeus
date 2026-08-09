@@ -54,6 +54,7 @@
 
   <ItemGroup>
     <PackageReference Include="Concentus" Version="2.2.2" />
+    <PackageReference Include="System.Device.Gpio" Version="3.2.0" />
     <!-- DeepCW skimmer (phase 2): CPU inference of the vendored AGPL-3.0
          model on the Pi. The package carries linux-arm64 natives. -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />

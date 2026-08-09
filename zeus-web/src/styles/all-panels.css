@@ -1908,3 +1908,4 @@
   margin-top: 8px; font-size: 11px; letter-spacing: .05em; }
 .cw-paddle-row label { display: inline-flex; gap: 6px; align-items: center; }
 .cw-paddle-row input[type="number"] { width: 52px; }
+.cw-step { min-width: 30px; min-height: 30px; font-size: 14px; line-height: 1; }

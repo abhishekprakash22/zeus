@@ -26,6 +26,42 @@ const MODES: ReadonlyArray<{ id: CwKeyerMode; label: string; hint: string }> = [
   { id: 'IambicB', label: 'IAMBIC B', hint: 'Releasing both paddles adds one opposite element' },
 ];
 
+/** Touch-first numeric control: the kiosk has no keyboard, so every value
+ * steps with -/+ (the number input stays for desktop typing). */
+function Stepper(props: {
+  label: string; unit?: string; value: number; min: number; max: number;
+  step: number; disabled?: boolean; title?: string;
+  onChange: (v: number) => void;
+}) {
+  const clamp = (v: number) => Math.min(props.max, Math.max(props.min, v));
+  return (
+    <label style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 11, letterSpacing: '.05em' }} title={props.title}>
+      {props.label}
+      <button
+        type="button" className="cwdec-btn cw-step"
+        disabled={props.disabled}
+        onClick={() => props.onChange(clamp(props.value - props.step))}
+      >
+        −
+      </button>
+      <input
+        type="number" min={props.min} max={props.max} step={props.step}
+        value={props.value} disabled={props.disabled}
+        style={{ width: 54, textAlign: 'center' }}
+        onChange={(e) => props.onChange(clamp(Number(e.currentTarget.value)))}
+      />
+      <button
+        type="button" className="cwdec-btn cw-step"
+        disabled={props.disabled}
+        onClick={() => props.onChange(clamp(props.value + props.step))}
+      >
+        +
+      </button>
+      {props.unit}
+    </label>
+  );
+}
+
 const row: React.CSSProperties = {
   display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12,
 };
@@ -54,6 +90,16 @@ export function CwSettingsPanel() {
     void saveCwSettings(p)
       .then((saved) => {
         setS(saved);                            // server-clamped truth
+        // A paddle-field save that comes back UNCHANGED means the server
+        // ignored an unknown property — the backend predates the GPIO
+        // keyer. Say so instead of silently snapping the checkbox back.
+        if (
+          (p.paddleGpioEnabled !== undefined && saved.paddleGpioEnabled !== p.paddleGpioEnabled) ||
+          (p.paddleSwap !== undefined && saved.paddleSwap !== p.paddleSwap)
+        ) {
+          setErr('the server ignored this setting — the radio is running a build older than the GPIO keyer (update via Settings → Updates)');
+          return;
+        }
         setErr('');
       })
       .catch((e) => setErr((e as Error)?.message ?? 'save failed'));
@@ -63,22 +109,11 @@ export function CwSettingsPanel() {
     <div className="cw-settings">
       <div style={head}>KEYER</div>
       <div style={row}>
-        <label style={label}>
-          SPEED
-          <input
-            type="number" min={5} max={50} value={s.wpm}
-            onChange={(e) => patch({ wpm: Number(e.currentTarget.value) })}
-          />
-          WPM
-        </label>
-        <label style={label} title="Character speed stays at SPEED; spacing stretches to this. 0 disables.">
-          FARNSWORTH
-          <input
-            type="number" min={0} max={50} value={s.farnsworthWpm ?? 0}
-            onChange={(e) => patch({ farnsworthWpm: Number(e.currentTarget.value) || null })}
-          />
-          WPM
-        </label>
+        <Stepper label="SPEED" unit="WPM" value={s.wpm} min={5} max={50} step={1}
+          onChange={(v) => patch({ wpm: v })} />
+        <Stepper label="FARNSWORTH" unit="WPM" value={s.farnsworthWpm ?? 0} min={0} max={50} step={1}
+          title="Character speed stays at SPEED; spacing stretches to this. 0 disables."
+          onChange={(v) => patch({ farnsworthWpm: v || null })} />
       </div>
       <div style={row}>
         {MODES.map((m) => (
@@ -99,22 +134,10 @@ export function CwSettingsPanel() {
 
       <div style={head}>SIDETONE</div>
       <div style={row}>
-        <label style={label}>
-          PITCH
-          <input
-            type="number" min={200} max={1200} step={10} value={s.sidetoneHz}
-            onChange={(e) => patch({ sidetoneHz: Number(e.currentTarget.value) })}
-          />
-          Hz
-        </label>
-        <label style={label}>
-          LEVEL
-          <input
-            type="number" min={-60} max={0} value={Math.round(s.sidetoneGainDb)}
-            onChange={(e) => patch({ sidetoneGainDb: Number(e.currentTarget.value) })}
-          />
-          dB
-        </label>
+        <Stepper label="PITCH" unit="Hz" value={s.sidetoneHz} min={200} max={1200} step={10}
+          onChange={(v) => patch({ sidetoneHz: v })} />
+        <Stepper label="LEVEL" unit="dB" value={Math.round(s.sidetoneGainDb)} min={-60} max={0} step={1}
+          onChange={(v) => patch({ sidetoneGainDb: v })} />
       </div>
 
       <div style={head}>PADDLE ON GPIO</div>
@@ -133,22 +156,12 @@ export function CwSettingsPanel() {
           />
           ENABLED
         </label>
-        <label style={label}>
-          DOT GPIO
-          <input
-            type="number" min={0} max={27} value={s.paddleDotPin}
-            disabled={!s.paddleGpioEnabled}
-            onChange={(e) => patch({ paddleDotPin: Number(e.currentTarget.value) })}
-          />
-        </label>
-        <label style={label}>
-          DASH GPIO
-          <input
-            type="number" min={0} max={27} value={s.paddleDashPin}
-            disabled={!s.paddleGpioEnabled}
-            onChange={(e) => patch({ paddleDashPin: Number(e.currentTarget.value) })}
-          />
-        </label>
+        <Stepper label="DOT GPIO" value={s.paddleDotPin} min={0} max={27} step={1}
+          disabled={!s.paddleGpioEnabled}
+          onChange={(v) => patch({ paddleDotPin: v })} />
+        <Stepper label="DASH GPIO" value={s.paddleDashPin} min={0} max={27} step={1}
+          disabled={!s.paddleGpioEnabled}
+          onChange={(v) => patch({ paddleDashPin: v })} />
         <label style={label} title="Swap dot and dash contacts">
           <input
             type="checkbox"

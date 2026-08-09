@@ -84,7 +84,11 @@ public sealed class CwSettingsStore : IDisposable
                 Macros: SanitizeStored(e.Macros),
                 SidetoneGainDb: e.SidetoneGainDb,
                 SidetoneHz: e.SidetoneHz,
-                KeyerMode: e.KeyerMode);
+                KeyerMode: e.KeyerMode,
+                PaddleGpioEnabled: e.PaddleGpioEnabled,
+                PaddleDotPin: e.PaddleDotPin,
+                PaddleDashPin: e.PaddleDashPin,
+                PaddleSwap: e.PaddleSwap);
         }
     }
 
@@ -126,6 +130,16 @@ public sealed class CwSettingsStore : IDisposable
                 // Reject out-of-range enum bytes (defensive — only 0/1/2 are
                 // valid gateware modes); fall back to the safe default.
                 entry.KeyerMode = Enum.IsDefined(km) ? km : DefaultKeyerMode;
+
+            if (req.PaddleGpioEnabled is bool pge)
+                entry.PaddleGpioEnabled = pge;
+            if (req.PaddleDotPin is int pdp)
+                // Header GPIOs on a Pi; reject out-of-range garbage.
+                entry.PaddleDotPin = Math.Clamp(pdp, 0, 27);
+            if (req.PaddleDashPin is int php)
+                entry.PaddleDashPin = Math.Clamp(php, 0, 27);
+            if (req.PaddleSwap is bool psw)
+                entry.PaddleSwap = psw;
 
             entry.UpdatedUtc = DateTime.UtcNow;
             if (existing is null) _docs.Insert(entry);
@@ -193,5 +207,9 @@ public sealed class CwSettingsEntry
     public double SidetoneGainDb { get; set; } = CwSettingsStore.DefaultSidetoneGainDb;
     public int SidetoneHz { get; set; } = CwSettingsStore.DefaultSidetoneHz;
     public CwKeyerMode KeyerMode { get; set; } = CwSettingsStore.DefaultKeyerMode;
+    public bool PaddleGpioEnabled { get; set; }
+    public int PaddleDotPin { get; set; } = 23;
+    public int PaddleDashPin { get; set; } = 24;
+    public bool PaddleSwap { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }

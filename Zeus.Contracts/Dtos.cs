@@ -1932,7 +1932,14 @@ public sealed record CwSettingsDto(
     string[] Macros,
     double SidetoneGainDb,
     int SidetoneHz,
-    CwKeyerMode KeyerMode);
+    CwKeyerMode KeyerMode,
+    // GPIO paddle (piHPSDR-style, paddle plugged into the computer).
+    // Disabled by default: GPIO probing is opt-in. BCM pin numbers;
+    // contacts to GND, internal pull-ups, active-low.
+    bool PaddleGpioEnabled = false,
+    int PaddleDotPin = 23,
+    int PaddleDashPin = 24,
+    bool PaddleSwap = false);
 
 // PATCH-shaped: every field nullable so the frontend can save one slider
 // (or one macro) without re-sending the whole record. Server merges on top
@@ -1941,6 +1948,10 @@ public sealed record CwSettingsSetRequest(
     int? Wpm = null,
     int? FarnsworthWpm = null,
     string[]? Macros = null,
+    bool? PaddleGpioEnabled = null,
+    int? PaddleDotPin = null,
+    int? PaddleDashPin = null,
+    bool? PaddleSwap = null,
     double? SidetoneGainDb = null,
     int? SidetoneHz = null,
     CwKeyerMode? KeyerMode = null);

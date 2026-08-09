@@ -26,6 +26,10 @@ export type CwSettings = {
   sidetoneHz: number;
   // On-board iambic keyer mode for a paddle on the radio's KEY jack.
   keyerMode: CwKeyerMode;
+  paddleGpioEnabled: boolean;
+  paddleDotPin: number;
+  paddleDashPin: number;
+  paddleSwap: boolean;
 };
 
 type CwSettingsDtoRaw = {
@@ -35,6 +39,10 @@ type CwSettingsDtoRaw = {
   sidetoneGainDb?: number;
   sidetoneHz?: number;
   keyerMode?: CwKeyerMode;
+  paddleGpioEnabled?: boolean;
+  paddleDotPin?: number;
+  paddleDashPin?: number;
+  paddleSwap?: boolean;
 };
 
 const DEFAULT_MACROS = ['CQ CQ CQ', 'TU 73', 'QRZ?', 'AGN?', '5NN TU', 'UR RST'];
@@ -50,6 +58,10 @@ export const DEFAULT_CW_SETTINGS: CwSettings = {
   sidetoneGainDb: -10,
   sidetoneHz: 600,
   keyerMode: 'Straight',
+  paddleGpioEnabled: false,
+  paddleDotPin: 23,
+  paddleDashPin: 24,
+  paddleSwap: false,
 };
 
 const KEYER_MODES: readonly CwKeyerMode[] = ['Straight', 'IambicA', 'IambicB'];
@@ -76,6 +88,16 @@ function normalize(raw: CwSettingsDtoRaw): CwSettings {
       raw.keyerMode !== undefined && KEYER_MODES.includes(raw.keyerMode)
         ? raw.keyerMode
         : DEFAULT_CW_SETTINGS.keyerMode,
+    paddleGpioEnabled:
+      typeof raw.paddleGpioEnabled === 'boolean'
+        ? raw.paddleGpioEnabled
+        : DEFAULT_CW_SETTINGS.paddleGpioEnabled,
+    paddleDotPin:
+      typeof raw.paddleDotPin === 'number' ? raw.paddleDotPin : DEFAULT_CW_SETTINGS.paddleDotPin,
+    paddleDashPin:
+      typeof raw.paddleDashPin === 'number' ? raw.paddleDashPin : DEFAULT_CW_SETTINGS.paddleDashPin,
+    paddleSwap:
+      typeof raw.paddleSwap === 'boolean' ? raw.paddleSwap : DEFAULT_CW_SETTINGS.paddleSwap,
   };
 }
 
@@ -97,6 +119,10 @@ export async function saveCwSettings(
   if (patch.sidetoneGainDb !== undefined) body.sidetoneGainDb = patch.sidetoneGainDb;
   if (patch.sidetoneHz !== undefined) body.sidetoneHz = patch.sidetoneHz;
   if (patch.keyerMode !== undefined) body.keyerMode = patch.keyerMode;
+  if (patch.paddleGpioEnabled !== undefined) body.paddleGpioEnabled = patch.paddleGpioEnabled;
+  if (patch.paddleDotPin !== undefined) body.paddleDotPin = patch.paddleDotPin;
+  if (patch.paddleDashPin !== undefined) body.paddleDashPin = patch.paddleDashPin;
+  if (patch.paddleSwap !== undefined) body.paddleSwap = patch.paddleSwap;
 
   const res = await fetch('/api/cw/settings', {
     method: 'PUT',

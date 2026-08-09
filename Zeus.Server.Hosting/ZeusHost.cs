@@ -772,6 +772,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<RepoUpdateService>();
         builder.Services.AddSingleton<RecorderService>();
         builder.Services.AddSingleton<SaturnXdmaProbe>();
+        builder.Services.AddSingleton<GpioPaddleKeyer>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1344,6 +1345,11 @@ public static class ZeusHost
         // duplicate-route conflict surfaces at startup rather than silently
         // shadowing. Uninstall one or the other in that case.
         Zeus.Server.Hosting.Digital.DigitalEndpoints.MapDigitalEndpoints(app);
+
+        // GPIO paddle keyer: bring up to match saved settings at boot, and
+        // re-apply whenever CW settings are saved (the PUT below already
+        // exists; keyer re-reads the store on Apply).
+        app.Services.GetRequiredService<GpioPaddleKeyer>().Apply();
 
         // ---- Pi shutdown (the appliance's last rite) ----
         // Clean power-off from the glass: systemctl poweroff runs as the

@@ -1902,3 +1902,9 @@
 /* ---- Pi shutdown (connect popup) ---- */
 .shutdown-btn { font-size: 10px; }
 .shutdown-btn.armed { background: #6b1414; border-color: #ff5252; color: #ffd7d7; }
+
+/* ---- GPIO paddle (CW panel) ---- */
+.cw-paddle-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  margin-top: 8px; font-size: 11px; letter-spacing: .05em; }
+.cw-paddle-row label { display: inline-flex; gap: 6px; align-items: center; }
+.cw-paddle-row input[type="number"] { width: 52px; }

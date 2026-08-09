@@ -2209,13 +2209,14 @@ public static class ZeusEndpoints
         app.MapGet("/api/cw/settings", (CwSettingsStore store) =>
             Results.Ok(store.Get()));
 
-        app.MapPut("/api/cw/settings", (CwSettingsSetRequest req, CwSettingsStore store, CwSidetoneSource sidetone, RadioService radio) =>
+        app.MapPut("/api/cw/settings", (CwSettingsSetRequest req, CwSettingsStore store, CwSidetoneSource sidetone, RadioService radio, GpioPaddleKeyer paddle) =>
         {
             // Save first so the persisted view is the source of truth even
             // if the live generator update races somehow. Then push the
             // (post-clamp) values to the live generator so a slider drag
             // updates pitch/gain without a restart.
             var snapshot = store.Save(req);
+            paddle.Apply();   // GPIO paddle keyer follows saved settings live
             sidetone.SetPitchHz(snapshot.SidetoneHz);
             sidetone.SetGainDb(snapshot.SidetoneGainDb);
             // Forward keyer speed (WPM) + mode + sidetone to the radio's

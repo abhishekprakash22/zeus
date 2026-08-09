@@ -1851,7 +1851,9 @@
 /* ---- Workspace Setup Mode ---- */
 .all-panels-grid--setup { outline: 2px dashed #ffb13c66; outline-offset: -2px; }
 .all-panels-grid--setup .react-grid-item { opacity: 0.92; }
-.ws-setup-chip { position: absolute; right: 10px; bottom: 10px; z-index: 60;
+.ws-setup-chip { position: absolute; right: 62px; bottom: 12px; z-index: 60;
+  /* right:62 clears the ⊕ add-panel button parked at right:12 in the same
+     corner — the two were stacked, the chip (z 60) eating the ⊕'s taps. */
   font: 700 10px var(--font-mono, monospace); letter-spacing: .08em;
   background: #1a1e25; color: #d7dde6; border: 1px solid #31353d;
   border-radius: 5px; padding: 4px 10px; cursor: pointer; opacity: .75; }

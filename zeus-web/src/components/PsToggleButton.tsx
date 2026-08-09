@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { setPs, setPsMonitor } from '../api/client';
+import { fetchPsPreferred, savePsPreferred, setPs, setPsMonitor } from '../api/client';
 import { useConnectionStore } from '../state/connection-store';
 import { useRadioStore } from '../state/radio-store';
 import { useTxStore } from '../state/tx-store';
@@ -50,6 +50,31 @@ export function PsToggleButton() {
   const connectedBoard = useRadioStore((s) => s.selection.connected);
 
   const disabled = !connected;
+
+  // Persistence restore: once per connect, if the operator's saved
+  // preference is PS-on and the session came up with PS off, re-arm it
+  // through the normal setPs path (all guards apply). The ref resets on
+  // disconnect so every fresh connect restores again.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!connected) {
+      restoredRef.current = false;
+      return;
+    }
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    void fetchPsPreferred()
+      .then((p) => {
+        if (!p.on) return;
+        const st = useTxStore.getState();
+        if (st.psEnabled) return;
+        st.setPsEnabled(true);
+        void setPs({ enabled: true, auto: st.psAuto, single: st.psSingle }).catch(() => {
+          st.setPsEnabled(false);
+        });
+      })
+      .catch(() => undefined);
+  }, [connected]);
   const tooltip = psEnabled
     ? 'PureSignal armed — predistortion active'
     : 'Arm PureSignal predistortion';
@@ -58,6 +83,7 @@ export function PsToggleButton() {
     if (disabled) return;
     const next = !psEnabled;
     setPsEnabled(next);
+    void savePsPreferred(next).catch(() => undefined); // persist the choice
     setPs({ enabled: next, auto: psAuto, single: psSingle }).catch(() => {
       setPsEnabled(!next);
     });

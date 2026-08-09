@@ -19,6 +19,7 @@ namespace Zeus.Server;
 public static class UiPrefsEndpoints
 {
     public const string KioskFullscreenMarker = "kiosk-fullscreen";
+    public const string PsPreferredMarker = "ps-preferred";
 
     private static string MarkerPath()
     {
@@ -26,8 +27,35 @@ public static class UiPrefsEndpoints
         return Path.Combine(dir, KioskFullscreenMarker);
     }
 
+    private static string PsMarkerPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, PsPreferredMarker);
+    }
+
     public static IEndpointRouteBuilder MapUiPrefsEndpoints(this IEndpointRouteBuilder app)
     {
+        // PureSignal persistence (field request: the PS button forgot its
+        // state across sessions). Same marker-file pattern as
+        // kiosk-fullscreen; the frontend re-arms PS through the normal
+        // /api/tx/ps path at connect, so every guard still applies.
+        app.MapGet("/api/ui/ps-preferred", () =>
+            Results.Ok(new { on = File.Exists(PsMarkerPath()) }));
+        app.MapPost("/api/ui/ps-preferred", (KioskFullscreenRequest req) =>
+        {
+            var path = PsMarkerPath();
+            if (req.On)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "1");
+            }
+            else if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+            return Results.Ok(new { on = req.On });
+        });
+
         app.MapGet("/api/ui/kiosk-fullscreen", () =>
             Results.Ok(new { on = File.Exists(MarkerPath()) }));
 

@@ -5829,6 +5829,22 @@ export function shutdownPi(): Promise<{ ok: boolean; error?: string }> {
   );
 }
 
+export function fetchPsPreferred(signal?: AbortSignal): Promise<{ on: boolean }> {
+  return jsonFetch('/api/ui/ps-preferred', { signal }, (raw) => raw as { on: boolean });
+}
+
+export function savePsPreferred(on: boolean): Promise<unknown> {
+  return jsonFetch(
+    '/api/ui/ps-preferred',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on }),
+    },
+    (raw) => raw,
+  );
+}
+
 // ---- Saturn FPGA flash ----------------------------------------------------
 export interface FpgaFlashStatusDto {
   phase: string;

@@ -773,6 +773,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<RecorderService>();
         builder.Services.AddSingleton<SaturnXdmaProbe>();
         builder.Services.AddSingleton<GpioPaddleKeyer>();
+        builder.Services.AddSingleton<SaturnFlashService>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1351,7 +1352,35 @@ public static class ZeusHost
         // exists; keyer re-reads the store on Apply).
         app.Services.GetRequiredService<GpioPaddleKeyer>().Apply();
 
-        // ---- Pi shutdown (the appliance's last rite) ----
+        // ---- Saturn FPGA flash (primary slot only; golden untouched) ----
+        var fpgaG = app.MapGroup("/api/fpga");
+        fpgaG.MapGet("/flash", (SaturnFlashService f) => Results.Ok(f.Status()));
+        fpgaG.MapGet("/images", async (IHttpClientFactory hf) =>
+        {
+            // The official bitstream shelf: laurencebarker/Saturn FPGA folder
+            // via the GitHub contents API — name, size, raw download URL.
+            using var c = hf.CreateClient();
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("openhpsdr-zeus");
+            var json = await c.GetStringAsync(
+                "https://api.github.com/repos/laurencebarker/Saturn/contents/FPGA");
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var list = doc.RootElement.EnumerateArray()
+                .Where(e => e.GetProperty("name").GetString()?.EndsWith(".bin") == true)
+                .Select(e => new
+                {
+                    name = e.GetProperty("name").GetString(),
+                    size = e.GetProperty("size").GetInt64(),
+                    url = e.GetProperty("download_url").GetString(),
+                })
+                .ToArray();
+            return Results.Ok(list);
+        });
+        fpgaG.MapPost("/flash", (FpgaFlashRequest req, SaturnFlashService f) =>
+            f.Start(req.Url ?? "", out var refusal)
+                ? Results.Ok(new { ok = true, status = f.Status() })
+                : Results.BadRequest(new { ok = false, error = refusal }));
+
+                // ---- Pi shutdown (the appliance's last rite) ----
         // Clean power-off from the glass: systemctl poweroff runs as the
         // session user (polkit permits the active local session on Raspberry
         // Pi OS), with loginctl and sudo -n as fallbacks. Refused while TX is
@@ -1560,3 +1589,5 @@ public sealed record RecorderStartRequest(string? Source);
 
 public sealed record ReplaySaveRequest(int? Seconds);
 public sealed record KeyerPlayRequest(string? Name);
+
+public sealed record FpgaFlashRequest(string? Url);

@@ -56,12 +56,21 @@ jobs:
           npm run build
 
       - name: Publish (win-x64, self-contained)
+        # EXACTLY the dev pipeline's flags (build-windows-dev.yml) — its
+        # 'single binary' comment is loose prose; the publish is
+        # MULTI-FILE, and both the payload verifier (expects runtimes\
+        # native dir + per-assembly DLLs) and zeus-windows.iss are written
+        # for that layout. Adding -p:PublishSingleFile here is what woke
+        # the IL3000 analyzer and then failed the verifier. Version is the
+        # tag, stamped the commit-55 way (VersionPrefix).
         shell: bash
         run: |
           dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj \
             -c Release -r win-x64 --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:Version=${{ steps.version.outputs.version }}
+            -p:PublishReadyToRun=true \
+            -p:VersionPrefix=${{ steps.version.outputs.version }} \
+            -p:DebugType=embedded \
+            -p:DebugSymbols=false
 
       - name: Verify installer payload
         shell: pwsh

@@ -1,0 +1,79 @@
+# Build and publish the macOS installer on every release tag — the macOS
+# sibling of release-appimage and release-windows. The heavy lifting
+# already lives in-tree: installers/create-macos-app.sh builds Zeus.app +
+# Zeus Server.app from a dotnet publish, and create-macos-pkg.sh wraps
+# them into openhpsdr-zeus-<ver>-macos-<arch>.pkg. This workflow publishes
+# osx-arm64 (Apple Silicon — the modern fleet; add an x64 matrix leg if
+# Intel demand appears), runs both scripts with the tag's version, and
+# attaches the .pkg to the SAME release the AppImages and setup.exe land
+# on. Ad-hoc signing per the script; unsigned-notarization caveat applies
+# (right-click -> Open on first launch).
+
+name: release-macos
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.15.65). Must exist."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend
+        run: |
+          cd zeus-web
+          npm ci
+          npm run build
+
+      - name: Publish (osx-arm64, self-contained)
+        run: |
+          dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj \
+            -c Release -r osx-arm64 --self-contained true \
+            -p:PublishReadyToRun=true \
+            -p:VersionPrefix=${{ steps.version.outputs.version }} \
+            -p:DebugType=embedded \
+            -p:DebugSymbols=false
+
+      - name: Build .app bundles
+        run: ./installers/create-macos-app.sh "${{ steps.version.outputs.version }}" arm64
+
+      - name: Build .pkg installer
+        run: ./installers/create-macos-pkg.sh "${{ steps.version.outputs.version }}" arm64
+
+      - name: Attach installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: installers/output/*.pkg

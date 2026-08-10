@@ -1,0 +1,87 @@
+# Build and publish the Windows x64 installer on every release tag — the
+# Windows sibling of release-appimage.yml. Steps mirror the PROVEN
+# build-windows-dev.yml pipeline (publish -> payload verify -> WebView2
+# bootstrapper -> Inno Setup); the difference is the trigger (tags +
+# dispatch crank, same as the AppImage workflow) and the destination
+# (the tag's GitHub Release instead of workflow artifacts). The version
+# stamped into the installer is the tag itself.
+
+name: release-windows
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.15.58). Must exist."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend
+        shell: bash
+        run: |
+          cd zeus-web
+          npm ci
+          npm run build
+
+      - name: Publish (win-x64, self-contained)
+        shell: bash
+        run: |
+          dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj \
+            -c Release -r win-x64 --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Verify installer payload
+        shell: pwsh
+        run: ./tools/verify-windows-installer-payload.ps1 -PublishDir "OpenhpsdrZeus/bin/Release/net10.0/win-x64/publish" -Arch "x64"
+
+      - name: Fetch WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          $out = "installers\MicrosoftEdgeWebview2Setup.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $out
+
+      - name: Build Windows Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y
+          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          iscc /DMyAppVersion="${{ steps.version.outputs.version }}" /DArch="x64" installers\zeus-windows.iss
+
+      - name: Attach installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: installers/output/*.exe

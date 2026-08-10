@@ -76,6 +76,16 @@ jobs:
         shell: pwsh
         run: ./tools/verify-windows-installer-payload.ps1 -PublishDir "OpenhpsdrZeus/bin/Release/net10.0/win-x64/publish" -Arch "x64"
 
+      # Bundled by zeus-windows.iss and installed behind a registry check —
+      # the step this workflow was missing (Inno line 78 aborted on it).
+      - name: Download Visual C++ Redistributable
+        shell: pwsh
+        run: |
+          $url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+          $out = "installers\vc_redist.x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          Get-Item $out | Select-Object Name, Length
+
       - name: Fetch WebView2 bootstrapper
         shell: pwsh
         run: |

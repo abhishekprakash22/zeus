@@ -57,7 +57,9 @@ internal static partial class MiniAudioInterop
 
         string rid = CurrentRid();
         string fileName = NativeFileName();
-        string? asmDir = Path.GetDirectoryName(assembly.Location);
+        // IL3000: Location is "" in the single-file Windows installer.
+        // BaseDirectory is the app folder in every deployment shape.
+        string? asmDir = AppContext.BaseDirectory;
         if (!string.IsNullOrEmpty(asmDir))
         {
             string c1 = Path.Combine(asmDir, "runtimes", rid, "native", fileName);

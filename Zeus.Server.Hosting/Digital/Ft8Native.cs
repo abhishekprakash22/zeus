@@ -195,8 +195,10 @@ internal static unsafe class Ft8Native
         string rid = Rid();
         string file = FileName();
 
-        // Beside the plugin DLL — the natural place for a plugin's own native.
-        string? asmDir = Path.GetDirectoryName(asm.Location);
+        // Beside the app — IL3000: Location is "" in the single-file
+        // Windows installer; BaseDirectory is the app folder in every
+        // deployment shape, and this loader ships in the core app.
+        string? asmDir = AppContext.BaseDirectory;
         if (!string.IsNullOrEmpty(asmDir))
         {
             yield return Path.Combine(asmDir, file);

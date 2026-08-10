@@ -37,11 +37,26 @@ internal static class VstBridgeNativeLoader
     {
         string rid = CurrentRid();
         string fileName = NativeFileName();
-        string? asmDir = Path.GetDirectoryName(assembly.Location);
+        // Single-file publish (the Windows installer) embeds assemblies:
+        // Assembly.Location is "" there and Path.GetDirectoryName of it is
+        // null — which would silently break native-library resolution at
+        // runtime. AppContext.BaseDirectory is the app folder in EVERY
+        // deployment shape (framework-dependent, self-contained, single
+        // file), so prefer it and keep Location only as a secondary probe.
+        string? asmDir = AppContext.BaseDirectory;
+        string? asmLocDir = Path.GetDirectoryName(assembly.Location);
         if (!string.IsNullOrEmpty(asmDir))
         {
             yield return Path.Combine(asmDir, "runtimes", rid, "native", fileName);
             yield return Path.Combine(asmDir, fileName);
+        }
+        if (!string.Equals(asmLocDir, asmDir, StringComparison.Ordinal))
+        {
+            if (!string.IsNullOrEmpty(asmLocDir))
+            {
+                yield return Path.Combine(asmLocDir, "runtimes", rid, "native", fileName);
+                yield return Path.Combine(asmLocDir, fileName);
+            }
         }
 
         string baseDir = AppContext.BaseDirectory;

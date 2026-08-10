@@ -46,7 +46,10 @@ internal static partial class MiniAudioInterop
         lock (Gate)
         {
             if (_registered) return;
-            NativeLibrary.SetDllImportResolver(typeof(MiniAudioInterop).Assembly, Resolve);
+            // Through the assembly's single resolver hub — a direct
+            // SetDllImportResolver here collided with the other Hosting
+            // interop's registration ('A resolver is already set').
+            HostingNativeResolver.Register(Resolve);
             _registered = true;
         }
     }

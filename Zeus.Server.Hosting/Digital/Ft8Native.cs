@@ -42,7 +42,10 @@ internal static unsafe class Ft8Native
 
     static Ft8Native()
     {
-        NativeLibrary.SetDllImportResolver(typeof(Ft8Native).Assembly, Resolve);
+        // Through the assembly's single resolver hub — a direct
+            // SetDllImportResolver here collided with the other Hosting
+            // interop's registration ('A resolver is already set').
+            HostingNativeResolver.Register(Resolve);
     }
 
     /// <summary>True when libzeus_ft8 loaded and its ABI matches.</summary>

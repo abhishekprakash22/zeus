@@ -67,7 +67,11 @@ jobs:
             -p:DebugSymbols=false
 
       - name: Build .app bundles
-        run: ./installers/create-macos-app.sh "${{ steps.version.outputs.version }}" arm64
+        # Belt to the git-mode fix: never a Permission denied on a fresh
+        # checkout again, whatever bit a future script forgets.
+        run: |
+          chmod +x installers/*.sh
+          ./installers/create-macos-app.sh "${{ steps.version.outputs.version }}" arm64
 
       - name: Build .pkg installer
         run: ./installers/create-macos-pkg.sh "${{ steps.version.outputs.version }}" arm64

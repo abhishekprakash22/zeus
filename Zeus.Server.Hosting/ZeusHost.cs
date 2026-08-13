@@ -1382,7 +1382,11 @@ public static class ZeusHost
                 ? Results.Ok(new { ok = true, status = f.Status() })
                 : Results.BadRequest(new { ok = false, error = refusal }));
 
-                // ---- Pi shutdown (the appliance's last rite) ----
+                // ---- XDMA field diagnostics: one curl replaces guesswork ----
+        app.MapGet("/api/system/xdma", (SaturnXdmaProbe probe) =>
+            Results.Ok(probe.ProbeDiagnostics()));
+
+        // ---- Pi shutdown (the appliance's last rite) ----
         // Clean power-off from the glass: systemctl poweroff runs as the
         // session user (polkit permits the active local session on Raspberry
         // Pi OS), with loginctl and sudo -n as fallbacks. Refused while TX is

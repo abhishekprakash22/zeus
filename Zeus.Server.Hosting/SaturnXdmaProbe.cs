@@ -46,13 +46,65 @@ public sealed class SaturnXdmaProbe
     /// null when the device node is absent, unreadable, or fronts something
     /// that fails the Saturn identity checks — absence of a Saturn is a
     /// normal, silent result on every external-Pi and desktop install.</summary>
+    /// <summary>Field-debuggable probe: every step recorded, nothing
+    /// silent. GET /api/system/xdma returns this — one curl replaces
+    /// guesswork on a CM5 that "should" work (first field case: fresh CM5
+    /// on a Saturn, no detection — the silent-null design hid whether the
+    /// node, the permissions, or the registers were at fault).</summary>
+    public object ProbeDiagnostics()
+    {
+        var steps = new List<string>();
+        if (!OperatingSystem.IsLinux())
+            return new { detected = false, steps = new[] { "not Linux — XDMA is Linux-only" } };
+        steps.Add($"node {UserDev}: " + (File.Exists(UserDev) ? "EXISTS" : "MISSING — xdma driver not loaded? (Saturn repo: scripts/build-xdma.sh installs linuxdriver/xdma + udev rules)"));
+        if (!File.Exists(UserDev))
+        {
+            string others = string.Join(", ", Directory.GetFiles("/dev").Where(f => f.Contains("xdma")).DefaultIfEmpty("none"));
+            steps.Add($"other /dev/xdma* nodes: {others}");
+            return new { detected = false, steps };
+        }
+        FileStream? fs = null;
+        try
+        {
+            try
+            {
+                fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+                steps.Add("open: read-write OK (piHPSDR parity)");
+            }
+            catch (Exception exRw)
+            {
+                steps.Add($"open read-write FAILED: {exRw.Message} — udev rules installed? (sudo cp Saturn/etc/udev/rules.d/* /etc/udev/rules.d && reboot)");
+                fs = new FileStream(UserDev, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                steps.Add("open: read-only fallback OK");
+            }
+            uint sw = ReadReg(fs, SwVersionReg);
+            uint prod = ReadReg(fs, ProdVersionReg);
+            uint user = ReadReg(fs, UserVersionReg);
+            steps.Add($"regs: sw=0x{sw:X8} prod=0x{prod:X8} user=0x{user:X8}" + (sw == 0 && prod == 0 ? " — all zero: pread returned nothing (link down? FPGA unconfigured?)" : ""));
+            uint prodId = (prod >> 16) & 0xFFFF;
+            uint swId = (sw >> 20) & 0x1F;
+            uint minor = (sw >> 4) & 0xFFFF;
+            bool clocksOk = (sw & 0xF) == 0xF;
+            steps.Add($"identity: ProdID={prodId} (need {SaturnProductId}), SWID={swId} (golden={GoldenConfigId}/primary={PrimaryConfigId}), fwMinor={minor}, clocks={(sw & 0xF):X} ({(clocksOk ? "all present" : "MISSING — check 122.88/10/125 MHz sources")})");
+            bool detected = prodId == SaturnProductId && (swId is GoldenConfigId or PrimaryConfigId) && clocksOk;
+            steps.Add(detected ? "VERDICT: Saturn detected" : "VERDICT: node present but identity checks failed — see above");
+            return new { detected, steps };
+        }
+        catch (Exception ex)
+        {
+            steps.Add($"FAILED: {ex.GetType().Name}: {ex.Message}");
+            return new { detected = false, steps };
+        }
+        finally { fs?.Dispose(); }
+    }
+
     public SaturnXdmaInfo? Probe()
     {
         if (!OperatingSystem.IsLinux()) return null;
         try
         {
             if (!File.Exists(UserDev)) return null;
-            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var fs = OpenUser();
             uint sw = ReadReg(fs, SwVersionReg);
             uint prod = ReadReg(fs, ProdVersionReg);
             uint user = ReadReg(fs, UserVersionReg);
@@ -75,6 +127,13 @@ public sealed class SaturnXdmaProbe
         {
             return null;   // permissions, driver mid-load, etc. — not a Saturn today
         }
+    }
+
+    private static FileStream OpenUser()
+    {
+        // piHPSDR opens O_RDWR; some xdma builds refuse read-only opens.
+        try { return new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite); }
+        catch { return new FileStream(UserDev, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
     }
 
     private static uint ReadReg(FileStream fs, long offset)

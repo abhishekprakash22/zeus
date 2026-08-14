@@ -1378,6 +1378,11 @@ public static class ZeusEndpoints
         // because it can kick another (possibly transmitting) operator off.
         app.MapPost("/api/radios/reclaim", async (ReclaimRadioRequest req, RadioReclaimService reclaim, HttpContext ctx) =>
         {
+            if (req.Endpoint?.Contains("(PCIe/XDMA)") == true)
+                return Results.BadRequest(new { error =
+                    "This Saturn was detected on the LOCAL PCIe bus. The native PCIe " +
+                    "data plane is not implemented yet — connect to the same radio " +
+                    "through its network entry (p2app serves it on the LAN address)." });
             if (!TryParseIpEndpoint(req.Endpoint ?? string.Empty, out var ipEndpoint))
                 return Results.BadRequest(new { error = $"Invalid endpoint '{req.Endpoint}'." });
 
@@ -1466,6 +1471,11 @@ public static class ZeusEndpoints
                     new { error = "DSP is preparing FFTW plans — try again in a moment." },
                     statusCode: StatusCodes.Status503ServiceUnavailable);
 
+            if (req.Endpoint?.Contains("(PCIe/XDMA)") == true)
+                return Results.BadRequest(new { error =
+                    "This Saturn was detected on the LOCAL PCIe bus. The native PCIe " +
+                    "data plane is not implemented yet — connect to the same radio " +
+                    "through its network entry (p2app serves it on the LAN address)." });
             if (!TryParseIpEndpoint(req.Endpoint, out var ipEndpoint))
                 return Results.BadRequest(new { error = $"Invalid endpoint '{req.Endpoint}'." });
 
@@ -1586,6 +1596,11 @@ public static class ZeusEndpoints
 
             log.LogInformation("api.connect.p3 endpoint={Ep}", req.Endpoint);
 
+            if (req.Endpoint?.Contains("(PCIe/XDMA)") == true)
+                return Results.BadRequest(new { error =
+                    "This Saturn was detected on the LOCAL PCIe bus. The native PCIe " +
+                    "data plane is not implemented yet — connect to the same radio " +
+                    "through its network entry (p2app serves it on the LAN address)." });
             if (!TryParseIpEndpoint(req.Endpoint, out var ipEndpoint))
                 return Results.BadRequest(new { error = $"Invalid endpoint '{req.Endpoint}'." });
             if (radio.IsConnected)

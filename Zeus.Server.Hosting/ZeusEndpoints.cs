@@ -1476,7 +1476,7 @@ public static class ZeusEndpoints
                     "This Saturn was detected on the LOCAL PCIe bus. The native PCIe " +
                     "data plane is not implemented yet — connect to the same radio " +
                     "through its network entry (p2app serves it on the LAN address)." });
-            if (!TryParseIpEndpoint(req.Endpoint, out var ipEndpoint))
+            if (!TryParseIpEndpoint(req.Endpoint ?? string.Empty, out var ipEndpoint))
                 return Results.BadRequest(new { error = $"Invalid endpoint '{req.Endpoint}'." });
 
             var currentState = radio.Snapshot();
@@ -1601,7 +1601,7 @@ public static class ZeusEndpoints
                     "This Saturn was detected on the LOCAL PCIe bus. The native PCIe " +
                     "data plane is not implemented yet — connect to the same radio " +
                     "through its network entry (p2app serves it on the LAN address)." });
-            if (!TryParseIpEndpoint(req.Endpoint, out var ipEndpoint))
+            if (!TryParseIpEndpoint(req.Endpoint ?? string.Empty, out var ipEndpoint))
                 return Results.BadRequest(new { error = $"Invalid endpoint '{req.Endpoint}'." });
             if (radio.IsConnected)
             {

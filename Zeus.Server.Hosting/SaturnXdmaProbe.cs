@@ -80,7 +80,7 @@ public sealed class SaturnXdmaProbe
             uint sw = ReadReg(fs, SwVersionReg);
             uint prod = ReadReg(fs, ProdVersionReg);
             uint user = ReadReg(fs, UserVersionReg);
-            steps.Add($"regs: sw=0x{sw:X8} prod=0x{prod:X8} user=0x{user:X8}" + (sw == 0 && prod == 0 ? " — all zero: pread returned nothing (link down? FPGA unconfigured?)" : ""));
+            steps.Add($"regs (libc pread): sw=0x{sw:X8} prod=0x{prod:X8} user=0x{user:X8}" + (sw == 0 && prod == 0 ? " — all zero: pread returned nothing (link down? FPGA unconfigured?)" : ""));
             uint prodId = (prod >> 16) & 0xFFFF;
             uint swId = (sw >> 20) & 0x1F;
             uint minor = (sw >> 4) & 0xFFFF;
@@ -137,9 +137,7 @@ public sealed class SaturnXdmaProbe
     }
 
     private static uint ReadReg(FileStream fs, long offset)
-    {
-        Span<byte> b = stackalloc byte[4];
-        long got = RandomAccess.Read(fs.SafeFileHandle, b, offset);
-        return got == 4 ? BitConverter.ToUInt32(b) : 0;
-    }
+        // libc pread — RandomAccess refuses char devices by file type
+        // (the first field diagnosis; see XdmaIo).
+        => XdmaIo.Read32(fs.SafeFileHandle, offset);
 }

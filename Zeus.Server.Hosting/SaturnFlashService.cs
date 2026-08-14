@@ -238,17 +238,11 @@ public sealed class SaturnFlashService
     // ---- SPI plumbing: xspi polled mode over pread/pwrite ----
 
     private static void Reg(FileStream fs, long off, uint val)
-    {
-        Span<byte> b = stackalloc byte[4];
-        BitConverter.TryWriteBytes(b, val);
-        RandomAccess.Write(fs.SafeFileHandle, b, off);
-    }
+        // libc pwrite — RandomAccess refuses char devices (see XdmaIo).
+        => XdmaIo.Write32(fs.SafeFileHandle, off, val);
 
     private static uint Reg(FileStream fs, long off)
-    {
-        Span<byte> b = stackalloc byte[4];
-        return RandomAccess.Read(fs.SafeFileHandle, b, off) == 4 ? BitConverter.ToUInt32(b) : 0;
-    }
+        => XdmaIo.Read32(fs.SafeFileHandle, off);
 
     private static void SpiInit(FileStream fs)
     {

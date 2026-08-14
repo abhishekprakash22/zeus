@@ -1656,7 +1656,7 @@ public static class ZeusEndpoints
                     .ConnectAsync(ipEndpoint, p3.Port, p3RxRateHz, p3RxStreams, initialState, ctx.RequestAborted)
                     .ConfigureAwait(false);
                 radio.MarkProtocol3Connected(
-                    req.Endpoint,
+                    req.Endpoint ?? string.Empty,
                     p3RxRateHz,
                     Math.Min(snapshot.RxActiveStreams, Zeus.Contracts.WireContract.MaxReceivers),
                     p3.FirmwareVersion.ToString());

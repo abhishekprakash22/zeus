@@ -963,14 +963,28 @@ public sealed class RadioService : IDisposable
         lock (_sync)
         {
             _nativeActive = true;
-            _state = _state with { Endpoint = "pcie:xdma0", SampleRate = sampleRateHz };
+            // Status is the field the frontend's connection store actually
+            // obeys: applyState ingests s.status from the 1 Hz state poll,
+            // and the discovery modal + every control gate key off it. The
+            // 4b.2 commit set Endpoint/SampleRate but left Status at
+            // Disconnected — which is why nothing in the browser moved.
+            _state = _state with
+            {
+                Status = ConnectionStatus.Connected,
+                Endpoint = "pcie:xdma0",
+                SampleRate = sampleRateHz,
+            };
         }
         StateChanged?.Invoke(Snapshot());
     }
 
     public void MarkNativeSessionDisconnected()
     {
-        lock (_sync) { _nativeActive = false; }
+        lock (_sync)
+        {
+            _nativeActive = false;
+            _state = _state with { Status = ConnectionStatus.Disconnected, Endpoint = null };
+        }
         StateChanged?.Invoke(Snapshot());
     }
 

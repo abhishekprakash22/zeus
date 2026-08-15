@@ -944,7 +944,34 @@ public sealed class RadioService : IDisposable
     /// </summary>
     public bool IsConnected
     {
-        get { lock (_sync) return _activeClient is not null || _p2Active || _p3Active; }
+        get { lock (_sync) return _activeClient is not null || _p2Active || _p3Active || _nativeActive; }
+    }
+
+    // PHASE 4b.2: the XDMA-native session is a first-class connection. The
+    // workspace gates every control on IsConnected / ConnectedProtocol, so a
+    // session the RadioService can't see is a session the operator can't
+    // adjust — the bench symptom was an AM blowtorch clipping an ADC whose
+    // attenuator slider refused to engage. SaturnRxStream raises this flag
+    // when the native stream (and its engine) is up, lowers it on stop.
+    // Mutual exclusion with P1/P2/P3 is enforced upstream: ConnectNativeRx
+    // refuses while any network session is active, and the network connect
+    // paths are reached through discovery flows the native badge replaces.
+    private bool _nativeActive;
+
+    public void MarkNativeSessionConnected(int sampleRateHz)
+    {
+        lock (_sync)
+        {
+            _nativeActive = true;
+            _state = _state with { Endpoint = "pcie:xdma0", SampleRate = sampleRateHz };
+        }
+        StateChanged?.Invoke(Snapshot());
+    }
+
+    public void MarkNativeSessionDisconnected()
+    {
+        lock (_sync) { _nativeActive = false; }
+        StateChanged?.Invoke(Snapshot());
     }
 
     /// <summary>True while a Protocol-1 client owns the connection — i.e. the
@@ -4840,6 +4867,7 @@ public sealed class RadioService : IDisposable
 
     private string? ConnectedProtocolLocked()
     {
+        if (_nativeActive) return "XDMA";
         if (_p2Active) return "P2";
         if (_p3Active) return "P3";
         if (_activeClient is not null) return "P1";

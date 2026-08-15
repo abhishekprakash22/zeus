@@ -774,6 +774,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnXdmaProbe>();
         builder.Services.AddSingleton<GpioPaddleKeyer>();
         builder.Services.AddSingleton<SaturnFlashService>();
+        builder.Services.AddSingleton<SaturnControl>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1382,6 +1383,27 @@ public static class ZeusHost
                 ? Results.Ok(new { ok = true, status = f.Status() })
                 : Results.BadRequest(new { ok = false, error = refusal }));
 
+                // ---- XDMA register plane (Phase 2): status reads + gated writes ----
+        app.MapGet("/api/xdma/status", (SaturnControl sc) => Results.Ok(sc.ReadStatus()));
+        app.MapPost("/api/xdma/control/ddc-freq", (XdmaDdcFreqRequest req, SaturnControl sc) =>
+        {
+            // Writes contend with p2app — two masters on one register file
+            // is operator error. The caller must state the field is clear.
+            if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error =
+                    "register writes contend with p2app — stop it first, then pass confirm:'p2app-stopped'" });
+            var result = sc.SetDdcFrequency(req.Ddc, req.Hz, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
+        app.MapPost("/api/xdma/control/duc-freq", (XdmaDucFreqRequest req, SaturnControl sc) =>
+        {
+            if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error =
+                    "register writes contend with p2app — stop it first, then pass confirm:'p2app-stopped'" });
+            var result = sc.SetDucFrequency(req.Hz, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
+
                 // ---- XDMA field diagnostics: one curl replaces guesswork ----
         app.MapGet("/api/system/xdma", (SaturnXdmaProbe probe) =>
             Results.Ok(probe.ProbeDiagnostics()));
@@ -1597,3 +1619,6 @@ public sealed record ReplaySaveRequest(int? Seconds);
 public sealed record KeyerPlayRequest(string? Name);
 
 public sealed record FpgaFlashRequest(string? Url);
+
+public sealed record XdmaDdcFreqRequest(int Ddc, long Hz, string? Confirm);
+public sealed record XdmaDucFreqRequest(long Hz, string? Confirm);

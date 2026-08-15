@@ -71,6 +71,7 @@ public sealed class SaturnRxStream : IDisposable
     private readonly object _lock = new();
     private CancellationTokenSource? _cts;
     private Thread? _thread;
+    private int _gen;   // audit fix: stale-pump teardown guard (stop→quick-restart race)
 
     // Stats (volatile snapshot; written by the reader thread only).
     private long _bytes;
@@ -95,7 +96,10 @@ public sealed class SaturnRxStream : IDisposable
     // sample, which is exactly the 2× the first field run measured.
     private static readonly int[] SamplesPerCode = { 0, 1, 2, 4, 8, 16, 32, 0 };
     private bool _aligned;
-    private readonly byte[] _carry = new byte[512];
+    // Audit fix: sized for the largest legal frame — 10 DDCs × 32 words
+    // × 8 B + rate word = 2568 B (the old 512 silently dropped the carry
+    // for any future multi-DDC frame and forced a resync per block).
+    private readonly byte[] _carry = new byte[4096];
     private int _carryLen;
     private uint _prevRateWord = 0xFFFFFFFF;
     private int _frameWords;
@@ -240,7 +244,8 @@ public sealed class SaturnRxStream : IDisposable
             if (snap.RadioLoHz > 0) { tuneHz = snap.RadioLoHz; _tunedHz = tuneHz; }
             _attenDb = -1;   // force one atten push via the seed below
             var ct = _cts.Token;
-            _thread = new Thread(() => Pump(rateCode, tuneHz, ct))
+            int gen = ++_gen;
+            _thread = new Thread(() => Pump(rateCode, tuneHz, gen, ct))
             { IsBackground = true, Name = "saturn-rx-dma" };
             _thread.Start();
         }
@@ -265,7 +270,7 @@ public sealed class SaturnRxStream : IDisposable
         }
     }
 
-    private void Pump(uint rateCode, long tuneHz, CancellationToken ct)
+    private void Pump(uint rateCode, long tuneHz, int gen, CancellationToken ct)
     {
         try
         {
@@ -336,6 +341,19 @@ public sealed class SaturnRxStream : IDisposable
             }
 
             // ---- teardown: leave the field as we found it ----
+            // Audit fix (stop→quick-restart race): Stop() cancels without
+            // joining, so this tail can run AFTER a NEW pump's init and
+            // would disable the stream that pump just enabled. A stale
+            // generation stands down and lets the new session own the
+            // registers.
+            lock (_lock)
+            {
+                if (gen != _gen)
+                {
+                    _log.LogInformation("xdma.rx stale pump gen={Gen} yields teardown to the new session", gen);
+                    return;
+                }
+            }
             XdmaIo.Write32(h, InSelReg, 0);                      // stream enable off
             XdmaIo.Write32(h, RatesReg, 0);                      // all DDCs disabled
             _log.LogWarning("xdma.rx stream STOP after {Bytes} bytes / {Blocks} blocks", _bytes, _blocks);

@@ -122,7 +122,14 @@ public sealed class SaturnControl
     // at its next start. ADC1 RX atten = bits [4:0], 0-31 dB
     // (SetADCAttenuator, saturnregisters.c). ADC2 (<<10) left for multi-RX.
     private const long AdcCtrlReg = 0x2018;         // VADDRADCCTRLREG
-    private uint _adcCtrlShadow;
+    // Audit fix: the register also carries the TX-path attenuator fields
+    // (SetADCAttenuator: ADC1 RX [4:0] / TX [9:5]; ADC2 shifted <<10 →
+    // RX [14:10] / TX [19:15]). The shadow used to start at zero, so the
+    // first RX-atten write silently programmed BOTH TX attenuators to
+    // 0 dB — harmless today (no native TX path exists) but exactly the
+    // wrong default to inherit into 4c. TX fields now seed at maximum
+    // attenuation until the TX increment owns them deliberately.
+    private uint _adcCtrlShadow = (31u << 5) | (31u << 15);
     private int? _rxAttenDb;
 
     /// <summary>PHASE 4b: ADC1 RX step attenuator, 0-31 dB. Driven by the

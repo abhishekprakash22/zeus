@@ -290,6 +290,7 @@ public sealed class SaturnRxStream : IDisposable
             // p2app with these bits at their power-up zeros. Back to OFF;
             // the verb stays for boards where the handshake is real.
             _control.SetAdcOptions(dither: false, random: false, out _);
+            _control.SetByteSwapping(swapped: true, out _);   // p2app boot parity: BE wire order
             XdmaIo.Write32(h, RatesReg, rateCode);               // DDC0 rate, others disabled
             uint reset = XdmaIo.Read32(h, FifoResetReg);
             XdmaIo.Write32(h, FifoResetReg, reset & ~FifoResetBit);   // pulse RX FIFO reset

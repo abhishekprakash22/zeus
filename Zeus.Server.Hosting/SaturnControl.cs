@@ -162,6 +162,33 @@ public sealed class SaturnControl
     private const long RfGpioReg = 0x2014;          // VADDRRFGPIOREG
     private uint _rfGpioShadow;
 
+    /// <summary>THE missing init write, found by systematic diff against
+    /// p2app's boot sequence (p2app.c line 484): the FPGA has a hardware
+    /// byte-swap engine on the DMA data path — bit 26 (VDATAENDIAN) of the
+    /// RF GPIO register. Set = words emerge in NETWORK byte order (the
+    /// 24-bit BE I/Q both downstream authorities parse); clear (power-up) =
+    /// 'raspberry pi local order'. p2app and piHPSDR both set it at boot,
+    /// which is why their verbatim copies work — and why every decode this
+    /// port shipped was fighting a configurable switch left at its default.
+    /// </summary>
+    public object SetByteSwapping(bool swapped, out string? refusal)
+    {
+        refusal = null;
+        if (!SaturnPresent) { refusal = "no Saturn on the local PCIe bus"; return new { ok = false }; }
+        uint reg;
+        lock (_lock)
+        {
+            reg = _rfGpioShadow;
+            if (swapped) reg |= 1u << 26; else reg &= ~(1u << 26);
+            if (reg == _rfGpioShadow) return new { ok = true, swapped, written = false };
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            XdmaIo.Write32(fs.SafeFileHandle, RfGpioReg, reg);
+            _rfGpioShadow = reg;
+        }
+        _log.LogWarning("xdma.control byte-swap={S} (network order)", swapped);
+        return new { ok = true, swapped, written = true };
+    }
+
     /// <summary>PHASE 4b.4: ADC conditioning — dither + randomizer for both
     /// ADCs (PGA left off, matching p2app's SetADCOptions(…, false, D, R)
     /// calls). Write-on-change via the shadow.</summary>

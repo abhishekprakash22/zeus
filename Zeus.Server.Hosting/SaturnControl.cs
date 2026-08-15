@@ -116,6 +116,35 @@ public sealed class SaturnControl
         return new { ok = true, ddc, hz, deltaPhase = $"0x{delta:X8}", written = true };
     }
 
+    // ADC control shadow (register 0x2018 is write-only; the C keeps
+    // GRXADCCtrl for the same reason). Session-local: the native session
+    // owns the register plane while it runs, and p2app rewrites everything
+    // at its next start. ADC1 RX atten = bits [4:0], 0-31 dB
+    // (SetADCAttenuator, saturnregisters.c). ADC2 (<<10) left for multi-RX.
+    private const long AdcCtrlReg = 0x2018;         // VADDRADCCTRLREG
+    private uint _adcCtrlShadow;
+    private int? _rxAttenDb;
+
+    /// <summary>PHASE 4b: ADC1 RX step attenuator, 0-31 dB. Driven by the
+    /// native session from radio state; write-on-change like the DDC path.
+    /// </summary>
+    public object SetRxAtten(int db, out string? refusal)
+    {
+        refusal = null;
+        if (!SaturnPresent) { refusal = "no Saturn on the local PCIe bus"; return new { ok = false }; }
+        db = Math.Clamp(db, 0, 31);
+        lock (_lock)
+        {
+            if (_rxAttenDb == db) return new { ok = true, db, written = false };
+            _adcCtrlShadow = (_adcCtrlShadow & ~0x1Fu) | (uint)db;
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            XdmaIo.Write32(fs.SafeFileHandle, AdcCtrlReg, _adcCtrlShadow);
+            _rxAttenDb = db;
+        }
+        _log.LogInformation("xdma.control rx-atten={Db}dB", db);
+        return new { ok = true, db, written = true };
+    }
+
     /// <summary>DUC (TX) frequency — same math, TX side. Same gate.</summary>
     public object SetDucFrequency(long hz, out string? refusal)
     {

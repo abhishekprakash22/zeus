@@ -108,7 +108,7 @@ export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
             title={
               armed
                 ? 'Native RX owns registers p2app also owns — press again to confirm p2app is stopped'
-                : `Start native RX: DSP engine up, DDC0 tuned to ${(START_HZ / 1e6).toFixed(1)} MHz at ${START_RATE_KHZ} kHz — no p2app, no network`
+                : `Start native RX: DSP engine up, DDC0 follows your VFO (falls back to ${(START_HZ / 1e6).toFixed(1)} MHz) at ${START_RATE_KHZ} kHz — no p2app, no network`
             }
             style={armed ? { borderColor: '#e0a030', color: '#e0a030' } : undefined}
           >

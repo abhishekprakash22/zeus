@@ -64,7 +64,9 @@ public sealed class SaturnRxStream : IDisposable
     private readonly SaturnControl _control;
     private readonly TxService _tx;
     private readonly DspPipelineService _dsp;
+    private readonly RadioService _radio;
     private readonly ILogger<SaturnRxStream> _log;
+    private int _attenDb = -1;
 
     private readonly object _lock = new();
     private CancellationTokenSource? _cts;
@@ -124,13 +126,41 @@ public sealed class SaturnRxStream : IDisposable
 
     public SaturnRxStream(
         SaturnXdmaProbe probe, SaturnControl control, TxService tx,
-        DspPipelineService dsp, ILogger<SaturnRxStream> log)
+        DspPipelineService dsp, RadioService radio, ILogger<SaturnRxStream> log)
     {
         _probe = probe;
         _control = control;
         _tx = tx;
         _dsp = dsp;
+        _radio = radio;
         _log = log;
+        // PHASE 4b: the native session follows the operator. RadioService is
+        // the single source of tuning truth (frozen-NCO model — the hardware
+        // sits at RadioLoHz with CW offset pre-baked; the P2 path pushes the
+        // SAME field from OnRadioStateChanged). While the stream runs, VFO
+        // and attenuator changes route to the register plane; while it
+        // doesn't, this handler is a no-op.
+        _radio.StateChanged += OnRadioState;
+    }
+
+    private void OnRadioState(StateDto s)
+    {
+        if (!Running) return;
+        try
+        {
+            _control.SetDdcFrequency(0, s.RadioLoHz, out _);
+            lock (_lock) { _tunedHz = s.RadioLoHz; }
+            int atten = Math.Clamp(s.EffectiveAttenDb, 0, 31);
+            if (atten != _attenDb)
+            {
+                _control.SetRxAtten(atten, out _);
+                _attenDb = atten;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "xdma.rx state-follow failed");
+        }
     }
 
     public bool Running => _cts is not null;
@@ -160,6 +190,7 @@ public sealed class SaturnRxStream : IDisposable
                 resyncs = _resyncs,
                 fedFrames = _fedFrames,          // 3b: IqFrames delivered to the DSP sink
                 engine = _dsp.CurrentEngineName,  // 4a diag: WdspDspEngine vs Synthetic fallback
+                attenDb = _attenDb,               // 4b: ADC1 RX step attenuator, radio-state-followed
                 aligned = _aligned,
                 sampleMin = _sampleMin,                  // 24-bit I, demuxed
                 sampleMax = _sampleMax,
@@ -197,6 +228,11 @@ public sealed class SaturnRxStream : IDisposable
             _iqFill = 0; _iqSeq = 0; _fedFrames = 0;
             _rateKhz = rateKhz; _tunedHz = tuneHz;
             _startedAtMs = Environment.TickCount64;
+            // PHASE 4b: seed tuning + atten from the operator's live state —
+            // the fixed request default only matters on a virgin database.
+            var snap = _radio.Snapshot();
+            if (snap.RadioLoHz > 0) { tuneHz = snap.RadioLoHz; _tunedHz = tuneHz; }
+            _attenDb = -1;   // force one atten push via the seed below
             var ct = _cts.Token;
             _thread = new Thread(() => Pump(rateCode, tuneHz, ct))
             { IsBackground = true, Name = "saturn-rx-dma" };
@@ -230,6 +266,7 @@ public sealed class SaturnRxStream : IDisposable
 
             // ---- init sequence, per p2app ----
             _control.SetDdcFrequency(0, tuneHz, out _);          // tune DDC0
+            _control.SetRxAtten(Math.Clamp(_radio.Snapshot().EffectiveAttenDb, 0, 31), out _);
             XdmaIo.Write32(h, RatesReg, rateCode);               // DDC0 rate, others disabled
             uint reset = XdmaIo.Read32(h, FifoResetReg);
             XdmaIo.Write32(h, FifoResetReg, reset & ~FifoResetBit);   // pulse RX FIFO reset

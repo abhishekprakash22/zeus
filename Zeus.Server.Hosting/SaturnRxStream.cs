@@ -150,7 +150,9 @@ public sealed class SaturnRxStream : IDisposable
         {
             _control.SetDdcFrequency(0, s.RadioLoHz, out _);
             lock (_lock) { _tunedHz = s.RadioLoHz; }
-            int atten = Math.Clamp(s.EffectiveAttenDb, 0, 31);
+            // EffectiveAttenDb lives on RadioService, not StateDto — the same
+            // property ConnectP2Async seeds the P2 client from.
+            int atten = Math.Clamp(_radio.EffectiveAttenDb, 0, 31);
             if (atten != _attenDb)
             {
                 _control.SetRxAtten(atten, out _);
@@ -266,7 +268,7 @@ public sealed class SaturnRxStream : IDisposable
 
             // ---- init sequence, per p2app ----
             _control.SetDdcFrequency(0, tuneHz, out _);          // tune DDC0
-            _control.SetRxAtten(Math.Clamp(_radio.Snapshot().EffectiveAttenDb, 0, 31), out _);
+            _control.SetRxAtten(Math.Clamp(_radio.EffectiveAttenDb, 0, 31), out _);
             XdmaIo.Write32(h, RatesReg, rateCode);               // DDC0 rate, others disabled
             uint reset = XdmaIo.Read32(h, FifoResetReg);
             XdmaIo.Write32(h, FifoResetReg, reset & ~FifoResetBit);   // pulse RX FIFO reset

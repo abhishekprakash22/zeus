@@ -431,17 +431,22 @@ public sealed class SaturnRxStream : IDisposable
             for (int w = 0; w < _frameWords; w++)
             {
                 int b = off + 8 + w * 8;
-                // FPGA DMA sample word = TWO 32-bit LITTLE-endian fields,
-                // 24 significant bits each: I at +0, Q at +4. Convicted by
-                // the bench, twice over: captured words decode to noise-
-                // floor values this way (Q = 0xFFFFFF = -1; I = tens of
-                // thousands) and to exact ±full-scale rails when read as
-                // packed 24-bit BE — which is precisely what the meter
-                // showed with NOTHING on the antenna port. The BE order is
-                // p2app's UDP output format, produced by its copy loop;
-                // it is not the FPGA's memory format.
-                int i24 = BitConverter.ToInt32(data, b) & 0xFFFFFF;
-                int q24 = BitConverter.ToInt32(data, b + 4) & 0xFFFFFF;
+                // THE settled layout, proven by OutDDCIQ.c's copy loop tail
+                // ('SrcWordPtr++ — skip 16 bits where theres no data'):
+                // bytes 0-5 of each word are copied VERBATIM into the P2
+                // UDP sample area, whose format is 24-bit BIG-endian I then
+                // Q; bytes 6-7 are pad. So: I = BE24 @ +0, Q = BE24 @ +3.
+                // This is commit 129's decode, wrongly 'corrected' to LE32
+                // pairs by commit 132: that read I byte-reversed and built
+                // Q from bytes 4-6 — true high byte discarded, remainder
+                // reversed, top byte always pad — producing the field's
+                // exact symptoms (distorted undemodulatable audio, comb
+                // spurs, antenna-indifferent constant power). The evidence
+                // that convicted 129 was real RF: a local MW blowtorch
+                // leaking into an open unfiltered front end reads high on
+                // an honest meter.
+                int i24 = (data[b] << 16) | (data[b + 1] << 8) | data[b + 2];
+                int q24 = (data[b + 3] << 16) | (data[b + 4] << 8) | data[b + 5];
                 if ((i24 & 0x800000) != 0) i24 |= unchecked((int)0xFF000000);
                 if ((q24 & 0x800000) != 0) q24 |= unchecked((int)0xFF000000);
                 if (i24 < _sampleMin) _sampleMin = i24;

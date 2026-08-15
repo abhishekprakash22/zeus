@@ -36,6 +36,8 @@ public sealed class SaturnTxProbe
     private const string DucDev = "/dev/xdma0_h2c_0";
     private const string UserDev = "/dev/xdma0_user";
     private const long FifoMonTx = 0x9004;          // base 0x9000 + 4 × channel 1
+    private const long FifoResetReg = 0x7000;
+    private const uint DucFifoResetBit = 1u << 3;   // VBITDUCFIFORESET
     private const int FrameBytes = 1440;            // p2app's VDMATRANSFERSIZE
 
     private readonly SaturnXdmaProbe _probe;
@@ -70,9 +72,13 @@ public sealed class SaturnTxProbe
                 lastRun = _lastRun,
                 framesWritten = _framesWritten,
                 bytesWritten = _bytesWritten,
-                depthBefore = _depthBefore,     // DUC FIFO locations (8-byte), pre-write
-                depthAfter = _depthAfter,       // immediately post-write
-                depthSettledMs500 = _depthSettled, // 500 ms later — drain behavior, informative
+                // WRITE-channel monitor semantics (saturndrivers.c): these
+                // report FREE 8-byte locations, not occupancy. Expect a
+                // post-reset FIFO to show a large free count, and each
+                // 1440-byte frame to REDUCE it by ~180.
+                freeBefore = _depthBefore,
+                freeAfter = _depthAfter,
+                freeSettledMs500 = _depthSettled,
                 error = _error,
             };
         }
@@ -102,6 +108,17 @@ public sealed class SaturnTxProbe
                 using var bar = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
                 using var duc = new FileStream(DucDev, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
                 var h = bar.SafeFileHandle;
+
+                // The first field probe answered with pwrite failing and the
+                // monitor reading ZERO — which for a WRITE channel means zero
+                // FREE locations (saturndrivers.c: write channels report free
+                // space, not occupancy): a FIFO frozen in its power-up reset,
+                // stalling the h2c DMA. p2app's very first act in InDUCIQ.c
+                // is ResetDMAStreamFIFO(eTXDUCDMA); ours now matches — pulse
+                // bit 3 of the FIFO reset register, exactly the RX pattern.
+                uint reset = XdmaIo.Read32(h, FifoResetReg);
+                XdmaIo.Write32(h, FifoResetReg, reset & ~DucFifoResetBit);
+                XdmaIo.Write32(h, FifoResetReg, reset | DucFifoResetBit);
 
                 _depthBefore = (int)(XdmaIo.Read32(h, FifoMonTx) & 0xFFFF);
 

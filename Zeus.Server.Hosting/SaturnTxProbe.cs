@@ -36,6 +36,8 @@ public sealed class SaturnTxProbe
     private const string DucDev = "/dev/xdma0_h2c_0";
     private const string UserDev = "/dev/xdma0_user";
     private const long FifoMonTx = 0x9004;          // base 0x9000 + 4 × channel 1
+    private const long FifoCfgTx = 0x9014;          // base + 4 × channel + 0x10
+    private const uint DucFifoDepth = 2048;         // DMAFIFODepths[eTXDUCDMA]
     private const long FifoResetReg = 0x7000;
     private const uint DucFifoResetBit = 1u << 3;   // VBITDUCFIFORESET
     private const int FrameBytes = 1440;            // p2app's VDMATRANSFERSIZE
@@ -50,6 +52,7 @@ public sealed class SaturnTxProbe
     private int _depthBefore = -1;
     private int _depthAfter = -1;
     private int _depthSettled = -1;
+    private int[] _freePerFrame = Array.Empty<int>();
     private string? _error;
     private DateTimeOffset? _lastRun;
 
@@ -79,6 +82,8 @@ public sealed class SaturnTxProbe
                 freeBefore = _depthBefore,
                 freeAfter = _depthAfter,
                 freeSettledMs500 = _depthSettled,
+                freePerFrame = _freePerFrame,   // sampled after EVERY frame — the drain story
+                fifoCapacity = DucFifoDepth,
                 error = _error,
             };
         }
@@ -120,12 +125,24 @@ public sealed class SaturnTxProbe
                 XdmaIo.Write32(h, FifoResetReg, reset & ~DucFifoResetBit);
                 XdmaIo.Write32(h, FifoResetReg, reset | DucFifoResetBit);
 
+                // SetupFIFOMonitorChannel parity (p2app InDUCIQ.c:104): the
+                // config register holds the FIFO's CAPACITY — the monitor
+                // computes free = capacity − occupancy for write channels.
+                // Unconfigured (0), it computed 0 − anything = 0: the first
+                // probe's triple-zero explained by one unwritten constant.
+                XdmaIo.Write32(h, FifoCfgTx, DucFifoDepth);
+
                 _depthBefore = (int)(XdmaIo.Read32(h, FifoMonTx) & 0xFFFF);
 
                 var zeros = new byte[FrameBytes];   // 240 samples of exact silence
                 int written = 0;
+                var perFrame = new int[frames];
                 for (int i = 0; i < frames; i++)
+                {
                     written += XdmaIo.WriteBytes(duc.SafeFileHandle, zeros, FrameBytes, 0);
+                    perFrame[i] = (int)(XdmaIo.Read32(h, FifoMonTx) & 0xFFFF);
+                }
+                _freePerFrame = perFrame;
 
                 _depthAfter = (int)(XdmaIo.Read32(h, FifoMonTx) & 0xFFFF);
                 Thread.Sleep(500);

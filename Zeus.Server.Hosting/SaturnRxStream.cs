@@ -63,6 +63,7 @@ public sealed class SaturnRxStream : IDisposable
     private readonly SaturnXdmaProbe _probe;
     private readonly SaturnControl _control;
     private readonly TxService _tx;
+    private readonly DspPipelineService _dsp;
     private readonly ILogger<SaturnRxStream> _log;
 
     private readonly object _lock = new();
@@ -102,11 +103,33 @@ public sealed class SaturnRxStream : IDisposable
     private double _ksps;
     private bool _thresholdPrev;
 
-    public SaturnRxStream(SaturnXdmaProbe probe, SaturnControl control, TxService tx, ILogger<SaturnRxStream> log)
+    // ---- PHASE 3b: forwarding into the DSP's front door ----
+    // The demuxed samples are delivered to DspPipelineService through the
+    // SAME interface the network client uses — Zeus.Protocol2.IRxPacketSink
+    // .OnIqFrame — as interleaved doubles at the P2 client's exact scale
+    // (1/2^23; board gain correction deliberately omitted here and noted).
+    // The FPGA emits each sample word's low 6 bytes ALREADY IN P2 WIRE
+    // ORDER: 24-bit BIG-endian I then Q (p2app copies them verbatim into
+    // the UDP packet) — which also corrects the previous commit's LE stats
+    // decode. Frames are 240 complex samples (5 ms @ 48 kHz), one reused
+    // buffer (the sink contract copies synchronously). If no session is
+    // active the sink drops frames internally — fedFrames still counts
+    // deliveries, and the audible bench arrives with the Phase-4 native
+    // session (the badge's Connect).
+    private const int FramePairs = 240;
+    private readonly double[] _iqOut = new double[FramePairs * 2];
+    private int _iqFill;
+    private uint _iqSeq;
+    private long _fedFrames;
+
+    public SaturnRxStream(
+        SaturnXdmaProbe probe, SaturnControl control, TxService tx,
+        DspPipelineService dsp, ILogger<SaturnRxStream> log)
     {
         _probe = probe;
         _control = control;
         _tx = tx;
+        _dsp = dsp;
         _log = log;
     }
 
@@ -135,6 +158,7 @@ public sealed class SaturnRxStream : IDisposable
                 frameWords = _frameWords,
                 markerWords = _markers,
                 resyncs = _resyncs,
+                fedFrames = _fedFrames,          // 3b: IqFrames delivered to the DSP sink
                 aligned = _aligned,
                 sampleMin = _sampleMin,                  // 24-bit I, demuxed
                 sampleMax = _sampleMax,
@@ -165,6 +189,7 @@ public sealed class SaturnRxStream : IDisposable
             _aligned = false; _carryLen = 0; _prevRateWord = 0xFFFFFFFF;
             _frameWords = 0; _samples = 0; _markers = 0; _resyncs = 0;
             _ksps = 0; _thresholdPrev = false;
+            _iqFill = 0; _iqSeq = 0; _fedFrames = 0;
             _rateKhz = rateKhz; _tunedHz = tuneHz;
             _startedAtMs = Environment.TickCount64;
             var ct = _cts.Token;
@@ -327,13 +352,34 @@ public sealed class SaturnRxStream : IDisposable
 
             _markers++;
             _samples += _frameWords;
-            if (_frameWords > 0)
+            for (int w = 0; w < _frameWords; w++)
             {
-                // DDC0's first sample: I = low 24 bits, sign-extended.
-                int i24 = data[off + 8] | (data[off + 9] << 8) | (data[off + 10] << 16);
+                int b = off + 8 + w * 8;
+                // P2 wire order, verbatim from the FPGA: 24-bit BIG-endian
+                // I then Q in the word's low 6 bytes.
+                int i24 = (data[b] << 16) | (data[b + 1] << 8) | data[b + 2];
+                int q24 = (data[b + 3] << 16) | (data[b + 4] << 8) | data[b + 5];
                 if ((i24 & 0x800000) != 0) i24 |= unchecked((int)0xFF000000);
+                if ((q24 & 0x800000) != 0) q24 |= unchecked((int)0xFF000000);
                 if (i24 < _sampleMin) _sampleMin = i24;
                 if (i24 > _sampleMax) _sampleMax = i24;
+
+                const double Scale = 1.0 / 8388608.0;   // the P2 client's 1/2^23
+                _iqOut[_iqFill++] = i24 * Scale;
+                _iqOut[_iqFill++] = q24 * Scale;
+                if (_iqFill == _iqOut.Length)
+                {
+                    _iqFill = 0;
+                    var f = new Zeus.Protocol2.IqFrame(
+                        _iqOut,
+                        FramePairs,
+                        _rateKhz * 1000,
+                        _iqSeq++,
+                        Environment.TickCount64 * 1_000_000L,
+                        0);
+                    ((Zeus.Protocol2.IRxPacketSink)_dsp).OnIqFrame(in f);
+                    _fedFrames++;
+                }
             }
             off += frameBytes;
         }

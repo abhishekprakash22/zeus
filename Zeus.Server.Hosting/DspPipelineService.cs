@@ -5667,9 +5667,14 @@ public class DspPipelineService : BackgroundService,
     /// client. P2 sends directly to the radio DUC; P3 sends the same IQ
     /// payload into the hosted sidecar's credit-paced TX egress.
     /// </summary>
+    /// <summary>4c: the native session's DUC feeder taps the SAME egress
+    /// every TX source funnels through — set by ZeusHost at startup.</summary>
+    public SaturnTxStream? NativeTxSink { get; set; }
+
     public void ForwardTxIqToP2(ReadOnlySpan<float> iqInterleaved)
     {
         _p2Client?.SendTxIq(iqInterleaved);
+        NativeTxSink?.OnTxIq(iqInterleaved);
         if (_radio.IsProtocol3Active)
             _p3Sidecar?.ForwardTxIq(iqInterleaved);
         // Measurement-only: record the egress instant for TX-turnaround stats

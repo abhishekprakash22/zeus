@@ -777,6 +777,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnControl>();
         builder.Services.AddSingleton<SaturnRxStream>();
         builder.Services.AddSingleton<SaturnTxProbe>();
+        builder.Services.AddSingleton<SaturnTxStream>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1409,7 +1410,10 @@ public static class ZeusHost
                 // ---- XDMA TX plane (Phase 4c, COLD): DUC FIFO prober — this build
         // contains no MOX or TX-enable path; the probe writes zero samples
         // and reads FIFO depth. Nothing here can radiate.
+        app.Services.GetRequiredService<DspPipelineService>().NativeTxSink =
+            app.Services.GetRequiredService<SaturnTxStream>();
         app.MapGet("/api/xdma/tx", (SaturnTxProbe txp) => Results.Ok(txp.Status()));
+        app.MapGet("/api/xdma/tx/feeder", (SaturnTxStream txs) => Results.Ok(txs.Status()));
         app.MapPost("/api/xdma/tx/probe", (XdmaTxProbeRequest req, SaturnTxProbe txp) =>
         {
             if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))

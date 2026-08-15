@@ -65,6 +65,7 @@ public sealed class SaturnRxStream : IDisposable
     private readonly TxService _tx;
     private readonly DspPipelineService _dsp;
     private readonly RadioService _radio;
+    private readonly SaturnTxStream _txStream;
     private readonly ILogger<SaturnRxStream> _log;
     private int _attenDb = -1;
 
@@ -130,13 +131,15 @@ public sealed class SaturnRxStream : IDisposable
 
     public SaturnRxStream(
         SaturnXdmaProbe probe, SaturnControl control, TxService tx,
-        DspPipelineService dsp, RadioService radio, ILogger<SaturnRxStream> log)
+        DspPipelineService dsp, RadioService radio, SaturnTxStream txStream,
+        ILogger<SaturnRxStream> log)
     {
         _probe = probe;
         _control = control;
         _tx = tx;
         _dsp = dsp;
         _radio = radio;
+        _txStream = txStream;
         _log = log;
         // PHASE 4b: the native session follows the operator. RadioService is
         // the single source of tuning truth (frozen-NCO model — the hardware
@@ -228,6 +231,9 @@ public sealed class SaturnRxStream : IDisposable
             // controls (AGC, atten, AF, mode — everything gated on
             // IsConnected). TX controls remain inert until 4c.
             _radio.MarkNativeSessionConnected(rateKhz * 1000);
+            // 4c cold rehearsal: the DUC feeder runs for the session's life —
+            // TX engine IQ flows into a discarding DUC; nothing can key.
+            _txStream.Start();
             _cts = new CancellationTokenSource();
             _bytes = 0; _blocks = 0; _overflows = 0; _overThreshold = 0;
             _mbPerSec = 0; _lastDepth = 0; _peekHex = ""; _error = null;
@@ -265,6 +271,7 @@ public sealed class SaturnRxStream : IDisposable
         }
         if (wasRunning)
         {
+            _txStream.Stop();
             _radio.MarkNativeSessionDisconnected();
             _dsp.DisconnectNativeRx();
         }
@@ -371,6 +378,7 @@ public sealed class SaturnRxStream : IDisposable
         {
             _log.LogError(ex, "xdma.rx stream failed");
             lock (_lock) { _error = ex.Message; _cts = null; _thread = null; }
+            try { _txStream.Stop(); } catch { /* best-effort */ }
             try { _radio.MarkNativeSessionDisconnected(); } catch { /* best-effort */ }
             try { _dsp.DisconnectNativeRx(); } catch { /* teardown is best-effort on the failure path */ }
         }

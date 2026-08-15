@@ -620,10 +620,28 @@ More info: https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus
 EOF
 fi
 
-hdiutil create -volname "Openhpsdr Zeus v${VERSION}" \
-    -srcfolder "${DMG_TEMP}" \
-    -ov -format UDZO \
-    "${DMG_PATH}"
+# hdiutil on GitHub macOS runners intermittently fails with 'Resource
+# busy' — Spotlight/diskarbitration touching the freshly created bundles
+# while hdiutil images the folder (the .92 tag's leg died here). Same
+# armor as the Windows leg's vc_redist fetch: retry with growing
+# backoff, sync between attempts, loud failure after five.
+DMG_CREATED=""
+for DMG_ATTEMPT in 1 2 3 4 5; do
+    if hdiutil create -volname "Openhpsdr Zeus v${VERSION}" \
+        -srcfolder "${DMG_TEMP}" \
+        -ov -format UDZO \
+        "${DMG_PATH}"; then
+        DMG_CREATED=1
+        break
+    fi
+    echo "hdiutil busy (attempt ${DMG_ATTEMPT}/5) — syncing and retrying..."
+    sync
+    sleep $((DMG_ATTEMPT * 5))
+done
+if [ -z "${DMG_CREATED}" ]; then
+    echo "DMG creation failed after 5 attempts" >&2
+    exit 1
+fi
 
 rm -rf "${DMG_TEMP}"
 

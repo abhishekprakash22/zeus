@@ -83,6 +83,25 @@ public sealed class SaturnRxStream : IDisposable
     private int _sampleMin, _sampleMax;
     private string? _error;
 
+    // ---- demux state (the C's frame walker, ported) ----
+    // Stream format per OutDDCIQ.c/AnalyseDDCHeader: frame = one RATE WORD
+    // (marker: byte 7 == 0x80; low 30 bits = 10× 3-bit per-DDC rate codes)
+    // followed by FrameLength 64-bit sample words, each carrying 48 bits =
+    // one 24+24-bit IQ pair. Samples per frame per rate code:
+    // {0,1,2,4,8,16,32} — so a single 48 kHz DDC rides 16 wire-bytes per
+    // sample, which is exactly the 2× the first field run measured.
+    private static readonly int[] SamplesPerCode = { 0, 1, 2, 4, 8, 16, 32, 0 };
+    private bool _aligned;
+    private readonly byte[] _carry = new byte[512];
+    private int _carryLen;
+    private uint _prevRateWord = 0xFFFFFFFF;
+    private int _frameWords;
+    private long _samples;
+    private long _markers;
+    private long _resyncs;
+    private double _ksps;
+    private bool _thresholdPrev;
+
     public SaturnRxStream(SaturnXdmaProbe probe, SaturnControl control, TxService tx, ILogger<SaturnRxStream> log)
     {
         _probe = probe;
@@ -111,7 +130,13 @@ public sealed class SaturnRxStream : IDisposable
                 overThreshold = _overThreshold,
                 uptimeSec = Running ? (Environment.TickCount64 - _startedAtMs) / 1000 : 0,
                 firstBlockHex = _peekHex,
-                sampleMin = _sampleMin,
+                samplesDemuxed = _samples,
+                effectiveKsps = Math.Round(_ksps, 2),   // THE criterion: ≈ rateKhz
+                frameWords = _frameWords,
+                markerWords = _markers,
+                resyncs = _resyncs,
+                aligned = _aligned,
+                sampleMin = _sampleMin,                  // 24-bit I, demuxed
                 sampleMax = _sampleMax,
                 error = _error,
             };
@@ -137,6 +162,9 @@ public sealed class SaturnRxStream : IDisposable
             _bytes = 0; _blocks = 0; _overflows = 0; _overThreshold = 0;
             _mbPerSec = 0; _lastDepth = 0; _peekHex = ""; _error = null;
             _sampleMin = int.MaxValue; _sampleMax = int.MinValue;
+            _aligned = false; _carryLen = 0; _prevRateWord = 0xFFFFFFFF;
+            _frameWords = 0; _samples = 0; _markers = 0; _resyncs = 0;
+            _ksps = 0; _thresholdPrev = false;
             _rateKhz = rateKhz; _tunedHz = tuneHz;
             _startedAtMs = Environment.TickCount64;
             var ct = _cts.Token;
@@ -178,6 +206,7 @@ public sealed class SaturnRxStream : IDisposable
             int transfer = 4096;
             var sw = Stopwatch.StartNew();
             long windowBytes = 0;
+            long windowSamples = 0;
             long windowStart = sw.ElapsedMilliseconds;
 
             while (!ct.IsCancellationRequested)
@@ -185,7 +214,9 @@ public sealed class SaturnRxStream : IDisposable
                 uint mon = XdmaIo.Read32(h, FifoMonRx);
                 int depth = (int)(mon & 0xFFFF);                 // 8-byte locations
                 if ((mon & 0x8000_0000) != 0) _overflows++;
-                if ((mon & 0x4000_0000) != 0) _overThreshold++;
+                bool thr = (mon & 0x4000_0000) != 0;
+                if (thr && !_thresholdPrev) _overThreshold++;    // rising edges only
+                _thresholdPrev = thr;
                 _lastDepth = depth;
 
                 // Adaptive transfer size, exactly the C's ladder.
@@ -207,21 +238,18 @@ public sealed class SaturnRxStream : IDisposable
                 if (_blocks == 1)
                     _peekHex = Convert.ToHexString(buf.AsSpan(0, Math.Min(32, got)));
 
-                // Sparse magnitude scan: int32 LE pairs (24 significant bits
-                // live in the top; header words will spike occasionally —
-                // stats, not framing).
-                for (int i = 0; i + 8 <= got; i += 512)
-                {
-                    int v = BitConverter.ToInt32(buf, i);
-                    if (v < _sampleMin) _sampleMin = v;
-                    if (v > _sampleMax) _sampleMax = v;
-                }
+                long before = _samples;
+                Demux(buf, got);
+                windowSamples += _samples - before;
 
                 long now = sw.ElapsedMilliseconds;
                 if (now - windowStart >= 1000)
                 {
-                    _mbPerSec = windowBytes / 1_000_000.0 / ((now - windowStart) / 1000.0);
+                    double secs = (now - windowStart) / 1000.0;
+                    _mbPerSec = windowBytes / 1_000_000.0 / secs;
+                    _ksps = windowSamples / 1000.0 / secs;
                     windowBytes = 0;
+                    windowSamples = 0;
                     windowStart = now;
                 }
             }
@@ -235,6 +263,86 @@ public sealed class SaturnRxStream : IDisposable
         {
             _log.LogError(ex, "xdma.rx stream failed");
             lock (_lock) { _error = ex.Message; _cts = null; _thread = null; }
+        }
+    }
+
+    /// <summary>The C's frame walker: align once on a rate word (byte 7 ==
+    /// 0x80, searched at 8-byte stride past the first word), then consume
+    /// [rate word][FrameLength sample words] frames; partial frames carry
+    /// across DMA block boundaries. Sample words hold one 24+24-bit IQ pair
+    /// in their low 48 bits — DDC0's I is min/max-tracked, sign-extended.
+    /// A marker miss mid-walk realigns and counts a resync.</summary>
+    private void Demux(byte[] block, int got)
+    {
+        // Prepend carry.
+        byte[] data;
+        int len;
+        if (_carryLen > 0)
+        {
+            data = new byte[_carryLen + got];
+            Buffer.BlockCopy(_carry, 0, data, 0, _carryLen);
+            Buffer.BlockCopy(block, 0, data, _carryLen, got);
+            len = _carryLen + got;
+            _carryLen = 0;
+        }
+        else { data = block; len = got; }
+
+        int off = 0;
+        if (!_aligned)
+        {
+            for (int i = 8; i + 8 <= len; i += 8)
+                if (data[i + 7] == 0x80) { off = i; _aligned = true; break; }
+            if (!_aligned) return;                       // keep searching next block
+        }
+
+        while (len - off >= 8)
+        {
+            if (data[off + 7] != 0x80)                   // lost the frame — realign
+            {
+                _resyncs++;
+                _aligned = false;
+                for (int i = off + 8; i + 8 <= len; i += 8)
+                    if (data[i + 7] == 0x80) { off = i; _aligned = true; break; }
+                if (!_aligned) return;
+            }
+
+            uint rateWord = BitConverter.ToUInt32(data, off);
+            if (rateWord != _prevRateWord)
+            {
+                _prevRateWord = rateWord;
+                int total = 0;
+                uint hdr = rateWord;
+                for (int ddc = 0; ddc < 10; ddc++)
+                {
+                    uint code = hdr & 7;
+                    if (code == 7) { hdr >>= 3; total += 2 * SamplesPerCode[hdr & 7]; ddc++; }
+                    else total += SamplesPerCode[code];
+                    hdr >>= 3;
+                }
+                _frameWords = total;
+            }
+
+            int frameBytes = 8 + _frameWords * 8;
+            if (len - off < frameBytes) break;           // partial frame → carry
+
+            _markers++;
+            _samples += _frameWords;
+            if (_frameWords > 0)
+            {
+                // DDC0's first sample: I = low 24 bits, sign-extended.
+                int i24 = data[off + 8] | (data[off + 9] << 8) | (data[off + 10] << 16);
+                if ((i24 & 0x800000) != 0) i24 |= unchecked((int)0xFF000000);
+                if (i24 < _sampleMin) _sampleMin = i24;
+                if (i24 > _sampleMax) _sampleMax = i24;
+            }
+            off += frameBytes;
+        }
+
+        int rest = len - off;
+        if (rest > 0 && rest <= _carry.Length)
+        {
+            Buffer.BlockCopy(data, off, _carry, 0, rest);
+            _carryLen = rest;
         }
     }
 

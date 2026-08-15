@@ -281,7 +281,15 @@ public sealed class SaturnRxStream : IDisposable
             // ---- init sequence, per p2app ----
             _control.SetDdcFrequency(0, tuneHz, out _);          // tune DDC0
             _control.SetRxAtten(Math.Clamp(_radio.EffectiveAttenDb, 0, 31), out _);
-            _control.SetAdcOptions(dither: true, random: true, out _);   // 4b.4: condition the ADCs
+            // 4b.4 postmortem: dither+random ON raised the no-antenna floor
+            // to near full scale (-1 dBm) — under a two-authority-verified
+            // CORRECT decode, that is the raw ADC bus arriving scrambled.
+            // This board's randomizer handshake is evidently not wired the
+            // way that bit assumes (ADC pin unconnected, or no
+            // de-randomizer behind it) — and the radio ran for years under
+            // p2app with these bits at their power-up zeros. Back to OFF;
+            // the verb stays for boards where the handshake is real.
+            _control.SetAdcOptions(dither: false, random: false, out _);
             XdmaIo.Write32(h, RatesReg, rateCode);               // DDC0 rate, others disabled
             uint reset = XdmaIo.Read32(h, FifoResetReg);
             XdmaIo.Write32(h, FifoResetReg, reset & ~FifoResetBit);   // pulse RX FIFO reset

@@ -276,6 +276,7 @@ public sealed class SaturnRxStream : IDisposable
             // ---- init sequence, per p2app ----
             _control.SetDdcFrequency(0, tuneHz, out _);          // tune DDC0
             _control.SetRxAtten(Math.Clamp(_radio.EffectiveAttenDb, 0, 31), out _);
+            _control.SetAdcOptions(dither: true, random: true, out _);   // 4b.4: condition the ADCs
             XdmaIo.Write32(h, RatesReg, rateCode);               // DDC0 rate, others disabled
             uint reset = XdmaIo.Read32(h, FifoResetReg);
             XdmaIo.Write32(h, FifoResetReg, reset & ~FifoResetBit);   // pulse RX FIFO reset

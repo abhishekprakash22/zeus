@@ -145,6 +145,40 @@ public sealed class SaturnControl
         return new { ok = true, db, written = true };
     }
 
+    // RF GPIO register (0x2014, VADDRRFGPIOREG) — shadow-composed like the
+    // C's GPIORegValue. Holds the ADC front-end conditioning bits
+    // (SetADCOptions): ADC1 random/PGA/dither = bits 8/9/10, ADC2 = 11/12/13.
+    // Never written natively before this — the raised no-antenna floor and
+    // spur comb were the ADCs running at power-up defaults. Antenna/preamp
+    // relay bits in this register remain zero (their power-up state) until
+    // the relay increment lands.
+    private const long RfGpioReg = 0x2014;          // VADDRRFGPIOREG
+    private uint _rfGpioShadow;
+
+    /// <summary>PHASE 4b.4: ADC conditioning — dither + randomizer for both
+    /// ADCs (PGA left off, matching p2app's SetADCOptions(…, false, D, R)
+    /// calls). Write-on-change via the shadow.</summary>
+    public object SetAdcOptions(bool dither, bool random, out string? refusal)
+    {
+        refusal = null;
+        if (!SaturnPresent) { refusal = "no Saturn on the local PCIe bus"; return new { ok = false }; }
+        uint reg;
+        lock (_lock)
+        {
+            reg = _rfGpioShadow;
+            reg &= ~((1u << 8) | (1u << 10) | (1u << 11) | (1u << 13));   // random/dither, both ADCs
+            reg &= ~((1u << 9) | (1u << 12));                             // PGA off, both ADCs
+            if (random) reg |= (1u << 8) | (1u << 11);
+            if (dither) reg |= (1u << 10) | (1u << 13);
+            if (reg == _rfGpioShadow) return new { ok = true, dither, random, written = false };
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            XdmaIo.Write32(fs.SafeFileHandle, RfGpioReg, reg);
+            _rfGpioShadow = reg;
+        }
+        _log.LogInformation("xdma.control adc-options dither={D} random={R}", dither, random);
+        return new { ok = true, dither, random, written = true };
+    }
+
     /// <summary>DUC (TX) frequency — same math, TX side. Same gate.</summary>
     public object SetDucFrequency(long hz, out string? refusal)
     {

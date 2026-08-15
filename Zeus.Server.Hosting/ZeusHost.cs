@@ -775,6 +775,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<GpioPaddleKeyer>();
         builder.Services.AddSingleton<SaturnFlashService>();
         builder.Services.AddSingleton<SaturnControl>();
+        builder.Services.AddSingleton<SaturnRxStream>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1404,6 +1405,23 @@ public static class ZeusHost
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
 
+                // ---- XDMA data plane (Phase 3): the DDC0 DMA stream ----
+        app.MapGet("/api/xdma/rx", (SaturnRxStream rxs) => Results.Ok(rxs.Status()));
+        app.MapPost("/api/xdma/rx/start", (XdmaRxStartRequest req, SaturnRxStream rxs) =>
+        {
+            if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error =
+                    "the DMA stream owns registers p2app also owns — stop it first, then pass confirm:'p2app-stopped'" });
+            return rxs.Start(req.RateKhz ?? 48, req.Hz ?? 7_100_000, out var refusal)
+                ? Results.Ok(rxs.Status())
+                : Results.BadRequest(new { error = refusal });
+        });
+        app.MapPost("/api/xdma/rx/stop", (SaturnRxStream rxs) =>
+        {
+            rxs.Stop();
+            return Results.Ok(rxs.Status());
+        });
+
                 // ---- XDMA field diagnostics: one curl replaces guesswork ----
         app.MapGet("/api/system/xdma", (SaturnXdmaProbe probe) =>
             Results.Ok(probe.ProbeDiagnostics()));
@@ -1622,3 +1640,5 @@ public sealed record FpgaFlashRequest(string? Url);
 
 public sealed record XdmaDdcFreqRequest(int Ddc, long Hz, string? Confirm);
 public sealed record XdmaDucFreqRequest(long Hz, string? Confirm);
+
+public sealed record XdmaRxStartRequest(int? RateKhz, long? Hz, string? Confirm);

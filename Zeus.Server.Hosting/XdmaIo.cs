@@ -41,6 +41,20 @@ internal static class XdmaIo
         return v;
     }
 
+    [DllImport("libc", SetLastError = true, EntryPoint = "pread")]
+    private static extern nint preadBuf(int fd, byte[] buf, nuint count, long offset);
+
+    /// <summary>Bulk pread into a byte buffer — the DMA stream reads
+    /// (c2h devices) use this; same .NET-refuses-char-devices story as
+    /// the register path.</summary>
+    public static int ReadBytes(SafeFileHandle handle, byte[] buf, int count, long offset)
+    {
+        nint n = preadBuf((int)handle.DangerousGetHandle(), buf, (nuint)count, offset);
+        if (n < 0)
+            throw new IOException($"pread(bulk,0x{offset:X}) failed (errno {Marshal.GetLastPInvokeError()})");
+        return (int)n;
+    }
+
     /// <summary>4-byte register write at <paramref name="offset"/> in the BAR.</summary>
     public static void Write32(SafeFileHandle handle, long offset, uint value)
     {

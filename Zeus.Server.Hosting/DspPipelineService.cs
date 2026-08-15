@@ -5149,6 +5149,16 @@ public class DspPipelineService : BackgroundService,
     // MaybeTickInline drives display and audio cadence exactly as a
     // protocol client's frames would. Refuses while any network session is
     // active — one engine, one owner.
+    /// <summary>Name of the engine currently installed — surfaces in
+    /// /api/xdma/rx so the bench can tell WdspDspEngine from a
+    /// SyntheticDspEngine fallback with a curl instead of a log hunt.</summary>
+    public string CurrentEngineName => Volatile.Read(ref _engine)?.GetType().Name ?? "none";
+
+    /// <summary>Name of the engine currently installed — surfaces in
+    /// /api/xdma/rx so the bench can tell WdspDspEngine from a
+    /// SyntheticDspEngine fallback with a curl instead of a log hunt.</summary>
+    public string CurrentEngineName => Volatile.Read(ref _engine)?.GetType().Name ?? "none";
+
     public int ConnectNativeRx(int rateHz)
     {
         if (_p2Client is not null)

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchXdmaRx, startXdmaRx, stopXdmaRx } from '../api/client';
 import type { XdmaRxStatus } from '../api/client';
+import { getAudioClient } from '../audio/audio-client';
 
 const START_RATE_KHZ = 48;
 const START_HZ = 7_100_000;
@@ -62,6 +63,14 @@ export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
     try {
       const s = await startXdmaRx(START_RATE_KHZ, START_HZ);
       setStatus(s);
+      // The silence hunt's verdict: on a kiosk/browser install the desktop
+      // NativeAudioSink stands down BY DESIGN and RX audio travels the
+      // WebSocket to the BROWSER — which only listens once its audio
+      // client starts, normally inside the connected workspace. At the
+      // discovery screen nobody was listening to a perfectly demodulated
+      // stream. This click is a user gesture, so the AudioContext is
+      // allowed to start right here — same call the Connect flow makes.
+      void getAudioClient().start();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -72,6 +81,7 @@ export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
   const onStop = useCallback(async () => {
     setBusy(true);
     try {
+      void getAudioClient().stop();
       await stopXdmaRx();
       const s = await fetchXdmaRx().catch(() => null);
       setStatus(s ?? null);

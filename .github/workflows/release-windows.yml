@@ -81,9 +81,27 @@ jobs:
       - name: Download Visual C++ Redistributable
         shell: pwsh
         run: |
+          # aka.ms rides a redirect chain to a CDN that occasionally drops
+          # mid-body on runners ('The response ended prematurely') — the .85
+          # tag's leg died here. Two defenses: retry the fetch, and refuse a
+          # truncated file. The second matters more than the first: a
+          # premature end that DOESN'T throw would silently package half a
+          # redistributable into every installer (vc_redist.x64 is ~25 MB;
+          # anything under 10 MB is a lie).
           $url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
           $out = "installers\vc_redist.x64.exe"
-          Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+          $ok = $false
+          foreach ($attempt in 1..5) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+              if ((Get-Item $out).Length -ge 10MB) { $ok = $true; break }
+              Write-Warning "attempt ${attempt}: truncated download ($((Get-Item $out).Length) bytes)"
+            } catch {
+              Write-Warning "attempt ${attempt}: $($_.Exception.Message)"
+            }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+          if (-not $ok) { throw "vc_redist fetch failed after 5 attempts" }
           Get-Item $out | Select-Object Name, Length
 
       - name: Fetch WebView2 bootstrapper

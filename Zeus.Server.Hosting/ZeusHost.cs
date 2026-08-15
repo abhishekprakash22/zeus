@@ -776,6 +776,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnFlashService>();
         builder.Services.AddSingleton<SaturnControl>();
         builder.Services.AddSingleton<SaturnRxStream>();
+        builder.Services.AddSingleton<SaturnTxProbe>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1405,6 +1406,19 @@ public static class ZeusHost
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
 
+                // ---- XDMA TX plane (Phase 4c, COLD): DUC FIFO prober — this build
+        // contains no MOX or TX-enable path; the probe writes zero samples
+        // and reads FIFO depth. Nothing here can radiate.
+        app.MapGet("/api/xdma/tx", (SaturnTxProbe txp) => Results.Ok(txp.Status()));
+        app.MapPost("/api/xdma/tx/probe", (XdmaTxProbeRequest req, SaturnTxProbe txp) =>
+        {
+            if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error =
+                    "the DUC stream contends with p2app — stop it first, then pass confirm:'p2app-stopped'" });
+            var result = txp.Probe(req.Frames ?? 8, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
+
                 // ---- XDMA data plane (Phase 3): the DDC0 DMA stream ----
         app.MapGet("/api/xdma/rx", (SaturnRxStream rxs) => Results.Ok(rxs.Status()));
         app.MapPost("/api/xdma/rx/start", (XdmaRxStartRequest req, SaturnRxStream rxs) =>
@@ -1642,3 +1656,5 @@ public sealed record XdmaDdcFreqRequest(int Ddc, long Hz, string? Confirm);
 public sealed record XdmaDucFreqRequest(long Hz, string? Confirm);
 
 public sealed record XdmaRxStartRequest(int? RateKhz, long? Hz, string? Confirm);
+
+public sealed record XdmaTxProbeRequest(int? Frames, string? Confirm);

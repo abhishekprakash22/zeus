@@ -55,6 +55,19 @@ internal static class XdmaIo
         return (int)n;
     }
 
+    [DllImport("libc", SetLastError = true, EntryPoint = "pwrite")]
+    private static extern nint pwriteBuf(int fd, byte[] buf, nuint count, long offset);
+
+    /// <summary>Bulk pwrite from a byte buffer — the DUC h2c stream writes
+    /// use this; mirror of ReadBytes.</summary>
+    public static int WriteBytes(SafeFileHandle handle, byte[] buf, int count, long offset)
+    {
+        nint n = pwriteBuf((int)handle.DangerousGetHandle(), buf, (nuint)count, offset);
+        if (n < 0)
+            throw new IOException($"pwrite(bulk,0x{offset:X}) failed (errno {Marshal.GetLastPInvokeError()})");
+        return (int)n;
+    }
+
     /// <summary>4-byte register write at <paramref name="offset"/> in the BAR.</summary>
     public static void Write32(SafeFileHandle handle, long offset, uint value)
     {

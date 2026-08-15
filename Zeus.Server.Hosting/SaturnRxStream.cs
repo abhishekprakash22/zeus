@@ -160,7 +160,6 @@ public sealed class SaturnRxStream : IDisposable
                 resyncs = _resyncs,
                 fedFrames = _fedFrames,          // 3b: IqFrames delivered to the DSP sink
                 engine = _dsp.CurrentEngineName,  // 4a diag: WdspDspEngine vs Synthetic fallback
-                engine = _dsp.CurrentEngineName,  // 4a diag: WdspDspEngine vs Synthetic fallback
                 aligned = _aligned,
                 sampleMin = _sampleMin,                  // 24-bit I, demuxed
                 sampleMax = _sampleMax,

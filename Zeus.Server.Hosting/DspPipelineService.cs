@@ -5139,6 +5139,87 @@ public class DspPipelineService : BackgroundService,
     /// synchronous RX sink on the client (iter5 — no more Task.Run pumps).
     /// Only one client at a time.
     /// </summary>
+    // ---- PHASE 4a: the native session's engine half ------------------------
+    // Installs the WDSP engine for the XDMA-native RX path: the exact engine
+    // subset of ConnectP2Async (OpenChannel at rate, TX display seed, TX
+    // channel for parity with the coming 4c, state apply w/ synthetic
+    // fallback, locked swap, old-engine teardown) with everything
+    // client-shaped omitted — there is no network client; SaturnRxStream IS
+    // the packet source, delivering through IRxPacketSink.OnIqFrame, whose
+    // MaybeTickInline drives display and audio cadence exactly as a
+    // protocol client's frames would. Refuses while any network session is
+    // active — one engine, one owner.
+    public int ConnectNativeRx(int rateHz)
+    {
+        if (_p2Client is not null)
+            throw new InvalidOperationException("a P2 session is active — disconnect it first");
+        if (_radio.ActiveClient is not null)
+            throw new InvalidOperationException("a P1 session is active — disconnect it first");
+
+        IDspEngine newEngine;
+        int newChannelId;
+        try
+        {
+            var wdsp = new WdspDspEngine(_loggerFactory.CreateLogger<WdspDspEngine>());
+            newChannelId = wdsp.OpenChannel(rateHz, Width);
+            SeedTxDisplayConfig(wdsp);
+            wdsp.OpenTxChannel(outputRateHz: 192_000);
+            try { ApplyStateToNewChannel(wdsp, newChannelId); }
+            catch (EntryPointNotFoundException ex)
+            {
+                _log.LogWarning(ex, "dsp.pipeline native wdsp missing entry point — partial config applied");
+            }
+            newEngine = wdsp;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "dsp.pipeline native wdsp open failed, falling back to synthetic engine");
+            var synth = new SyntheticDspEngine();
+            newChannelId = synth.OpenChannel(rateHz, Width);
+            try { ApplyStateToNewChannel(synth, newChannelId); }
+            catch (EntryPointNotFoundException) { }
+            newEngine = synth;
+        }
+
+        IDspEngine? old;
+        int oldChannel;
+        lock (_engineLock)
+        {
+            old = _engine;
+            oldChannel = _channelId;
+            Volatile.Write(ref _engine, newEngine);
+            Volatile.Write(ref _channelId, newChannelId);
+            ResetSecondaryRxChannels();
+            Volatile.Write(ref _sampleRateHz, rateHz);
+        }
+        TeardownEngine(old, oldChannel);
+        _log.LogInformation("dsp.pipeline NATIVE engine={Engine} rate={Rate}", newEngine.GetType().Name, rateHz);
+        RaiseEngineChanged(newEngine);
+        return newChannelId;
+    }
+
+    /// <summary>Tears the native engine down and restores the disconnected
+    /// (synthetic display) engine — the same end-state OnRadioDisconnected
+    /// leaves behind, so the UI's pre-connect behavior is identical.</summary>
+    public void DisconnectNativeRx()
+    {
+        var disconnectedEngine = CreateDisconnectedEngine(out int channelId);
+        IDspEngine? old;
+        int oldChannel;
+        lock (_engineLock)
+        {
+            old = _engine;
+            oldChannel = _channelId;
+            Volatile.Write(ref _engine, disconnectedEngine);
+            Volatile.Write(ref _channelId, channelId);
+            ResetSecondaryRxChannels();
+            Volatile.Write(ref _sampleRateHz, SyntheticSampleRateHz);
+        }
+        TeardownEngine(old, oldChannel);
+        _log.LogInformation("dsp.pipeline native session closed engine={Engine}", disconnectedEngine.GetType().Name);
+        RaiseEngineChanged(disconnectedEngine);
+    }
+
     public async Task<int> ConnectP2Async(
         IPEndPoint radioEndpoint,
         int sampleRateKhz,

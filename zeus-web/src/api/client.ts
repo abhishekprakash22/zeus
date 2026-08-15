@@ -7877,3 +7877,51 @@ export function freeDvStationQsy(sid: string, signal?: AbortSignal): Promise<voi
     () => undefined,
   );
 }
+
+// ---- XDMA native RX (Phase 4a): the badge's START button ----
+export interface XdmaRxStatus {
+  running: boolean;
+  rateKhz: number;
+  tunedHz: number;
+  mbPerSec: number;
+  effectiveKsps: number;
+  fedFrames: number;
+  overflows: number;
+  resyncs: number;
+  error: string | null;
+}
+
+function normalizeXdmaRx(raw: unknown): XdmaRxStatus {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  return {
+    running: o.running === true,
+    rateKhz: typeof o.rateKhz === 'number' ? o.rateKhz : 0,
+    tunedHz: typeof o.tunedHz === 'number' ? o.tunedHz : 0,
+    mbPerSec: typeof o.mbPerSec === 'number' ? o.mbPerSec : 0,
+    effectiveKsps: typeof o.effectiveKsps === 'number' ? o.effectiveKsps : 0,
+    fedFrames: typeof o.fedFrames === 'number' ? o.fedFrames : 0,
+    overflows: typeof o.overflows === 'number' ? o.overflows : 0,
+    resyncs: typeof o.resyncs === 'number' ? o.resyncs : 0,
+    error: typeof o.error === 'string' ? o.error : null,
+  };
+}
+
+export async function fetchXdmaRx(signal?: AbortSignal): Promise<XdmaRxStatus> {
+  return jsonFetch('/api/xdma/rx', { signal }, normalizeXdmaRx);
+}
+
+export async function startXdmaRx(rateKhz: number, hz: number): Promise<XdmaRxStatus> {
+  return jsonFetch(
+    '/api/xdma/rx/start',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rateKhz, hz, confirm: 'p2app-stopped' }),
+    },
+    normalizeXdmaRx,
+  );
+}
+
+export async function stopXdmaRx(): Promise<XdmaRxStatus> {
+  return jsonFetch('/api/xdma/rx/stop', { method: 'POST' }, normalizeXdmaRx);
+}

@@ -44,6 +44,7 @@
 // License for details.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { XdmaNativeRxControls } from './XdmaNativeRxControls';
 import { ShutdownButton } from './ShutdownButton';
 import {
   connect as apiConnect,
@@ -1469,18 +1470,13 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
                           </button>
                         </div>
                       ) : r.details?.transport === 'xdma' ? (
-                        /* Phase-1 PCIe detection trophy: the board is real,
-                           the native data plane is not here yet. No Connect
-                           button wired to a network parser — a badge and
-                           the server's own status line instead. */
-                        <div
-                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                          title={r.details?.status ?? 'native PCIe transport arrives in a later release'}
-                        >
-                          <span className="label-xs" style={{ color: 'var(--accent, #6fc3ff)' }}>
-                            PCIe · DETECTED
-                          </span>
-                        </div>
+                        /* Phase 4a: the badge earns its button. START RX
+                           brings the DSP engine up natively and pumps DDC0
+                           over the PCIe bus — no p2app, no network. Two-press
+                           arms the register-contention confirm; while running
+                           the row shows live rate + a STOP. Full Connect
+                           (VFO routing, session UI) is the 4b step. */
+                        <XdmaNativeRxControls statusLine={r.details?.status} />
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           <button

@@ -182,6 +182,10 @@ public sealed class SaturnRxStream : IDisposable
         lock (_lock)
         {
             if (Running) { refusal = "stream already running"; return false; }
+            // PHASE 4a: bring the engine up BEFORE the pump — from the first
+            // delivered frame there is a room behind the door.
+            try { _dsp.ConnectNativeRx(rateKhz * 1000); }
+            catch (Exception ex) { refusal = ex.Message; return false; }
             _cts = new CancellationTokenSource();
             _bytes = 0; _blocks = 0; _overflows = 0; _overThreshold = 0;
             _mbPerSec = 0; _lastDepth = 0; _peekHex = ""; _error = null;
@@ -203,12 +207,16 @@ public sealed class SaturnRxStream : IDisposable
 
     public void Stop()
     {
+        bool wasRunning;
         lock (_lock)
         {
+            wasRunning = _cts is not null;
             _cts?.Cancel();
             _cts = null;
             _thread = null;
         }
+        if (wasRunning)
+            _dsp.DisconnectNativeRx();
     }
 
     private void Pump(uint rateCode, long tuneHz, CancellationToken ct)
@@ -288,6 +296,7 @@ public sealed class SaturnRxStream : IDisposable
         {
             _log.LogError(ex, "xdma.rx stream failed");
             lock (_lock) { _error = ex.Message; _cts = null; _thread = null; }
+            try { _dsp.DisconnectNativeRx(); } catch { /* teardown is best-effort on the failure path */ }
         }
     }
 

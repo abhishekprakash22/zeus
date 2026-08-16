@@ -776,6 +776,8 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnFlashService>();
         builder.Services.AddSingleton<SaturnControl>();
         builder.Services.AddSingleton<SaturnRxStream>();
+        builder.Services.AddSingleton<P2AppSupervisor>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<P2AppSupervisor>());
         builder.Services.AddSingleton<SaturnTxProbe>();
         builder.Services.AddSingleton<SaturnTxStream>();
 
@@ -1412,6 +1414,11 @@ public static class ZeusHost
         // and reads FIFO depth. Nothing here can radiate.
         app.Services.GetRequiredService<DspPipelineService>().NativeTxSink =
             app.Services.GetRequiredService<SaturnTxStream>();
+        // The moment a native session releases the register plane — clean
+        // stop or pump failure — the radio's p2app comes back on its own.
+        app.Services.GetRequiredService<SaturnRxStream>().OnSessionClosed =
+            () => app.Services.GetRequiredService<P2AppSupervisor>().Resume();
+        app.MapGet("/api/p2app", (P2AppSupervisor sup) => Results.Ok(sup.Status()));
         app.MapGet("/api/xdma/tx", (SaturnTxProbe txp) => Results.Ok(txp.Status()));
         app.MapGet("/api/xdma/tx/feeder", (SaturnTxStream txs) => Results.Ok(txs.Status()));
 
@@ -1444,14 +1451,21 @@ public static class ZeusHost
 
                 // ---- XDMA data plane (Phase 3): the DDC0 DMA stream ----
         app.MapGet("/api/xdma/rx", (SaturnRxStream rxs) => Results.Ok(rxs.Status()));
-        app.MapPost("/api/xdma/rx/start", (XdmaRxStartRequest req, SaturnRxStream rxs) =>
+        app.MapPost("/api/xdma/rx/start", async (XdmaRxStartRequest req, SaturnRxStream rxs, P2AppSupervisor sup) =>
         {
-            if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error =
-                    "the DMA stream owns registers p2app also owns — stop it first, then pass confirm:'p2app-stopped'" });
-            return rxs.Start(req.RateKhz ?? 48, req.Hz ?? 7_100_000, out var refusal)
-                ? Results.Ok(rxs.Status())
-                : Results.BadRequest(new { error = refusal });
+            // The honor-system confirm string is superseded by a measured
+            // fact: the supervisor stops its own p2app and verifies nothing
+            // else owns UDP 1024. An externally-managed p2app is refused —
+            // Zeus never kills a process it didn't start. (Confirm is still
+            // accepted in the DTO for old scripts; it is no longer checked.)
+            var (ok, error) = await sup.PauseForNativeSessionAsync();
+            if (!ok) return Results.BadRequest(new { error });
+            if (!rxs.Start(req.RateKhz ?? 48, req.Hz ?? 7_100_000, out var refusal))
+            {
+                sup.Resume();   // the pause killed p2app — a refused start must bring it back
+                return Results.BadRequest(new { error = refusal });
+            }
+            return Results.Ok(rxs.Status());
         });
         app.MapPost("/api/xdma/rx/stop", (SaturnRxStream rxs) =>
         {

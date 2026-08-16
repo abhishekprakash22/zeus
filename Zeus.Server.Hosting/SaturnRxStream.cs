@@ -70,6 +70,10 @@ public sealed class SaturnRxStream : IDisposable
     private int _attenDb = -1;
 
     private readonly object _lock = new();
+    /// <summary>Fires whenever a native session ends — clean Stop() or the
+    /// pump's failure teardown. The host wires this to P2AppSupervisor.Resume
+    /// so the radio's p2app comes back the moment the register plane is free.</summary>
+    public Action? OnSessionClosed { get; set; }
     private CancellationTokenSource? _cts;
     private Thread? _thread;
     private int _gen;   // audit fix: stale-pump teardown guard (stop→quick-restart race)
@@ -291,6 +295,7 @@ public sealed class SaturnRxStream : IDisposable
             _txStream.Stop();
             _radio.MarkNativeSessionDisconnected();
             _dsp.DisconnectNativeRx();
+            OnSessionClosed?.Invoke();
         }
     }
 
@@ -400,6 +405,7 @@ public sealed class SaturnRxStream : IDisposable
             try { _txStream.Stop(); } catch { /* best-effort */ }
             try { _radio.MarkNativeSessionDisconnected(); } catch { /* best-effort */ }
             try { _dsp.DisconnectNativeRx(); } catch { /* teardown is best-effort on the failure path */ }
+            try { OnSessionClosed?.Invoke(); } catch { /* best-effort */ }
         }
     }
 

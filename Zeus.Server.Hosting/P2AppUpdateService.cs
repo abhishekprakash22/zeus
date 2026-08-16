@@ -29,6 +29,7 @@ public sealed class P2AppUpdateService
     private string? _error;
     private string? _repoDir;
     private string? _headline;          // repo HEAD after a successful update
+    private bool _rolledBack;
     private Task? _running;
 
     public P2AppUpdateService(P2AppSupervisor sup, ILogger<P2AppUpdateService> log)
@@ -44,6 +45,7 @@ public sealed class P2AppUpdateService
                 repoDir = _repoDir,
                 head = _headline,
                 running = _running is { IsCompleted: false },
+                rolledBack = _rolledBack,
                 log = _logLines.TakeLast(12).ToArray(),
             };
     }
@@ -56,7 +58,7 @@ public sealed class P2AppUpdateService
         {
             if (_running is { IsCompleted: false })
                 return (false, "an update is already running");
-            _phase = "pausing"; _error = null; _headline = null; _logLines.Clear();
+            _phase = "pausing"; _error = null; _headline = null; _rolledBack = false; _logLines.Clear();
             _running = Task.Run(RunAsync);
         }
         return (true, null);
@@ -91,12 +93,35 @@ public sealed class P2AppUpdateService
             }
 
             SetPhase("building");
-            // Laurence's update script verbatim: clean, then build.
-            if (!await RunStepAsync("make", "clean", p2appDir, 120)) return;
-            if (!await RunStepAsync("make", "", p2appDir, 900)) return;
-
             var bin = Path.Combine(p2appDir, "p2app");
-            if (!File.Exists(bin)) { Fail("build finished but no p2app binary was produced"); return; }
+            var backup = bin + ".zeus-previous";
+            UnixFileMode? previousMode = null;
+            if (File.Exists(bin))
+            {
+                // 'make clean' is 'rm -rf $(TARGET) *.o' in the Saturn
+                // Makefile — it deletes the running binary before the new
+                // one exists. Preserve it, or a failed build (broken
+                // upstream commit, missing dep) leaves the radio with NO
+                // p2app until some build succeeds.
+                previousMode = File.GetUnixFileMode(bin);
+                File.Copy(bin, backup, overwrite: true);
+                Append($"previous binary preserved as {Path.GetFileName(backup)}");
+            }
+
+            // Laurence's update script verbatim: clean, then build.
+            var built =
+                await RunStepAsync("make", "clean", p2appDir, 120)
+                && await RunStepAsync("make", "", p2appDir, 900);
+            if (built && !File.Exists(bin))
+            {
+                Fail("build finished but no p2app binary was produced");
+                built = false;
+            }
+            if (!built)
+            {
+                RestoreBackup(bin, backup, previousMode);
+                return;
+            }
 
             // Record what we're now running.
             var head = await CaptureAsync("git", "log -1 --format=%h %cd --date=short", repo);
@@ -177,6 +202,26 @@ public sealed class P2AppUpdateService
             return sb.ToString();
         }
         catch { return null; }
+    }
+
+    private void RestoreBackup(string bin, string backup, UnixFileMode? mode)
+    {
+        if (!File.Exists(backup))
+        {
+            Append("no previous binary to restore (first install) — p2app stays absent until a build succeeds");
+            return;
+        }
+        try
+        {
+            File.Copy(backup, bin, overwrite: true);
+            if (mode is { } m) File.SetUnixFileMode(bin, m);
+            lock (_lock) _rolledBack = true;
+            Append("ROLLED BACK — previous p2app binary restored; the radio keeps working on the old version");
+        }
+        catch (Exception ex)
+        {
+            Append($"rollback failed: {ex.Message} — p2app may be absent until a build succeeds");
+        }
     }
 
     private void SetPhase(string phase) { lock (_lock) _phase = phase; }

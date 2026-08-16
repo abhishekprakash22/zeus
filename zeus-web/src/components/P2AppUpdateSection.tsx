@@ -110,6 +110,11 @@ export function P2AppUpdateSection() {
         {(error || upd?.error) && (
           <span style={{ fontSize: 11, color: 'var(--tx)' }}>{error ?? upd?.error}</span>
         )}
+        {upd?.rolledBack && !active && (
+          <span style={{ fontSize: 11, color: 'var(--ok, #6c6)' }}>
+            previous p2app restored — radio still working
+          </span>
+        )}
       </div>
       {active && upd && upd.log.length > 0 && (
         <pre

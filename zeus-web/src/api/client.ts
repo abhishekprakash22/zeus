@@ -5835,6 +5835,7 @@ export interface P2AppUpdateStatusDto {
   repoDir: string | null;
   head: string | null;
   running: boolean;
+  rolledBack: boolean;
   log: string[];
 }
 

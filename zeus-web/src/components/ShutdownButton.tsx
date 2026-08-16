@@ -10,7 +10,8 @@
 import { useEffect, useState } from 'react';
 import { shutdownPi } from '../api/client';
 /** Clean Pi power-off from the connect popup — the appliance's last rite.
- * House two-press discipline (SHUT DOWN -> SURE?, self-disarming after 3 s)
+ * House two-press discipline (SHUT DOWN -> SURE?, self-disarming after 10 s
+ * — 3 s proved too short on the touchscreen for the second tap to land)
  * because this button turns the station off; the server refuses while TX is
  * keyed. After acceptance the UI announces the shutdown and stops — the next
  * thing this screen shows is the boot after the power button. */
@@ -21,7 +22,7 @@ export function ShutdownButton() {
 
   useEffect(() => {
     if (!armed) return;
-    const id = window.setTimeout(() => setArmed(false), 3000);
+    const id = window.setTimeout(() => setArmed(false), 10000);
     return () => window.clearTimeout(id);
   }, [armed]);
 

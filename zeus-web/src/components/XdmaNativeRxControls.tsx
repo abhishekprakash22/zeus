@@ -20,6 +20,13 @@ import { getAudioClient } from '../audio/audio-client';
 const START_RATE_KHZ = 48;
 const START_HZ = 7_100_000;
 
+// Field switch (2026-08-16): the display radio ships badge-only for now —
+// START RX stays off the glass until the native path is factory-blessed.
+// A stream that is ALREADY running (started via curl/API) still shows its
+// live rate and STOP: an active register-plane owner must never be
+// invisible or unstoppable from the screen. Flip to true to restore.
+const NATIVE_RX_START_UI: boolean = false;
+
 export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -99,6 +106,7 @@ export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
         PCIe · DETECTED
       </span>
       {!running ? (
+        !NATIVE_RX_START_UI ? null : (
         <>
           <button
             type="button"
@@ -120,6 +128,7 @@ export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
             </span>
           )}
         </>
+        )
       ) : (
         <>
           <span className="label-xs" style={{ color: 'var(--ok, #6fdf8f)' }}>

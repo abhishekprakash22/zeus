@@ -21,7 +21,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
-namespace Zeus.Server.Hosting;
+namespace Zeus.Server;
 
 public sealed class P2AppSupervisor : BackgroundService
 {

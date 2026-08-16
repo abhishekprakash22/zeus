@@ -1177,14 +1177,38 @@ public static class ZeusEndpoints
             HttpContext ctx) =>
         {
             var timeout = TimeSpan.FromMilliseconds(1500);
+            // PCIe probe FIRST: its verdict gates the loopback discovery leg
+            // below, and the identity-register pread costs microseconds.
+            var xdma = xdmaProbe.Probe();
             var p1Task = p1Discovery.DiscoverAsync(timeout, ctx.RequestAborted);
             var p2Task = p2Discovery.DiscoverAsync(timeout, ctx.RequestAborted);
             var p3Task = p3Presence.DiscoverAsync(TimeSpan.FromMilliseconds(700), ctx.RequestAborted);
-            await Task.WhenAll(p1Task, p2Task, p3Task);
+            // Loopback discovery leg — the internal display radio's case.
+            // Broadcast discovery needs a broadcast MEDIUM: with no Ethernet
+            // cable the NIC is not Up, the interface sweep finds nothing to
+            // send on, and the same-host p2app never hears a probe (field-
+            // verified on the internal CM5). p2app binds INADDR_ANY and
+            // replies to the sender's source address, so a unicast to
+            // 127.0.0.1:1024 round-trips with or without a cable. Gated on a
+            // local Saturn on the bus: only a host that IS the radio can be
+            // running the radio's own p2app.
+            var loopbackTask = xdma is null
+                ? Task.FromResult<Zeus.Protocol2.Discovery.DiscoveredRadio?>(null)
+                : p2Discovery.ProbeAsync(IPAddress.Loopback, timeout, ctx.RequestAborted);
+            await Task.WhenAll(p1Task, p2Task, p3Task, loopbackTask);
+
+            // Add-only merge: when the cable is in, broadcast already reports
+            // this radio at its LAN address — that row stays exactly as it
+            // was. The loopback row appears only when broadcast could not see
+            // the radio (same-MAC test), so cabled behaviour is unchanged.
+            var p2Radios = p2Task.Result;
+            var loopback = loopbackTask.Result;
+            if (loopback is not null && p2Radios.Any(r => r.Mac.Equals(loopback.Mac)))
+                loopback = null;
 
             var p3ByIp = p3Task.Result.ToDictionary(r => r.Ip, r => r.Presence);
             foreach (var entry in await ProbeProtocol3PresenceAsync(
-                p2Task.Result,
+                p2Radios,
                 p3Presence,
                 ctx.RequestAborted).ConfigureAwait(false))
             {
@@ -1192,10 +1216,22 @@ public static class ZeusEndpoints
             }
 
             var p1Infos = p1Task.Result.Select(MapP1);
-            var p2Infos = p2Task.Result.Select(r =>
+            var p2Infos = p2Radios.Select(r =>
                 MapP2(r, p3ByIp.TryGetValue(r.Ip, out var p3) ? p3 : null));
+            if (loopback is not null)
+            {
+                // p2app is P2-only, so no Protocol-3 presence probe for this
+                // row. BuildP2Details is used directly (not the record's
+                // nullable Details) so the copy stays CS8604-clean.
+                var loopbackDetails = new Dictionary<string, string>(
+                    BuildP2Details(loopback, null))
+                {
+                    ["link"] = "loopback — this radio's own p2app, no Ethernet needed",
+                };
+                p2Infos = p2Infos.Append(MapP2(loopback, null) with { Details = loopbackDetails });
+            }
             var knownIps = new HashSet<IPAddress>(
-                p1Task.Result.Select(r => r.Ip).Concat(p2Task.Result.Select(r => r.Ip)));
+                p1Task.Result.Select(r => r.Ip).Concat(p2Radios.Select(r => r.Ip)));
             var p3Infos = p3Task.Result
                 .Where(r => !knownIps.Contains(r.Ip))
                 .Select(MapP3);
@@ -1203,7 +1239,6 @@ public static class ZeusEndpoints
             // discovered the piHPSDR way — XDMA node + FPGA identity
             // registers. Phase 1 surfaces the board; data flows via the
             // network personality (p2app) until the native transport lands.
-            var xdma = xdmaProbe.Probe();
             var xdmaInfos = xdma is null
                 ? Array.Empty<RadioInfo>()
                 : new[]
@@ -1223,7 +1258,7 @@ public static class ZeusEndpoints
                             ["userVersion"] = xdma.UserVersion.ToString(),
                             ["status"] = !xdma.KnownConfig ? "unknown FPGA config"
                                 : !xdma.ClocksOk ? "clocks missing"
-                                : "detected — native PCIe transport arrives in a later release; connect via the network entry",
+                                : "detected — native PCIe transport ready (START RX on this row)",
                         }),
                 };
 

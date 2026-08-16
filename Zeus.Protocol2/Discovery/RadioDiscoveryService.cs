@@ -181,6 +181,17 @@ public sealed class RadioDiscoveryService : IRadioDiscovery
                     // Windows WSAECONNRESET (10054): stray ICMP port-unreachable.
                     continue;
                 }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionRefused)
+                {
+                    // Linux surfaces ICMP port-unreachable as ECONNREFUSED on the
+                    // next recv: a definitive "nothing listens there". Return the
+                    // no-answer verdict now instead of waiting out the timeout —
+                    // and quietly (debug, not warning): the loopback discovery leg
+                    // asks this question every cycle on hosts where p2app is
+                    // deliberately not running (native-XDMA sessions).
+                    _log.LogDebug("p2.probe.refused radio={Radio}", radioEndpoint.Address);
+                    break;
+                }
                 catch (SocketException ex)
                 {
                     _log.LogWarning(ex, "p2.probe.socket.error radio={Radio}", radioEndpoint.Address);

@@ -78,7 +78,9 @@ public sealed class AudioSettingsStore : IDisposable
                     Source: ClampSource(e.Source),
                     MicBoost: e.MicBoost,
                     MicBias: e.MicBias,
-                    LineInGain: ClampGain(e.LineInGain));
+                    LineInGain: ClampGain(e.LineInGain),
+                    MicPttEnabled: e.MicPttEnabled,
+                    PttOnTip: e.PttOnTip);
         }
     }
 
@@ -99,6 +101,8 @@ public sealed class AudioSettingsStore : IDisposable
                 MicBoost = sel.MicBoost,
                 MicBias = sel.MicBias,
                 LineInGain = ClampGain(sel.LineInGain),
+                MicPttEnabled = sel.MicPttEnabled,
+                PttOnTip = sel.PttOnTip,
                 UpdatedUtc = DateTime.UtcNow,
             });
         }
@@ -173,5 +177,9 @@ public sealed class AudioFrontEndEntry
     // 0..31 line-in gain. Rows written before this feature hydrate this as 0,
     // the correct legacy default.
     public byte LineInGain { get; set; }
+    // Mic-jack PTT config (byte-50 bits 2/3). Rows written before these fields
+    // hydrate to the wire-neutral defaults: PTT enabled, Apache tip/ring.
+    public bool MicPttEnabled { get; set; } = true;
+    public bool PttOnTip { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }

@@ -1414,6 +1414,25 @@ public static class ZeusHost
             app.Services.GetRequiredService<SaturnTxStream>();
         app.MapGet("/api/xdma/tx", (SaturnTxProbe txp) => Results.Ok(txp.Status()));
         app.MapGet("/api/xdma/tx/feeder", (SaturnTxStream txs) => Results.Ok(txs.Status()));
+
+        // ---- THE ARMING CEREMONY (Phase 4c): three deliberate acts ----
+        app.MapPost("/api/xdma/tx/arm", (XdmaTxArmRequest req, SaturnControl c, SaturnRxStream rx) =>
+        {
+            if (!string.Equals(req.Confirm, "i-have-a-dummy-load", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error =
+                    "arming requires confirm:'i-have-a-dummy-load' — and the load itself, which only you can verify" });
+            if (!rx.Running)
+                return Results.BadRequest(new { error = "arm inside a running native session (START RX first)" });
+            var result = c.TxArm(req.Seconds ?? 60, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
+        app.MapPost("/api/xdma/tx/disarm", (SaturnControl c) => Results.Ok(c.TxDisarm()));
+        app.MapGet("/api/xdma/tx/arm", (SaturnControl c) => Results.Ok(new
+        {
+            armed = c.TxArmed,
+            secondsLeft = c.TxArmedSecondsLeft,
+            hwMox = c.HwMox,
+        }));
         app.MapPost("/api/xdma/tx/probe", (XdmaTxProbeRequest req, SaturnTxProbe txp) =>
         {
             if (!string.Equals(req.Confirm, "p2app-stopped", StringComparison.OrdinalIgnoreCase))
@@ -1662,3 +1681,5 @@ public sealed record XdmaDucFreqRequest(long Hz, string? Confirm);
 public sealed record XdmaRxStartRequest(int? RateKhz, long? Hz, string? Confirm);
 
 public sealed record XdmaTxProbeRequest(int? Frames, string? Confirm);
+
+public sealed record XdmaTxArmRequest(int? Seconds, string? Confirm);

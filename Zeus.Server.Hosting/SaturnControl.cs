@@ -162,6 +162,132 @@ public sealed class SaturnControl
     private const long RfGpioReg = 0x2014;          // VADDRRFGPIOREG
     private uint _rfGpioShadow;
 
+    // ================== THE ARMING CEREMONY (Phase 4c) ==================
+    // Until this commit, no build could key: SetMox and SetTxEnable did not
+    // exist. They exist now — behind a ceremony designed so that radiating
+    // requires three deliberate acts in order: (1) POST /api/xdma/tx/arm
+    // with the confirm phrase, which starts an auto-disarm countdown;
+    // (2) a software MOX claim (TUN, CWX, MOX) inside the armed window;
+    // (3) the operator's own dummy load, which no software can verify and
+    // this commit's bench notes therefore insist on. Disarm fires
+    // automatically at expiry, on session stop, on the failure path, and
+    // on demand — and disarming always forces MOX and TX-enable off.
+    private const long TxConfigReg = 0x2008;        // VADDRTXCONFIGREG
+    private const int VMoxBit = 24;                 // RF GPIO
+    private const int VTxEnableBit = 25;            // RF GPIO
+    private uint _txConfigShadow;
+    private long _armedUntilUtcTicks;
+    private CancellationTokenSource? _armCts;
+    private bool _hwMox;
+
+    public bool TxArmed => DateTime.UtcNow.Ticks < Interlocked.Read(ref _armedUntilUtcTicks);
+    public int TxArmedSecondsLeft
+    {
+        get
+        {
+            long left = Interlocked.Read(ref _armedUntilUtcTicks) - DateTime.UtcNow.Ticks;
+            return left > 0 ? (int)TimeSpan.FromTicks(left).TotalSeconds : 0;
+        }
+    }
+
+    /// <summary>TX config parity (p2app boot lines 460-500): modulation
+    /// source = eIQData (0), protocol = P2/192k (bit 3), amplitude scale =
+    /// 0x2000 (1/32 full scale — the FW≥13 constant, also the conservative
+    /// one; FW<13 radios would use 0x1FFFF). EER stays at its power-up off.
+    /// Keyer ramp + DAC atten ROMs are deferred with reason: the smoke test
+    /// keys a steady TUN carrier, not the FPGA CW keyer, and drive is
+    /// governed low via the DRV slider's IQ scaling.</summary>
+    public object SetTxParity(out string? refusal)
+    {
+        refusal = null;
+        if (!SaturnPresent) { refusal = "no Saturn on the local PCIe bus"; return new { ok = false }; }
+        lock (_lock)
+        {
+            uint reg = 0;
+            reg |= 1u << 3;                          // VTXCONFIGPROTOCOLBIT: P2 (192 kHz)
+            reg |= 0x2000u << 4;                     // VTXCONFIGSCALEBIT: 18-bit scale, 1/32
+            // modulation source bits [1:0] = eIQData = 0
+            if (reg == _txConfigShadow) return new { ok = true, written = false };
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            XdmaIo.Write32(fs.SafeFileHandle, TxConfigReg, reg);
+            _txConfigShadow = reg;
+        }
+        _log.LogWarning("xdma.control TX parity: eIQData, P2 rate, scale 1/32");
+        return new { ok = true, written = true };
+    }
+
+    public object TxArm(int seconds, out string? refusal)
+    {
+        refusal = null;
+        if (!SaturnPresent) { refusal = "no Saturn on the local PCIe bus"; return new { ok = false }; }
+        seconds = Math.Clamp(seconds, 10, 120);
+        _armCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _armCts = cts;
+        Interlocked.Exchange(ref _armedUntilUtcTicks, DateTime.UtcNow.AddSeconds(seconds).Ticks);
+        _log.LogWarning("xdma.control ⚡ TX ARMED for {S}s — auto-disarm scheduled", seconds);
+        _ = Task.Delay(TimeSpan.FromSeconds(seconds), cts.Token)
+                .ContinueWith(_ => { if (!cts.IsCancellationRequested) TxDisarm(); },
+                              TaskScheduler.Default);
+        return new { ok = true, armedSeconds = seconds };
+    }
+
+    /// <summary>Always legal, always total: kills MOX, kills TX enable,
+    /// zeroes the window.</summary>
+    public object TxDisarm()
+    {
+        _armCts?.Cancel();
+        Interlocked.Exchange(ref _armedUntilUtcTicks, 0);
+        SetMoxBit(false);
+        SetTxEnableBit(false);
+        _log.LogWarning("xdma.control TX DISARMED — MOX and TX-enable forced off");
+        return new { ok = true };
+    }
+
+    /// <summary>Keying while not armed is refused; unkeying is always
+    /// honored. The RF GPIO shadow carries the bit.</summary>
+    public object SetMox(bool on, out string? refusal)
+    {
+        refusal = null;
+        if (on && !TxArmed) { refusal = "TX is not armed — POST /api/xdma/tx/arm first"; return new { ok = false }; }
+        if (on && !SaturnPresent) { refusal = "no Saturn on the local PCIe bus"; return new { ok = false }; }
+        SetTxEnableBit(on);
+        SetMoxBit(on);
+        return new { ok = true, mox = on };
+    }
+
+    private void SetMoxBit(bool on)
+    {
+        lock (_lock)
+        {
+            if (!SaturnPresent) return;
+            uint reg = _rfGpioShadow;
+            if (on) reg |= 1u << VMoxBit; else reg &= ~(1u << VMoxBit);
+            if (reg == _rfGpioShadow) return;
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            XdmaIo.Write32(fs.SafeFileHandle, RfGpioReg, reg);
+            _rfGpioShadow = reg;
+            _hwMox = on;
+        }
+        _log.LogWarning("xdma.control MOX={On}", on);
+    }
+
+    private void SetTxEnableBit(bool on)
+    {
+        lock (_lock)
+        {
+            if (!SaturnPresent) return;
+            uint reg = _rfGpioShadow;
+            if (on) reg |= 1u << VTxEnableBit; else reg &= ~(1u << VTxEnableBit);
+            if (reg == _rfGpioShadow) return;
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            XdmaIo.Write32(fs.SafeFileHandle, RfGpioReg, reg);
+            _rfGpioShadow = reg;
+        }
+    }
+
+    public bool HwMox { get { lock (_lock) return _hwMox; } }
+
     /// <summary>THE missing init write, found by systematic diff against
     /// p2app's boot sequence (p2app.c line 484): the FPGA has a hardware
     /// byte-swap engine on the DMA data path — bit 26 (VDATAENDIAN) of the

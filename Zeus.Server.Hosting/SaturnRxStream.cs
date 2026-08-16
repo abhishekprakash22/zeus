@@ -165,6 +165,18 @@ public sealed class SaturnRxStream : IDisposable
                 _control.SetRxAtten(atten, out _);
                 _attenDb = atten;
             }
+            // THE CEREMONY'S THIRD GATE: the software MOX claim reaches the
+            // hardware ONLY inside an armed window. Unkey always honored;
+            // an expired window with hardware MOX still up is forced down.
+            bool mox = s.MoxOn;
+            if (mox && _control.TxArmed)
+            {
+                if (!_control.HwMox) _control.SetMox(true, out _);
+            }
+            else if (_control.HwMox)
+            {
+                _control.SetMox(false, out _);
+            }
         }
         catch (Exception ex)
         {
@@ -271,6 +283,7 @@ public sealed class SaturnRxStream : IDisposable
         }
         if (wasRunning)
         {
+            _control.TxDisarm();
             _txStream.Stop();
             _radio.MarkNativeSessionDisconnected();
             _dsp.DisconnectNativeRx();
@@ -298,6 +311,7 @@ public sealed class SaturnRxStream : IDisposable
             // the verb stays for boards where the handshake is real.
             _control.SetAdcOptions(dither: false, random: false, out _);
             _control.SetByteSwapping(swapped: true, out _);   // p2app boot parity: BE wire order
+            _control.SetTxParity(out _);                       // 4c: TX config (cold — configures, never keys)
             XdmaIo.Write32(h, RatesReg, rateCode);               // DDC0 rate, others disabled
             uint reset = XdmaIo.Read32(h, FifoResetReg);
             XdmaIo.Write32(h, FifoResetReg, reset & ~FifoResetBit);   // pulse RX FIFO reset
@@ -378,6 +392,7 @@ public sealed class SaturnRxStream : IDisposable
         {
             _log.LogError(ex, "xdma.rx stream failed");
             lock (_lock) { _error = ex.Message; _cts = null; _thread = null; }
+            try { _control.TxDisarm(); } catch { /* best-effort */ }
             try { _txStream.Stop(); } catch { /* best-effort */ }
             try { _radio.MarkNativeSessionDisconnected(); } catch { /* best-effort */ }
             try { _dsp.DisconnectNativeRx(); } catch { /* teardown is best-effort on the failure path */ }

@@ -168,7 +168,11 @@ public sealed class SaturnRxStream : IDisposable
             // THE CEREMONY'S THIRD GATE: the software MOX claim reaches the
             // hardware ONLY inside an armed window. Unkey always honored;
             // an expired window with hardware MOX still up is forced down.
-            bool mox = s.MoxOn;
+            // MOX truth lives on TxService (MoxOwner claim), not StateDto —
+            // the same enclosing-type lesson as commit 135's EffectiveAttenDb:
+            // a grep hit in Dtos.cs belonged to a different record. TxService
+            // is already this class's contention authority.
+            bool mox = _tx.MoxOwner is not null;
             if (mox && _control.TxArmed)
             {
                 if (!_control.HwMox) _control.SetMox(true, out _);

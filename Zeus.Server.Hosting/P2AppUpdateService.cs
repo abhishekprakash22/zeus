@@ -103,7 +103,11 @@ public sealed class P2AppUpdateService
                 // one exists. Preserve it, or a failed build (broken
                 // upstream commit, missing dep) leaves the radio with NO
                 // p2app until some build succeeds.
-                previousMode = File.GetUnixFileMode(bin);
+                // Guard for the CA1416 platform analyzer: the whole run is
+                // Linux-gated in Start(), but the analyzer can't see across
+                // methods — Zeus also compiles for Windows.
+                if (OperatingSystem.IsLinux())
+                    previousMode = File.GetUnixFileMode(bin);
                 File.Copy(bin, backup, overwrite: true);
                 Append($"previous binary preserved as {Path.GetFileName(backup)}");
             }
@@ -214,7 +218,7 @@ public sealed class P2AppUpdateService
         try
         {
             File.Copy(backup, bin, overwrite: true);
-            if (mode is { } m) File.SetUnixFileMode(bin, m);
+            if (OperatingSystem.IsLinux() && mode is { } m) File.SetUnixFileMode(bin, m);
             lock (_lock) _rolledBack = true;
             Append("ROLLED BACK — previous p2app binary restored; the radio keeps working on the old version");
         }

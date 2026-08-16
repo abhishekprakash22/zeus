@@ -1487,7 +1487,7 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
                               isP3
                                 ? p3Title
                                 : isP2
-                                  ? 'Protocol 2 path — experimental, RX only'
+                                  ? 'Protocol 2 — the primary path: full RX + TX, CW, PureSignal'
                                   : undefined
                             }
                             className={`btn sm ${p3Blocked ? '' : 'active'}`}
@@ -1797,7 +1797,7 @@ function ManualMode(p: ManualModeProps) {
               onClick={() => p.setProtocol('P2')}
               className={`btn sm ${p.protocol === 'P2' ? 'active' : 'ghost'}`}
               style={{ flex: 1 }}
-              title="Protocol 2 — experimental, RX only"
+              title="Protocol 2 — the primary path: full RX + TX, CW, PureSignal"
             >
               P2
             </button>

@@ -778,6 +778,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnRxStream>();
         builder.Services.AddSingleton<P2AppSupervisor>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<P2AppSupervisor>());
+        builder.Services.AddSingleton<P2AppUpdateService>();
         builder.Services.AddSingleton<SaturnTxProbe>();
         builder.Services.AddSingleton<SaturnTxStream>();
 
@@ -1419,6 +1420,17 @@ public static class ZeusHost
         app.Services.GetRequiredService<SaturnRxStream>().OnSessionClosed =
             () => app.Services.GetRequiredService<P2AppSupervisor>().Resume();
         app.MapGet("/api/p2app", (P2AppSupervisor sup) => Results.Ok(sup.Status()));
+        app.MapPost("/api/p2app/update", (P2AppUpdateService upd) =>
+        {
+            var (ok, error) = upd.Start();
+            return ok ? Results.Ok(upd.Status()) : Results.BadRequest(new { error });
+        });
+        app.MapGet("/api/p2app/update", (P2AppUpdateService upd) => Results.Ok(upd.Status()));
+        // Exit and INSTALL & RESTART leave via Environment.Exit, which skips
+        // hosted-service shutdown — kill the supervised p2app explicitly so
+        // it never outlives the Zeus that owns it.
+        app.Services.GetRequiredService<AppRestartService>().OnRestartRequested =
+            () => app.Services.GetRequiredService<P2AppSupervisor>().KillChildOnProcessExit();
         app.MapGet("/api/xdma/tx", (SaturnTxProbe txp) => Results.Ok(txp.Status()));
         app.MapGet("/api/xdma/tx/feeder", (SaturnTxStream txs) => Results.Ok(txs.Status()));
 

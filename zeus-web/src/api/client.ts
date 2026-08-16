@@ -5821,6 +5821,39 @@ export function getUpdateApplyStatus(signal?: AbortSignal): Promise<UpdateApplyS
   return jsonFetch('/api/system/update/apply', { signal }, (raw) => raw as UpdateApplyStatusDto);
 }
 
+export interface P2AppStatusDto {
+  mode: string;
+  pid: number | null;
+  binaryPath: string | null;
+  restarts: number;
+  lastExitCode: number | null;
+}
+
+export interface P2AppUpdateStatusDto {
+  phase: string;
+  error: string | null;
+  repoDir: string | null;
+  head: string | null;
+  running: boolean;
+  log: string[];
+}
+
+export function getP2AppStatus(signal?: AbortSignal): Promise<P2AppStatusDto> {
+  return jsonFetch('/api/p2app', { signal }, (raw) => raw as P2AppStatusDto);
+}
+
+export function getP2AppUpdateStatus(signal?: AbortSignal): Promise<P2AppUpdateStatusDto> {
+  return jsonFetch('/api/p2app/update', { signal }, (raw) => raw as P2AppUpdateStatusDto);
+}
+
+export function postP2AppUpdate(): Promise<P2AppUpdateStatusDto> {
+  return jsonFetch(
+    '/api/p2app/update',
+    { method: 'POST' },
+    (raw) => raw as P2AppUpdateStatusDto,
+  );
+}
+
 export function shutdownPi(): Promise<{ ok: boolean; error?: string }> {
   return jsonFetch(
     '/api/system/shutdown',

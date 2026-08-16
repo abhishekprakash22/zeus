@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { FpgaFlashSection } from './FpgaFlashSection';
+import { P2AppUpdateSection } from './P2AppUpdateSection';
 import {
   fetchUpdateStatus,
   getUpdateApplyStatus,
@@ -310,6 +311,7 @@ export function UpdatesPanel() {
         </div>
       )}
 
+      <P2AppUpdateSection />
       <FpgaFlashSection />
     </div>
   );

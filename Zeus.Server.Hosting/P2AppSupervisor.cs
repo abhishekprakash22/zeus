@@ -82,6 +82,39 @@ public sealed class P2AppSupervisor : BackgroundService
         return (true, null);
     }
 
+    /// <summary>
+    /// The process is about to die via Environment.Exit (the Exit button or
+    /// INSTALL &amp; RESTART) — BackgroundService.StopAsync never runs on that
+    /// path, so this synchronous kill is the only thing standing between the
+    /// operator and an orphaned p2app that the NEXT Zeus can only ADOPT (and
+    /// then can't pause for native sessions). SIGTERM, short grace, SIGKILL.
+    /// </summary>
+    public void KillChildOnProcessExit()
+    {
+        _paused = true;   // the loop must not respawn into a dying process
+        Process? c;
+        lock (_lock) { c = _child; _child = null; }
+        if (c is null || c.HasExited) { c?.Dispose(); return; }
+        try
+        {
+            _log.LogInformation("p2app stopping pid={Pid} (Zeus exiting)", c.Id);
+            using var term = Process.Start(new ProcessStartInfo
+            { FileName = "kill", Arguments = $"-TERM {c.Id}", UseShellExecute = false });
+            term?.WaitForExit(1000);
+            if (!c.WaitForExit(2000))
+            {
+                c.Kill(entireProcessTree: true);
+                c.WaitForExit(1000);
+            }
+        }
+        catch { /* the process is exiting — best effort */ }
+        finally { c.Dispose(); }
+    }
+
+    /// <summary>Where p2app lives on this host, or null. Config wins; then the
+    /// usual Saturn build trees; then the Zeus-managed clone.</summary>
+    public string? ResolveBinaryPath() => FindBinary();
+
     /// <summary>Native session closed (cleanly or by failure) — respawn soon.</summary>
     public void Resume()
     {
@@ -233,6 +266,7 @@ public sealed class P2AppSupervisor : BackgroundService
         {
             Path.Combine(home, "Saturn/sw_projects/P2_app/p2app"),
             Path.Combine(home, "github/Saturn/sw_projects/P2_app/p2app"),
+            Path.Combine(home, ".zeus/Saturn/sw_projects/P2_app/p2app"),
             "/home/pi/Saturn/sw_projects/P2_app/p2app",
             "/usr/local/bin/p2app",
         })

@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.107**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.109**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -94,6 +94,11 @@ Connect, then operate from the workspace:
   audio and settings.
 - **Diversity:** two-antenna phasing pad for null steering (hardware
   permitting).
+- **Front-panel controls (G2 / G2 Ultra):** enable *Front Panel* in
+  Settings → Radio and the physical knobs, buttons, and LEDs work — both
+  when Zeus talks to the panel directly and when you're connected through
+  the radio's own p2app row (the panel's events are relayed automatically;
+  the settings card shows which path is live).
 
 ---
 

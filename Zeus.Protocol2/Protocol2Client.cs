@@ -472,6 +472,17 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     private uint _seqCmdTxIq;
     private readonly CmdHighPriorityTxLogGate _cmdHpTxLogGate = new();
 
+    /// <summary>
+    /// When nonzero, announced to the radio in every high-priority command
+    /// packet (bytes 1398-1399, big-endian). p2app's InHighPriority.c reads
+    /// this word and connects a TCP CAT socket BACK to our source address on
+    /// that port, then forwards the G2 front panel's traffic (ZZZS/ZZZE/
+    /// ZZZP/ZZZU/ZZZD) over it. Zero (default) keeps CAT shut down — the
+    /// stock wire, byte-for-byte. Static ambient by design: one panel
+    /// bridge per host.
+    /// </summary>
+    public static volatile int PanelCatAnnouncePort;
+
     // TX-DUC IQ accumulator. WDSP TXA emits 1024/2048-sample blocks; the P2
     // wire format wants 240 complex samples per 1444-byte packet on port 1029.
     // We buffer into this 240-pair scratch and enqueue whenever it fills.
@@ -2835,6 +2846,9 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     {
         var p = new byte[BufLen];
         WriteBeU32(p, 0, _seqCmdHp++);
+        int catPort = PanelCatAnnouncePort;
+        if (catPort > 0 && catPort <= 65535)
+            WriteBeU16(p, 1398, (ushort)catPort);   // G2 panel CAT callback port
         bool moxOn = _moxOn;
         bool tuneActive = _tuneActive;
         // PureSignal feedback bytes (DDC0/DDC1 phase mirror + ALEX_PS / bypass

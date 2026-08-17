@@ -17,6 +17,8 @@
 // ANDROMEDA ZZZS/ZZZI handshake. See ATTRIBUTIONS.md for provenance.
 
 using System.IO.Ports;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Zeus.Contracts;
 
@@ -47,6 +49,22 @@ public sealed class G2FrontPanelService : BackgroundService
     private readonly AndromedaParser _parser = new();
     private readonly object _writeLock = new();
     private SerialPort? _port;
+
+    // ---- CAT-over-TCP link (the p2app topology) -------------------------
+    // When the radio is used through its own p2app (the display radio's
+    // loopback row), p2app is the sole reader of the panel's serial line —
+    // opening it here too would put two readers on one tty and they'd steal
+    // each other's messages. Instead p2app FORWARDS the panel's traffic:
+    // Zeus announces a callback port in the P2 high-priority packet (bytes
+    // 1398-1399), p2app connects to it and relays ZZZS/ZZZE/ZZZP/ZZZU/ZZZD
+    // verbatim. Same parser, same router, same LED writes (ZZZI goes back
+    // over the socket and p2app relays it to the panel). While this link is
+    // live the serial path stands down; when it drops, serial probing
+    // resumes — so the checkbox governs the panel regardless of transport.
+    private TcpListener? _catListener;
+    private volatile NetworkStream? _catStream;
+    private volatile bool _catActive;
+    private int _catPort;
 
     // Per-iteration linked CTS so a settings change (RequestReconnect) can break
     // the current session/idle wait and force the loop to re-resolve the device.
@@ -143,8 +161,18 @@ public sealed class G2FrontPanelService : BackgroundService
             {
                 // Disabled in Settings — wait until that changes (or shutdown),
                 // holding the port closed. RequestReconnect wakes us.
+                StopCatListener();
                 _log.LogInformation("g2panel.disabled (settings/config Enabled=false)");
                 await DelaySafe(Timeout.InfiniteTimeSpan, ct);
+                continue;
+            }
+
+            EnsureCatListener(stoppingToken);
+            if (_catActive)
+            {
+                // p2app is relaying the panel over TCP — the serial line
+                // belongs to p2app; opening it here would contend. Idle.
+                await DelaySafe(TimeSpan.FromSeconds(1), ct);
                 continue;
             }
 
@@ -323,6 +351,21 @@ public sealed class G2FrontPanelService : BackgroundService
 
     private void Send(string cmd)
     {
+        // Whichever link carries the panel carries the LEDs.
+        var cat = _catStream;
+        if (cat is not null)
+        {
+            try
+            {
+                var bytes = Encoding.ASCII.GetBytes(cmd);
+                lock (_writeLock) cat.Write(bytes, 0, bytes.Length);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "g2panel.cat.write.failed cmd={Cmd}", cmd);
+            }
+            return;
+        }
         var port = _port;
         if (port is null || !port.IsOpen) return;
         try
@@ -336,6 +379,94 @@ public sealed class G2FrontPanelService : BackgroundService
         {
             _log.LogDebug(ex, "g2panel.write.failed cmd={Cmd}", cmd);
         }
+    }
+
+    /// <summary>Start the CAT callback listener once and publish its port in
+    /// the P2 high-priority packet. p2app connects only when a panel exists
+    /// and a P2 session is up, so an idle listener costs nothing.</summary>
+    private void EnsureCatListener(CancellationToken serviceCt)
+    {
+        if (_catListener is not null) return;
+        try
+        {
+            var listener = new TcpListener(IPAddress.Any, 0);
+            listener.Start();
+            _catListener = listener;
+            _catPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+            Zeus.Protocol2.Protocol2Client.PanelCatAnnouncePort = _catPort;
+            _log.LogInformation("g2panel.cat listening on {Port} (announced in the P2 high-priority packet)", _catPort);
+            _ = Task.Run(() => CatAcceptLoop(listener, serviceCt), serviceCt);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "g2panel.cat listener failed to start — serial path only");
+        }
+    }
+
+    private async Task CatAcceptLoop(TcpListener listener, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            TcpClient client;
+            try { client = await listener.AcceptTcpClientAsync(ct); }
+            catch (OperationCanceledException) { return; }
+            catch (Exception) { return; }   // listener stopped
+            _ = Task.Run(() => CatSessionAsync(client, ct), ct);
+        }
+    }
+
+    private async Task CatSessionAsync(TcpClient client, CancellationToken ct)
+    {
+        // Adopt the newest connection (p2app reconnects across sessions).
+        var old = _catStream;
+        try { old?.Dispose(); } catch { /* superseded link */ }
+
+        using var _ = client;
+        var stream = client.GetStream();
+        _catStream = stream;
+        _catActive = true;
+        _connected = true;
+        _activePath = $"p2app CAT ({client.Client.RemoteEndPoint})";
+        _activeBaud = 0;
+        _log.LogInformation("g2panel.cat connected from {Remote} — serial path standing down", client.Client.RemoteEndPoint);
+        RequestReconnect();   // break an open serial session; the loop idles while _catActive
+
+        var buf = new byte[256];
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                int n = await stream.ReadAsync(buf.AsMemory(0, buf.Length), ct);
+                if (n <= 0) break;
+                _parser.Feed(Encoding.ASCII.GetString(buf, 0, n), OnEvent);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException)
+        {
+            // Session end / supervisor pause / superseded link — all normal.
+        }
+        if (ReferenceEquals(_catStream, stream))
+        {
+            _catStream = null;
+            _catActive = false;
+            _connected = false;
+            _panelType = 0;
+            _activePath = null;
+            _log.LogInformation("g2panel.cat disconnected — serial probing resumes");
+            RequestReconnect();
+        }
+    }
+
+    private void StopCatListener()
+    {
+        Zeus.Protocol2.Protocol2Client.PanelCatAnnouncePort = 0;
+        var l = _catListener;
+        _catListener = null;
+        try { l?.Stop(); } catch { /* teardown */ }
+        var stream = _catStream;
+        _catStream = null;
+        _catActive = false;
+        try { stream?.Dispose(); } catch { /* teardown */ }
     }
 
     private void ClosePort()
@@ -357,6 +488,7 @@ public sealed class G2FrontPanelService : BackgroundService
     public override void Dispose()
     {
         _store.Changed -= OnSettingsChanged;
+        StopCatListener();
         ClosePort();
         base.Dispose();
     }

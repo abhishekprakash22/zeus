@@ -57,6 +57,10 @@ export function G2Drawer() {
           layout never remounts the transport's children. */}
       <style>{`
         .g2-layout .transport { display: none !important; }
+        /* The drawer is position:fixed — reserve its height so the layout's
+           bottom edge (settings/SETUP chip, status corner) stays reachable
+           above it instead of being buried under it (field report). */
+        .app.g2-layout { padding-bottom: ${DRAWER_H}px; box-sizing: border-box; }
         .g2-drawer .g2-key > button {
           width: 100%;
           height: 100%;
@@ -65,6 +69,11 @@ export function G2Drawer() {
           font-weight: 700;
           letter-spacing: 0.05em;
           border-radius: 9px;
+          /* Hosted transport buttons arrive with transparent chrome in this
+             context — give them the same face as the sheet keys so the
+             drawer reads as one keyboard (field report). */
+          border: 1px solid var(--line, #32373f);
+          background: var(--bg-2, #24282e);
         }
       `}</style>
 
@@ -81,7 +90,7 @@ export function G2Drawer() {
                       ? 'FILTER'
                       : sheet === 'dsp'
                         ? 'NB · NR · DSP'
-                        : 'ANT · RADIO'}
+                        : 'RADIO'}
               </span>
               <button type="button" style={sheetClose} onClick={() => setSheet(null)}>
                 CLOSE
@@ -109,7 +118,7 @@ export function G2Drawer() {
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
-        <SheetKey label="ANT" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
+        <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
         <div style={{ flex: 1 }} />
         <div style={txStrip}>
           <TxBar uid="g2-fwd" reading={MeterReadingId.TxFwdWatts} />

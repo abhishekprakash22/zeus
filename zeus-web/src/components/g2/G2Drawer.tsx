@@ -31,6 +31,10 @@ import { useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { MoxButton } from '../MoxButton';
 import { TunButton } from '../TunButton';
+import { TxMonitorButton } from '../TxMonitorButton';
+import { PsToggleButton } from '../PsToggleButton';
+import { CtunButton } from '../CtunButton';
+import { RecorderButton } from '../RecorderButton';
 import { BandButtons } from '../BandButtons';
 import { ModeBandwidth } from '../ModeBandwidth';
 import { FilterRibbon } from '../filter/FilterRibbon';
@@ -65,7 +69,7 @@ export function G2Drawer() {
           width: 100%;
           height: 100%;
           min-height: 84px;
-          font-size: 15px;
+          font-size: 13px;
           font-weight: 700;
           letter-spacing: 0.05em;
           border-radius: 9px;
@@ -114,11 +118,23 @@ export function G2Drawer() {
         <div className="g2-key" style={key}>
           <TunButton />
         </div>
+        <div className="g2-key" style={key}>
+          <TxMonitorButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <PsToggleButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <CtunButton />
+        </div>
         <SheetKey label="BAND" active={sheet === 'band'} onTap={() => toggleSheet('band')} />
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
+        <div className="g2-key" style={key}>
+          <RecorderButton />
+        </div>
         <div style={{ flex: 1 }} />
         <div style={txStrip}>
           <TxBar uid="g2-fwd" reading={MeterReadingId.TxFwdWatts} />
@@ -178,7 +194,7 @@ const drawer: CSSProperties = {
 };
 
 const key: CSSProperties = {
-  width: 92,
+  width: 74,
   display: 'flex',
   alignItems: 'stretch',
 };
@@ -190,7 +206,7 @@ const sheetKeyBtn: CSSProperties = {
   borderRadius: 9,
   background: '#24282e',
   color: '#e8ecf1',
-  fontSize: 15,
+  fontSize: 13,
   fontWeight: 700,
   letterSpacing: '0.05em',
   cursor: 'pointer',

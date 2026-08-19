@@ -25,6 +25,8 @@ import { useCallback, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
 import { Waterfall } from '../Waterfall';
+import { AnalogMeterPanel } from '../analog-meter/AnalogMeterPanel';
+import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
 import { getReceiverVfoHz, rxIndexOf, type ReceiverKey } from '../../state/receiver-state';
 
@@ -63,6 +65,17 @@ export function G2RxStack() {
         <span style={dividerGrip} />
       </div>
       <RxPane receiver="B" heightPct={(1 - split) * 100} />
+      {/* Instrument cards (commit 4 of the approved frame): the analog
+          S-meter — face untouched, the Zeus signature — and the bandwidth
+          filter display (FilterMiniPan; it splits per receiver internally
+          when RX2 is enabled). Cards float over the stack's top-right so
+          they cost no pane height; the panadapters keep full width. */}
+      <div style={meterCard}>
+        <AnalogMeterPanel />
+      </div>
+      <div style={filterCard}>
+        <FilterMiniPan />
+      </div>
     </div>
   );
 }
@@ -110,6 +123,34 @@ function formatMHz(hz: number): string {
   const [int, frac = ''] = mhz.toFixed(6).split('.');
   return `${int}.${frac.slice(0, 3)}.${frac.slice(3, 6)} MHz`;
 }
+
+const meterCard: CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  right: 12,
+  zIndex: 7,
+  width: 300,
+  height: 170,
+  overflow: 'hidden',
+  borderRadius: 8,
+  border: '1px solid var(--line, #32373f)',
+  background: 'rgba(20, 23, 28, 0.92)',
+  boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+};
+
+const filterCard: CSSProperties = {
+  position: 'absolute',
+  top: 186,
+  right: 12,
+  zIndex: 7,
+  width: 300,
+  maxHeight: 170,
+  overflow: 'hidden',
+  borderRadius: 8,
+  border: '1px solid var(--line, #32373f)',
+  background: 'rgba(20, 23, 28, 0.92)',
+  boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+};
 
 const stack: CSSProperties = {
   position: 'relative',

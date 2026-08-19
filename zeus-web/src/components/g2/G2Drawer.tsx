@@ -35,6 +35,10 @@ import { TxMonitorButton } from '../TxMonitorButton';
 import { PsToggleButton } from '../PsToggleButton';
 import { CtunButton } from '../CtunButton';
 import { RecorderButton } from '../RecorderButton';
+import { SplitButton, RitButton } from '../RitSplitButtons';
+import { DiversityToggleButton } from '../DiversityWindow';
+import { AudioToggle } from '../AudioToggle';
+import { DisplayPanel } from '../DisplayPanel';
 import { BandButtons } from '../BandButtons';
 import { ModeBandwidth } from '../ModeBandwidth';
 import { FilterRibbon } from '../filter/FilterRibbon';
@@ -43,7 +47,7 @@ import { RadioSettingsPanel } from '../RadioSettingsPanel';
 import { MeterRenderer } from '../meter-group/MeterRenderer';
 import { MeterReadingId } from '../meters/meterCatalog';
 
-type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | null;
+type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | null;
 
 const DRAWER_H = 108;
 
@@ -65,7 +69,8 @@ export function G2Drawer() {
            bottom edge (settings/SETUP chip, status corner) stays reachable
            above it instead of being buried under it (field report). */
         .app.g2-layout { padding-bottom: ${DRAWER_H}px; box-sizing: border-box; }
-        .g2-drawer .g2-key > button {
+        .g2-drawer .g2-key > * { width: 100%; height: 100%; display: flex; }
+        .g2-drawer .g2-key button {
           width: 100%;
           height: 100%;
           min-height: 84px;
@@ -94,7 +99,9 @@ export function G2Drawer() {
                       ? 'FILTER'
                       : sheet === 'dsp'
                         ? 'NB · NR · DSP'
-                        : 'RADIO'}
+                        : sheet === 'ant'
+                          ? 'RADIO'
+                          : 'SETUP · DISPLAY'}
               </span>
               <button type="button" style={sheetClose} onClick={() => setSheet(null)}>
                 CLOSE
@@ -106,6 +113,7 @@ export function G2Drawer() {
               {sheet === 'filter' && <FilterRibbon embedded />}
               {sheet === 'dsp' && <DspPanel />}
               {sheet === 'ant' && <RadioSettingsPanel />}
+              {sheet === 'setup' && <DisplayPanel />}
             </div>
           </div>
         </div>
@@ -127,15 +135,27 @@ export function G2Drawer() {
         <div className="g2-key" style={key}>
           <CtunButton />
         </div>
+        <div className="g2-key" style={key}>
+          <SplitButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <RitButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <DiversityToggleButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <AudioToggle />
+        </div>
         <SheetKey label="BAND" active={sheet === 'band'} onTap={() => toggleSheet('band')} />
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
+        <SheetKey label="SETUP" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
         <div className="g2-key" style={key}>
           <RecorderButton />
         </div>
-        <div style={{ flex: 1 }} />
         <div style={txStrip}>
           <TxBar uid="g2-fwd" reading={MeterReadingId.TxFwdWatts} />
           <TxBar uid="g2-swr" reading={MeterReadingId.TxSwr} />
@@ -194,7 +214,8 @@ const drawer: CSSProperties = {
 };
 
 const key: CSSProperties = {
-  width: 74,
+  flex: '1 1 0',
+  minWidth: 58,
   display: 'flex',
   alignItems: 'stretch',
 };

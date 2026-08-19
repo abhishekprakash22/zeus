@@ -106,14 +106,18 @@ Connect, then operate from the workspace:
 
 Settings → Display → **G2 touch drawer** swaps the desktop transport bar for
 touch keys while connected: **MOX**, **TUN**, **MON**, **PS**, **CTUN**,
-and **REC** (the same transport buttons, with all their safeguards, at
-finger size), plus **BAND**, **MODE**, and **FILTER** keys that open bottom
+**SPLIT**, **RIT**, **DIV**, the audio toggle, and **REC** (the same
+transport buttons, with all their safeguards, at finger size), plus **BAND**, **MODE**, and **FILTER** keys that open bottom
 sheets with the full band, mode/bandwidth, and filter controls for the
 focused receiver. A compact FWD / SWR / ALC strip lives at the drawer's
 right end and reads the live TX meters. **NB·NR** opens the noise-blanker /
 noise-reduction panel and **RADIO** the radio (antenna) settings, both as
-touch sheets. The analog S-meter and the bandwidth filter display float
-over the receiver panes' top-right corner. With the drawer on, the whole workspace
+touch sheets, and **SETUP** the display settings. The keys stretch to
+fill the drawer edge to edge. The analog S-meter and bandwidth filter
+display float over the receiver panes — drag them by their title strip
+and resize them by the corner handle to put them wherever you like. Each
+receiver pane carries its floating VFO flag: RX number, frequency, and
+mode, amber on the active receiver. With the drawer on, the whole workspace
 wears the graphite-and-amber G2 theme, and the workspace becomes two
 stacked receiver panes — RX1 over RX2, each with its own spectrum,
 waterfall, and band. Tap anywhere on the inactive pane to make that

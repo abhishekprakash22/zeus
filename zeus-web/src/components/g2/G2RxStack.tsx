@@ -22,13 +22,14 @@
 // The split is a persisted-in-session drag divider (default 55/45).
 
 import { useCallback, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
 import { Waterfall } from '../Waterfall';
 import { AnalogMeterPanel } from '../analog-meter/AnalogMeterPanel';
 import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
-import { getReceiverVfoHz, rxIndexOf, type ReceiverKey } from '../../state/receiver-state';
+import { getReceiverVfoHz, getReceiverMode, rxIndexOf, type ReceiverKey } from '../../state/receiver-state';
 
 const DIVIDER_H = 10;
 
@@ -70,12 +71,12 @@ export function G2RxStack() {
           filter display (FilterMiniPan; it splits per receiver internally
           when RX2 is enabled). Cards float over the stack's top-right so
           they cost no pane height; the panadapters keep full width. */}
-      <div style={meterCard}>
+      <G2Card title="S-METER" initial={{ x: -312, y: 8, w: 300, h: 170 }}>
         <AnalogMeterPanel />
-      </div>
-      <div style={filterCard}>
+      </G2Card>
+      <G2Card title="FILTER" initial={{ x: -312, y: 186, w: 300, h: 170 }}>
         <FilterMiniPan />
-      </div>
+      </G2Card>
     </div>
   );
 }
@@ -85,6 +86,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const active = useConnectionStore((s) => s.focusedRxIndex === rxIndex);
   const setFocusedRxIndex = useConnectionStore((s) => s.setFocusedRxIndex);
   const vfoHz = useConnectionStore((s) => getReceiverVfoHz(s, receiver));
+  const mode = useConnectionStore((s) => getReceiverMode(s, receiver));
 
   // First tap on an inactive pane activates its receiver and is swallowed
   // (capture phase) so the panadapter never sees it as a tune. The active
@@ -108,11 +110,14 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         <Waterfall receiver={receiver} />
       </div>
       <div style={{ ...flag, ...(active ? flagActive : null) }}>
-        <span style={{ ...flagBadge, ...(active ? flagBadgeActive : null) }}>
-          RX{rxIndex + 1}
-        </span>
+        <div style={flagRow}>
+          <span style={{ ...flagBadge, ...(active ? flagBadgeActive : null) }}>
+            RX{rxIndex + 1}
+          </span>
+          {active ? <span style={flagActiveTag}>ACTIVE</span> : null}
+        </div>
         <span style={flagFreq}>{formatMHz(vfoHz)}</span>
-        {active ? <span style={flagActiveTag}>ACTIVE</span> : null}
+        <span style={flagMode}>{mode ?? ''}</span>
       </div>
     </div>
   );
@@ -124,13 +129,78 @@ function formatMHz(hz: number): string {
   return `${int}.${frac.slice(0, 3)}.${frac.slice(3, 6)} MHz`;
 }
 
-const meterCard: CSSProperties = {
+/** Draggable + resizable floating card. x negative = anchored from the
+ *  right edge (so defaults hug top-right like the approved frame). Drag by
+ *  the title strip, resize by the corner handle; session-only positions. */
+function G2Card({
+  title,
+  initial,
+  children,
+}: {
+  title: string;
+  initial: { x: number; y: number; w: number; h: number };
+  children: ReactNode;
+}) {
+  const [box, setBox] = useState(initial);
+  const mode = useRef<null | 'move' | 'size'>(null);
+  const start = useRef({ px: 0, py: 0, x: 0, y: 0, w: 0, h: 0 });
+
+  const begin = (m: 'move' | 'size') => (e: ReactPointerEvent) => {
+    mode.current = m;
+    start.current = { px: e.clientX, py: e.clientY, ...box };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const move = (e: ReactPointerEvent) => {
+    if (!mode.current) return;
+    const dx = e.clientX - start.current.px;
+    const dy = e.clientY - start.current.py;
+    if (mode.current === 'move') {
+      setBox((b) => ({ ...b, x: start.current.x + dx, y: Math.max(0, start.current.y + dy) }));
+    } else {
+      setBox((b) => ({
+        ...b,
+        w: Math.max(200, start.current.w + dx),
+        h: Math.max(120, start.current.h + dy),
+      }));
+    }
+  };
+  const end = () => {
+    mode.current = null;
+  };
+
+  const pos: CSSProperties =
+    box.x < 0 ? { right: -box.x, top: box.y } : { left: box.x, top: box.y };
+
+  return (
+    <div style={{ ...cardShell, ...pos, width: box.w, height: box.h }}>
+      <div
+        style={cardGrip}
+        onPointerDown={begin('move')}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+      >
+        {title}
+      </div>
+      <div style={cardBody}>{children}</div>
+      <div
+        style={cardResize}
+        onPointerDown={begin('size')}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+      />
+    </div>
+  );
+}
+
+const cardShell: CSSProperties = {
   position: 'absolute',
-  top: 8,
-  right: 12,
   zIndex: 7,
-  width: 300,
-  height: 170,
+  display: 'flex',
+  flexDirection: 'column',
   overflow: 'hidden',
   borderRadius: 8,
   border: '1px solid var(--line, #32373f)',
@@ -138,18 +208,52 @@ const meterCard: CSSProperties = {
   boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
 };
 
-const filterCard: CSSProperties = {
-  position: 'absolute',
-  top: 186,
-  right: 12,
-  zIndex: 7,
-  width: 300,
-  maxHeight: 170,
+const cardGrip: CSSProperties = {
+  flex: '0 0 22px',
+  display: 'flex',
+  alignItems: 'center',
+  padding: '0 8px',
+  fontSize: 9,
+  fontWeight: 800,
+  letterSpacing: '0.16em',
+  color: 'var(--fg-2, #9aa3ae)',
+  background: 'var(--bg-1, #1b1e23)',
+  borderBottom: '1px solid var(--line, #32373f)',
+  cursor: 'move',
+  touchAction: 'none',
+  userSelect: 'none',
+};
+
+const cardBody: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
   overflow: 'hidden',
-  borderRadius: 8,
-  border: '1px solid var(--line, #32373f)',
-  background: 'rgba(20, 23, 28, 0.92)',
-  boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+  display: 'flex',
+};
+
+const cardResize: CSSProperties = {
+  position: 'absolute',
+  right: 0,
+  bottom: 0,
+  width: 26,
+  height: 26,
+  cursor: 'nwse-resize',
+  touchAction: 'none',
+  background:
+    'linear-gradient(135deg, transparent 55%, var(--fg-3, #6a727d) 55%, var(--fg-3, #6a727d) 62%, transparent 62%, transparent 75%, var(--fg-3, #6a727d) 75%, var(--fg-3, #6a727d) 82%, transparent 82%)',
+};
+
+const flagRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+};
+
+const flagMode: CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.1em',
+  color: 'var(--fg-2, #9aa3ae)',
 };
 
 const stack: CSSProperties = {
@@ -210,8 +314,8 @@ const flag: CSSProperties = {
   left: 10,
   zIndex: 6,
   display: 'flex',
-  alignItems: 'center',
-  gap: 8,
+  flexDirection: 'column',
+  gap: 3,
   padding: '5px 10px',
   borderRadius: 6,
   border: '1px solid var(--line, #32373f)',
@@ -239,7 +343,7 @@ const flagBadgeActive: CSSProperties = {
 
 const flagFreq: CSSProperties = {
   fontFamily: '"JetBrains Mono", Consolas, monospace',
-  fontSize: 15,
+  fontSize: 21,
   fontWeight: 600,
   color: 'var(--fg-0, #e8ecf1)',
 };

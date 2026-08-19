@@ -29,6 +29,7 @@ import { Waterfall } from '../Waterfall';
 import { AnalogMeterPanel } from '../analog-meter/AnalogMeterPanel';
 import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
+import { useRxMetersStore } from '../../state/rx-meters-store';
 import { useDisplayStore, selectDisplaySlice } from '../../state/display-store';
 import { getReceiverVfoHz, getReceiverMode, rxIndexOf, type ReceiverKey } from '../../state/receiver-state';
 
@@ -38,15 +39,33 @@ const RATIO_H = 10;
  *  analog meter's G2 signal source, so the needle follows the active pane.
  *  Called from the meter's rAF loop; getState() keeps it subscription-free. */
 function sampleFocusedRxDbm(): number | null {
-  const focused = useConnectionStore.getState().focusedRxIndex;
-  const slice = selectDisplaySlice(useDisplayStore.getState(), focused === 1 ? 'B' : 'A');
+  const conn = useConnectionStore.getState();
+  // RX1 focused: return null so the meter uses its real calibrated stream.
+  if (conn.focusedRxIndex !== 1) return null;
+  const vfo = getReceiverVfoHz(conn, 'B');
+  return sliceTunePeakDbm(useDisplayStore.getState(), 'B', vfo);
+}
+
+/** Peak calibrated dBm within ±3 kHz of the tune line in a receiver's
+ *  display slice — the display-derived stand-in for a real S reading on
+ *  receivers the meter stream doesn't cover. */
+function sliceTunePeakDbm(
+  st: ReturnType<typeof useDisplayStore.getState>,
+  receiver: ReceiverKey,
+  vfoHz: number,
+): number | null {
+  const slice = selectDisplaySlice(st, receiver);
   const pan = slice.panDb;
-  if (!pan || pan.length < 8) return null;
-  const a = Math.floor(pan.length * 0.4);
-  const b = Math.ceil(pan.length * 0.6);
-  let sum = 0;
-  for (let i = a; i < b; i++) sum += pan[i] ?? 0;
-  return sum / (b - a);
+  if (!pan || pan.length < 8 || !(slice.hzPerPixel > 0)) return null;
+  const center = Number(slice.centerHz);
+  const mid = pan.length / 2 + (vfoHz - center) / slice.hzPerPixel;
+  const half = Math.max(2, Math.round(3000 / slice.hzPerPixel));
+  const a = Math.max(0, Math.floor(mid - half));
+  const b = Math.min(pan.length, Math.ceil(mid + half));
+  if (b - a < 1) return null;
+  let peak = -Infinity;
+  for (let i = a; i < b; i++) peak = Math.max(peak, pan[i] ?? -Infinity);
+  return Number.isFinite(peak) ? peak : null;
 }
 
 /** Map a display-estimated dBm onto the mini S-bar (S0 -127 dBm .. S9+40 -33 dBm). */
@@ -73,9 +92,14 @@ export function G2RxStack() {
       <G2Card title="S-METER" initial={{ x: -312, y: 8, w: 300, h: 170 }}>
         <AnalogMeterPanel sampleDbmOverride={sampleFocusedRxDbm} />
       </G2Card>
-      <G2Card title="FILTER" initial={{ x: -312, y: 186, w: 300, h: 170 }}>
-        <FilterMiniPan />
+      <G2Card title="FILTER · RX1" initial={{ x: -312, y: 186, w: 300, h: 150 }}>
+        <FilterMiniPan receiver="A" />
       </G2Card>
+      {rx2Enabled ? (
+        <G2Card title="FILTER · RX2" initial={{ x: -312, y: 372, w: 300, h: 150 }}>
+          <FilterMiniPan receiver="B" />
+        </G2Card>
+      ) : null}
     </div>
   );
 }
@@ -86,19 +110,16 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const setFocusedRxIndex = useConnectionStore((s) => s.setFocusedRxIndex);
   const vfoHz = useConnectionStore((s) => getReceiverVfoHz(s, receiver));
   const mode = useConnectionStore((s) => getReceiverMode(s, receiver));
-  // Estimated signal for the flag's mini S-bar: mean power of the display
-  // slice's central bins. Display-derived (the calibrated panadapter dBm),
-  // not the meter stream — which today carries RX1 only. Honest and per-RX.
-  const estDbm = useDisplayStore((st) => {
-    const slice = selectDisplaySlice(st, receiver);
-    const pan = slice.panDb;
-    if (!pan || pan.length < 8) return null;
-    const a = Math.floor(pan.length * 0.4);
-    const b = Math.ceil(pan.length * 0.6);
-    let sum = 0;
-    for (let i = a; i < b; i++) sum += pan[i] ?? 0;
-    return sum / (b - a);
-  });
+  // Flag S-bar signal. RX1 gets the REAL calibrated meter-stream peak (the
+  // same source the desktop S-meter trusts). RX2 has no meter stream, so it
+  // gets the display slice's PEAK around its own tune line — a mean over the
+  // span just reads the noise floor (field-falsified), the passband peak is
+  // what an S-meter means.
+  const realPk = useRxMetersStore((s) => s.signalPk);
+  const estDbm = useDisplayStore((st) =>
+    rxIndex === 0 ? null : sliceTunePeakDbm(st, receiver, vfoHz),
+  );
+  const barDbm = rxIndex === 0 ? (Number.isFinite(realPk) ? realPk : null) : estDbm;
   // Spectrum share of the pane (the requested per-receiver drag): 0.2-0.7.
   const [specFrac, setSpecFrac] = useState(0.44);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -158,7 +179,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         <span style={flagFreq}>{formatMHz(vfoHz)}</span>
         <span style={flagMode}>{mode ?? ''}</span>
         <div style={sBarShell}>
-          <div style={{ ...sBarFill, width: `${dbmToPct(estDbm)}%` }} />
+          <div style={{ ...sBarFill, width: `${dbmToPct(barDbm)}%` }} />
         </div>
       </div>
     </div>

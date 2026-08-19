@@ -2043,10 +2043,12 @@ function FilterMiniPanSurface({
   );
 }
 
-export function FilterMiniPan() {
+export function FilterMiniPan({ receiver }: { receiver?: SpectrumReceiver } = {}) {
   const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
   const receivers = useConnectionStore((s) => s.receivers);
-  const keys = filterMiniPanReceivers(rx2Enabled, receivers);
+  // Single-receiver mode (G2 layout mounts one card per pane); default keeps
+  // the desktop behaviour of showing every enabled receiver side by side.
+  const keys = receiver != null ? [receiver] : filterMiniPanReceivers(rx2Enabled, receivers);
   const split = keys.length > 1;
 
   return (

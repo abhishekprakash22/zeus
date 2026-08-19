@@ -118,8 +118,10 @@ is enabled; with RX2 off, RX1 takes the whole display. Drag the bar
 inside each pane to set its spectrum/waterfall ratio. The analog S-meter
 (which follows the active receiver) and the bandwidth filter display
 float over the panes — drag by the title strip, resize by the corner
-handle. Each receiver's VFO flag shows RX number, frequency, mode, and a
-live mini signal bar, highlighted on the active receiver. With the drawer on, the whole workspace
+handle; each receiver gets its own bandwidth filter card. Each receiver's
+VFO flag shows RX number, frequency, mode, and a live mini signal bar
+(RX1 from the calibrated meter, RX2 estimated from its spectrum),
+highlighted on the active receiver. With the drawer on, the whole workspace
 wears the graphite-and-amber G2 theme, and the workspace becomes two
 stacked receiver panes — RX1 over RX2, each with its own spectrum,
 waterfall, and band. Tap anywhere on the inactive pane to make that

@@ -134,7 +134,9 @@ export function Waterfall({
   // GL float-texture capabilities, surfaced on-screen because the desktop
   // (WebView2) app has no reachable DevTools. Only shown when something the
   // waterfall needs is missing (#629).
-  const [glCaps, setGlCaps] = useState<WfGlCaps | null>(null);
+  // Caps retained for future diagnostics (the on-screen NEAREST-fallback
+  // banner was retired by operator request; the fallback itself still works).
+  const [, setGlCaps] = useState<WfGlCaps | null>(null);
   const [glError, setGlError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -706,31 +708,6 @@ export function Waterfall({
       } as CSSProperties}
     >
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
-      {glCaps && !glCaps.floatLinear && (
-        // On-screen diagnostic (#629). The desktop (WebView2) app has no
-        // reachable DevTools, so when the GPU lacks OES_texture_float_linear —
-        // the prime suspect for the Windows-in-a-VM "no waterfall" — surface it
-        // here. The NEAREST fallback keeps the waterfall working; this just
-        // confirms the cause from a screenshot.
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 4,
-            left: 6,
-            padding: '2px 6px',
-            fontSize: 10,
-            fontFamily: 'monospace',
-            color: 'var(--fg-0)',
-            background: 'rgba(0,0,0,0.55)',
-            borderRadius: 3,
-            pointerEvents: 'none',
-            zIndex: 2,
-          }}
-          title={`GPU: ${glCaps.gpu}`}
-        >
-          wf: float_linear unsupported → NEAREST fallback
-        </div>
-      )}
       {glError && (
         <div
           role="status"

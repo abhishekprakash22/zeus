@@ -66,12 +66,26 @@ export function G2Drawer() {
            bottom edge (settings/SETUP chip, status corner) stays reachable
            above it instead of being buried under it (field report). */
         .app.g2-layout { padding-bottom: ${DRAWER_H}px; box-sizing: border-box; }
-        .g2-drawer .g2-key > * { width: 100%; height: 100%; display: flex; }
+        .g2-drawer .g2-key { min-width: 64px; overflow: hidden; }
+        .g2-drawer .g2-key > * { width: 100%; height: 100%; display: flex; min-width: 0; }
+        /* One keyboard, one face: hosted transport buttons arrive with their
+           own widths/padding/fonts — normalize the box so nothing overlaps
+           its neighbor; engaged colors still come from their own classes. */
         .g2-drawer .g2-key button {
-          width: 100%;
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          margin: 0 !important;
+          padding: 2px 4px !important;
+          box-sizing: border-box !important;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .g2-drawer .g2-key button {
           height: 100%;
           min-height: 84px;
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.05em;
           border-radius: 9px;

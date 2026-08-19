@@ -21,7 +21,7 @@
 //
 // The split is a persisted-in-session drag divider (default 55/45).
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
@@ -31,7 +31,15 @@ import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
 import { useRxMetersStore } from '../../state/rx-meters-store';
 import { useDisplayStore, selectDisplaySlice } from '../../state/display-store';
-import { getReceiverVfoHz, getReceiverMode, rxIndexOf, type ReceiverKey } from '../../state/receiver-state';
+import {
+  getReceiverVfoHz,
+  getReceiverMode,
+  getReceiverFilterLowHz,
+  getReceiverFilterHighHz,
+  rxIndexOf,
+  type ReceiverKey,
+} from '../../state/receiver-state';
+import { setReceiverMuted } from '../../api/client';
 
 const RATIO_H = 10;
 
@@ -68,6 +76,33 @@ function sliceTunePeakDbm(
   return Number.isFinite(peak) ? peak : null;
 }
 
+/** S-bar tick positions on the -127..-33 dBm span. */
+const S_TICKS = [
+  { label: 'S1', dbm: -121 },
+  { label: '3', dbm: -109 },
+  { label: '5', dbm: -97 },
+  { label: '7', dbm: -85 },
+  { label: '9', dbm: -73 },
+  { label: '+20', dbm: -53 },
+  { label: '+40', dbm: -33 },
+].map((t) => ({ ...t, pct: ((t.dbm + 127) / 94) * 100 }));
+
+/** "S7", "S9+10" — the readout beside the mini bar. */
+function dbmToSText(dbm: number | null): string {
+  if (dbm == null || !Number.isFinite(dbm)) return '—';
+  if (dbm >= -73) {
+    const over = Math.round((dbm + 73) / 5) * 5;
+    return over > 0 ? `S9+${over}` : 'S9';
+  }
+  return `S${Math.max(0, Math.min(9, Math.round((dbm + 127) / 6)))}`;
+}
+
+/** "2.7 kHz" filter-width chip. */
+function formatWidth(hz: number): string {
+  if (!Number.isFinite(hz) || hz <= 0) return '';
+  return hz >= 1000 ? `${(hz / 1000).toFixed(1)} kHz` : `${Math.round(hz)} Hz`;
+}
+
 /** Map a display-estimated dBm onto the mini S-bar (S0 -127 dBm .. S9+40 -33 dBm). */
 function dbmToPct(dbm: number | null): number {
   if (dbm == null || !Number.isFinite(dbm)) return 0;
@@ -79,6 +114,27 @@ export function G2RxStack() {
   // request). With both up the split is a fixed 50/50; the adjustable drag
   // lives INSIDE each pane (spectrum/waterfall ratio), not between panes.
   const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
+  const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
+
+  // Audio follows the ACTIVE receiver (field request): the inactive pane is
+  // muted via the per-receiver mute the hero mixer uses. Best-effort — a
+  // failed call leaves the mixer as-is. Leaving the layout unmutes both so
+  // the desktop returns to its own expectations.
+  useEffect(() => {
+    if (!rx2Enabled) {
+      void setReceiverMuted(0, false).catch(() => {});
+      return;
+    }
+    void setReceiverMuted(0, focusedRxIndex !== 0).catch(() => {});
+    void setReceiverMuted(1, focusedRxIndex !== 1).catch(() => {});
+  }, [focusedRxIndex, rx2Enabled]);
+  useEffect(
+    () => () => {
+      void setReceiverMuted(0, false).catch(() => {});
+      void setReceiverMuted(1, false).catch(() => {});
+    },
+    [],
+  );
 
   return (
     <div style={stack}>
@@ -110,6 +166,9 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const setFocusedRxIndex = useConnectionStore((s) => s.setFocusedRxIndex);
   const vfoHz = useConnectionStore((s) => getReceiverVfoHz(s, receiver));
   const mode = useConnectionStore((s) => getReceiverMode(s, receiver));
+  const widthHz = useConnectionStore(
+    (s) => getReceiverFilterHighHz(s, receiver) - getReceiverFilterLowHz(s, receiver),
+  );
   // Flag S-bar signal. RX1 gets the REAL calibrated meter-stream peak (the
   // same source the desktop S-meter trusts). RX2 has no meter stream, so it
   // gets the display slice's PEAK around its own tune line — a mean over the
@@ -177,9 +236,25 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           {active ? <span style={flagActiveTag}>ACTIVE</span> : null}
         </div>
         <span style={flagFreq}>{formatMHz(vfoHz)}</span>
-        <span style={flagMode}>{mode ?? ''}</span>
-        <div style={sBarShell}>
-          <div style={{ ...sBarFill, width: `${dbmToPct(barDbm)}%` }} />
+        <div style={flagRow}>
+          <span style={flagMode}>{mode ?? ''}</span>
+          <span style={flagChip}>{formatWidth(widthHz)}</span>
+        </div>
+        <div style={sBarRow}>
+          <div style={sBarShell}>
+            <div style={{ ...sBarFill, width: `${dbmToPct(barDbm)}%` }} />
+            {S_TICKS.map((t) => (
+              <span key={t.label} style={{ ...sTick, left: `${t.pct}%` }} />
+            ))}
+          </div>
+          <span style={sReadout}>{dbmToSText(barDbm)}</span>
+        </div>
+        <div style={sTickLabels}>
+          {S_TICKS.map((t) => (
+            <span key={t.label} style={{ ...sTickLabel, left: `${t.pct}%` }}>
+              {t.label}
+            </span>
+          ))}
         </div>
       </div>
     </div>
@@ -364,9 +439,57 @@ const ratioBar: CSSProperties = {
   zIndex: 5,
 };
 
-const sBarShell: CSSProperties = {
-  height: 6,
+const sBarRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
   marginTop: 2,
+};
+
+const sReadout: CSSProperties = {
+  minWidth: 44,
+  fontFamily: '"JetBrains Mono", Consolas, monospace',
+  fontSize: 11,
+  fontWeight: 700,
+  color: 'var(--fg-0, #e8ecf1)',
+};
+
+const sTick: CSSProperties = {
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  width: 1,
+  background: 'rgba(232, 236, 241, 0.45)',
+};
+
+const sTickLabels: CSSProperties = {
+  position: 'relative',
+  height: 10,
+  marginTop: 1,
+};
+
+const sTickLabel: CSSProperties = {
+  position: 'absolute',
+  transform: 'translateX(-50%)',
+  fontSize: 7,
+  letterSpacing: '0.04em',
+  color: 'var(--fg-3, #6a727d)',
+};
+
+const flagChip: CSSProperties = {
+  padding: '1px 6px',
+  borderRadius: 3,
+  border: '1px solid var(--line, #263041)',
+  fontSize: 9,
+  fontWeight: 700,
+  letterSpacing: '0.06em',
+  color: 'var(--fg-2, #9aa3ae)',
+};
+
+const sBarShell: CSSProperties = {
+  flex: 1,
+  position: 'relative',
+  height: 7,
   borderRadius: 3,
   background: 'rgba(8, 12, 18, 0.9)',
   border: '1px solid var(--line, #263041)',

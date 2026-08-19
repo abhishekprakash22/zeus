@@ -578,9 +578,11 @@ export function Panadapter({
       )}
       <FreqAxis receiver={receiver} stitched={stitched} />
       {widebandDisplay && <WidebandViewportControls containerRef={containerRef} receiver={receiver} />}
-      {/* One global dB scale for the whole stack — only RX1 (leftmost) renders
-          it; every other pane (RX2 stitched half, RX3+ standalone) shares it. */}
-      {rxIndex === 0 && !widebandDisplay && <DbScale />}
+      {/* dB scale + level drag. In the stitched/shared world only RX1 renders
+          it (one global scale for the row). A STANDALONE secondary pane — the
+          G2 layout's RX2, receiver-bound and neither stitched nor multiRx —
+          is its own display and gets its own scale (same shared dB range). */}
+      {(rxIndex === 0 || (!stitched && !multiRx)) && !widebandDisplay && <DbScale />}
     </div>
   );
 }

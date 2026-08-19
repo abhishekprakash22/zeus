@@ -2871,7 +2871,8 @@ public static class ZeusEndpoints
                 req.WidebandDisplayEnabled,
                 req.DisplayMaxFrameRateHz,
                 req.DisplayDecimation,
-                req.WaterfallUpdatePeriod);
+                req.WaterfallUpdatePeriod,
+                req.G2LayoutEnabled);
             var saved = store.Get();
             // Push the (validated, merged) display config to the running
             // engine/client so the change is live without a reconnect.

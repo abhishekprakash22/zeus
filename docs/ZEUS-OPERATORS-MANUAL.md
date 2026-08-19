@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.109**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.110**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -101,6 +101,17 @@ Connect, then operate from the workspace:
   the settings card shows which path is live).
 
 ---
+
+### The G2 touch drawer (8-inch front glass)
+
+Settings → Display → **G2 touch drawer** swaps the desktop transport bar for
+large touch keys while connected: **MOX** and **TUN** (the same buttons, with
+all their safeguards, at finger size), plus **BAND**, **MODE**, and **FILTER**
+keys that open bottom sheets with the full band, mode/bandwidth, and filter
+controls for the focused receiver. A compact FWD / SWR / ALC strip lives at
+the drawer's right end and reads the live TX meters. Turning the option off
+restores the desktop bar instantly. More of the touch layout (stacked
+receiver panes, on-glass filter displays) arrives in the next releases.
 
 ## 5. Transmitting
 

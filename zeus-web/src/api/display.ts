@@ -36,6 +36,7 @@ export type DisplaySettings = {
   displayMaxFrameRateHz: number;
   displayDecimation: number;
   waterfallUpdatePeriod: number;
+  g2LayoutEnabled: boolean;
 };
 
 // Matches backend DisplaySettingsStore.DefaultRxTraceColor.
@@ -66,6 +67,7 @@ type DisplaySettingsDtoRaw = {
   displayMaxFrameRateHz?: number | null;
   displayDecimation?: number | null;
   waterfallUpdatePeriod?: number | null;
+  g2LayoutEnabled?: boolean | null;
 };
 
 function normalizeRxTraceColor(raw: string | null | undefined): string {
@@ -118,6 +120,7 @@ function normalize(raw: DisplaySettingsDtoRaw): DisplaySettings {
     displayMaxFrameRateHz: normalizeDisplayMaxFrameRateHz(raw.displayMaxFrameRateHz),
     displayDecimation: normalizeIntRange(raw.displayDecimation, 1, 16, DEFAULT_DISPLAY_DECIMATION),
     waterfallUpdatePeriod: normalizeIntRange(raw.waterfallUpdatePeriod, 1, 1000, DEFAULT_WATERFALL_UPDATE_PERIOD),
+    g2LayoutEnabled: raw.g2LayoutEnabled === true,
   };
 }
 
@@ -149,6 +152,7 @@ export async function updateDisplaySettings(
   displayMaxFrameRateHz?: number | null,
   displayDecimation?: number | null,
   waterfallUpdatePeriod?: number | null,
+  g2LayoutEnabled?: boolean | null,
   signal?: AbortSignal,
 ): Promise<DisplaySettings> {
   const res = await fetch('/api/display-settings', {
@@ -174,6 +178,7 @@ export async function updateDisplaySettings(
       displayMaxFrameRateHz,
       displayDecimation,
       waterfallUpdatePeriod,
+      g2LayoutEnabled,
     }),
     signal,
   });

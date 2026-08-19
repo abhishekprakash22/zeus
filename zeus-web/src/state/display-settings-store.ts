@@ -522,6 +522,7 @@ export type DisplaySettingsState = {
   // the bounded wideband ADC stream only while a display client is mounted and
   // renders RX0 panadapter/waterfall as a 0-60 MHz view.
   widebandDisplayEnabled: boolean;
+  g2LayoutEnabled: boolean;
   // Backend display/analyzer frame cap. Values below the legacy 30 Hz cadence
   // gate generated frames; values above it let the connected-radio inline
   // display path run faster on hosts that can keep up.
@@ -588,6 +589,7 @@ export type DisplaySettingsState = {
   // windows (mirrors setAutoRange for RX).
   setTxAutoRange: (v: boolean) => void;
   setWidebandDisplayEnabled: (v: boolean) => Promise<void>;
+  setG2LayoutEnabled: (v: boolean) => Promise<void>;
   setDisplayMaxFrameRateHz: (v: number) => Promise<void>;
   setDisplayDecimation: (v: number) => Promise<void>;
   setWaterfallUpdatePeriod: (v: number) => Promise<void>;
@@ -698,6 +700,7 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
   // windows via restoreSavedTxWindows().
   txAutoRange: DEFAULT_TX_AUTO_RANGE,
   widebandDisplayEnabled: false,
+  g2LayoutEnabled: false,
   displayMaxFrameRateHz: DEFAULT_DISPLAY_MAX_FRAME_RATE_HZ,
   displayDecimation: DEFAULT_DISPLAY_DECIMATION,
   waterfallUpdatePeriod: DEFAULT_WATERFALL_UPDATE_PERIOD,
@@ -893,6 +896,37 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
       // Off restores the operator's saved TX windows (mirrors setAutoRange).
       set({ txAutoRange: false });
       get().restoreSavedTxWindows();
+    }
+  },
+  setG2LayoutEnabled: async (g2LayoutEnabled) => {
+    const prev = get().g2LayoutEnabled;
+    set({ g2LayoutEnabled });
+    try {
+      const s = get();
+      const result = await updateDisplaySettings(
+        s.panBackground,
+        s.backgroundImageFit,
+        s.rxTraceColor,
+        s.dbMin,
+        s.dbMax,
+        s.txDbMin,
+        s.txDbMax,
+        s.wfDbMin,
+        s.wfDbMax,
+        s.wfTxDbMin,
+        s.wfTxDbMax,
+        undefined,
+        s.widebandDisplayEnabled,
+        s.displayMaxFrameRateHz,
+        s.displayDecimation,
+        s.waterfallUpdatePeriod,
+        g2LayoutEnabled,
+      );
+      if (result.g2LayoutEnabled !== g2LayoutEnabled) {
+        set({ g2LayoutEnabled: result.g2LayoutEnabled });
+      }
+    } catch {
+      set({ g2LayoutEnabled: prev });
     }
   },
   setWidebandDisplayEnabled: async (widebandDisplayEnabled) => {
@@ -1263,6 +1297,7 @@ async function hydrateFromServer(): Promise<void> {
     backgroundImageFit: server.fit,
     rxTraceColor: server.rxTraceColor,
     widebandDisplayEnabled: server.widebandDisplayEnabled,
+    g2LayoutEnabled: server.g2LayoutEnabled,
     displayMaxFrameRateHz: normalizeDisplayMaxFrameRateHz(server.displayMaxFrameRateHz),
     displayDecimation: normalizeDisplayDecimation(server.displayDecimation),
     waterfallUpdatePeriod: normalizeWaterfallUpdatePeriod(server.waterfallUpdatePeriod),

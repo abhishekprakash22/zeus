@@ -149,6 +149,7 @@ public sealed class DisplaySettingsStore : IDisposable
                     TxDisplayWindow: null,
                     TxDisplayAvgTauMs: null,
                     WidebandDisplayEnabled: false,
+                    G2LayoutEnabled: false,
                     DisplayMaxFrameRateHz: _defaultDisplayMaxFrameRateHz,
                     DisplayDecimation: DisplayPerformanceOptions.DefaultDisplayDecimation,
                     WaterfallUpdatePeriod: DisplayPerformanceOptions.DefaultWaterfallUpdatePeriod);
@@ -178,6 +179,7 @@ public sealed class DisplaySettingsStore : IDisposable
                 TxDisplayWindow: e.TxDisplayWindow,
                 TxDisplayAvgTauMs: e.TxDisplayAvgTauMs,
                 WidebandDisplayEnabled: e.WidebandDisplayEnabled,
+                G2LayoutEnabled: e.G2LayoutEnabled,
                 DisplayMaxFrameRateHz: DisplayPerformanceOptions.NormalizeFrameRate(
                     e.DisplayMaxFrameRateHz,
                     _defaultDisplayMaxFrameRateHz),
@@ -199,7 +201,8 @@ public sealed class DisplaySettingsStore : IDisposable
         bool? widebandDisplayEnabled = null,
         double? displayMaxFrameRateHz = null,
         int? displayDecimation = null,
-        int? waterfallUpdatePeriod = null)
+        int? waterfallUpdatePeriod = null,
+        bool? g2LayoutEnabled = null)
     {
         lock (_sync)
         {
@@ -227,6 +230,7 @@ public sealed class DisplaySettingsStore : IDisposable
             if (IsValidWindow(txDisplayWindow)) e.TxDisplayWindow = txDisplayWindow;
             if (IsValidAvgTauMs(txDisplayAvgTauMs)) e.TxDisplayAvgTauMs = txDisplayAvgTauMs;
             if (widebandDisplayEnabled.HasValue) e.WidebandDisplayEnabled = widebandDisplayEnabled.Value;
+            if (g2LayoutEnabled.HasValue) e.G2LayoutEnabled = g2LayoutEnabled.Value;
             if (displayMaxFrameRateHz.HasValue && double.IsFinite(displayMaxFrameRateHz.Value))
             {
                 e.DisplayMaxFrameRateHz = DisplayPerformanceOptions.NormalizeFrameRate(displayMaxFrameRateHz.Value);
@@ -351,6 +355,7 @@ public sealed class DisplaySettingsEntry
     // Protocol-2 ADC snapshot display mode. False on legacy rows because bool
     // defaults to false when LiteDB materialises rows written before this field.
     public bool WidebandDisplayEnabled { get; set; }
+    public bool G2LayoutEnabled { get; set; }
     // Max generated panadapter/waterfall display frames per second. Null on
     // legacy rows means "use the process/profile default".
     public double? DisplayMaxFrameRateHz { get; set; }

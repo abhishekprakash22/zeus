@@ -2364,7 +2364,11 @@ public sealed record DisplaySettingsDto(
     bool WidebandDisplayEnabled = false,
     double DisplayMaxFrameRateHz = 30.0,
     int DisplayDecimation = 1,
-    int WaterfallUpdatePeriod = 1);
+    int WaterfallUpdatePeriod = 1,
+    // G2 display layout (the radio's own 8-inch 1280x800 glass): graphite
+    // touch chrome with the bottom key drawer. Display-only; false = the
+    // classic desktop workspace, byte-identical behaviour.
+    bool G2LayoutEnabled = false);
 
 public sealed record DisplaySettingsSetRequest(
     string Mode,
@@ -2385,7 +2389,8 @@ public sealed record DisplaySettingsSetRequest(
     bool? WidebandDisplayEnabled = null,
     double? DisplayMaxFrameRateHz = null,
     int? DisplayDecimation = null,
-    int? WaterfallUpdatePeriod = null);
+    int? WaterfallUpdatePeriod = null,
+    bool? G2LayoutEnabled = null);
 
 // Server-side mirror of the frontend Signal Intelligence weak-signal display
 // controls. The DSP math remains in zeus-web's signal-estimator; this DTO lets

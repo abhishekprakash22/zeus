@@ -21,6 +21,7 @@ import { SpectrumScaleSettingsPanel } from './SpectrumScaleSettingsPanel';
 import { ThemeSettingsPanel } from './ThemeSettingsPanel';
 import { TraceColorPanel } from './TraceColorPanel';
 import { WidebandDisplayPanel } from './WidebandDisplayPanel';
+import { G2LayoutSection } from './g2/G2LayoutSection';
 
 export function DisplayPanel() {
   return (
@@ -31,6 +32,7 @@ export function DisplayPanel() {
       <PanadapterOverlaySettingsPanel />
       <DisplayPerformancePanel />
       <WidebandDisplayPanel />
+      <G2LayoutSection />
       <SpectrumScaleSettingsPanel />
     </div>
   );

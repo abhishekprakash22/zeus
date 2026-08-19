@@ -84,6 +84,7 @@ import { TxMonitorButton } from './components/TxMonitorButton';
 import { RecorderButton } from './components/RecorderButton';
 import { PaTempChip } from './components/PaTempChip';
 import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
+import { G2Drawer } from './components/g2/G2Drawer';
 import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
@@ -349,6 +350,11 @@ export default function App() {
   const workspaceZoomPct = useConnectionStore((s) => s.workspaceZoomPct);
   const chromeZoom = (workspaceZoomPct > 0 ? workspaceZoomPct : 100) / 100;
   const connected = status === 'Connected';
+  // G2 display layout (Settings → Display): graphite touch chrome for the
+  // radio's own 8-inch glass. Applied only while connected so the connect
+  // screen keeps the standard chrome.
+  const g2LayoutEnabled = useDisplaySettingsStore((s) => s.g2LayoutEnabled);
+  const g2LayoutOn = g2LayoutEnabled && connected;
   useEffect(() => {
     if (appAccessAllowed || status !== 'Connected') return;
 
@@ -1378,7 +1384,7 @@ export default function App() {
     <DspSceneDiagnosticsPublisher />
     <AudioPlaybackDiagnosticsPublisher />
     <div
-      className="app"
+      className={g2LayoutOn ? 'app g2-layout' : 'app'}
       data-screen-label="01 Main Console"
       style={{
         position: 'relative',
@@ -1387,6 +1393,7 @@ export default function App() {
     >
       {/* Left layout bar — issue #241. Spans the full app height; lists named
           layouts for the active radio with switch/add/delete/reset actions. */}
+      {g2LayoutOn && <G2Drawer />}
       <LeftLayoutBar />
 
       {/* Top bar — brand on the left, transport-level inline controls

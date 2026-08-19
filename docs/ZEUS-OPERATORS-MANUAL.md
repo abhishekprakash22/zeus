@@ -112,8 +112,13 @@ controls for the focused receiver. A compact FWD / SWR / ALC strip lives at
 the drawer's right end and reads the live TX meters. **NB·NR** opens the
 noise-blanker / noise-reduction panel and **ANT** the radio (antenna)
 settings, both as touch sheets. With the drawer on, the whole workspace
-wears the graphite-and-amber G2 theme. Turning the option off
-restores the desktop bar and standard theme instantly. More of the touch layout (stacked
+wears the graphite-and-amber G2 theme, and the workspace becomes two
+stacked receiver panes — RX1 over RX2, each with its own spectrum,
+waterfall, and band. Tap anywhere on the inactive pane to make that
+receiver active (the first tap only selects — it never tunes); the
+amber flag marks the active one, and the drawer's BAND/MODE/FILTER
+follow it. Drag the bar between the panes to resize. Turning the option
+off restores the desktop workspace and standard theme instantly. More of the touch layout (stacked
 receiver panes, on-glass filter displays) arrives in the next releases.
 
 ## 5. Transmitting

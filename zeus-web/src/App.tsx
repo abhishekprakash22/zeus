@@ -85,6 +85,7 @@ import { RecorderButton } from './components/RecorderButton';
 import { PaTempChip } from './components/PaTempChip';
 import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
 import { G2Drawer } from './components/g2/G2Drawer';
+import { G2RxStack } from './components/g2/G2RxStack';
 import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
@@ -1583,7 +1584,7 @@ export default function App() {
             key={activeLayoutId}
             onReset={resetActiveWorkspaceLayout}
           >
-            <FlexWorkspace key={activeLayoutId} />
+            {g2LayoutOn ? <G2RxStack /> : <FlexWorkspace key={activeLayoutId} />}
           </WorkspaceErrorBoundary>
         )}
       </div>

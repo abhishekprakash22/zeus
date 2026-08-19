@@ -480,3 +480,37 @@ input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+
+/* ===========================================================
+   G2 display layout — graphite + amber (operator-approved
+   preview, 2026-08-19). Scoped: these overrides apply ONLY
+   while App wears .g2-layout (Settings → Display → G2 touch
+   drawer, connected). CSS custom properties cascade, so every
+   panel, button, and line inside the workspace re-skins with
+   no per-component changes. TX stays red — amber is chrome,
+   never a transmit cue.
+   =========================================================== */
+.app.g2-layout {
+  --bg-app:       #101215;
+  --bg-workspace: #101215;
+  --bg-0: #101215;
+  --bg-1: #1b1e23;
+  --bg-2: #24282e;
+  --bg-3: #2d323a;
+  --bg-inset: #0b0d10;
+  --bg-meter: #0a0c0f;
+
+  --line:        #32373f;
+  --line-soft:   #262b32;
+  --line-strong: #414751;
+
+  --fg-0: #e8ecf1;
+  --fg-1: #c3cad3;
+  --fg-2: #9aa3ae;
+  --fg-3: #6a727d;
+
+  --accent:        #f2c11d;
+  --accent-bright: #ffd44d;
+  --accent-soft:   rgba(242, 193, 29, 0.14);
+  --accent-line:   rgba(242, 193, 29, 0.55);
+}

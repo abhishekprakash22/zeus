@@ -19,9 +19,9 @@
 // MODE, and FILTER open bottom sheets hosting the real BandButtons /
 // ModeBandwidth / FilterRibbon components — the same controls the desktop
 // panels mount, following the focused receiver. The TX strip is three
-// MeterRenderer hbar widgets fed by the live meter pipeline. NB / ANT / NR
-// dedicated keys arrive with the per-receiver pane work (next commit in
-// this series); nothing here pretends to be wired that isn't.
+// MeterRenderer hbar widgets fed by the live meter pipeline. NB·NR opens
+// the real DspPanel; ANT opens the radio settings panel (antenna section
+// included) — same stores, same semantics as the desktop.
 //
 // The classic .transport strip is hidden by the scoped stylesheet below
 // while the drawer is mounted — App leaves it in the tree so switching the
@@ -34,10 +34,12 @@ import { TunButton } from '../TunButton';
 import { BandButtons } from '../BandButtons';
 import { ModeBandwidth } from '../ModeBandwidth';
 import { FilterRibbon } from '../filter/FilterRibbon';
+import { DspPanel } from '../DspPanel';
+import { RadioSettingsPanel } from '../RadioSettingsPanel';
 import { MeterRenderer } from '../meter-group/MeterRenderer';
 import { MeterReadingId } from '../meters/meterCatalog';
 
-type SheetId = 'band' | 'mode' | 'filter' | null;
+type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | null;
 
 const DRAWER_H = 108;
 
@@ -71,7 +73,15 @@ export function G2Drawer() {
           <div style={sheetBody} onClick={(e) => e.stopPropagation()}>
             <div style={sheetHead}>
               <span style={sheetTitle}>
-                {sheet === 'band' ? 'BAND' : sheet === 'mode' ? 'MODE' : 'FILTER'}
+                {sheet === 'band'
+                  ? 'BAND'
+                  : sheet === 'mode'
+                    ? 'MODE'
+                    : sheet === 'filter'
+                      ? 'FILTER'
+                      : sheet === 'dsp'
+                        ? 'NB · NR · DSP'
+                        : 'ANT · RADIO'}
               </span>
               <button type="button" style={sheetClose} onClick={() => setSheet(null)}>
                 CLOSE
@@ -81,6 +91,8 @@ export function G2Drawer() {
               {sheet === 'band' && <BandButtons />}
               {sheet === 'mode' && <ModeBandwidth />}
               {sheet === 'filter' && <FilterRibbon embedded />}
+              {sheet === 'dsp' && <DspPanel />}
+              {sheet === 'ant' && <RadioSettingsPanel />}
             </div>
           </div>
         </div>
@@ -96,6 +108,8 @@ export function G2Drawer() {
         <SheetKey label="BAND" active={sheet === 'band'} onTap={() => toggleSheet('band')} />
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
+        <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
+        <SheetKey label="ANT" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
         <div style={{ flex: 1 }} />
         <div style={txStrip}>
           <TxBar uid="g2-fwd" reading={MeterReadingId.TxFwdWatts} />

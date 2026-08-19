@@ -35,9 +35,6 @@ import { TxMonitorButton } from '../TxMonitorButton';
 import { PsToggleButton } from '../PsToggleButton';
 import { CtunButton } from '../CtunButton';
 import { RecorderButton } from '../RecorderButton';
-import { SplitButton, RitButton } from '../RitSplitButtons';
-import { DiversityToggleButton } from '../DiversityWindow';
-import { AudioToggle } from '../AudioToggle';
 import { DisplayPanel } from '../DisplayPanel';
 import { BandButtons } from '../BandButtons';
 import { ModeBandwidth } from '../ModeBandwidth';
@@ -135,18 +132,6 @@ export function G2Drawer() {
         <div className="g2-key" style={key}>
           <CtunButton />
         </div>
-        <div className="g2-key" style={key}>
-          <SplitButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <RitButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <DiversityToggleButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <AudioToggle />
-        </div>
         <SheetKey label="BAND" active={sheet === 'band'} onTap={() => toggleSheet('band')} />
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
@@ -234,12 +219,13 @@ const sheetKeyBtn: CSSProperties = {
 };
 
 const sheetKeyActive: CSSProperties = {
-  borderColor: '#6d5a12',
-  color: '#f2c11d',
+  borderColor: 'var(--accent, #4aa3df)',
+  color: 'var(--accent, #4aa3df)',
 };
 
 const txStrip: CSSProperties = {
-  width: 340,
+  width: 420,
+  flex: '0 0 420px',
   display: 'flex',
   flexDirection: 'column',
   gap: 4,
@@ -288,7 +274,7 @@ const sheetTitle: CSSProperties = {
   fontSize: 12,
   fontWeight: 800,
   letterSpacing: '0.18em',
-  color: '#f2c11d',
+  color: 'var(--accent, #4aa3df)',
 };
 
 const sheetClose: CSSProperties = {

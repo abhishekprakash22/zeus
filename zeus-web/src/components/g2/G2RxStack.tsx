@@ -29,50 +29,49 @@ import { Waterfall } from '../Waterfall';
 import { AnalogMeterPanel } from '../analog-meter/AnalogMeterPanel';
 import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
+import { useDisplayStore, selectDisplaySlice } from '../../state/display-store';
 import { getReceiverVfoHz, getReceiverMode, rxIndexOf, type ReceiverKey } from '../../state/receiver-state';
 
-const DIVIDER_H = 10;
+const RATIO_H = 10;
+
+/** dBm estimate for the FOCUSED receiver from its display slice — the
+ *  analog meter's G2 signal source, so the needle follows the active pane.
+ *  Called from the meter's rAF loop; getState() keeps it subscription-free. */
+function sampleFocusedRxDbm(): number | null {
+  const focused = useConnectionStore.getState().focusedRxIndex;
+  const slice = selectDisplaySlice(useDisplayStore.getState(), focused === 1 ? 'B' : 'A');
+  const pan = slice.panDb;
+  if (!pan || pan.length < 8) return null;
+  const a = Math.floor(pan.length * 0.4);
+  const b = Math.ceil(pan.length * 0.6);
+  let sum = 0;
+  for (let i = a; i < b; i++) sum += pan[i] ?? 0;
+  return sum / (b - a);
+}
+
+/** Map a display-estimated dBm onto the mini S-bar (S0 -127 dBm .. S9+40 -33 dBm). */
+function dbmToPct(dbm: number | null): number {
+  if (dbm == null || !Number.isFinite(dbm)) return 0;
+  return Math.min(100, Math.max(0, ((dbm + 127) / 94) * 100));
+}
 
 export function G2RxStack() {
-  // Fraction of the stack height given to RX1 (the rest goes to RX2).
-  const [split, setSplit] = useState(0.55);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const dragging = useRef(false);
-
-  const onDividerDown = useCallback((e: ReactPointerEvent) => {
-    dragging.current = true;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  }, []);
-  const onDividerMove = useCallback((e: ReactPointerEvent) => {
-    if (!dragging.current || !rootRef.current) return;
-    const r = rootRef.current.getBoundingClientRect();
-    const f = (e.clientY - r.top) / Math.max(1, r.height);
-    setSplit(Math.min(0.8, Math.max(0.2, f)));
-  }, []);
-  const onDividerUp = useCallback(() => {
-    dragging.current = false;
-  }, []);
+  // RX2 present only when enabled — a dead receiver earns no glass (field
+  // request). With both up the split is a fixed 50/50; the adjustable drag
+  // lives INSIDE each pane (spectrum/waterfall ratio), not between panes.
+  const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
 
   return (
-    <div ref={rootRef} style={stack}>
-      <RxPane receiver="A" heightPct={split * 100} />
-      <div
-        style={divider}
-        onPointerDown={onDividerDown}
-        onPointerMove={onDividerMove}
-        onPointerUp={onDividerUp}
-        onPointerCancel={onDividerUp}
-      >
-        <span style={dividerGrip} />
-      </div>
-      <RxPane receiver="B" heightPct={(1 - split) * 100} />
+    <div style={stack}>
+      <RxPane receiver="A" heightPct={rx2Enabled ? 50 : 100} />
+      {rx2Enabled ? <RxPane receiver="B" heightPct={50} /> : null}
       {/* Instrument cards (commit 4 of the approved frame): the analog
           S-meter — face untouched, the Zeus signature — and the bandwidth
           filter display (FilterMiniPan; it splits per receiver internally
           when RX2 is enabled). Cards float over the stack's top-right so
           they cost no pane height; the panadapters keep full width. */}
       <G2Card title="S-METER" initial={{ x: -312, y: 8, w: 300, h: 170 }}>
-        <AnalogMeterPanel />
+        <AnalogMeterPanel sampleDbmOverride={sampleFocusedRxDbm} />
       </G2Card>
       <G2Card title="FILTER" initial={{ x: -312, y: 186, w: 300, h: 170 }}>
         <FilterMiniPan />
@@ -87,6 +86,36 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const setFocusedRxIndex = useConnectionStore((s) => s.setFocusedRxIndex);
   const vfoHz = useConnectionStore((s) => getReceiverVfoHz(s, receiver));
   const mode = useConnectionStore((s) => getReceiverMode(s, receiver));
+  // Estimated signal for the flag's mini S-bar: mean power of the display
+  // slice's central bins. Display-derived (the calibrated panadapter dBm),
+  // not the meter stream — which today carries RX1 only. Honest and per-RX.
+  const estDbm = useDisplayStore((st) => {
+    const slice = selectDisplaySlice(st, receiver);
+    const pan = slice.panDb;
+    if (!pan || pan.length < 8) return null;
+    const a = Math.floor(pan.length * 0.4);
+    const b = Math.ceil(pan.length * 0.6);
+    let sum = 0;
+    for (let i = a; i < b; i++) sum += pan[i] ?? 0;
+    return sum / (b - a);
+  });
+  // Spectrum share of the pane (the requested per-receiver drag): 0.2-0.7.
+  const [specFrac, setSpecFrac] = useState(0.44);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const ratioDrag = useRef(false);
+  const onRatioDown = useCallback((e: ReactPointerEvent) => {
+    ratioDrag.current = true;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.stopPropagation();
+  }, []);
+  const onRatioMove = useCallback((e: ReactPointerEvent) => {
+    if (!ratioDrag.current || !paneRef.current) return;
+    const r = paneRef.current.getBoundingClientRect();
+    setSpecFrac(Math.min(0.7, Math.max(0.2, (e.clientY - r.top) / Math.max(1, r.height))));
+  }, []);
+  const onRatioUp = useCallback(() => {
+    ratioDrag.current = false;
+  }, []);
 
   // First tap on an inactive pane activates its receiver and is swallowed
   // (capture phase) so the panadapter never sees it as a tune. The active
@@ -100,11 +129,21 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
 
   return (
     <div
-      style={{ ...pane, height: `calc(${heightPct}% - ${DIVIDER_H / 2}px)` }}
+      ref={paneRef}
+      style={{ ...pane, height: `${heightPct}%` }}
       onPointerDownCapture={onCapturePointerDown}
     >
-      <div style={paneSpectrum}>
+      <div style={{ ...paneSpectrum, flex: `0 0 calc(${(specFrac * 100).toFixed(1)}% - ${RATIO_H / 2}px)` }}>
         <Panadapter receiver={receiver} multiRx={false} />
+      </div>
+      <div
+        style={ratioBar}
+        onPointerDown={onRatioDown}
+        onPointerMove={onRatioMove}
+        onPointerUp={onRatioUp}
+        onPointerCancel={onRatioUp}
+      >
+        <span style={dividerGrip} />
       </div>
       <div style={paneWaterfall}>
         <Waterfall receiver={receiver} />
@@ -118,6 +157,9 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         </div>
         <span style={flagFreq}>{formatMHz(vfoHz)}</span>
         <span style={flagMode}>{mode ?? ''}</span>
+        <div style={sBarShell}>
+          <div style={{ ...sBarFill, width: `${dbmToPct(estDbm)}%` }} />
+        </div>
       </div>
     </div>
   );
@@ -276,7 +318,7 @@ const pane: CSSProperties = {
 
 const paneSpectrum: CSSProperties = {
   position: 'relative',
-  flex: '0 0 44%',
+  flex: '0 0 44%', // overridden inline by the per-pane ratio drag
   minHeight: 0,
   display: 'flex',
 };
@@ -288,17 +330,32 @@ const paneWaterfall: CSSProperties = {
   display: 'flex',
 };
 
-const divider: CSSProperties = {
-  flex: `0 0 ${DIVIDER_H}px`,
+const ratioBar: CSSProperties = {
+  flex: `0 0 ${RATIO_H}px`,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: 'var(--bg-1, #1b1e23)',
-  borderTop: '1px solid var(--line, #32373f)',
-  borderBottom: '1px solid var(--line, #32373f)',
+  background: 'var(--bg-1, #14181f)',
+  borderTop: '1px solid var(--line, #263041)',
+  borderBottom: '1px solid var(--line, #263041)',
   cursor: 'row-resize',
   touchAction: 'none',
   zIndex: 5,
+};
+
+const sBarShell: CSSProperties = {
+  height: 6,
+  marginTop: 2,
+  borderRadius: 3,
+  background: 'rgba(8, 12, 18, 0.9)',
+  border: '1px solid var(--line, #263041)',
+  overflow: 'hidden',
+};
+
+const sBarFill: CSSProperties = {
+  height: '100%',
+  borderRadius: 2,
+  background: 'linear-gradient(90deg, #2c8f5b, #3fd08a 65%, var(--accent, #4aa3df))',
 };
 
 const dividerGrip: CSSProperties = {
@@ -324,7 +381,7 @@ const flag: CSSProperties = {
 };
 
 const flagActive: CSSProperties = {
-  borderColor: 'rgba(242, 193, 29, 0.55)',
+  borderColor: 'var(--accent, #4aa3df)',
 };
 
 const flagBadge: CSSProperties = {
@@ -338,7 +395,7 @@ const flagBadge: CSSProperties = {
 };
 
 const flagBadgeActive: CSSProperties = {
-  background: 'var(--accent, #f2c11d)',
+  background: 'var(--accent, #4aa3df)',
 };
 
 const flagFreq: CSSProperties = {
@@ -352,5 +409,5 @@ const flagActiveTag: CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
   letterSpacing: '0.14em',
-  color: 'var(--accent, #f2c11d)',
+  color: 'var(--accent, #4aa3df)',
 };

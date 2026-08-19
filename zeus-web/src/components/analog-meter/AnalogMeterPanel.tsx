@@ -198,6 +198,10 @@ export interface AnalogMeterPanelProps {
   tileLocked?: boolean;
   workspaceLocked?: boolean;
   onToggleLock?: () => void;
+  /** Optional RX signal source override (dBm). When provided and finite it
+   *  replaces the meter-stream sample — the G2 layout uses this to follow
+   *  the ACTIVE receiver, since the meter stream carries RX1 only. */
+  sampleDbmOverride?: () => number | null;
 }
 
 export function AnalogMeterPanel({
@@ -205,6 +209,7 @@ export function AnalogMeterPanel({
   tileLocked,
   workspaceLocked,
   onToggleLock,
+  sampleDbmOverride,
 }: AnalogMeterPanelProps = {}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cfg = useAnalogMeterStore();
@@ -325,7 +330,8 @@ export function AnalogMeterPanel({
       // Pull the latest live readings without subscribing — getState() avoids
       // re-rendering the panel on every store change.
       const tx = useTxStore.getState();
-      s.rxDbm = sampleRxDbm();
+      const ov = sampleDbmOverride?.();
+      s.rxDbm = ov != null && Number.isFinite(ov) ? ov : sampleRxDbm();
       s.fwdW = tx.fwdWatts;
       s.swr = tx.swr;
 

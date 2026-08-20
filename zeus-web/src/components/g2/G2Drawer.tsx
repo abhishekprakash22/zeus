@@ -36,6 +36,10 @@ import { PsToggleButton } from '../PsToggleButton';
 import { CtunButton } from '../CtunButton';
 import { RecorderButton } from '../RecorderButton';
 import { DisplayPanel } from '../DisplayPanel';
+import { SplitButton, RitButton } from '../RitSplitButtons';
+import { DiversityToggleButton } from '../DiversityWindow';
+import { CwDecodeToggleButton } from '../CwDecodeWindow';
+import { TxPanel } from '../../layout/panels/TxPanel';
 import { BandButtons } from '../BandButtons';
 import { ModeBandwidth } from '../ModeBandwidth';
 import { FilterRibbon } from '../filter/FilterRibbon';
@@ -44,7 +48,7 @@ import { RadioSettingsPanel } from '../RadioSettingsPanel';
 import { MeterRenderer } from '../meter-group/MeterRenderer';
 import { MeterReadingId } from '../meters/meterCatalog';
 
-type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | null;
+type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
 const DRAWER_H = 108;
 
@@ -88,6 +92,22 @@ export function G2Drawer() {
           bottom edge, and scale the hosted transport buttons to touch size.
           Kept as a stylesheet (not conditional render in App) so toggling the
           layout never remounts the transport's children. */}
+      {controlsOpen ? (
+        <div className="g2-controls-extras">
+          <span className="g2-extras-label">SPLIT · RIT · DIV · CW · NIGHT</span>
+          <SplitButton />
+          <RitButton />
+          <DiversityToggleButton />
+          <CwDecodeToggleButton />
+          <button
+            type="button"
+            style={{ ...sheetKeyBtnFlat, ...(night ? { color: 'var(--accent, #4aa3df)', borderColor: 'var(--accent, #4aa3df)' } : null) }}
+            onClick={toggleNight}
+          >
+            NIGHT
+          </button>
+        </div>
+      ) : null}
       <button
         type="button"
         className={controlsOpen ? 'g2-controls-btn on' : 'g2-controls-btn'}
@@ -108,6 +128,30 @@ export function G2Drawer() {
            re-homed as a left panel the side button toggles. Same DOM, same
            handlers; only the dress changes, so nothing can drift out of
            sync with the desktop. */
+        .g2-controls-extras {
+          position: fixed;
+          left: 58px;
+          bottom: 128px;
+          z-index: 461;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 10px;
+          border: 1px solid var(--line, #32373f);
+          background: rgba(13, 17, 24, 0.97);
+          box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+        }
+        .g2-controls-extras button { min-height: 40px; min-width: 52px; }
+        .g2-extras-label {
+          position: absolute;
+          top: -14px;
+          left: 8px;
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 0.1em;
+          color: var(--fg-3, #6a727d);
+        }
         body.g2-controls-open .app.g2-layout .topbar-controls-shell {
           display: flex !important;
           position: fixed;
@@ -116,7 +160,7 @@ export function G2Drawer() {
           z-index: 460;
           width: 420px;
           max-width: calc(100vw - 120px);
-          max-height: calc(100vh - 200px);
+          max-height: calc(100vh - 280px);
           overflow: auto;
           padding: 10px;
           border-radius: 10px;
@@ -244,7 +288,9 @@ export function G2Drawer() {
                         ? 'NB · NR · DSP'
                         : sheet === 'ant'
                           ? 'RADIO'
-                          : 'SETUP · DISPLAY'}
+                          : sheet === 'setup'
+                            ? 'SETUP · DISPLAY'
+                            : 'TX · DRIVE / MIC'}
               </span>
               <button
                 type="button"
@@ -264,6 +310,7 @@ export function G2Drawer() {
               {sheet === 'dsp' && <DspPanel />}
               {sheet === 'ant' && <RadioSettingsPanel />}
               {sheet === 'setup' && <DisplayPanel />}
+              {sheet === 'tx' && <TxPanel />}
             </div>
           </div>
         </div>
@@ -291,7 +338,7 @@ export function G2Drawer() {
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
         <SheetKey label="SETUP" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
-        <SheetKey label="NIGHT" active={night} onTap={toggleNight} />
+        <SheetKey label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />
         <div className="g2-key" style={key}>
           <RecorderButton />
         </div>
@@ -357,6 +404,18 @@ const key: CSSProperties = {
   minWidth: 58,
   display: 'flex',
   alignItems: 'stretch',
+};
+
+const sheetKeyBtnFlat: CSSProperties = {
+  padding: '0 10px',
+  borderRadius: 7,
+  border: '1px solid var(--line, #32373f)',
+  background: 'var(--bg-2, #1c2129)',
+  color: 'var(--fg-1, #c3cad3)',
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: '0.06em',
+  cursor: 'pointer',
 };
 
 const sheetKeyBtn: CSSProperties = {

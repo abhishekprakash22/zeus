@@ -17,7 +17,7 @@
 // Esc / F11 exits count as the operator's decision and update the preference —
 // the button label stays truthful via the fullscreenchange event either way.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { G2_FRAME_H, G2_FRAME_W, useG2WorkspaceStore } from '../state/g2-workspace-store';
 
 const PREF_KEY = 'zeus.fullscreen.preferred';
@@ -39,12 +39,32 @@ function writePref(on: boolean) {
 export function FullscreenButton() {
   const [full, setFull] = useState<boolean>(!!document.fullscreenElement);
 
+  // Page teardown flag. On reload / navigation (every INSTALL & RESTART
+  // ritual included) Chromium exits fullscreen and fires fullscreenchange
+  // while the page is still alive — the listener below used to record that
+  // forced exit as operator intent and stomp the preference to 'off', so
+  // fullscreen never survived a restart (field report: "no persistence").
+  // Teardown exits are nobody's intent; the preference keeps its value.
+  const unloadingRef = useRef(false);
+  useEffect(() => {
+    const markUnloading = () => {
+      unloadingRef.current = true;
+    };
+    window.addEventListener('pagehide', markUnloading);
+    window.addEventListener('beforeunload', markUnloading);
+    return () => {
+      window.removeEventListener('pagehide', markUnloading);
+      window.removeEventListener('beforeunload', markUnloading);
+    };
+  }, []);
+
   useEffect(() => {
     const onChange = () => {
       const now = !!document.fullscreenElement;
       setFull(now);
-      // Any state change after load is operator intent (button, Esc, F11) —
-      // remember it.
+      // A LIVE state change is operator intent (button, Esc, F11) —
+      // remember it. An exit during page teardown is not (see above).
+      if (unloadingRef.current) return;
       writePref(now);
     };
     document.addEventListener('fullscreenchange', onChange);

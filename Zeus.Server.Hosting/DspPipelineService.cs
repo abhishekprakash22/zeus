@@ -6889,6 +6889,15 @@ public class DspPipelineService : BackgroundService,
                     : InvalidFrameBins(rx.WfDecBuf, displayPlan.Decimation, out _);
 
                 UpdateRxLo(ri, state);
+                // RX2 advertises ITS OWN zoom's Hz/pixel. The tick-level
+                // hzPerPixel above derives from the PRIMARY ZoomLevel, and
+                // stamping it here made RX1's zoom rescale RX2's display —
+                // the engine zoom was split per channel (Rx2ZoomLevel), but
+                // the frame header still leaked the primary's. RX3+ keep the
+                // global level, matching their engine-side seeding.
+                float secHzPerPixel = ri == 1
+                    ? (float)((double)sampleRate / Math.Max(1, state.Rx2ZoomLevel) / Width)
+                    : hzPerPixel;
                 var secFrame = new DisplayFrame(
                     Seq: NextDisplaySeq(),
                     TsUnixMs: nowMs,
@@ -6896,7 +6905,7 @@ public class DspPipelineService : BackgroundService,
                     BodyFlags: secFlags,
                     Width: secFrameWidth,
                     CenterHz: rx.LoHz,
-                    HzPerPixel: hzPerPixel * displayPlan.Decimation,
+                    HzPerPixel: secHzPerPixel * displayPlan.Decimation,
                     PanDb: secPanBins,
                     WfDb: secWfBins);
                 if (secFlags != DisplayBodyFlags.None)

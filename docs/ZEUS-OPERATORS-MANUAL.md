@@ -112,8 +112,10 @@ sheets with the full band, mode/bandwidth, and filter controls for the
 focused receiver. A compact FWD / SWR / ALC strip lives at the drawer's
 right end and reads the live TX meters. **NB·NR** opens the noise-blanker /
 noise-reduction panel and **RADIO** the radio (antenna) settings, both as
-touch sheets, **SETUP** the display settings, and **TX** the
-transmit panel (drive, mic, bandpass). The CONTROLS panel also carries a
+touch sheets, **DISPLAY** the display settings, and **TX** the
+transmit panel (drive, mic, bandpass). A second side button, **AUDIO
+PROC**, opens the TX audio processing panel (CFC, EQ, leveler) with the
+live TX stage meters. SPLIT lights a red SPLIT▸B tag on RX1's flag. The CONTROLS panel also carries a
 row with SPLIT, RIT, DIV, the CW decoder toggle, and NIGHT (dims the
 display for the dark shack). BAND/MODE/FILTER sheets close themselves after
 a pick (PIN keeps them open). Tap a flag's frequency for a numeric keypad

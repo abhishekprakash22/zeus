@@ -40,6 +40,8 @@ import { SplitButton, RitButton } from '../RitSplitButtons';
 import { DiversityToggleButton } from '../DiversityWindow';
 import { CwDecodeToggleButton } from '../CwDecodeWindow';
 import { TxPanel } from '../../layout/panels/TxPanel';
+import { TxFidelityPanel } from '../../layout/panels/TxFidelityPanel';
+import { TxMetersPanel } from '../../layout/panels/TxMetersPanel';
 import { BandButtons } from '../BandButtons';
 import { ModeBandwidth } from '../ModeBandwidth';
 import { FilterRibbon } from '../filter/FilterRibbon';
@@ -70,6 +72,7 @@ export function G2Drawer() {
     }
   };
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [audioProcOpen, setAudioProcOpen] = useState(false);
   const toggleControls = () => {
     setControlsOpen((v) => {
       document.body.classList.toggle('g2-controls-open', !v);
@@ -116,6 +119,20 @@ export function G2Drawer() {
       >
         CONTROLS
       </button>
+      <button
+        type="button"
+        className={audioProcOpen ? 'g2-controls-btn g2-audioproc-btn on' : 'g2-controls-btn g2-audioproc-btn'}
+        onClick={() => setAudioProcOpen((v) => !v)}
+        title="TX audio processing (CFC, EQ, leveler) and stage meters"
+      >
+        AUDIO PROC
+      </button>
+      {audioProcOpen ? (
+        <div className="g2-audioproc-panel">
+          <TxMetersPanel />
+          <TxFidelityPanel />
+        </div>
+      ) : null}
       <style>{`
         .g2-layout .transport { display: none !important; }
         /* G2 top-bar diet: the dense desktop control cluster (STEP / FRONT-END /
@@ -143,6 +160,14 @@ export function G2Drawer() {
           box-shadow: 0 12px 40px rgba(0,0,0,0.6);
         }
         .g2-controls-extras button { min-height: 40px; min-width: 52px; }
+        /* The transport buttons' engaged dress is scoped to the transport bar
+           on some themes — restate it here so SPLIT/RIT/DIV/CW visibly light
+           up in the extras row (field: 'pressing split does nothing' — it
+           worked, it just had no visible answer). */
+        .g2-controls-extras button.engaged {
+          color: var(--accent, #4aa3df) !important;
+          border-color: var(--accent, #4aa3df) !important;
+        }
         .g2-extras-label {
           position: absolute;
           top: -14px;
@@ -236,6 +261,25 @@ export function G2Drawer() {
           cursor: pointer;
         }
         .g2-controls-btn.on { color: var(--accent, #4aa3df); border-color: var(--accent, #4aa3df); }
+        .g2-audioproc-btn { top: 200px; height: 84px; }
+        .g2-audioproc-panel {
+          position: fixed;
+          left: 58px;
+          top: 40px;
+          z-index: 460;
+          width: 460px;
+          max-width: calc(100vw - 120px);
+          max-height: calc(100vh - 170px);
+          overflow: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding: 10px;
+          border-radius: 10px;
+          border: 1px solid var(--line, #32373f);
+          background: rgba(13, 17, 24, 0.97);
+          box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+        }
         /* Night mode: one key dims the whole glass for the dark shack. */
         body.g2-night .app.g2-layout { filter: brightness(0.55); }
         /* The drawer is position:fixed — reserve its height so the layout's
@@ -289,7 +333,7 @@ export function G2Drawer() {
                         : sheet === 'ant'
                           ? 'RADIO'
                           : sheet === 'setup'
-                            ? 'SETUP · DISPLAY'
+                            ? 'DISPLAY'
                             : 'TX · DRIVE / MIC'}
               </span>
               <button
@@ -337,7 +381,7 @@ export function G2Drawer() {
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
-        <SheetKey label="SETUP" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
+        <SheetKey label="DISPLAY" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
         <SheetKey label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />
         <div className="g2-key" style={key}>
           <RecorderButton />

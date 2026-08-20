@@ -225,6 +225,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const muted = useConnectionStore((s) => s.receivers[rxIndex]?.muted ?? false);
   const afGainDb = useConnectionStore((s) => s.receivers[rxIndex]?.afGainDb ?? 0);
   const agcTopDb = useConnectionStore((s) => s.agcTopDb);
+  const splitEnabled = useConnectionStore((s) => s.splitEnabled);
   const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
   const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
   const [keypadOpen, setKeypadOpen] = useState(false);
@@ -356,6 +357,9 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
             RX{rxIndex + 1}
           </span>
           {active ? <span style={flagActiveTag}>ACTIVE</span> : null}
+          {rxIndex === 0 && splitEnabled ? (
+            <span style={{ ...flagActiveTag, color: 'var(--tx, #e05656)' }}>SPLIT▸B</span>
+          ) : null}
         </div>
         <span
           style={{ ...flagFreq, cursor: 'pointer' }}
@@ -456,7 +460,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 max={12}
                 step={1}
                 value={afGainDb}
-                style={{ flex: 1 }}
+                style={{ flex: 1, minWidth: 0, width: '100%' }}
                 onChange={(e) => {
                   const db = Number(e.target.value);
                   void setReceiver(rxIndex, { afGainDb: db }).then(applyState).catch(() => {});
@@ -472,7 +476,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 max={120}
                 step={1}
                 value={agcTopDb}
-                style={{ flex: 1 }}
+                style={{ flex: 1, minWidth: 0, width: '100%' }}
                 onChange={(e) => {
                   const db = Number(e.target.value);
                   void setAgcTop(db).then(applyState).catch(() => {});
@@ -760,6 +764,8 @@ const keypadGo: CSSProperties = {
 const popover: CSSProperties = {
   marginTop: 6,
   padding: 8,
+  width: '100%',
+  boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
   gap: 8,
@@ -775,7 +781,8 @@ const popRow: CSSProperties = {
 };
 
 const popLabel: CSSProperties = {
-  width: 44,
+  width: 38,
+  flex: '0 0 38px',
   fontSize: 10,
   fontWeight: 800,
   letterSpacing: '0.08em',
@@ -783,7 +790,8 @@ const popLabel: CSSProperties = {
 };
 
 const popVal: CSSProperties = {
-  minWidth: 44,
+  flex: '0 0 40px',
+  minWidth: 0,
   textAlign: 'right',
   fontFamily: '"JetBrains Mono", Consolas, monospace',
   fontSize: 11,

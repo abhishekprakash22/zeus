@@ -56,12 +56,13 @@ const TICK_STRIDE_DB = 10;
 // pointer drag shifts both dbMin and dbMax in lockstep — Thetis-style, see
 // PanDisplay.cs:3684-3700. No independent min/max scaling; just an offset.
 // Sits inside the Panadapter container as an absolutely-positioned column.
-export function DbScale() {
-  const rxDbMin = useDisplaySettingsStore((s) => s.dbMin);
-  const rxDbMax = useDisplaySettingsStore((s) => s.dbMax);
+export function DbScale({ receiver = 'A' }: { receiver?: 'A' | 'B' } = {}) {
+  const isB = receiver === 'B';
+  const rxDbMin = useDisplaySettingsStore((s) => (isB ? s.rx2DbMin : s.dbMin));
+  const rxDbMax = useDisplaySettingsStore((s) => (isB ? s.rx2DbMax : s.dbMax));
   const txDbMin = useDisplaySettingsStore((s) => s.txDbMin);
   const txDbMax = useDisplaySettingsStore((s) => s.txDbMax);
-  const shiftDbRange = useDisplaySettingsStore((s) => s.shiftDbRange);
+  const shiftDbRange = useDisplaySettingsStore((s) => (isB ? s.shiftRx2DbRange : s.shiftDbRange));
   const shiftTxDbRange = useDisplaySettingsStore((s) => s.shiftTxDbRange);
   const moxOn = useTxStore((s) => s.moxOn);
   const tunOn = useTxStore((s) => s.tunOn);

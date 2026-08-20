@@ -269,8 +269,11 @@ export function Panadapter({
       // keeps the absolute dB window.
       const popOn = pop.popEnabled && !keyed;
       const popIntensity = popOn ? Math.max(0, Math.min(1, pop.popRenderIntensity / 100)) : 0;
-      const dbMin = popOn ? 0 : keyed ? s.txDbMin : s.dbMin;
-      const dbMax = popOn ? 1 : keyed ? s.txDbMax : s.dbMax;
+      // A standalone RX2 pane (G2 stack) draws with ITS OWN range — the
+      // waterfall was already per-receiver; this is the spectrum's half.
+      const ownRange = rxIndex === 1 && !stitched;
+      const dbMin = popOn ? 0 : keyed ? s.txDbMin : ownRange ? s.rx2DbMin : s.dbMin;
+      const dbMax = popOn ? 1 : keyed ? s.txDbMax : ownRange ? s.rx2DbMax : s.dbMax;
       const { r, g, b } = hexToRgbFloats(s.rxTraceColor);
       renderer.setTraceColor(r, g, b);
       renderer.setPopMode(popOn, popIntensity);
@@ -467,6 +470,8 @@ export function Panadapter({
       if (
         state.dbMin !== prev.dbMin ||
         state.dbMax !== prev.dbMax ||
+        state.rx2DbMin !== prev.rx2DbMin ||
+        state.rx2DbMax !== prev.rx2DbMax ||
         state.txDbMin !== prev.txDbMin ||
         state.txDbMax !== prev.txDbMax ||
         state.rxTraceColor !== prev.rxTraceColor
@@ -582,7 +587,9 @@ export function Panadapter({
           it (one global scale for the row). A STANDALONE secondary pane — the
           G2 layout's RX2, receiver-bound and neither stitched nor multiRx —
           is its own display and gets its own scale (same shared dB range). */}
-      {(rxIndex === 0 || (!stitched && !multiRx)) && !widebandDisplay && <DbScale />}
+      {(rxIndex === 0 || (!stitched && !multiRx)) && !widebandDisplay && (
+        <DbScale receiver={rxIndex === 1 ? 'B' : 'A'} />
+      )}
     </div>
   );
 }

@@ -123,7 +123,7 @@ VFO flag shows RX number, frequency, mode, filter width, and a live mini
 S-meter with S-point markings and an S readout (RX1 from the calibrated
 meter, RX2 estimated from its spectrum), highlighted on the active
 receiver. Both panes carry the dB scales with their level drags — on the spectrum
-and on the waterfall — plus ZOOM and a waterfall SPEED
+and on the waterfall, each receiver's levels fully independent — plus ZOOM and a waterfall SPEED
 multiplier docked bottom-right — each receiver zooms and scrolls
 independently. The flag S-meters carry a peak-hold tick, and the S-meter
 and filter cards can be closed with ✕ (restore pills appear top-right).

@@ -107,6 +107,7 @@ export const TX_DISPLAY_AVG_TAU_MAX_MS = 2000;
 
 const STORAGE_KEY = 'zeus.display.dbRange';
 const TX_STORAGE_KEY = 'zeus.display.txDbRange';
+const RX2_STORAGE_KEY = 'zeus.display.rx2DbRange';
 const WF_STORAGE_KEY = 'zeus.display.wfDbRange';
 const WF_TX_STORAGE_KEY = 'zeus.display.wfTxDbRange';
 const WF_SCROLL_SPEED_STORAGE_KEY = 'zeus.display.wfScrollSpeed';
@@ -283,6 +284,34 @@ function readSavedRange(): { dbMin: number; dbMax: number } {
     return { dbMin, dbMax };
   } catch {
     return { dbMin: FIXED_DB_MIN, dbMax: FIXED_DB_MAX };
+  }
+}
+
+function readSavedRx2Range(): { dbMin: number; dbMax: number } {
+  // RX2's pane range (G2 stacked layout). Falls back to the shared saved
+  // range so a fresh RX2 pane starts where RX1 sits.
+  try {
+    if (typeof localStorage === 'undefined') return readSavedRange();
+    const raw = localStorage.getItem(RX2_STORAGE_KEY);
+    if (!raw) return readSavedRange();
+    const parsed = JSON.parse(raw);
+    const dbMin = typeof parsed?.dbMin === 'number' ? parsed.dbMin : FIXED_DB_MIN;
+    const dbMax = typeof parsed?.dbMax === 'number' ? parsed.dbMax : FIXED_DB_MAX;
+    if (!(dbMin < dbMax) || !Number.isFinite(dbMin) || !Number.isFinite(dbMax)) {
+      return readSavedRange();
+    }
+    return { dbMin, dbMax };
+  } catch {
+    return readSavedRange();
+  }
+}
+
+function writeSavedRx2Range(dbMin: number, dbMax: number): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(RX2_STORAGE_KEY, JSON.stringify({ dbMin, dbMax }));
+  } catch {
+    // best-effort, in-memory state remains authoritative
   }
 }
 
@@ -489,6 +518,10 @@ export type DisplaySettingsState = {
   // the AUTO toggle (EMA-tracked).
   dbMin: number;
   dbMax: number;
+  // RX2's independent panadapter range (G2 stacked panes). The waterfall
+  // already reads per-receiver; this is the spectrum's missing half.
+  rx2DbMin: number;
+  rx2DbMax: number;
   // Waterfall dB window. Independent of the panadapter so the operator
   // can darken/brighten the waterfall colour mapping without disturbing
   // the panadapter's noise-floor view. Driven by its own DbScale slider.
@@ -607,6 +640,8 @@ export type DisplaySettingsState = {
   // drag DOWN raises both limits so the trace slides DOWN on the canvas.
   // Clamps absolute values to Thetis's ±200 dB window.
   shiftDbRange: (deltaDb: number) => void;
+  // Same as shiftDbRange but for RX2's independent panadapter range.
+  shiftRx2DbRange: (deltaDb: number) => void;
   // Same as shiftDbRange but for the TX-specific range.
   shiftTxDbRange: (deltaDb: number) => void;
   // Same as shiftDbRange but for the waterfall's independent range.
@@ -678,6 +713,8 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
   autoRange: false,
   dbMin: initialRange.dbMin,
   dbMax: initialRange.dbMax,
+  rx2DbMin: readSavedRx2Range().dbMin,
+  rx2DbMax: readSavedRx2Range().dbMax,
   wfDbMin: initialWfRange.wfDbMin,
   wfDbMax: initialWfRange.wfDbMax,
   wfTxDbMin: initialWfTxRange.wfTxDbMin,
@@ -1124,6 +1161,12 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
     set({ autoRange: false, dbMin: nextMin, dbMax: nextMax });
     writeSavedRange(nextMin, nextMax);
     scheduleDbRangeSave();
+  },
+  shiftRx2DbRange: (deltaDb) => {
+    const { rx2DbMin, rx2DbMax } = get();
+    const { min: nextMin, max: nextMax } = clampShift(rx2DbMin, rx2DbMax, deltaDb);
+    set({ rx2DbMin: nextMin, rx2DbMax: nextMax });
+    writeSavedRx2Range(nextMin, nextMax);
   },
   shiftTxDbRange: (deltaDb) => {
     const { txDbMin, txDbMax } = get();

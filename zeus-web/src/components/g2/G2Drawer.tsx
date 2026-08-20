@@ -129,6 +129,50 @@ export function G2Drawer() {
           row-gap: 12px;
           overflow: visible;
         }
+        /* Full-height glass (field request): the header row is retired from
+           the flow entirely — the panes take its space. Its surviving
+           tenants (brand, Disconnect) move INTO the CONTROLS panel; the
+           re-dressed controls shell needs the header alive in the DOM, so
+           the header collapses (fixed, zero-height, overflow visible)
+           rather than display:none. !important beats the inline
+           position/zIndex the header carries. */
+        .app.g2-layout .topbar {
+          position: fixed !important;
+          top: 0; left: 0;
+          height: 0 !important;
+          min-height: 0 !important;
+          padding: 0 !important;
+          border: 0 !important;
+          background: transparent !important;
+          overflow: visible !important;
+          z-index: 455 !important;
+        }
+        .app.g2-layout .topbar > .brand,
+        .app.g2-layout .topbar > .topbar-spacer,
+        .app.g2-layout .topbar > .topbar-divider,
+        .app.g2-layout .topbar > .topbar-connect { display: none !important; }
+        body.g2-controls-open .app.g2-layout .topbar > .brand {
+          display: flex !important;
+          position: fixed;
+          left: 58px;
+          top: 14px;
+          z-index: 461;
+          padding: 6px 10px;
+          border-radius: 8px;
+          border: 1px solid var(--line, #32373f);
+          background: rgba(13, 17, 24, 0.97);
+        }
+        body.g2-controls-open .app.g2-layout .topbar > .topbar-connect {
+          display: flex !important;
+          position: fixed;
+          left: 300px;
+          top: 14px;
+          z-index: 461;
+          padding: 4px 8px;
+          border-radius: 8px;
+          border: 1px solid var(--line, #32373f);
+          background: rgba(13, 17, 24, 0.97);
+        }
         .g2-controls-btn {
           position: fixed;
           left: 10px;

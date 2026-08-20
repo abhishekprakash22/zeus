@@ -33,15 +33,31 @@
 // is rebased to the server span exactly once per zoom step (the existing
 // 'rescale' path); this module only animates how that texture is VIEWED.
 //
-// Zoom is a single global setting applied to every receiver channel
-// (DspPipelineService applies SetZoom to RX1 and RX2 together and both frames
-// carry the same hzPerPixel), so one shared tween drives all spectrum
-// surfaces. During steady RX the loop is parked — zero idle cost.
-//
+// Zoom WAS a single global setting when this module was written; since the
+// per-receiver zoom split (Rx2ZoomLevel — engine, frames, and ZoomControl all
+// per-channel) that is only true for RX1 and the RX3+ receivers that share the
+// global level. The shared tween is driven by RX1's frames and serves exactly
+// those receivers. RX2 (own zoom level) and the Kiwi (own native span) must
+// NOT be viewed through it — their surfaces self-scale to their own frames'
+// Hz/pixel via followsSharedZoom / the *For accessors below. Before the
+// secondary frames carried their own hzPerPixel this coupling was invisible
+// (the ratio was accidentally 1); once the headers told the truth, viewing
+// RX2 through RX1's tween stretched RX2 with RX1's zoom and broke RX2's own.
+// During steady RX the loop is parked — zero idle cost.
+
 // Kill switch: VIEW_ZOOM_TWEEN_ENABLED = false (or TAU_MS = 0) snaps to the
 // target every tick, restoring the pre-animation stepping feel.
 
-import { KIWI_RECEIVER_INDEX } from './receiver-state';
+import { KIWI_RECEIVER_INDEX, rxIndexOf, type ReceiverKey } from './receiver-state';
+
+/** True when this receiver's surfaces follow the shared RX1-driven tween.
+ *  False for RX2 (independent Rx2ZoomLevel) and the Kiwi slice receiver
+ *  (independent native span) — those self-scale to their own frame Hz/pixel.
+ *  RX3+ share the global zoom level, so they follow the tween. */
+export function followsSharedZoom(receiver: ReceiverKey): boolean {
+  const idx = rxIndexOf(receiver);
+  return idx !== 1 && idx !== KIWI_RECEIVER_INDEX;
+}
 
 export const VIEW_ZOOM_TWEEN_ENABLED = true;
 
@@ -156,8 +172,24 @@ export function getDisplayedHzPerPixel(): number {
  *  `ownFrameHzPerPixel` is the receiver's latest frame Hz/pixel (<= 0 when none
  *  yet); a non-positive value falls back to the global displayed span. */
 export function displayedHzPerPixelFor(rxIndex: number, ownFrameHzPerPixel: number): number {
-  if (rxIndex === KIWI_RECEIVER_INDEX && ownFrameHzPerPixel > 0) return ownFrameHzPerPixel;
+  if (!followsSharedZoom(rxIndex) && ownFrameHzPerPixel > 0) return ownFrameHzPerPixel;
   return displayedHzPerPixel;
+}
+
+/** Viewport-shaped accessors for resolveSpectrumViewport's `viewHzPerPixel`:
+ *  the shared tween's value for receivers that follow it, `undefined` for
+ *  independent-zoom receivers (RX2, Kiwi) — undefined makes the viewport
+ *  unit-scale on the SOURCE frame's Hz/pixel, i.e. the receiver's own span,
+ *  which is exactly the self-scale these receivers need. Axis, passband,
+ *  cursor, and drag→Hz geometry all agree with the drawn content this way. */
+export function displayedViewHzPerPixelFor(receiver: ReceiverKey): number | undefined {
+  if (!followsSharedZoom(receiver)) return undefined;
+  return initialized ? displayedHzPerPixel : undefined;
+}
+
+export function targetViewHzPerPixelFor(receiver: ReceiverKey): number | undefined {
+  if (!followsSharedZoom(receiver)) return undefined;
+  return initialized ? targetHzPerPixel : undefined;
 }
 
 /** The server span the view is easing toward. */

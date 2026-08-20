@@ -140,7 +140,7 @@ export function FreqAxis({ receiver = 'A', stitched = false }: FreqAxisProps = {
         sourceCenterHz: Number(s.centerHz),
         sourceHzPerPixel: s.hzPerPixel,
         viewCenterHz: layoutTarget,
-        viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getTargetHzPerPixel() : undefined,
+        viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
       });
       if (!viewport) return;
       const spanHz = viewport.spanHz;
@@ -151,7 +151,7 @@ export function FreqAxis({ receiver = 'A', stitched = false }: FreqAxisProps = {
         sourceCenterHz: Number(s.centerHz),
         sourceHzPerPixel: s.hzPerPixel,
         viewCenterHz: vc.isInitialized() ? vc.getViewCenterHz() : Number(s.centerHz),
-        viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getDisplayedHzPerPixel() : undefined,
+        viewHzPerPixel: viewZoom.displayedViewHzPerPixelFor(receiver),
       });
       const view = liveViewport?.centerHz ?? layoutCenter;
       // Ticks were laid out around layoutCenter; sliding the strip by the
@@ -208,7 +208,7 @@ export function FreqAxis({ receiver = 'A', stitched = false }: FreqAxisProps = {
     sourceCenterHz: center,
     sourceHzPerPixel: hzPerPixel,
     viewCenterHz: vc.isInitialized() ? vc.getTargetCenterHz() : undefined,
-    viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getTargetHzPerPixel() : undefined,
+    viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
   });
   if (!viewport) return null;
   const spanHz = viewport.spanHz;

@@ -57,7 +57,7 @@ import {
   registerEstimatorConsumer,
   useSignalEnhanceStore,
 } from '../dsp/signal-estimator';
-import { getReceiverVfoHz, KIWI_RECEIVER_INDEX, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
+import { getReceiverVfoHz, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
 import { estimateRowFloorDb, forgetReceiverFloor, reportReceiverFloorDb } from '../dsp/floor-normalization';
 import { effectiveRxWfWindow, useRxDbWindowStore } from '../state/rx-db-window-store';
 import * as viewCenter from '../state/view-center';
@@ -308,7 +308,7 @@ export function Waterfall({
       // displayedHzPerPixelFor.
       const ownFrameHzPerPixel = selectDisplaySlice(useDisplayStore.getState(), receiver).hzPerPixel;
       const viewHzPerPixel =
-        rxIndex === KIWI_RECEIVER_INDEX
+        !viewZoom.followsSharedZoom(rxIndex)
           ? ownFrameHzPerPixel > 0
             ? viewZoom.displayedHzPerPixelFor(rxIndex, ownFrameHzPerPixel)
             : null

@@ -102,7 +102,7 @@ export function useRulerPanGesture(
         sourceCenterHz,
         sourceHzPerPixel: s.hzPerPixel,
         viewCenterHz: vc.isInitialized() ? vc.getTargetCenterHz() : undefined,
-        viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getTargetHzPerPixel() : undefined,
+        viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
       });
       if (viewport) {
         return {

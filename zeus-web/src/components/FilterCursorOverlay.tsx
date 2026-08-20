@@ -109,7 +109,7 @@ export function FilterCursorOverlay({ containerRef, receiver = 'A' }: FilterCurs
               sourceCenterHz: Number(slice.centerHz),
               sourceHzPerPixel: hzPerPixel,
               viewCenterHz: vc.isInitialized() ? vc.getViewCenterHz() : undefined,
-              viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getDisplayedHzPerPixel() : undefined,
+              viewHzPerPixel: viewZoom.displayedViewHzPerPixelFor(receiver),
             })
           : null;
       if (viewport && rectW > 0) {

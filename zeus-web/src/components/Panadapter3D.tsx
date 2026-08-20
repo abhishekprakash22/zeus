@@ -20,7 +20,7 @@ import { useDisplaySettingsStore, shouldTxAutoRange } from '../state/display-set
 import { useConnectionStore } from '../state/connection-store';
 import { enhanceInto, useSignalEnhanceStore } from '../dsp/signal-estimator';
 import { normalizeStitchedBins, stitchFloorShiftDb } from '../dsp/stitch-normalizer';
-import { getReceiverVfoHz, KIWI_RECEIVER_INDEX, receiverLabel, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
+import { getReceiverVfoHz, receiverLabel, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
 import * as viewCenter from '../state/view-center';
 import * as viewZoom from '../state/view-zoom';
 import { useTxStore } from '../state/tx-store';
@@ -226,7 +226,7 @@ export function Panadapter3D({
 
       const ownFrameHzPerPixel = selectDisplaySlice(useDisplayStore.getState(), receiver).hzPerPixel;
       const viewHzPerPixel =
-        rxIndex === KIWI_RECEIVER_INDEX
+        !viewZoom.followsSharedZoom(rxIndex)
           ? ownFrameHzPerPixel > 0
             ? viewZoom.displayedHzPerPixelFor(rxIndex, ownFrameHzPerPixel)
             : null

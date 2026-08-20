@@ -36,7 +36,7 @@ import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
 import { cancelDrawBusFrame, requestDrawBusFrame } from '../realtime/draw-bus';
-import { getReceiverVfoHz, KIWI_RECEIVER_INDEX, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
+import { getReceiverVfoHz, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
 import * as viewCenter from '../state/view-center';
 import * as viewZoom from '../state/view-zoom';
 import { usePanTuneGesture, type PanTuneGestureOptions } from '../util/use-pan-tune-gesture';
@@ -280,7 +280,7 @@ export function WaterfallHeightfield({
       // displayedHzPerPixelFor.
       const ownFrameHzPerPixel = selectDisplaySlice(useDisplayStore.getState(), receiver).hzPerPixel;
       const viewHzPerPixel =
-        rxIndex === KIWI_RECEIVER_INDEX
+        !viewZoom.followsSharedZoom(rxIndex)
           ? ownFrameHzPerPixel > 0
             ? viewZoom.displayedHzPerPixelFor(rxIndex, ownFrameHzPerPixel)
             : null

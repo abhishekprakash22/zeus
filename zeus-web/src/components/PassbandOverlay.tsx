@@ -138,7 +138,7 @@ export function PassbandOverlay({
       sourceCenterHz: Number(s.centerHz),
       sourceHzPerPixel: s.hzPerPixel,
       viewCenterHz: vc.isInitialized() ? vc.getViewCenterHz() : undefined,
-      viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getDisplayedHzPerPixel() : undefined,
+      viewHzPerPixel: viewZoom.displayedViewHzPerPixelFor(receiver),
     });
     if (!viewport) return null;
     const span = viewport.spanHz;
@@ -234,7 +234,7 @@ export function PassbandOverlay({
         sourceCenterHz: Number(s.centerHz),
         sourceHzPerPixel: s.hzPerPixel,
         viewCenterHz: vc.isInitialized() ? vc.getViewCenterHz() : undefined,
-        viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getDisplayedHzPerPixel() : undefined,
+        viewHzPerPixel: viewZoom.displayedViewHzPerPixelFor(receiver),
       });
       if (!viewport) return;
       const spanHz = viewport.spanHz;
@@ -317,7 +317,7 @@ export function PassbandOverlay({
     sourceCenterHz: frameCenter,
     sourceHzPerPixel: hzPerPixel,
     viewCenterHz: vc.isInitialized() ? vc.getViewCenterHz() : undefined,
-    viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getDisplayedHzPerPixel() : undefined,
+    viewHzPerPixel: viewZoom.displayedViewHzPerPixelFor(receiver),
   });
   if (!initialViewport) return null;
   const spanHz = initialViewport.spanHz;

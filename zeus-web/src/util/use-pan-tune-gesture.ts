@@ -219,7 +219,7 @@ export function resolvePanTuneTarget(
     sourceCenterHz: Number(ds.centerHz),
     sourceHzPerPixel: ds.hzPerPixel,
     viewCenterHz: vc.isInitialized() ? vc.getTargetCenterHz() : undefined,
-    viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getTargetHzPerPixel() : undefined,
+    viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
   });
   const radiusHzPerPixel = viewport?.hzPerPixel ?? ds.hzPerPixel;
   const maxRadiusHz = Math.min(radiusHzPerPixel * SNAP_RADIUS_PX, enhance.snapRadiusHz);
@@ -369,7 +369,7 @@ function readView(receiver: SpectrumReceiver = 'A'): { centerHz: number; spanHz:
     sourceCenterHz,
     sourceHzPerPixel: hzPerPixel,
     viewCenterHz: vc.isInitialized() ? vc.getTargetCenterHz() : undefined,
-    viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getTargetHzPerPixel() : undefined,
+    viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
   });
   if (viewport) {
     return {
@@ -550,7 +550,7 @@ export function usePanTuneGesture(
         sourceCenterHz,
         sourceHzPerPixel: s.hzPerPixel,
         viewCenterHz: panVc.isInitialized() ? panVc.getTargetCenterHz() : undefined,
-        viewHzPerPixel: viewZoom.isInitialized() ? viewZoom.getTargetHzPerPixel() : undefined,
+        viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
       });
       if (viewport) {
         return {

@@ -269,6 +269,10 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   // (capture phase) so the panadapter never sees it as a tune. The active
   // pane's taps pass through untouched.
   const onCapturePointerDown = (e: ReactPointerEvent) => {
+    // Taps born on the flag are the flag's business — it activates the
+    // receiver itself, so its controls work in ONE tap even on the
+    // inactive pane (field report: popover unreachable on RX2).
+    if ((e.target as HTMLElement).closest?.('[data-g2-flag]')) return;
     if (active) return;
     e.preventDefault();
     e.stopPropagation();
@@ -311,11 +315,13 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         <Waterfall receiver={receiver} speedFactor={speedFactor} />
       </div>
       <div
+        data-g2-flag
         style={{ ...flag, ...(active ? flagActive : null), pointerEvents: 'auto' }}
         onPointerDownCapture={(e) => {
-          // Flag taps are flag business — they must neither activate-swallow
-          // nor tune the pane underneath.
+          // Flag taps are flag business — they must not tune the pane
+          // underneath; they DO activate the receiver so one tap works.
           e.stopPropagation();
+          if (!active) setFocusedRxIndex(rxIndex);
         }}
       >
         <div style={flagRow}>
@@ -335,17 +341,18 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           {formatMHz(vfoHz)}
         </span>
         <div style={flagRow}>
+          <span style={flagMode}>{mode ?? ''}</span>
+          <span style={flagChip}>{formatWidth(widthHz)}</span>
           <span
-            style={{ ...flagMode, cursor: 'pointer' }}
+            style={{ ...flagChip, cursor: 'pointer', borderColor: 'var(--accent, #4aa3df)', color: 'var(--accent, #4aa3df)' }}
             onClick={() => {
               setKeypadOpen(false);
               setPopoverOpen((o) => !o);
             }}
-            title="receiver controls"
+            title="AF · AGC-T · mute for this receiver"
           >
-            {mode ?? ''} ⚙
+            CTRL
           </span>
-          <span style={flagChip}>{formatWidth(widthHz)}</span>
           <span
             style={{ ...flagChip, cursor: 'pointer' }}
             onClick={cycleStep}

@@ -115,7 +115,7 @@ noise-reduction panel and **RADIO** the radio (antenna) settings, both as
 touch sheets, **SETUP** the display settings, and **NIGHT** dims the whole
 display for the dark shack. BAND/MODE/FILTER sheets close themselves after
 a pick (PIN keeps them open). Tap a flag's frequency for a numeric keypad
-(direct entry in MHz or kHz), the mode line for that receiver's AF /
+(direct entry in MHz or kHz), the **CTRL** chip for that receiver's AF /
 AGC-T / mute controls, and the STEP chip to cycle the tune step. Pinch on
 either pane zooms that receiver alone. The desktop header's control
 cluster is hidden in this layout — those controls live on the flags and

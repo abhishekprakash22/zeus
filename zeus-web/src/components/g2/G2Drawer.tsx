@@ -50,6 +50,27 @@ const DRAWER_H = 108;
 
 export function G2Drawer() {
   const [sheet, setSheet] = useState<SheetId>(null);
+  // Sheets dismiss themselves after a selection (touch economy) unless pinned.
+  const [pinned, setPinned] = useState(false);
+  const [night, setNight] = useState(false);
+  const onSheetSelection = (e: { target: EventTarget }) => {
+    if (pinned) return;
+    // Only the pick-one sheets self-dismiss; DSP/RADIO/SETUP are panels the
+    // operator works inside, not menus.
+    if (sheet !== 'band' && sheet !== 'mode' && sheet !== 'filter') return;
+    const el = e.target as HTMLElement;
+    // A button tap inside the sheet content = a selection made; give the click
+    // a beat to land, then close. Sliders and inputs don't dismiss.
+    if (el.closest('button')) {
+      window.setTimeout(() => setSheet(null), 180);
+    }
+  };
+  const toggleNight = () => {
+    setNight((n) => {
+      document.body.classList.toggle('g2-night', !n);
+      return !n;
+    });
+  };
 
   const toggleSheet = (id: Exclude<SheetId, null>) =>
     setSheet((cur) => (cur === id ? null : id));
@@ -62,6 +83,13 @@ export function G2Drawer() {
           layout never remounts the transport's children. */}
       <style>{`
         .g2-layout .transport { display: none !important; }
+        /* G2 top-bar diet: the dense desktop control cluster (STEP / FRONT-END /
+           AGC / SQL / AF ...) is mouse chrome — its daily-use controls live on
+           the flags (AF, AGC-T, STEP) and in the drawer sheets. The brand,
+           status, and Disconnect stay. */
+        .g2-layout .topbar-controls-shell { display: none !important; }
+        /* Night mode: one key dims the whole glass for the dark shack. */
+        body.g2-night .app.g2-layout { filter: brightness(0.55); }
         /* The drawer is position:fixed — reserve its height so the layout's
            bottom edge (settings/SETUP chip, status corner) stays reachable
            above it instead of being buried under it (field report). */
@@ -114,11 +142,18 @@ export function G2Drawer() {
                           ? 'RADIO'
                           : 'SETUP · DISPLAY'}
               </span>
+              <button
+                type="button"
+                style={{ ...sheetClose, ...(pinned ? { color: 'var(--accent, #4aa3df)' } : null) }}
+                onClick={() => setPinned((v) => !v)}
+              >
+                {pinned ? 'PINNED' : 'PIN'}
+              </button>
               <button type="button" style={sheetClose} onClick={() => setSheet(null)}>
                 CLOSE
               </button>
             </div>
-            <div style={sheetContent}>
+            <div style={sheetContent} onClickCapture={onSheetSelection}>
               {sheet === 'band' && <BandButtons />}
               {sheet === 'mode' && <ModeBandwidth />}
               {sheet === 'filter' && <FilterRibbon embedded />}
@@ -152,6 +187,7 @@ export function G2Drawer() {
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
         <SheetKey label="SETUP" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
+        <SheetKey label="NIGHT" active={night} onTap={toggleNight} />
         <div className="g2-key" style={key}>
           <RecorderButton />
         </div>

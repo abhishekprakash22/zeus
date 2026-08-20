@@ -718,10 +718,13 @@ export function usePanTuneGesture(
       if (delta === 0) return;
       if (tryNudgeWidebandZoom(delta, anchorClientX)) return;
       const state = useConnectionStore.getState();
-      const cur = state.zoomLevel;
+      // Per-receiver zoom: a pinch on RX2's pane zooms RX2 alone.
+      const zoomRx = rxIndexOf(receiver) === 1 ? 1 : 0;
+      const cur = zoomRx === 1 ? state.rx2ZoomLevel : state.zoomLevel;
       const next = clampZoom(cur + delta);
       if (next === cur) return;
-      useConnectionStore.getState().setZoomLevel(next);
+      if (zoomRx === 1) useConnectionStore.getState().setRx2ZoomLevel(next);
+      else useConnectionStore.getState().setZoomLevel(next);
       zoomInflight?.abort();
       const ctrl = new AbortController();
       zoomInflight = ctrl;
@@ -729,10 +732,9 @@ export function usePanTuneGesture(
         rxIndexOf(receiver) === 0 && rxIndexOf(tuneReceiver) === 0
           ? centerCtunForZoomIn(cur, next, ctrl.signal)
           : null;
-      // Zoom is global — re-centre the Kiwi slice on its dial too (self-guards on
-      // CTUN + Kiwi-enabled + zoom-in), whichever panel the wheel is over.
-      centerKiwiForZoomIn(cur, next);
-      setZoom(next, 0, ctrl.signal)
+      // The Kiwi slice mirrors only the classic RX1/global zoom.
+      if (zoomRx === 0) centerKiwiForZoomIn(cur, next);
+      setZoom(next, zoomRx, ctrl.signal)
         .then((s) => {
           if (!ctrl.signal.aborted) {
             useConnectionStore.getState().applyState(s);

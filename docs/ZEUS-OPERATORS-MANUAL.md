@@ -112,7 +112,14 @@ sheets with the full band, mode/bandwidth, and filter controls for the
 focused receiver. A compact FWD / SWR / ALC strip lives at the drawer's
 right end and reads the live TX meters. **NB·NR** opens the noise-blanker /
 noise-reduction panel and **RADIO** the radio (antenna) settings, both as
-touch sheets, and **SETUP** the display settings. The keys stretch to
+touch sheets, **SETUP** the display settings, and **NIGHT** dims the whole
+display for the dark shack. BAND/MODE/FILTER sheets close themselves after
+a pick (PIN keeps them open). Tap a flag's frequency for a numeric keypad
+(direct entry in MHz or kHz), the mode line for that receiver's AF /
+AGC-T / mute controls, and the STEP chip to cycle the tune step. Pinch on
+either pane zooms that receiver alone. The desktop header's control
+cluster is hidden in this layout — those controls live on the flags and
+in the sheets. The keys stretch to
 fill the drawer edge to edge. Receivers split the glass 50/50 when RX2
 is enabled; with RX2 off, RX1 takes the whole display. Drag the bar
 inside each pane to set its spectrum/waterfall ratio. The analog S-meter

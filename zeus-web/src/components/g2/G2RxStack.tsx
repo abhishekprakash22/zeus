@@ -40,7 +40,8 @@ import {
   rxIndexOf,
   type ReceiverKey,
 } from '../../state/receiver-state';
-import { setReceiverMuted } from '../../api/client';
+import { setReceiverMuted, setReceiverLo, setReceiver, setAgcTop } from '../../api/client';
+import { useToolbarFavoritesStore } from '../../state/toolbar-favorites-store';
 
 const RATIO_H = 10;
 
@@ -200,6 +201,30 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const widthHz = useConnectionStore(
     (s) => getReceiverFilterHighHz(s, receiver) - getReceiverFilterLowHz(s, receiver),
   );
+  const applyState = useConnectionStore((s) => s.applyState);
+  const muted = useConnectionStore((s) => s.receivers[rxIndex]?.muted ?? false);
+  const afGainDb = useConnectionStore((s) => s.receivers[rxIndex]?.afGainDb ?? 0);
+  const agcTopDb = useConnectionStore((s) => s.agcTopDb);
+  const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
+  const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
+  const [keypadOpen, setKeypadOpen] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [entry, setEntry] = useState('');
+  const commitEntry = (mult: number) => {
+    const v = parseFloat(entry);
+    if (Number.isFinite(v) && v > 0) {
+      void setReceiverLo(rxIndex, Math.round(v * mult))
+        .then(applyState)
+        .catch(() => {});
+    }
+    setEntry('');
+    setKeypadOpen(false);
+  };
+  const cycleStep = () => {
+    const steps = [10, 100, 500, 1000, 5000, 10000];
+    const i = steps.indexOf(stepHz);
+    setStepHz(steps[(i + 1) % steps.length] ?? 100);
+  };
   // Flag S-bar signal. RX1 gets the REAL calibrated meter-stream peak (the
   // same source the desktop S-meter trusts). RX2 has no meter stream, so it
   // gets the display slice's PEAK around its own tune line — a mean over the
@@ -285,17 +310,49 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       <div style={paneWaterfall}>
         <Waterfall receiver={receiver} speedFactor={speedFactor} />
       </div>
-      <div style={{ ...flag, ...(active ? flagActive : null) }}>
+      <div
+        style={{ ...flag, ...(active ? flagActive : null), pointerEvents: 'auto' }}
+        onPointerDownCapture={(e) => {
+          // Flag taps are flag business — they must neither activate-swallow
+          // nor tune the pane underneath.
+          e.stopPropagation();
+        }}
+      >
         <div style={flagRow}>
           <span style={{ ...flagBadge, ...(active ? flagBadgeActive : null) }}>
             RX{rxIndex + 1}
           </span>
           {active ? <span style={flagActiveTag}>ACTIVE</span> : null}
         </div>
-        <span style={flagFreq}>{formatMHz(vfoHz)}</span>
+        <span
+          style={{ ...flagFreq, cursor: 'pointer' }}
+          onClick={() => {
+            setPopoverOpen(false);
+            setKeypadOpen((o) => !o);
+          }}
+          title="tap to type a frequency"
+        >
+          {formatMHz(vfoHz)}
+        </span>
         <div style={flagRow}>
-          <span style={flagMode}>{mode ?? ''}</span>
+          <span
+            style={{ ...flagMode, cursor: 'pointer' }}
+            onClick={() => {
+              setKeypadOpen(false);
+              setPopoverOpen((o) => !o);
+            }}
+            title="receiver controls"
+          >
+            {mode ?? ''} ⚙
+          </span>
           <span style={flagChip}>{formatWidth(widthHz)}</span>
+          <span
+            style={{ ...flagChip, cursor: 'pointer' }}
+            onClick={cycleStep}
+            title="tune step — tap to cycle"
+          >
+            STEP {stepHz >= 1000 ? `${stepHz / 1000}k` : stepHz}
+          </span>
         </div>
         <div style={sBarRow}>
           <div style={sBarShell}>
@@ -316,6 +373,90 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
             </span>
           ))}
         </div>
+        {keypadOpen ? (
+          <div style={keypad}>
+            <div style={keypadEntry}>{entry || '—'}</div>
+            <div style={keypadGrid}>
+              {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '⌫'].map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  style={keypadKey}
+                  onClick={() =>
+                    k === '⌫'
+                      ? setEntry((v) => v.slice(0, -1))
+                      : setEntry((v) => (k === '.' && v.includes('.') ? v : v + k))
+                  }
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+            <div style={keypadGrid2}>
+              <button type="button" style={keypadGo} onClick={() => commitEntry(1e6)}>
+                MHz
+              </button>
+              <button type="button" style={keypadGo} onClick={() => commitEntry(1e3)}>
+                kHz
+              </button>
+              <button
+                type="button"
+                style={keypadKey}
+                onClick={() => {
+                  setEntry('');
+                  setKeypadOpen(false);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {popoverOpen ? (
+          <div style={popover}>
+            <label style={popRow}>
+              <span style={popLabel}>AF</span>
+              <input
+                type="range"
+                min={-30}
+                max={12}
+                step={1}
+                value={afGainDb}
+                style={{ flex: 1 }}
+                onChange={(e) => {
+                  const db = Number(e.target.value);
+                  void setReceiver(rxIndex, { afGainDb: db }).then(applyState).catch(() => {});
+                }}
+              />
+              <span style={popVal}>{afGainDb} dB</span>
+            </label>
+            <label style={popRow}>
+              <span style={popLabel}>AGC-T</span>
+              <input
+                type="range"
+                min={20}
+                max={120}
+                step={1}
+                value={agcTopDb}
+                style={{ flex: 1 }}
+                onChange={(e) => {
+                  const db = Number(e.target.value);
+                  void setAgcTop(db).then(applyState).catch(() => {});
+                }}
+              />
+              <span style={popVal}>{agcTopDb}</span>
+            </label>
+            <button
+              type="button"
+              style={{ ...keypadKey, background: muted ? 'var(--accent, #4aa3df)' : undefined }}
+              onClick={() =>
+                void setReceiverMuted(rxIndex, !muted).then(applyState).catch(() => {})
+              }
+            >
+              {muted ? 'UNMUTE' : 'MUTE'}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -499,6 +640,94 @@ const paneWaterfall: CSSProperties = {
   display: 'flex',
 };
 
+const keypad: CSSProperties = {
+  marginTop: 6,
+  padding: 8,
+  borderRadius: 8,
+  border: '1px solid var(--line, #263041)',
+  background: 'rgba(10, 14, 20, 0.96)',
+};
+
+const keypadEntry: CSSProperties = {
+  marginBottom: 6,
+  padding: '4px 8px',
+  borderRadius: 5,
+  background: 'rgba(0,0,0,0.5)',
+  fontFamily: '"JetBrains Mono", Consolas, monospace',
+  fontSize: 18,
+  color: 'var(--fg-0, #e8ecf1)',
+  minHeight: 24,
+};
+
+const keypadGrid: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, 1fr)',
+  gap: 6,
+};
+
+const keypadGrid2: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr 56px',
+  gap: 6,
+  marginTop: 6,
+};
+
+const keypadKey: CSSProperties = {
+  minHeight: 40,
+  borderRadius: 6,
+  border: '1px solid var(--line, #32373f)',
+  background: 'var(--bg-2, #1c2129)',
+  color: 'var(--fg-0, #e8ecf1)',
+  fontSize: 16,
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+const keypadGo: CSSProperties = {
+  minHeight: 40,
+  borderRadius: 6,
+  border: '1px solid var(--accent, #4aa3df)',
+  background: 'transparent',
+  color: 'var(--accent, #4aa3df)',
+  fontSize: 14,
+  fontWeight: 800,
+  letterSpacing: '0.06em',
+  cursor: 'pointer',
+};
+
+const popover: CSSProperties = {
+  marginTop: 6,
+  padding: 8,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  borderRadius: 8,
+  border: '1px solid var(--line, #263041)',
+  background: 'rgba(10, 14, 20, 0.96)',
+};
+
+const popRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+};
+
+const popLabel: CSSProperties = {
+  width: 44,
+  fontSize: 10,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  color: 'var(--fg-2, #9aa3ae)',
+};
+
+const popVal: CSSProperties = {
+  minWidth: 44,
+  textAlign: 'right',
+  fontFamily: '"JetBrains Mono", Consolas, monospace',
+  fontSize: 11,
+  color: 'var(--fg-1, #c3cad3)',
+};
+
 const sPeak: CSSProperties = {
   position: 'absolute',
   top: -1,
@@ -665,7 +894,6 @@ const flag: CSSProperties = {
   borderRadius: 6,
   border: '1px solid var(--line, #32373f)',
   background: 'rgba(27, 30, 35, 0.88)',
-  pointerEvents: 'none',
 };
 
 const flagActive: CSSProperties = {

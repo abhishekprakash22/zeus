@@ -55,7 +55,12 @@ import { disconnectAll } from '../../util/disconnect-all';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
-const DRAWER_H = 108;
+// Two-deck drawer (option C, field-picked): a slim tab strip for the seven
+// page keys — they OPEN panels, tabs is what they are — over a full-height
+// transport row. Hierarchy by size: the row you tap in anger is the big one.
+const TABS_H = 32;
+const LOWER_H = 66;
+const DRAWER_H = TABS_H + LOWER_H; // sheets + layout padding anchor on this
 
 
 // DISC — the drawer's disconnect key (field request: a disconnect within
@@ -355,7 +360,7 @@ export function G2Drawer() {
         }
         .g2-drawer .g2-key button {
           height: 100%;
-          min-height: 84px;
+          min-height: 48px;
           font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.05em;
@@ -412,6 +417,16 @@ export function G2Drawer() {
       )}
 
       <div className="g2-drawer" style={drawer}>
+        <div style={tabsRow}>
+          <SheetTab label="BAND" active={sheet === 'band'} onTap={() => toggleSheet('band')} />
+          <SheetTab label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
+          <SheetTab label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
+          <SheetTab label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
+          <SheetTab label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
+          <SheetTab label="DISPLAY" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
+          <SheetTab label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />
+        </div>
+        <div style={lowerRow}>
         <div className="g2-key" style={key}>
           <MoxButton />
         </div>
@@ -427,13 +442,7 @@ export function G2Drawer() {
         <div className="g2-key" style={key}>
           <CtunButton />
         </div>
-        <SheetKey label="BAND" active={sheet === 'band'} onTap={() => toggleSheet('band')} />
-        <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
-        <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
-        <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
-        <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
-        <SheetKey label="DISPLAY" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
-        <SheetKey label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />
+        <span style={rowDivider} aria-hidden />
         <div className="g2-key" style={key}>
           <RecorderButton />
         </div>
@@ -442,12 +451,13 @@ export function G2Drawer() {
           <TxBar uid="g2-swr" reading={MeterReadingId.TxSwr} />
           <TxBar uid="g2-alc" reading={MeterReadingId.TxAlcPk} />
         </div>
+        </div>
       </div>
     </>
   );
 }
 
-function SheetKey({
+function SheetTab({
   label,
   active,
   onTap,
@@ -460,11 +470,7 @@ function SheetKey({
     <button
       type="button"
       onClick={onTap}
-      style={{
-        ...key,
-        ...sheetKeyBtn,
-        ...(active ? sheetKeyActive : null),
-      }}
+      style={{ ...tabBtn, ...(active ? tabActive : null) }}
     >
       {label}
     </button>
@@ -486,12 +492,54 @@ const drawer: CSSProperties = {
   bottom: 0,
   height: DRAWER_H,
   display: 'flex',
-  gap: 8,
-  padding: 10,
+  flexDirection: 'column',
   boxSizing: 'border-box',
-  background: '#1b1e23',
-  borderTop: '1px solid #32373f',
+  background: 'linear-gradient(180deg, #161c26, #10151d)',
+  borderTop: '1px solid #3d4552',
   zIndex: 60,
+};
+
+const tabsRow: CSSProperties = {
+  height: TABS_H,
+  flex: `0 0 ${TABS_H}px`,
+  display: 'flex',
+  alignItems: 'stretch',
+  padding: '0 10px',
+  borderBottom: '1px solid #202834',
+};
+
+const tabBtn: CSSProperties = {
+  padding: '0 16px',
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--fg-2, #8b95a3)',
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  cursor: 'pointer',
+};
+
+const tabActive: CSSProperties = {
+  color: 'var(--accent, #4aa3df)',
+  boxShadow: 'inset 0 -2px 0 var(--accent, #4aa3df)',
+  background: 'linear-gradient(180deg, transparent 55%, rgba(74,163,223,0.10))',
+};
+
+const lowerRow: CSSProperties = {
+  flex: 1,
+  display: 'flex',
+  alignItems: 'stretch',
+  gap: 8,
+  padding: 8,
+  boxSizing: 'border-box',
+  minHeight: 0,
+};
+
+const rowDivider: CSSProperties = {
+  width: 1,
+  margin: '6px 2px',
+  background: '#2a3341',
+  flex: '0 0 1px',
 };
 
 const key: CSSProperties = {
@@ -511,24 +559,6 @@ const sheetKeyBtnFlat: CSSProperties = {
   fontWeight: 800,
   letterSpacing: '0.06em',
   cursor: 'pointer',
-};
-
-const sheetKeyBtn: CSSProperties = {
-  alignItems: 'center',
-  justifyContent: 'center',
-  border: '1px solid #32373f',
-  borderRadius: 9,
-  background: '#24282e',
-  color: '#e8ecf1',
-  fontSize: 13,
-  fontWeight: 700,
-  letterSpacing: '0.05em',
-  cursor: 'pointer',
-};
-
-const sheetKeyActive: CSSProperties = {
-  borderColor: 'var(--accent, #4aa3df)',
-  color: 'var(--accent, #4aa3df)',
 };
 
 const txStrip: CSSProperties = {

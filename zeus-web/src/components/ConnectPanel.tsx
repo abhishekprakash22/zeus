@@ -50,9 +50,6 @@ import {
   connect as apiConnect,
   connectP2 as apiConnectP2,
   connectP3 as apiConnectP3,
-  disconnect as apiDisconnect,
-  disconnectP2 as apiDisconnectP2,
-  disconnectP3 as apiDisconnectP3,
   reclaimRadio,
   fetchRadios,
   fetchProtocol3Presence,
@@ -77,6 +74,7 @@ import {
   type BoardKind,
 } from '../api/radio';
 import { getAudioClient } from '../audio/audio-client';
+import { disconnectAll } from '../util/disconnect-all';
 import { useConnectionStore } from '../state/connection-store';
 import { flushLayoutsBeforeQuit } from '../state/layout-store';
 import { useRadioStore } from '../state/radio-store';
@@ -1079,14 +1077,9 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
     setInflight(true);
     setError(null);
     try {
-      try { await apiDisconnectP3(); } catch { /* may be P1/P2 */ }
-      try { await apiDisconnect(); } catch { /* may be P2 */ }
-      try { await apiDisconnectP2(); } catch { /* may have been P1 */ }
-      const fresh = await fetchState();
-      applyState(fresh);
-      hydrateTxFromState(fresh);
-      setBoardId(null);
-      setConnectedProtocol(null);
+      // Shared with the G2 drawer's DISC key (util/disconnect-all.ts) so the
+      // protocol cascade and store resets can never drift between the two.
+      await disconnectAll();
       setRadios(null);
     } catch (err) {
       setError(errorMessage(err));

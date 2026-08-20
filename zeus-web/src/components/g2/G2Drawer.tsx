@@ -27,7 +27,7 @@
 // while the drawer is mounted — App leaves it in the tree so switching the
 // layout off restores the desktop chrome with zero remount churn.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { MoxButton } from '../MoxButton';
 import { TunButton } from '../TunButton';
@@ -49,10 +49,59 @@ import { DspPanel } from '../DspPanel';
 import { RadioSettingsPanel } from '../RadioSettingsPanel';
 import { MeterRenderer } from '../meter-group/MeterRenderer';
 import { MeterReadingId } from '../meters/meterCatalog';
+import { useConnectionStore } from '../../state/connection-store';
+import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
+import { disconnectAll } from '../../util/disconnect-all';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
 const DRAWER_H = 108;
+
+
+// DISC — the drawer's disconnect key (field request: a disconnect within
+// reach, just above the settings keys, without opening the CONTROLS panel).
+// Same verb as ConnectPanel's Disconnect (util/disconnect-all.ts). A first
+// tap arms SURE? for 3 s so a stray tap on glass can't drop the session;
+// when the TX audio profile has unsaved live edits the armed label says so
+// (the panel's save-first prompt needs the panel — this key is the quick
+// exit and makes the cost visible instead).
+function DisconnectKey({ keyStyle }: { keyStyle: CSSProperties }) {
+  const connected = useConnectionStore((s) => s.status === 'Connected');
+  const dirty = useTxAudioProfileStore((s) => s.dirty);
+  const [armed, setArmed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  if (!connected) return null;
+  const onTap = () => {
+    if (!armed) {
+      setArmed(true);
+      timer.current = setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    if (timer.current) clearTimeout(timer.current);
+    setArmed(false);
+    void disconnectAll().catch(() => {});
+  };
+  return (
+    <div className="g2-key" style={keyStyle}>
+      <button
+        type="button"
+        onClick={onTap}
+        style={{
+          width: '100%',
+          height: '100%',
+          border: armed ? '1px solid var(--tx, #e05656)' : undefined,
+          color: armed ? 'var(--tx, #e05656)' : undefined,
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+        }}
+        title="Disconnect from the radio"
+      >
+        {armed ? (dirty ? 'UNSAVED·SURE?' : 'SURE?') : 'DISC'}
+      </button>
+    </div>
+  );
+}
 
 export function G2Drawer() {
   const [sheet, setSheet] = useState<SheetId>(null);
@@ -380,6 +429,7 @@ export function G2Drawer() {
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
+        <DisconnectKey keyStyle={key} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
         <SheetKey label="DISPLAY" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
         <SheetKey label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />

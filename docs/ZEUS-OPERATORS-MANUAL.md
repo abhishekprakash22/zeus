@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.110**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.137**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -118,9 +118,14 @@ PROC**, opens the TX audio processing panel (CFC, EQ, leveler) with the
 live TX stage meters. SPLIT lights a red SPLIT▸B tag on RX1's flag. The CONTROLS panel also carries a
 row with SPLIT, RIT, DIV, the CW decoder toggle, and NIGHT (dims the
 display for the dark shack). BAND/MODE/FILTER sheets close themselves after
-a pick (PIN keeps them open). Tap a flag's frequency for a numeric keypad
-(direct entry in MHz or kHz), the **CTRL** chip for that receiver's AF /
-AGC-T / mute controls, and the STEP chip to cycle the tune step. Pinch on
+a pick (PIN keeps them open).a pick (PIN keeps them open). Each pane's flag carries the real VFO
+readout — scroll the wheel over a digit to step that decade, or click the
+digits to type a frequency (kHz) inline — plus the **CTRL** chip for that
+receiver's AF / AGC-T / mute controls and the STEP chip to cycle the tune
+step. RX2's waterfall wears the same enhanced texture as RX1's, built from
+its own band. A DISC key sits above RADIO in the drawer — tap once to arm
+(SURE?), tap again within 3 s to disconnect; if TX-audio profile edits are
+unsaved the armed key says so. Pinch on
 either pane zooms that receiver alone. The desktop header's control
 cluster is re-homed: the **CONTROLS** button on the left edge opens the
 full set (STEP, FRONT-END, AGC, SQL, AF, ROGER, VIEW...) as a touch

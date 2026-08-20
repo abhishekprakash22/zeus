@@ -129,15 +129,13 @@ export function Panadapter3D({
           stitchSlot ^= 1;
         }
       }
-      // Primary only — the estimator floor is a singleton trained on RxId-0
-      // frames (see Waterfall.tsx); secondary traces stay raw.
-      if (!useSignalEnhanceStore.getState().popEnabled || keyed || rxIndex !== 0) return source;
+      if (!useSignalEnhanceStore.getState().popEnabled || keyed) return source;
       let buf = enhScratch[enhSlot];
       if (!buf || buf.length !== source.length) {
         buf = new Float32Array(source.length);
         enhScratch[enhSlot] = buf;
       }
-      enhanceInto(source, buf);
+      enhanceInto(source, buf, null, rxIndex);
       enhSlot ^= 1;
       return buf;
     };

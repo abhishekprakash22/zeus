@@ -67,6 +67,7 @@ import {
   optimisticSetReceiverFilter,
   optimisticSetReceiverPreset,
   postReceiverFilter,
+  rxIndexOf,
 } from '../../state/receiver-state';
 import { formatCutOffset, formatFilterWidth, nudgeStepHz } from './filterPresets';
 import { receiverColorByIndex } from '../spectrumReceiverColor';
@@ -367,9 +368,9 @@ function setSelectedFilterState(
 }
 
 function sharedNoiseFloorForReceiver(receiver: SpectrumReceiver): Float32Array | null {
-  // The shared estimator is currently fed from RX1 display frames. Do not mix
-  // that floor with RX2 bins; RX2 falls back to the mini-pan's local floor.
-  return receiver === 'A' ? getNoiseFloor() : null;
+  // Per-receiver estimator bank: each receiver's own floor, trained from its
+  // own display frames (display-store banks maybeUpdateEstimator by rxId).
+  return getNoiseFloor(rxIndexOf(receiver));
 }
 
 // Snap a dragged edge onto the nearest detected carrier when it falls inside
@@ -1189,7 +1190,7 @@ function FilterMiniPanSurface({
         // Measure on the time-averaged spectrum once it exists (stable width);
         // fall back to the live frame for the very first frames.
         const measSpec = avgDb && avgDb.length === panDb.length ? avgDb : panDb;
-        const peaks = detectPeaks(panDb, dCenter, frameHzPerPixel)
+        const peaks = detectPeaks(panDb, dCenter, frameHzPerPixel, rxIndexOf(receiver))
           .filter((p) => p.snrDb >= BRACKET_MIN_SNR_DB)
           .slice(0, BRACKET_MAX); // detectPeaks returns strongest-first
         const drawnBands: Array<{ loPx: number; hiPx: number }> = [];
@@ -1200,7 +1201,7 @@ function FilterMiniPanSurface({
           // Energy extent on the AVERAGED spectrum (the confidence-aware, gap-
           // tolerant walk snap uses), then refine to the ITU 99%-power occupied
           // bandwidth — the signal's true transmitted width, not noisy skirts.
-          const ext = signalExtentHz(measSpec, dCenter, frameHzPerPixel, p.hz, EDGE_ANCHOR_HZ);
+          const ext = signalExtentHz(measSpec, dCenter, frameHzPerPixel, p.hz, EDGE_ANCHOR_HZ, rxIndexOf(receiver));
           if (!ext) continue;
           let loEdgeHz = ext.loHz;
           let hiEdgeHz = ext.hiHz;
@@ -1733,7 +1734,7 @@ function FilterMiniPanSurface({
     const lo = vfo + fitCwOff;
     const winLoHz = lo + filterWindowLoOffsetHz(active.filterLowHz, active.filterHighHz, spanHz);
     const dCenter = Number(d.centerHz);
-    const peaks = detectPeaks(d.panDb, dCenter, d.hzPerPixel).filter((p) => p.snrDb >= BRACKET_MIN_SNR_DB);
+    const peaks = detectPeaks(d.panDb, dCenter, d.hzPerPixel, rxIndexOf(active.receiver)).filter((p) => p.snrDb >= BRACKET_MIN_SNR_DB);
     let best: DetectedPeak | null = null;
     let bestDist = FIT_HIT_PX;
     for (const p of peaks) {
@@ -1742,7 +1743,7 @@ function FilterMiniPanSurface({
       if (dist < bestDist) { bestDist = dist; best = p; }
     }
     if (!best) return false;
-    const ext = signalExtentHz(d.panDb, dCenter, d.hzPerPixel, best.hz, EDGE_ANCHOR_HZ);
+    const ext = signalExtentHz(d.panDb, dCenter, d.hzPerPixel, best.hz, EDGE_ANCHOR_HZ, rxIndexOf(active.receiver));
     if (!ext) return false;
     // Keep the fit on the active mode's sideband — a signal on the wrong side of
     // the carrier is unreachable here without retuning, so bail rather than flip
@@ -1797,7 +1798,7 @@ function FilterMiniPanSurface({
     {
       const d = selectDisplaySlice(useDisplayStore.getState(), active.receiver);
       if (d.panDb && d.hzPerPixel > 0 && sharedNoiseFloorForReceiver(active.receiver) !== null) {
-        peaks = detectPeaks(d.panDb, Number(d.centerHz), d.hzPerPixel);
+        peaks = detectPeaks(d.panDb, Number(d.centerHz), d.hzPerPixel, rxIndexOf(active.receiver));
       }
     }
 

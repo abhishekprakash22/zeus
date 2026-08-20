@@ -262,6 +262,11 @@ export const useDisplayStore = create<DisplayState>((set) => ({
     // frame's geometry and payload, and keeps the trace and waterfall sourced from
     // the same (real) frames, so they stay in lockstep (issue #597).
     if (!clean.panValid && !clean.wfValid) return;
+    // Train the per-receiver estimator bank from EVERY receiver's frames
+    // (maybeUpdateEstimator banks by clean.rxId and self-gates on Pop/Snap/
+    // consumers). Historically only the primary fall-through trained it, so
+    // the singleton bank knew only RX1 — the root of the RX2-waterfall saga.
+    maybeUpdateEstimator(clean);
     const nextSlice = sliceFromFrame(clean);
     const rxId = clean.rxId;
 
@@ -282,10 +287,6 @@ export const useDisplayStore = create<DisplayState>((set) => ({
       return;
     }
 
-    // Advance the shared noise-floor tracker BEFORE notifying subscribers, so
-    // the panadapter/waterfall enhance this frame against this frame's floor.
-    // No-op (zero cost) unless Signal Pop or Snap is enabled.
-    maybeUpdateEstimator(clean);
     set({
       ...nextSlice,
     });

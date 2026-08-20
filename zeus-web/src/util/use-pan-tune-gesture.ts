@@ -237,6 +237,7 @@ export function resolvePanTuneTarget(
     maxRadiusHz,
     sticky,
     hysteresisHz,
+    rxIdx,
   );
   if (liveHz != null) {
     lastSnapHz.set(rxIdx, liveHz);

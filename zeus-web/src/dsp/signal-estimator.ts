@@ -1182,6 +1182,70 @@ let hist: Int32Array | null = null; // quantized dB histogram for ordered-statis
 let geomKey = '';
 let lastHzPerPixel = 0;
 
+// ---------------------------------------------------------------------------
+// Per-receiver estimator banks. The mutable state above is ONE register file;
+// historically it was a process singleton trained only on RX1's frames, which
+// meant a secondary receiver's rows enhanced against RX1's floor wore RX1's
+// band (the RX2-waterfall saga) and RX2's snap thresholds read RX1's floor.
+// Rather than thread ~16 arrays through every internal function, the registers
+// stay as-is and useBank() swaps the whole file when the caller's receiver
+// changes — a register-file save/restore keyed by rx index. Every internal
+// function remains byte-identical; only the exported entry points declare
+// which receiver they speak for (trailing optional rx, default 0, so every
+// existing caller keeps its meaning).
+type EstimatorBank = {
+  floor: Float32Array | null;
+  quietRef: Float32Array | null;
+  signalHold: Float32Array | null;
+  signalConfidence: Float32Array | null;
+  signalStationarity: Float32Array | null;
+  signalLevelEma: Float32Array | null;
+  signalLevelDev: Float32Array | null;
+  previousSnr: Float32Array | null;
+  ridgeMean: Float32Array | null;
+  signalTexture: Float32Array | null;
+  visualAgcHist: Int32Array | null;
+  snapHistorySnr: Float32Array | null;
+  snapHistorySpec: Float32Array | null;
+  hist: Int32Array | null;
+  geomKey: string;
+  lastHzPerPixel: number;
+};
+
+const estimatorBanks = new Map<number, EstimatorBank>();
+let activeBank = 0;
+
+function saveActiveBank(): void {
+  estimatorBanks.set(activeBank, {
+    floor, quietRef, signalHold, signalConfidence, signalStationarity,
+    signalLevelEma, signalLevelDev, previousSnr, ridgeMean, signalTexture,
+    visualAgcHist, snapHistorySnr, snapHistorySpec, hist, geomKey, lastHzPerPixel,
+  });
+}
+
+function useBank(rx: number): void {
+  if (rx === activeBank) return;
+  saveActiveBank();
+  const b = estimatorBanks.get(rx);
+  floor = b?.floor ?? null;
+  quietRef = b?.quietRef ?? null;
+  signalHold = b?.signalHold ?? null;
+  signalConfidence = b?.signalConfidence ?? null;
+  signalStationarity = b?.signalStationarity ?? null;
+  signalLevelEma = b?.signalLevelEma ?? null;
+  signalLevelDev = b?.signalLevelDev ?? null;
+  previousSnr = b?.previousSnr ?? null;
+  ridgeMean = b?.ridgeMean ?? null;
+  signalTexture = b?.signalTexture ?? null;
+  visualAgcHist = b?.visualAgcHist ?? null;
+  snapHistorySnr = b?.snapHistorySnr ?? null;
+  snapHistorySpec = b?.snapHistorySpec ?? null;
+  hist = b?.hist ?? null;
+  geomKey = b?.geomKey ?? '';
+  lastHzPerPixel = b?.lastHzPerPixel ?? 0;
+  activeBank = rx;
+}
+
 /** A floor estimate is only valid for the geometry it was built on. Width and
  *  Hz/pixel changes (zoom, sample rate) re-scale the window and bin layout, so
  *  re-converge in one frame (EMA=1). A plain retune does NOT reset — the
@@ -1191,6 +1255,7 @@ function makeGeomKey(width: number, hzPerPixel: number): string {
 }
 
 type EstimatorFrame = {
+  rxId?: number;
   panDb: Float32Array | null;
   panValid: boolean;
   width: number;
@@ -1222,6 +1287,7 @@ export function registerEstimatorConsumer(): () => void {
  *  before notifying subscribers so the same-frame enhance sees this frame's
  *  floor. */
 export function maybeUpdateEstimator(f: EstimatorFrame): void {
+  useBank(f.rxId ?? 0);
   const st = useSignalEnhanceStore.getState();
   if (!st.popEnabled && !st.snapEnabled && !st.autoProfileEnabled && estimatorConsumers === 0) return;
   if (!f.panValid || !f.panDb || f.panDb.length === 0) return;
@@ -1441,7 +1507,8 @@ function resetSnapHistory(): void {
  *  or null when nothing has been remembered yet. Reuses the snap cluster/edge
  *  logic: bins with held energy read above the floor exactly as a live signal
  *  would, so computeSnapToLineHz finds and edge-aligns them. Read-only. */
-export function getSnapHistorySpectrum(): Float32Array | null {
+export function getSnapHistorySpectrum(rx = 0): Float32Array | null {
+  useBank(rx);
   const f = floor;
   const h = snapHistorySnr;
   if (f === null || h === null || h.length !== f.length) return null;
@@ -1460,14 +1527,16 @@ export function getSnapHistorySpectrum(): Float32Array | null {
 
 /** Current per-bin floor, or null before the first frame. Read-only — callers
  *  must not mutate it. */
-export function getNoiseFloor(): Float32Array | null {
+export function getNoiseFloor(rx = 0): Float32Array | null {
+  useBank(rx);
   return floor;
 }
 
 /** Current 0..1 signal confidence map, or null before Pop has accumulated it.
  *  Read-only. Values near 1 mean the bin has repeated/neighbour-supported
  *  signal energy; values near 0 are noise or one-frame speckles. */
-export function getSignalConfidence(): Float32Array | null {
+export function getSignalConfidence(rx = 0): Float32Array | null {
+  useBank(rx);
   return signalConfidence;
 }
 
@@ -1476,19 +1545,23 @@ export function getSignalConfidence(): Float32Array | null {
  *  (a carrier/heterodyne); values near 0 mean it swings (voice/AM sidebands or
  *  noise). This is the carrier-vs-voice discriminant the auto-notch detector
  *  uses so it stops notching voice and starts catching steady blockers. */
-export function getSignalStationarity(): Float32Array | null {
+export function getSignalStationarity(rx = 0): Float32Array | null {
+  useBank(rx);
   return signalStationarity;
 }
 
 /** Current 0..1 display signal-evidence texture, or null before an enhanced
  *  display row has been mapped. This is derived display state: it is sparse,
  *  confidence/ridge/support aware, and never feeds tuning or snap decisions. */
-export function getSignalTexture(): Float32Array | null {
+export function getSignalTexture(rx = 0): Float32Array | null {
+  useBank(rx);
   return signalTexture;
 }
 
 /** Reset the estimator (e.g. on disconnect). Next frame re-seeds. */
 export function resetEstimator(): void {
+  estimatorBanks.clear();
+  activeBank = 0;
   floor = null;
   quietRef = null;
   signalHold = null;
@@ -1783,7 +1856,8 @@ function updateDisplayTexture(
 /** Map the spectrum to a 0..1 Pop display value per bin: subtract the floor,
  *  derive a sparse signal texture, then compress so weak and strong signals can
  *  coexist in the colormap. Outputs 0 (dark) when no floor exists yet. */
-export function enhanceInto(raw: Float32Array, out: Float32Array, terrainOut?: Float32Array | null): void {
+export function enhanceInto(raw: Float32Array, out: Float32Array, terrainOut?: Float32Array | null, rx = 0): void {
+  useBank(rx);
   const n = raw.length;
   const f = floor;
   if (f === null || f.length !== n) {
@@ -1863,7 +1937,8 @@ export function enhanceInto(raw: Float32Array, out: Float32Array, terrainOut?: F
  *  the renderer dB-space rows with coherent signals lifted like topography.
  *  Because output remains in dB, the normal waterfall range slider keeps full
  *  authority; POP remains the only hard-gated normalized mode. */
-export function enhanceWaterfallTextureInto(raw: Float32Array, out: Float32Array, terrainOut?: Float32Array | null): void {
+export function enhanceWaterfallTextureInto(raw: Float32Array, out: Float32Array, terrainOut?: Float32Array | null, rx = 0): void {
+  useBank(rx);
   const n = raw.length;
   const f = floor;
   if (f === null || f.length !== n) {
@@ -1941,7 +2016,9 @@ export function findPeakHz(
   centerHz: number,
   hzPerPixel: number,
   clickHz: number,
+  rx = 0,
 ): number | null {
+  useBank(rx);
   const n = spec.length;
   if (
     n < 3 ||
@@ -1996,7 +2073,8 @@ function coherentThreshold(baseDb: number, index: number, n: number): number {
  *  to the strongest within PEAK_MIN_SPACING_BINS and capped at PEAK_MAX_COUNT
  *  (strongest first). Empty until a floor exists. Pure: caller passes the live
  *  spectrum + geometry. */
-export function detectPeaks(spec: Float32Array, centerHz: number, hzPerPixel: number): DetectedPeak[] {
+export function detectPeaks(spec: Float32Array, centerHz: number, hzPerPixel: number, rx = 0): DetectedPeak[] {
+  useBank(rx);
   const n = spec.length;
   const f = floor;
   if (n < 3 || !validSpectrumGeometry(centerHz, hzPerPixel) || f === null || f.length !== n) return [];
@@ -2251,7 +2329,9 @@ export function computeSnapTuneHz(
   clickHz: number,
   maxRadiusHz: number,
   mode: RxMode,
+  rx = 0,
 ): number | null {
+  useBank(rx);
   const n = spec.length;
   if (
     n < 3 ||
@@ -2368,7 +2448,9 @@ export function computeSnapToLineHz(
   maxRadiusHz: number,
   stickyHz: number | null = null,
   hysteresisHz = 0,
+  rx = 0,
 ): number | null {
+  useBank(rx);
   const n = spec.length;
   if (
     n < 3 ||
@@ -2436,7 +2518,9 @@ export function signalExtentHz(
   hzPerPixel: number,
   nearHz: number,
   maxRadiusHz: number,
+  rx = 0,
 ): { loHz: number; hiHz: number; crestHz: number } | null {
+  useBank(rx);
   const n = spec.length;
   if (
     n < 3 ||
@@ -2503,7 +2587,9 @@ export function measureSnapLock(
   anchorBodyHz: number,
   captureHz: number,
   anchorLevelDb?: number,
+  rx = 0,
 ): SnapLockMeasure | null {
+  useBank(rx);
   const n = spec.length;
   if (
     n < 3 ||

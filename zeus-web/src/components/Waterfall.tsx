@@ -480,20 +480,15 @@ export function Waterfall({
       if (wfDb) {
         const { moxOn, tunOn } = useTxStore.getState();
         let rowForPush = wfDb;
-        // PRIMARY ONLY: the signal-estimator (dsp/signal-estimator.ts) is a
-        // module-level SINGLETON — one per-bin floor/texture/hold/confidence
-        // bank for the whole app — and display-store trains it exclusively on
-        // RxId-0 frames. Passing a secondary receiver's rows through it
-        // sculpts them per-bin against RX1's spectrum: relief where RX1 has
-        // carriers, tuck where it doesn't — RX1's band imprinted onto RX2's
-        // waterfall (the pan draws raw dB, hence the pan-right/wf-wrong
-        // split). Until the estimator grows per-receiver banks, secondary
-        // rows go to the texture RAW — correct content, matching the trace.
-        if (rxIndex === 0 && !moxOn && !tunOn) {
+        // Every receiver enhances against ITS OWN estimator bank (the
+        // estimator holds per-receiver register files, trained per-rxId by
+        // display-store). The interim primary-only gate — which left RX2's
+        // waterfall raw and flat next to RX1's sculpted texture — is retired.
+        if (!moxOn && !tunOn) {
           if (!enhBuf || enhBuf.length !== rowForPush.length) enhBuf = new Float32Array(rowForPush.length);
           if (!terrainBuf || terrainBuf.length !== rowForPush.length) terrainBuf = new Float32Array(rowForPush.length);
-          if (useSignalEnhanceStore.getState().popEnabled) enhanceInto(rowForPush, enhBuf, terrainBuf);
-          else enhanceWaterfallTextureInto(rowForPush, enhBuf, terrainBuf);
+          if (useSignalEnhanceStore.getState().popEnabled) enhanceInto(rowForPush, enhBuf, terrainBuf, rxIndex);
+          else enhanceWaterfallTextureInto(rowForPush, enhBuf, terrainBuf, rxIndex);
           rowForPush = enhBuf;
           terrainForPush = terrainBuf;
         }

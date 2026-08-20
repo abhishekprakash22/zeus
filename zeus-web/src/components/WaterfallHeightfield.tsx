@@ -131,11 +131,6 @@ export function WaterfallHeightfield({
     const domainNow = (): 'pop' | 'rx-db' | 'tx-db' => {
       const { moxOn, tunOn } = useTxStore.getState();
       if (moxOn || tunOn) return 'tx-db';
-      // Pop rows come from the signal-estimator, whose floor/texture bank is
-      // a module-level singleton trained on RxId-0 frames only (see
-      // Waterfall.tsx) — a secondary receiver's rows through it wear RX1's
-      // band. Secondary panes stay in the raw dB domain until per-RX banks.
-      if (rxIndex !== 0) return 'rx-db';
       return useSignalEnhanceStore.getState().popEnabled ? 'pop' : 'rx-db';
     };
 
@@ -174,7 +169,7 @@ export function WaterfallHeightfield({
           enhBuf = new Float32Array(row.length);
           terrainScratch = new Float32Array(row.length);
         }
-        enhanceInto(row, enhBuf, terrainScratch);
+        enhanceInto(row, enhBuf, terrainScratch, rxIndex);
         row = enhBuf;
         rowDomain = 'pop';
       }

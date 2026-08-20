@@ -734,6 +734,13 @@ public class DspPipelineService : BackgroundService,
         public long LoHz;
         public bool LoInit;
         public readonly float[] PanBuf = new float[Width];
+        // Per-receiver decimation scratch. Secondary display frames MUST NOT
+        // decimate into the shared _panDecimatedBuf/_wfDecimatedBuf: FrameBins
+        // returns a memory view over the scratch it fills, broadcast frames
+        // hold that reference until serialization, and the primary's next
+        // pass overwrites it — RX2's waterfall was shipping RX1's rows.
+        public readonly float[] PanDecBuf = new float[Width];
+        public readonly float[] WfDecBuf = new float[Width];
         public readonly float[] WfBuf = new float[Width];
         public readonly float[] AudioBuf = new float[AudioDrainCapacity];
         public int PanCnt;  // 1 Hz panadapter freshness tally (display probe)
@@ -6875,11 +6882,11 @@ public class DspPipelineService : BackgroundService,
                 if (secPan) secFlags |= DisplayBodyFlags.PanValid;
                 if (secWf) secFlags |= DisplayBodyFlags.WfValid;
                 var secPanBins = secPan
-                    ? FrameBins(rx.PanBuf, _panDecimatedBuf, displayPlan.Decimation, out var secFrameWidth)
-                    : InvalidFrameBins(_panDecimatedBuf, displayPlan.Decimation, out secFrameWidth);
+                    ? FrameBins(rx.PanBuf, rx.PanDecBuf, displayPlan.Decimation, out var secFrameWidth)
+                    : InvalidFrameBins(rx.PanDecBuf, displayPlan.Decimation, out secFrameWidth);
                 var secWfBins = secWf
-                    ? FrameBins(rx.WfBuf, _wfDecimatedBuf, displayPlan.Decimation, out _)
-                    : InvalidFrameBins(_wfDecimatedBuf, displayPlan.Decimation, out _);
+                    ? FrameBins(rx.WfBuf, rx.WfDecBuf, displayPlan.Decimation, out _)
+                    : InvalidFrameBins(rx.WfDecBuf, displayPlan.Decimation, out _);
 
                 UpdateRxLo(ri, state);
                 var secFrame = new DisplayFrame(

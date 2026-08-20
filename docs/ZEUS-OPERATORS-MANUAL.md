@@ -123,9 +123,9 @@ readout — scroll the wheel over a digit to step that decade, or click the
 digits to type a frequency (kHz) inline — plus the **CTRL** chip for that
 receiver's AF / AGC-T / mute controls and the STEP chip to cycle the tune
 step. RX2's waterfall wears the same enhanced texture as RX1's, built from
-its own band. A DISC key sits above RADIO in the drawer — tap once to arm
-(SURE?), tap again within 3 s to disconnect; if TX-audio profile edits are
-unsaved the armed key says so. Pinch on
+its own band. DISC sits at the top of the left rail, above CONTROLS — tap
+once to arm (SURE?, red), tap again within 3 s to disconnect; if TX-audio
+profile edits are unsaved the armed button says so. Pinch on
 either pane zooms that receiver alone. The desktop header's control
 cluster is re-homed: the **CONTROLS** button on the left edge opens the
 full set (STEP, FRONT-END, AGC, SQL, AF, ROGER, VIEW...) as a touch

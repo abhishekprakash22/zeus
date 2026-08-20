@@ -33,29 +33,6 @@ import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
 import { useRxMetersStore } from '../../state/rx-meters-store';
 import { useDisplayStore, selectDisplaySlice } from '../../state/display-store';
-// --- field diagnostic (temporary): per-pane wire-truth chip -----------------
-function paneDebugText(receiver: 'A' | 'B'): string {
-  const sl = selectDisplaySlice(useDisplayStore.getState(), receiver);
-  const wf = sl.wfDb;
-  let h = 0;
-  if (wf) {
-    // tiny content fingerprint: 16 spread samples, folded to 16 bits
-    const step = Math.max(1, Math.floor(wf.length / 16));
-    for (let i = 0; i < wf.length; i += step) h = (h * 31 + ((wf[i] ?? 0) * 10) | 0) & 0xffff;
-  }
-  const mhz = (Number(sl.centerHz) / 1e6).toFixed(4);
-  return `${receiver} ${mhz} ${sl.hzPerPixel.toFixed(1)}Hz/px wf#${h.toString(16).padStart(4, '0')}${sl.wfValid ? '' : ' (stale)'}`;
-}
-
-function PaneDebugChip({ receiver }: { receiver: 'A' | 'B' }) {
-  const [txt, setTxt] = useState('');
-  useEffect(() => {
-    const t = window.setInterval(() => setTxt(paneDebugText(receiver)), 1000);
-    return () => window.clearInterval(t);
-  }, [receiver]);
-  return <div style={debugChip}>{txt}</div>;
-}
-
 import {
   getReceiverVfoHz,
   getReceiverMode,
@@ -323,7 +300,6 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       </div>
       {/* ZOOM lives on each pane, and each pane zooms its OWN receiver —
           the backend applies zoom per DSP channel. */}
-      <PaneDebugChip receiver={rxIndex === 1 ? 'B' : 'A'} />
       <div style={zoomDock}>
         <ZoomControl receiver={rxIndex === 1 ? 'B' : 'A'} />
         <button
@@ -766,20 +742,6 @@ const speedPill: CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   cursor: 'pointer',
-};
-
-const debugChip: CSSProperties = {
-  position: 'absolute',
-  left: 8,
-  bottom: 8,
-  zIndex: 9,
-  padding: '2px 6px',
-  borderRadius: 4,
-  background: 'rgba(0,0,0,0.7)',
-  color: '#7fdc7f',
-  fontFamily: '"JetBrains Mono", Consolas, monospace',
-  fontSize: 10,
-  pointerEvents: 'none',
 };
 
 const zoomDock: CSSProperties = {

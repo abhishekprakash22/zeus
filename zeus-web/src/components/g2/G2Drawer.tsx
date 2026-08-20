@@ -65,7 +65,7 @@ const DRAWER_H = 108;
 // when the TX audio profile has unsaved live edits the armed label says so
 // (the panel's save-first prompt needs the panel — this key is the quick
 // exit and makes the cost visible instead).
-function DisconnectKey({ keyStyle }: { keyStyle: CSSProperties }) {
+function DisconnectSideButton() {
   const connected = useConnectionStore((s) => s.status === 'Connected');
   const dirty = useTxAudioProfileStore((s) => s.dirty);
   const [armed, setArmed] = useState(false);
@@ -83,23 +83,14 @@ function DisconnectKey({ keyStyle }: { keyStyle: CSSProperties }) {
     void disconnectAll().catch(() => {});
   };
   return (
-    <div className="g2-key" style={keyStyle}>
-      <button
-        type="button"
-        onClick={onTap}
-        style={{
-          width: '100%',
-          height: '100%',
-          border: armed ? '1px solid var(--tx, #e05656)' : undefined,
-          color: armed ? 'var(--tx, #e05656)' : undefined,
-          fontWeight: 700,
-          letterSpacing: '0.06em',
-        }}
-        title="Disconnect from the radio"
-      >
-        {armed ? (dirty ? 'UNSAVED·SURE?' : 'SURE?') : 'DISC'}
-      </button>
-    </div>
+    <button
+      type="button"
+      className={armed ? 'g2-controls-btn g2-disc-btn armed' : 'g2-controls-btn g2-disc-btn'}
+      onClick={onTap}
+      title="Disconnect from the radio"
+    >
+      {armed ? (dirty ? 'UNSAVED·SURE?' : 'SURE?') : 'DISC'}
+    </button>
   );
 }
 
@@ -160,6 +151,7 @@ export function G2Drawer() {
           </button>
         </div>
       ) : null}
+      <DisconnectSideButton />
       <button
         type="button"
         className={controlsOpen ? 'g2-controls-btn on' : 'g2-controls-btn'}
@@ -310,6 +302,16 @@ export function G2Drawer() {
           cursor: pointer;
         }
         .g2-controls-btn.on { color: var(--accent, #4aa3df); border-color: var(--accent, #4aa3df); }
+        /* DISC lives at the top of the left rail (field request: off the
+           drawer row, above CONTROLS). Armed = red SURE? for 3 s; the slot
+           between top 40 and CONTROLS at 128 leaves room for the armed
+           label to grow downward without touching its neighbour. */
+        .g2-disc-btn { top: 40px; height: 64px; }
+        .g2-disc-btn.armed {
+          color: var(--tx, #e05656);
+          border-color: var(--tx, #e05656);
+          height: 84px;
+        }
         .g2-audioproc-btn { top: 200px; height: 84px; }
         .g2-audioproc-panel {
           position: fixed;
@@ -429,7 +431,6 @@ export function G2Drawer() {
         <SheetKey label="MODE" active={sheet === 'mode'} onTap={() => toggleSheet('mode')} />
         <SheetKey label="FILTER" active={sheet === 'filter'} onTap={() => toggleSheet('filter')} />
         <SheetKey label="NB·NR" active={sheet === 'dsp'} onTap={() => toggleSheet('dsp')} />
-        <DisconnectKey keyStyle={key} />
         <SheetKey label="RADIO" active={sheet === 'ant'} onTap={() => toggleSheet('ant')} />
         <SheetKey label="DISPLAY" active={sheet === 'setup'} onTap={() => toggleSheet('setup')} />
         <SheetKey label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />

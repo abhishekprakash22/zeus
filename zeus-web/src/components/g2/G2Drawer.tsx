@@ -47,12 +47,13 @@ import { ModeBandwidth } from '../ModeBandwidth';
 import { FilterRibbon } from '../filter/FilterRibbon';
 import { DspPanel } from '../DspPanel';
 import { RadioSettingsPanel } from '../RadioSettingsPanel';
-import { MeterRenderer } from '../meter-group/MeterRenderer';
 import { MeterReadingId } from '../meters/meterCatalog';
 import { useConnectionStore } from '../../state/connection-store';
 import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
 import { disconnectAll } from '../../util/disconnect-all';
 import { setReceiverMuted } from '../../api/client';
+import { useRadioStore } from '../../state/radio-store';
+import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
@@ -459,7 +460,7 @@ export function G2Drawer() {
               </button>
             </div>
             <div style={sheetContent} onClickCapture={onSheetSelection}>
-              {sheet === 'band' && <BandButtons />}
+              {sheet === 'band' && <BandButtons rxIndex={focusedRxIndex} />}
               {sheet === 'mode' && <ModeBandwidth />}
               {sheet === 'filter' && <FilterRibbon embedded />}
               {sheet === 'dsp' && <DspPanel />}
@@ -502,9 +503,9 @@ export function G2Drawer() {
           <RecorderButton />
         </div>
         <div style={txStrip}>
-          <TxBar uid="g2-fwd" reading={MeterReadingId.TxFwdWatts} />
-          <TxBar uid="g2-swr" reading={MeterReadingId.TxSwr} />
-          <TxBar uid="g2-alc" reading={MeterReadingId.TxAlcPk} />
+          <TxBar reading={MeterReadingId.TxFwdWatts} />
+          <TxBar reading={MeterReadingId.TxSwr} />
+          <TxBar reading={MeterReadingId.TxAlcPk} />
         </div>
         </div>
       </div>
@@ -532,10 +533,50 @@ function SheetTab({
   );
 }
 
-function TxBar({ uid, reading }: { uid: string; reading: MeterReadingId }): ReactNode {
+// Compact TX readout, purpose-built for the drawer (field photos ×2: the
+// desktop hbar widget cannot degrade to this height — its axis scale and
+// drag handles wrote over each other at any layout we gave it). Same data
+// spine as MeterRenderer (useBallisticReadingById), none of its chrome:
+// label, thin bar, value. SWR and ALC blush red past their comfort lines.
+function TxBar({ reading }: { reading: MeterReadingId }): ReactNode {
+  const boardMaxWatts = useRadioStore((s) => s.capabilities.maxPowerWatts);
+  const span: AxisSpan =
+    reading === MeterReadingId.TxFwdWatts
+      ? { min: 0, max: Math.max(5, boardMaxWatts || 100) }
+      : reading === MeterReadingId.TxSwr
+        ? { min: 1, max: 5 }
+        : { min: -30, max: 0 };
+  const { value } = useBallisticReadingById(reading, span);
+  const finite = Number.isFinite(value);
+  const frac = finite
+    ? Math.min(1, Math.max(0, (value - span.min) / (span.max - span.min)))
+    : 0;
+  const hot =
+    (reading === MeterReadingId.TxSwr && finite && value >= 2.5) ||
+    (reading === MeterReadingId.TxAlcPk && finite && value >= -1);
+  const label =
+    reading === MeterReadingId.TxFwdWatts ? 'FWD' : reading === MeterReadingId.TxSwr ? 'SWR' : 'ALC';
+  const text =
+    reading === MeterReadingId.TxFwdWatts
+      ? `${finite ? value.toFixed(value >= 100 ? 0 : 1) : '0.0'} W`
+      : reading === MeterReadingId.TxSwr
+        ? (finite ? value.toFixed(2) : '—')
+        : finite
+          ? `${value.toFixed(1)} dB`
+          : '-∞ dB';
   return (
-    <div style={txRow}>
-      <MeterRenderer widget={{ uid, reading, kind: 'hbar' }} />
+    <div style={txMeter}>
+      <span style={txMeterLabel}>{label}</span>
+      <span style={txMeterBar}>
+        <span
+          style={{
+            ...txMeterFill,
+            width: `${(frac * 100).toFixed(1)}%`,
+            ...(hot ? { background: 'var(--tx, #e05656)' } : null),
+          }}
+        />
+      </span>
+      <span style={{ ...txMeterValue, ...(hot ? { color: 'var(--tx, #e05656)' } : null) }}>{text}</span>
     </div>
   );
 }
@@ -622,25 +663,64 @@ const sheetKeyBtnFlat: CSSProperties = {
 };
 
 const txStrip: CSSProperties = {
-  // Three meters SIDE BY SIDE: the two-deck row leaves ~50px of height,
-  // which three stacked hbars cannot share (field photo: scales collapsed
-  // into each other). Each meter now gets the full row height instead.
-  width: 460,
-  flex: '0 0 460px',
+  // Three slim label/bar/value lines. The desktop hbar widget is gone from
+  // this strip (two field photos: its axis chrome cannot fit this height in
+  // any arrangement); the compact TxBar above is ~14px per line, so three
+  // stack comfortably in the ~50px row.
+  width: 300,
+  flex: '0 0 300px',
   display: 'flex',
-  flexDirection: 'row',
-  gap: 8,
-  padding: '2px 8px',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  gap: 3,
+  padding: '4px 10px',
   boxSizing: 'border-box',
   background: '#14171c',
   border: '1px solid #32373f',
   borderRadius: 8,
 };
 
-const txRow: CSSProperties = {
-  flex: 1,
-  minHeight: 0,
+const txMeter: CSSProperties = {
   display: 'flex',
+  alignItems: 'center',
+  gap: 7,
+};
+
+const txMeterLabel: CSSProperties = {
+  flex: '0 0 30px',
+  fontFamily: '"JetBrains Mono", Consolas, monospace',
+  fontSize: 9,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  color: 'var(--fg-2, #8b95a3)',
+};
+
+const txMeterBar: CSSProperties = {
+  flex: 1,
+  position: 'relative',
+  height: 5,
+  borderRadius: 2,
+  background: 'rgba(6, 10, 16, 0.9)',
+  border: '1px solid #232b37',
+  overflow: 'hidden',
+  display: 'block',
+};
+
+const txMeterFill: CSSProperties = {
+  position: 'absolute',
+  inset: '0 auto 0 0',
+  background: 'linear-gradient(90deg, var(--accent, #4aa3df), #7fd4ff)',
+  borderRadius: 2,
+  display: 'block',
+};
+
+const txMeterValue: CSSProperties = {
+  flex: '0 0 62px',
+  textAlign: 'right',
+  fontFamily: '"JetBrains Mono", Consolas, monospace',
+  fontSize: 10,
+  fontWeight: 700,
+  color: 'var(--fg-1, #c3cad3)',
 };
 
 const sheetScrim: CSSProperties = {

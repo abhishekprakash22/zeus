@@ -48,6 +48,7 @@ import {
   fetchBandMemory,
   saveBandMemory,
   setMode,
+  setReceiver,
   setVfo,
   type BandMemoryEntry,
   type RadioStateDto,
@@ -91,9 +92,20 @@ function withRestoredMode(state: RadioStateDto, mode: RxMode): RadioStateDto {
   return { ...state, mode };
 }
 
-export function BandButtons() {
-  const vfoHz = useConnectionStore((s) => s.vfoHz);
-  const mode = useConnectionStore((s) => s.mode);
+export function BandButtons({ rxIndex = 0 }: { rxIndex?: number } = {}) {
+  // Receiver-aware (G2 field bug: with RX2 focused, a band tap re-tuned
+  // RX1 — this component only ever spoke the PRIMARY verbs). rxIndex 0 is
+  // the desktop path, byte-identical. rxIndex > 0 reads/writes THAT
+  // receiver: its vfo/mode drive the band highlight, a band tap PATCHes it
+  // via setReceiver, and the shared band memory is READ-ONLY for it —
+  // stored targets are honored, but a secondary receiver's excursions
+  // never overwrite the memory (that history stays the primary's).
+  const vfoHz = useConnectionStore((s) =>
+    rxIndex === 0 ? s.vfoHz : (s.receivers[rxIndex]?.vfoHz ?? s.vfoHz),
+  );
+  const mode = useConnectionStore((s) =>
+    rxIndex === 0 ? s.mode : (s.receivers[rxIndex]?.mode ?? s.mode),
+  );
   const applyState = useConnectionStore((s) => s.applyState);
 
   const [currentBand, setCurrentBand] = useState<string>(() => bandOf(vfoHz));
@@ -170,6 +182,7 @@ export function BandButtons() {
   useEffect(() => {
     const band = bandOf(vfoHz);
     setCurrentBand(band);
+    if (rxIndex !== 0) return; // highlight follows; memory writes are primary-only
     if (lastBandRef.current !== band) {
       flushPendingSave();
       lastBandRef.current = band;
@@ -179,14 +192,36 @@ export function BandButtons() {
     pendingSaveRef.current = { band, hz: vfoHz };
     clearSaveTimer();
     saveTimerRef.current = window.setTimeout(flushPendingSave, SAVE_DEBOUNCE_MS);
-  }, [clearSaveTimer, flushPendingSave, vfoHz]);
+  }, [clearSaveTimer, flushPendingSave, rxIndex, vfoHz]);
 
   const selectBand = useCallback(
     (band: BandEntry) => {
-      if (band.name !== currentBand) flushPendingSave();
+      if (rxIndex === 0 && band.name !== currentBand) flushPendingSave();
       const stored = memoryRef.current.get(band.name);
       const targetHz = stored?.hz ?? band.centerHz;
       const targetMode: RxMode | null = stored?.mode ?? null;
+
+      if (rxIndex !== 0) {
+        // Optimistic patch of THIS receiver's entry so its flag and pane
+        // track the tap immediately, then one setReceiver PATCH carries
+        // vfo (+ mode when the memory remembers one) to the server.
+        useConnectionStore.setState((st) => ({
+          receivers: st.receivers.map((r, i) =>
+            i === rxIndex
+              ? { ...r, vfoHz: targetHz, ...(targetMode ? { mode: targetMode } : {}) }
+              : r,
+          ),
+        }));
+        void setReceiver(rxIndex, {
+          vfoHz: targetHz,
+          ...(targetMode ? { mode: targetMode } : {}),
+        })
+          .then(applyState)
+          .catch(() => {
+            /* next state poll will reconcile */
+          });
+        return;
+      }
 
       useConnectionStore.setState(
         targetMode && targetMode !== mode
@@ -216,7 +251,7 @@ export function BandButtons() {
         }
       })();
     },
-    [applyState, currentBand, flushPendingSave, mode],
+    [applyState, currentBand, flushPendingSave, mode, rxIndex],
   );
 
   return (

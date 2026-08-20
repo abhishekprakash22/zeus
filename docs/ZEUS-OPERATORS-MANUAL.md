@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.144**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.145**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -112,7 +112,10 @@ tab wears an accent underline). The full-height row below holds the
 transmitter's own controls: **MOX**, **TUN**, **MON**, **PS**, **CTUN**,
 and — past a divider — **REC** (the same transport buttons, with all their
 safeguards, at finger size). A compact FWD / SWR / ALC readout (label,
-bar, value) sits inline in the transport row. Band, mode, and filter taps
+bar, value) sits inline in the transport row. DISPLAY also offers five G2
+themes (Zeus Blue, Amber, Night Red, Phosphor, Ice) that recolor the
+layout's chrome — TX red never changes, and the spectrum/waterfall keep
+their own colors; NIGHT dimming composes with any theme. Band, mode, and filter taps
 apply to the FOCUSED receiver — tap a pane first, then pick. **NB·NR** opens the noise-blanker /
 noise-reduction panel and **RADIO** the radio (antenna) settings, both as
 touch sheets, **DISPLAY** the display settings, and **TX** the

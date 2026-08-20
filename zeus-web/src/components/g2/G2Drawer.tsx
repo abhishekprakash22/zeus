@@ -57,6 +57,31 @@ import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticRe
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
+// G2 themes (field request). A theme is a custom-property override set
+// scoped under body[data-g2-theme] — the components already speak
+// var(--accent)/var(--ok)/... so no component changes anywhere. Two rules:
+// TX/danger red is NEVER themed (MOX must read as MOX in every palette),
+// and the spectrum/waterfall are canvas-drawn — themes recolor the chrome,
+// not the RF. NIGHT (brightness) composes with any theme.
+const G2_THEMES = [
+  { id: 'zeus', label: 'ZEUS BLUE', accent: '#4aa3df' },
+  { id: 'amber', label: 'AMBER', accent: '#ffb545' },
+  { id: 'nightred', label: 'NIGHT RED', accent: '#ff5a4d' },
+  { id: 'phosphor', label: 'PHOSPHOR', accent: '#4ade80' },
+  { id: 'ice', label: 'ICE', accent: '#8ad8ff' },
+] as const;
+type G2ThemeId = (typeof G2_THEMES)[number]['id'];
+const THEME_KEY = 'zeus.g2.theme';
+
+function readTheme(): G2ThemeId {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return G2_THEMES.some((t) => t.id === v) ? (v as G2ThemeId) : 'zeus';
+  } catch {
+    return 'zeus';
+  }
+}
+
 // Two-deck drawer (option C, field-picked): a slim tab strip for the seven
 // page keys — they OPEN panels, tabs is what they are — over a full-height
 // transport row. Hierarchy by size: the row you tap in anger is the big one.
@@ -154,6 +179,19 @@ export function G2Drawer() {
     },
     [],
   );
+  const [theme, setTheme] = useState<G2ThemeId>(() => readTheme());
+  useEffect(() => {
+    if (theme === 'zeus') delete document.body.dataset.g2Theme;
+    else document.body.dataset.g2Theme = theme;
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* private mode */
+    }
+    return () => {
+      delete document.body.dataset.g2Theme;
+    };
+  }, [theme]);
   const [sheet, setSheet] = useState<SheetId>(null);
   // Sheets dismiss themselves after a selection (touch economy) unless pinned.
   const [pinned, setPinned] = useState(false);
@@ -362,6 +400,34 @@ export function G2Drawer() {
           cursor: pointer;
         }
         .g2-controls-btn.on { color: var(--accent, #4aa3df); border-color: var(--accent, #4aa3df); }
+        /* G2 themes: custom-property overrides, cascading to everything the
+           layout draws (drawer, rail, flags, cards, sheets). --tx stays red
+           everywhere by design. Derived tints via color-mix so gradients
+           follow the accent without per-theme hand tuning. */
+        body[data-g2-theme='amber'] .app.g2-layout,
+        body[data-g2-theme='amber'] .g2-controls-btn,
+        body[data-g2-theme='amber'] .g2-drawer {
+          --accent: #ffb545;
+          --ok: #ffd27a;
+        }
+        body[data-g2-theme='nightred'] .app.g2-layout,
+        body[data-g2-theme='nightred'] .g2-controls-btn,
+        body[data-g2-theme='nightred'] .g2-drawer {
+          --accent: #ff5a4d;
+          --ok: #ff8a7a;
+        }
+        body[data-g2-theme='phosphor'] .app.g2-layout,
+        body[data-g2-theme='phosphor'] .g2-controls-btn,
+        body[data-g2-theme='phosphor'] .g2-drawer {
+          --accent: #4ade80;
+          --ok: #86efac;
+        }
+        body[data-g2-theme='ice'] .app.g2-layout,
+        body[data-g2-theme='ice'] .g2-controls-btn,
+        body[data-g2-theme='ice'] .g2-drawer {
+          --accent: #8ad8ff;
+          --ok: #c4ecff;
+        }
         /* Rail order, top to bottom: DISC, FULL SCR, CONTROLS, AUDIO PROC.
            The rail starts at 60px — clear of the workspace docking button
            that owns the top-left corner (field report: DISC overlapped it).
@@ -465,7 +531,30 @@ export function G2Drawer() {
               {sheet === 'filter' && <FilterRibbon embedded />}
               {sheet === 'dsp' && <DspPanel />}
               {sheet === 'ant' && <RadioSettingsPanel />}
-              {sheet === 'setup' && <DisplayPanel />}
+              {sheet === 'setup' && (
+                <>
+                  <div style={themeRow}>
+                    <span style={themeRowLabel}>G2 THEME</span>
+                    {G2_THEMES.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        style={{
+                          ...themeBtn,
+                          ...(theme === t.id
+                            ? { borderColor: t.accent, color: t.accent }
+                            : null),
+                        }}
+                        onClick={() => setTheme(t.id)}
+                      >
+                        <span style={{ ...themeSwatch, background: t.accent }} />
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <DisplayPanel />
+                </>
+              )}
               {sheet === 'tx' && <TxPanel />}
             </div>
           </div>
@@ -680,6 +769,48 @@ const txStrip: CSSProperties = {
   borderRadius: 8,
 };
 
+const themeRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap',
+  padding: '8px 10px',
+  marginBottom: 8,
+  borderRadius: 8,
+  border: '1px solid var(--line, #32373f)',
+  background: 'var(--bg-1, #14171c)',
+};
+
+const themeRowLabel: CSSProperties = {
+  fontSize: 9,
+  fontWeight: 800,
+  letterSpacing: '0.16em',
+  color: 'var(--fg-2, #8b95a3)',
+  marginRight: 4,
+};
+
+const themeBtn: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '6px 10px',
+  borderRadius: 7,
+  border: '1px solid var(--line, #32373f)',
+  background: 'var(--bg-2, #1c2129)',
+  color: 'var(--fg-1, #c3cad3)',
+  fontSize: 10,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  cursor: 'pointer',
+};
+
+const themeSwatch: CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: '50%',
+  display: 'inline-block',
+};
+
 const txMeter: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -709,7 +840,8 @@ const txMeterBar: CSSProperties = {
 const txMeterFill: CSSProperties = {
   position: 'absolute',
   inset: '0 auto 0 0',
-  background: 'linear-gradient(90deg, var(--accent, #4aa3df), #7fd4ff)',
+  background:
+    'linear-gradient(90deg, var(--accent, #4aa3df), color-mix(in srgb, var(--accent, #4aa3df) 55%, white))',
   borderRadius: 2,
   display: 'block',
 };

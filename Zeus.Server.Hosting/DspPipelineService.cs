@@ -5209,6 +5209,10 @@ public class DspPipelineService : BackgroundService,
             oldChannel = _channelId;
             Volatile.Write(ref _engine, newEngine);
             Volatile.Write(ref _channelId, newChannelId);
+            // Engine swap: stale secondary channel ids from the outgoing engine
+            // would collide with the NEW engine's slot numbering (field bug: RX2
+            // held id 0 across a connect swap and every RX2 display call landed on
+            // the new primary). Same reset the other three swap sites already do.
             ResetSecondaryRxChannels();
             Volatile.Write(ref _sampleRateHz, rateHz);
         }
@@ -5355,6 +5359,10 @@ public class DspPipelineService : BackgroundService,
             oldChannel = _channelId;
             Volatile.Write(ref _engine, newEngine);
             Volatile.Write(ref _channelId, newChannelId);
+            // Engine swap: stale secondary channel ids from the outgoing engine
+            // would collide with the NEW engine's slot numbering (field bug: RX2
+            // held id 0 across a connect swap and every RX2 display call landed on
+            // the new primary). Same reset the other three swap sites already do.
             ResetSecondaryRxChannels();
             Volatile.Write(ref _sampleRateHz, rateHz);
         }
@@ -5744,6 +5752,10 @@ public class DspPipelineService : BackgroundService,
             oldChannel = _channelId;
             Volatile.Write(ref _engine, wdsp);
             Volatile.Write(ref _channelId, channelId);
+            // Engine swap: stale secondary channel ids from the outgoing engine
+            // would collide with the NEW engine's slot numbering (field bug: RX2
+            // held id 0 across a connect swap and every RX2 display call landed on
+            // the new primary). Same reset the other three swap sites already do.
             ResetSecondaryRxChannels();
             Volatile.Write(ref _sampleRateHz, rateHz);
         }

@@ -6935,8 +6935,15 @@ public class DspPipelineService : BackgroundService,
                     _dispFlagLogMs = dispNowMs;
                     var rx2 = _secondaryRx[1];
                     _log.LogInformation(
-                        "p2.display.flags ticks={T} rx1pan={A} rx1wf={B} rx2pan={C} rx2wf={D}",
-                        _dispTicks, _rx1PanCnt, _rx1WfCnt, rx2.PanCnt, rx2.WfCnt);
+                        "p2.display.flags ticks={T} rx1pan={A} rx1wf={B} rx2pan={C} rx2wf={D} rx2routed={R} rx2cmd={Cmd} ddcPkts={Ddc}",
+                        _dispTicks, _rx1PanCnt, _rx1WfCnt, rx2.PanCnt, rx2.WfCnt,
+                        rx2.RoutedFrames,
+                        _p2Client is { } p2c
+                            ? $"{(p2c.Rx2CommandSnapshot().Enabled ? "on" : "off")}@{p2c.Rx2CommandSnapshot().FreqHz}Hz ddc{p2c.Rx2CommandSnapshot().Ddc}"
+                            : "n/a",
+                        _p2Client is { } p2r
+                            ? string.Join('/', p2r.SnapshotRxPortPacketRates())
+                            : "n/a");
                     _dispTicks = _rx1PanCnt = _rx1WfCnt = 0;
                     for (int i = 1; i < MaxReceivers; i++)
                     {

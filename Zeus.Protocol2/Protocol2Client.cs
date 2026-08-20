@@ -975,6 +975,14 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     /// isn't streaming that receiver at all. Returns a
     /// fresh copy; safe to call from any thread.
     /// </summary>
+    /// <summary>What the client believes it has COMMANDED for RX2 — the
+    /// enable flag, the DDC1-NCO frequency last written, and which DDC slot
+    /// this board maps RX2 to. Field diagnostic for the RX2-shows-RX1 hunt:
+    /// compare against SnapshotRxPortPacketRates to see whether the radio
+    /// honours the command.</summary>
+    public (bool Enabled, long FreqHz, int Ddc) Rx2CommandSnapshot() =>
+        (Volatile.Read(ref _rx2Enabled) != 0, (long)Volatile.Read(ref _rx2FreqHz), Rx2Ddc(_boardKind));
+
     public long[] SnapshotRxPortPacketRates()
     {
         lock (_rxPortRateLock)

@@ -116,6 +116,11 @@ export function G2RxStack() {
   // lives INSIDE each pane (spectrum/waterfall ratio), not between panes.
   const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
   const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
+  // Removable instrument cards (field request): ✕ hides a card; a restore
+  // pill row appears top-right while anything is hidden. Session-local.
+  const [hiddenCards, setHiddenCards] = useState<string[]>([]);
+  const hideCard = (id: string) => setHiddenCards((h) => (h.includes(id) ? h : [...h, id]));
+  const showCard = (id: string) => setHiddenCards((h) => h.filter((x) => x !== id));
 
   // Audio follows the ACTIVE receiver (field request): the inactive pane is
   // muted via the per-receiver mute the hero mixer uses. Best-effort — a
@@ -146,16 +151,41 @@ export function G2RxStack() {
           filter display (FilterMiniPan; it splits per receiver internally
           when RX2 is enabled). Cards float over the stack's top-right so
           they cost no pane height; the panadapters keep full width. */}
-      <G2Card title="S-METER" initial={{ x: -312, y: 8, w: 300, h: 170 }}>
-        <AnalogMeterPanel sampleDbmOverride={sampleFocusedRxDbm} />
-      </G2Card>
-      <G2Card title="FILTER · RX1" initial={{ x: -312, y: 186, w: 300, h: 150 }}>
-        <FilterMiniPan receiver="A" />
-      </G2Card>
-      {rx2Enabled ? (
-        <G2Card title="FILTER · RX2" initial={{ x: -312, y: 372, w: 300, h: 150 }}>
+      {!hiddenCards.includes('smeter') ? (
+        <G2Card
+          title="S-METER"
+          initial={{ x: -312, y: 8, w: 300, h: 170 }}
+          onClose={() => hideCard('smeter')}
+        >
+          <AnalogMeterPanel sampleDbmOverride={sampleFocusedRxDbm} />
+        </G2Card>
+      ) : null}
+      {!hiddenCards.includes('filter-a') ? (
+        <G2Card
+          title="FILTER · RX1"
+          initial={{ x: -312, y: 186, w: 300, h: 150 }}
+          onClose={() => hideCard('filter-a')}
+        >
+          <FilterMiniPan receiver="A" />
+        </G2Card>
+      ) : null}
+      {rx2Enabled && !hiddenCards.includes('filter-b') ? (
+        <G2Card
+          title="FILTER · RX2"
+          initial={{ x: -312, y: 372, w: 300, h: 150 }}
+          onClose={() => hideCard('filter-b')}
+        >
           <FilterMiniPan receiver="B" />
         </G2Card>
+      ) : null}
+      {hiddenCards.length > 0 ? (
+        <div style={restoreRow}>
+          {hiddenCards.map((id) => (
+            <button key={id} type="button" style={restorePill} onClick={() => showCard(id)}>
+              + {id === 'smeter' ? 'S-METER' : id === 'filter-a' ? 'FILTER RX1' : 'FILTER RX2'}
+            </button>
+          ))}
+        </div>
       ) : null}
     </div>
   );
@@ -180,8 +210,20 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
     rxIndex === 0 ? null : sliceTunePeakDbm(st, receiver, vfoHz),
   );
   const barDbm = rxIndex === 0 ? (Number.isFinite(realPk) ? realPk : null) : estDbm;
+  // Peak hold for the flag S-bar: hold the max 1.5 s, then let it fall.
+  const peakRef = useRef<{ dbm: number; at: number }>({ dbm: -Infinity, at: 0 });
+  if (barDbm != null && Number.isFinite(barDbm)) {
+    const now = performance.now();
+    const pk = peakRef.current;
+    if (barDbm >= pk.dbm || now - pk.at > 1500) peakRef.current = { dbm: barDbm, at: now };
+  }
+  const peakDbm = Number.isFinite(peakRef.current.dbm) ? peakRef.current.dbm : null;
   // Spectrum share of the pane (the requested per-receiver drag): 0.2-0.7.
   const [specFrac, setSpecFrac] = useState(0.44);
+  // Per-pane waterfall speed multiplier (field request): ×½ ×1 ×2 ×4 cycle.
+  const [speedFactor, setSpeedFactor] = useState(1);
+  const cycleSpeed = () =>
+    setSpeedFactor((f) => (f === 0.5 ? 1 : f === 1 ? 2 : f === 2 ? 4 : 0.5));
   const paneRef = useRef<HTMLDivElement | null>(null);
   const ratioDrag = useRef(false);
   const onRatioDown = useCallback((e: ReactPointerEvent) => {
@@ -221,6 +263,15 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           the backend applies zoom per DSP channel. */}
       <div style={zoomDock}>
         <ZoomControl receiver={rxIndex === 1 ? 'B' : 'A'} />
+        <button
+          type="button"
+          style={speedPill}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={cycleSpeed}
+          title="waterfall speed for this receiver (tap to cycle)"
+        >
+          SPD ×{speedFactor === 0.5 ? '½' : speedFactor}
+        </button>
       </div>
       <div
         style={ratioBar}
@@ -232,7 +283,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         <span style={dividerGrip} />
       </div>
       <div style={paneWaterfall}>
-        <Waterfall receiver={receiver} />
+        <Waterfall receiver={receiver} speedFactor={speedFactor} />
       </div>
       <div style={{ ...flag, ...(active ? flagActive : null) }}>
         <div style={flagRow}>
@@ -252,6 +303,9 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
             {S_TICKS.map((t) => (
               <span key={t.label} style={{ ...sTick, left: `${t.pct}%` }} />
             ))}
+            {peakDbm != null ? (
+              <span style={{ ...sPeak, left: `${dbmToPct(peakDbm)}%` }} />
+            ) : null}
           </div>
           <span style={sReadout}>{dbmToSText(barDbm)}</span>
         </div>
@@ -279,10 +333,12 @@ function formatMHz(hz: number): string {
 function G2Card({
   title,
   initial,
+  onClose,
   children,
 }: {
   title: string;
   initial: { x: number; y: number; w: number; h: number };
+  onClose?: () => void;
   children: ReactNode;
 }) {
   const [box, setBox] = useState(initial);
@@ -326,7 +382,18 @@ function G2Card({
         onPointerUp={end}
         onPointerCancel={end}
       >
-        {title}
+        <span style={{ flex: 1 }}>{title}</span>
+        {onClose ? (
+          <button
+            type="button"
+            style={cardClose}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onClose}
+            aria-label={`hide ${title}`}
+          >
+            ✕
+          </button>
+        ) : null}
       </div>
       <div style={cardBody}>{children}</div>
       <div
@@ -430,6 +497,62 @@ const paneWaterfall: CSSProperties = {
   flex: '1 1 auto',
   minHeight: 0,
   display: 'flex',
+};
+
+const sPeak: CSSProperties = {
+  position: 'absolute',
+  top: -1,
+  bottom: -1,
+  width: 2,
+  background: '#ffffffcc',
+};
+
+const cardClose: CSSProperties = {
+  width: 20,
+  height: 16,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: 'none',
+  borderRadius: 3,
+  background: 'transparent',
+  color: 'var(--fg-2, #9aa3ae)',
+  fontSize: 10,
+  cursor: 'pointer',
+};
+
+const restoreRow: CSSProperties = {
+  position: 'absolute',
+  top: 6,
+  right: 10,
+  zIndex: 8,
+  display: 'flex',
+  gap: 6,
+};
+
+const restorePill: CSSProperties = {
+  padding: '4px 9px',
+  borderRadius: 10,
+  border: '1px solid var(--line, #263041)',
+  background: 'rgba(13, 18, 26, 0.9)',
+  color: 'var(--fg-2, #9aa3ae)',
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.06em',
+  cursor: 'pointer',
+};
+
+const speedPill: CSSProperties = {
+  marginLeft: 8,
+  padding: '4px 8px',
+  borderRadius: 6,
+  border: '1px solid var(--line, #263041)',
+  background: 'transparent',
+  color: 'var(--fg-1, #c3cad3)',
+  fontFamily: '"JetBrains Mono", Consolas, monospace',
+  fontSize: 11,
+  fontWeight: 700,
+  cursor: 'pointer',
 };
 
 const zoomDock: CSSProperties = {

@@ -85,6 +85,9 @@ type WaterfallProps = {
   /** Render the in-tile dB scale on RX1. Off when the parent draws one scale
    *  spanning the whole (possibly multi-row) waterfall grid instead. */
   dbScale?: boolean;
+  /** Per-instance scroll-speed multiplier applied on top of the global
+   *  Display-settings speed (G2 panes carry their own speed control). */
+  speedFactor?: number;
 };
 
 type WaterfallValueDomain = 'rx-db' | 'pop' | 'tx-db';
@@ -100,6 +103,7 @@ export function Waterfall({
   stitched = false,
   foreground = true,
   dbScale = true,
+  speedFactor = 1,
 }: WaterfallProps = {}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -187,7 +191,7 @@ export function Waterfall({
       const reliefDepth = rxRenderable ? Math.max(0, Math.min(1, signalEnhance.waterfallReliefDepth / 100)) : 0;
       const smoothness = rxRenderable ? Math.max(0, Math.min(1, signalEnhance.waterfallSmoothness / 100)) : 0;
       const colormap: RenderColormapId = active ? 'pop' : useDisplaySettingsStore.getState().colormap;
-      renderer.setScrollSpeed(useDisplaySettingsStore.getState().waterfallScrollSpeed);
+      renderer.setScrollSpeed(useDisplaySettingsStore.getState().waterfallScrollSpeed * speedFactor);
       renderer.setPopMode(active, intensity, reliefDepth, smoothness);
       renderer.setColormap(colormap);
     };
@@ -282,9 +286,9 @@ export function Waterfall({
       const popIntensity = popOn ? Math.max(0, Math.min(1, pop.popRenderIntensity / 100)) : 0;
       const reliefDepth = rxRenderable ? Math.max(0, Math.min(1, pop.waterfallReliefDepth / 100)) : 0;
       const smoothness = rxRenderable ? Math.max(0, Math.min(1, pop.waterfallSmoothness / 100)) : 0;
-      if (waterfallScrollSpeed !== lastScrollSpeed) {
-        renderer.setScrollSpeed(waterfallScrollSpeed);
-        lastScrollSpeed = waterfallScrollSpeed;
+      if (waterfallScrollSpeed * speedFactor !== lastScrollSpeed) {
+        renderer.setScrollSpeed(waterfallScrollSpeed * speedFactor);
+        lastScrollSpeed = waterfallScrollSpeed * speedFactor;
       }
       // Mirror DbScale.tsx — keyed (MOX/TUN) renders the TX waterfall window so
       // the operator's RX noise-floor view stays put.
@@ -532,7 +536,7 @@ export function Waterfall({
         state.waterfallScrollSpeed !== prev.waterfallScrollSpeed
       ) {
         if (state.waterfallScrollSpeed !== prev.waterfallScrollSpeed) {
-          renderer.setScrollSpeed(state.waterfallScrollSpeed);
+          renderer.setScrollSpeed(state.waterfallScrollSpeed * speedFactor);
         }
         requestRedraw();
       }

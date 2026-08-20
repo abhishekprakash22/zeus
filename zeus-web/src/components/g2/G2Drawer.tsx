@@ -52,6 +52,7 @@ import { MeterReadingId } from '../meters/meterCatalog';
 import { useConnectionStore } from '../../state/connection-store';
 import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
 import { disconnectAll } from '../../util/disconnect-all';
+import { setReceiverMuted } from '../../api/client';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
@@ -70,6 +71,34 @@ const DRAWER_H = TABS_H + LOWER_H; // sheets + layout padding anchor on this
 // when the TX audio profile has unsaved live edits the armed label says so
 // (the panel's save-first prompt needs the panel — this key is the quick
 // exit and makes the cost visible instead).
+// FULL SCR — a rail mirror of the topbar FullscreenButton. The real button
+// stays mounted (App keeps the topbar in the DOM under G2), so ALL the
+// hard-won machinery — pref + kiosk marker writes, first-gesture restore,
+// stale-geometry watchdog — keeps running there; this button is a dumb
+// toggle whose label tracks fullscreenchange. No logic duplicated.
+function FullscreenSideButton() {
+  const [full, setFull] = useState<boolean>(!!document.fullscreenElement);
+  useEffect(() => {
+    const onChange = () => setFull(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggle = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    else void document.documentElement.requestFullscreen().catch(() => {});
+  };
+  return (
+    <button
+      type="button"
+      className={full ? 'g2-controls-btn g2-fullscr-btn on' : 'g2-controls-btn g2-fullscr-btn'}
+      onClick={toggle}
+      title={full ? 'Exit full screen (Esc also works)' : 'Full screen — hide the browser chrome'}
+    >
+      {full ? 'EXIT FS' : 'FULL SCR'}
+    </button>
+  );
+}
+
 function DisconnectSideButton() {
   const connected = useConnectionStore((s) => s.status === 'Connected');
   const dirty = useTxAudioProfileStore((s) => s.dirty);
@@ -100,6 +129,30 @@ function DisconnectSideButton() {
 }
 
 export function G2Drawer() {
+  // Audio follows the ACTIVE receiver — hoisted here from G2RxStack (field
+  // bug: opening Settings unmounts the panes, whose unmount cleanup unmuted
+  // BOTH receivers mid-session). The drawer mounts with the G2 LAYOUT
+  // SETTING and stays mounted while Settings is open, so mute state now
+  // survives a settings visit; when the layout itself is turned off the
+  // drawer unmounts and the cleanup returns both receivers to the desktop's
+  // expectations. Best-effort — a failed call leaves the mixer as-is.
+  const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
+  const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
+  useEffect(() => {
+    if (!rx2Enabled) {
+      void setReceiverMuted(0, false).catch(() => {});
+      return;
+    }
+    void setReceiverMuted(0, focusedRxIndex !== 0).catch(() => {});
+    void setReceiverMuted(1, focusedRxIndex !== 1).catch(() => {});
+  }, [focusedRxIndex, rx2Enabled]);
+  useEffect(
+    () => () => {
+      void setReceiverMuted(0, false).catch(() => {});
+      void setReceiverMuted(1, false).catch(() => {});
+    },
+    [],
+  );
   const [sheet, setSheet] = useState<SheetId>(null);
   // Sheets dismiss themselves after a selection (touch economy) unless pinned.
   const [pinned, setPinned] = useState(false);
@@ -157,6 +210,7 @@ export function G2Drawer() {
         </div>
       ) : null}
       <DisconnectSideButton />
+      <FullscreenSideButton />
       <button
         type="button"
         className={controlsOpen ? 'g2-controls-btn on' : 'g2-controls-btn'}
@@ -291,7 +345,7 @@ export function G2Drawer() {
         .g2-controls-btn {
           position: fixed;
           left: 10px;
-          top: 128px;
+          top: 224px;
           z-index: 461;
           width: 40px;
           height: 64px;
@@ -307,17 +361,18 @@ export function G2Drawer() {
           cursor: pointer;
         }
         .g2-controls-btn.on { color: var(--accent, #4aa3df); border-color: var(--accent, #4aa3df); }
-        /* DISC lives at the top of the left rail (field request: off the
-           drawer row, above CONTROLS). Armed = red SURE? for 3 s; the slot
-           between top 40 and CONTROLS at 128 leaves room for the armed
-           label to grow downward without touching its neighbour. */
-        .g2-disc-btn { top: 40px; height: 64px; }
+        /* Rail order, top to bottom: DISC, FULL SCR, CONTROLS, AUDIO PROC.
+           The rail starts at 60px — clear of the workspace docking button
+           that owns the top-left corner (field report: DISC overlapped it).
+           Armed DISC grows to 84px and stays clear of FULL SCR at 152. */
+        .g2-disc-btn { top: 60px; height: 64px; }
         .g2-disc-btn.armed {
           color: var(--tx, #e05656);
           border-color: var(--tx, #e05656);
           height: 84px;
         }
-        .g2-audioproc-btn { top: 200px; height: 84px; }
+        .g2-fullscr-btn { top: 152px; height: 64px; }
+        .g2-audioproc-btn { top: 296px; height: 84px; }
         .g2-audioproc-panel {
           position: fixed;
           left: 58px;
@@ -509,7 +564,12 @@ const tabsRow: CSSProperties = {
 };
 
 const tabBtn: CSSProperties = {
-  padding: '0 16px',
+  // Distribute the seven tabs across the strip so they sit over the
+  // transport keys instead of huddling left (field report).
+  flex: '1 1 0',
+  minWidth: 0,
+  textAlign: 'center',
+  padding: '0 8px',
   border: 'none',
   background: 'transparent',
   color: 'var(--fg-2, #8b95a3)',
@@ -562,12 +622,15 @@ const sheetKeyBtnFlat: CSSProperties = {
 };
 
 const txStrip: CSSProperties = {
-  width: 420,
-  flex: '0 0 420px',
+  // Three meters SIDE BY SIDE: the two-deck row leaves ~50px of height,
+  // which three stacked hbars cannot share (field photo: scales collapsed
+  // into each other). Each meter now gets the full row height instead.
+  width: 460,
+  flex: '0 0 460px',
   display: 'flex',
-  flexDirection: 'column',
-  gap: 4,
-  padding: '4px 8px',
+  flexDirection: 'row',
+  gap: 8,
+  padding: '2px 8px',
   boxSizing: 'border-box',
   background: '#14171c',
   border: '1px solid #32373f',

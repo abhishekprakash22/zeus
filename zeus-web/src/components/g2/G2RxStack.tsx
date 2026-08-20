@@ -21,7 +21,7 @@
 //
 // The split is a persisted-in-session drag divider (default 55/45).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
@@ -117,7 +117,6 @@ export function G2RxStack() {
   // request). With both up the split is a fixed 50/50; the adjustable drag
   // lives INSIDE each pane (spectrum/waterfall ratio), not between panes.
   const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
-  const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
   // Removable instrument cards (field request): ✕ hides a card; a restore
   // pill row appears top-right while anything is hidden. Session-local.
   const [hiddenCards, setHiddenCards] = useState<string[]>(() => {
@@ -141,25 +140,9 @@ export function G2RxStack() {
     setHiddenCards((h) => (h.includes(id) ? h : persistHidden([...h, id])));
   const showCard = (id: string) => setHiddenCards((h) => persistHidden(h.filter((x) => x !== id)));
 
-  // Audio follows the ACTIVE receiver (field request): the inactive pane is
-  // muted via the per-receiver mute the hero mixer uses. Best-effort — a
-  // failed call leaves the mixer as-is. Leaving the layout unmutes both so
-  // the desktop returns to its own expectations.
-  useEffect(() => {
-    if (!rx2Enabled) {
-      void setReceiverMuted(0, false).catch(() => {});
-      return;
-    }
-    void setReceiverMuted(0, focusedRxIndex !== 0).catch(() => {});
-    void setReceiverMuted(1, focusedRxIndex !== 1).catch(() => {});
-  }, [focusedRxIndex, rx2Enabled]);
-  useEffect(
-    () => () => {
-      void setReceiverMuted(0, false).catch(() => {});
-      void setReceiverMuted(1, false).catch(() => {});
-    },
-    [],
-  );
+  // Audio-follow moved to G2Drawer (field bug: Settings unmounts this
+  // stack, and an unmount cleanup here unmuted both receivers mid-session;
+  // the drawer tracks the LAYOUT SETTING, not the view).
 
   return (
     <div style={stack}>

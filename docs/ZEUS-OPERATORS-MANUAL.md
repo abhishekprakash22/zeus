@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.139**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.141**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -125,9 +125,12 @@ readout — scroll the wheel over a digit to step that decade, or click the
 digits to type a frequency (kHz) inline — plus the **CTRL** chip for that
 receiver's AF / AGC-T / mute controls and the STEP chip to cycle the tune
 step. RX2's waterfall wears the same enhanced texture as RX1's, built from
-its own band. DISC sits at the top of the left rail, above CONTROLS — tap
-once to arm (SURE?, red), tap again within 3 s to disconnect; if TX-audio
-profile edits are unsaved the armed button says so. Pinch on
+its own band. The left rail holds
+DISC (tap to arm SURE? in red, tap again within 3 s to disconnect — the
+armed button notes unsaved TX-audio edits), FULL SCR to enter or leave
+browser full screen, CONTROLS, and AUDIO PROC. While the G2 layout is on,
+audio follows the active receiver — including while the Settings page is
+open. Pinch on
 either pane zooms that receiver alone. The desktop header's control
 cluster is re-homed: the **CONTROLS** button on the left edge opens the
 full set (STEP, FRONT-END, AGC, SQL, AF, ROGER, VIEW...) as a touch

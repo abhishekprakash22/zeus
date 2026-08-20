@@ -6885,16 +6885,18 @@ public class DspPipelineService : BackgroundService,
                 anySecondary = true;
 
                 bool secPan = engine.TryGetDisplayPixels(secChan, DisplayPixout.Panadapter, rx.PanBuf);
-                // Secondary waterfall reads PIXOUT 0 — the same output the pan
-                // uses. Field-established on the G2 bench: a secondary
-                // analyzer's pixout 1 returned ANOTHER channel's rows (RX2's
-                // waterfall wore RX1's band and re-spanned with RX1's zoom)
-                // while pixout 0 tracked the channel's own tune correctly.
-                // Until the native pixout-1-on-secondary anomaly is run to
-                // ground in WDSP itself, the waterfall drinks from the proven
-                // spout; cosmetically it inherits the pan's averaging.
-                bool secWf = displayPlan.IncludeWaterfall &&
-                    engine.TryGetDisplayPixels(secChan, DisplayPixout.Panadapter, rx.WfBuf);
+                // Secondary waterfall shares PIXOUT 0's pixels with the pan.
+                // Field-established on the G2 bench: a secondary analyzer's
+                // pixout 1 returned ANOTHER channel's rows (RX2's waterfall
+                // wore RX1's band) while pixout 0 tracked the channel's own
+                // tune correctly. GetPixels consumes a per-pixout fresh-data
+                // flag, so pixout 0 must be drained ONCE and copied — the
+                // first form of this fix drained it twice and the second call
+                // came back empty (blank RX2 waterfall, .131). Cosmetically
+                // the wf inherits the pan's averaging; the primary's pixout 1
+                // is untouched — it has been correct since the fork began.
+                bool secWf = displayPlan.IncludeWaterfall && secPan;
+                if (secWf) Array.Copy(rx.PanBuf, rx.WfBuf, Width);
                 if (secPan) { Array.Reverse(rx.PanBuf); SanitizeDisplayBuffer(rx.PanBuf); rx.PanCnt++; }
                 if (secWf) { Array.Reverse(rx.WfBuf); SanitizeDisplayBuffer(rx.WfBuf); rx.WfCnt++; }
 

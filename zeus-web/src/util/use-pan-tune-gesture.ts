@@ -732,7 +732,7 @@ export function usePanTuneGesture(
       // Zoom is global — re-centre the Kiwi slice on its dial too (self-guards on
       // CTUN + Kiwi-enabled + zoom-in), whichever panel the wheel is over.
       centerKiwiForZoomIn(cur, next);
-      setZoom(next, ctrl.signal)
+      setZoom(next, 0, ctrl.signal)
         .then((s) => {
           if (!ctrl.signal.aborted) {
             useConnectionStore.getState().applyState(s);

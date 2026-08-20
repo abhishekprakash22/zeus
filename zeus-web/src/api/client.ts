@@ -379,6 +379,7 @@ export type RadioStateDto = {
   // UI labels the source and gates "Remove" (remove reverts to the default).
   nr3UsingBundledDefault: boolean;
   zoomLevel: ZoomLevel;
+  rx2ZoomLevel: ZoomLevel;
   // Workspace UI zoom (whole-percent cell-pitch scale; 100 = authored size).
   // Server-persisted so it follows the radio across clients.
   workspaceZoomPct: number;
@@ -2539,6 +2540,7 @@ export function normalizeState(raw: unknown): RadioStateDto {
     nr3ModelName: typeof r.nr3ModelName === 'string' ? r.nr3ModelName : null,
     nr3UsingBundledDefault: Boolean(r.nr3UsingBundledDefault),
     zoomLevel: normalizeZoomLevel(r.zoomLevel),
+    rx2ZoomLevel: normalizeZoomLevel(r.rx2ZoomLevel),
     workspaceZoomPct: normalizeWorkspaceZoomPct(r.workspaceZoomPct),
     // PureSignal persisted settings. Defaults match RadioService.cs init and
     // PsSettingsEntry — older servers without the fields fall back cleanly.
@@ -6611,6 +6613,7 @@ export function setAutoAgc(
 
 export function setZoom(
   level: ZoomLevel,
+  rx: number = 0,
   signal?: AbortSignal,
 ): Promise<RadioStateDto> {
   return jsonFetch(
@@ -6618,7 +6621,7 @@ export function setZoom(
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ level }),
+      body: JSON.stringify({ level, rx }),
       signal,
     },
     normalizeState,

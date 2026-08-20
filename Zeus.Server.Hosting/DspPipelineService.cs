@@ -993,6 +993,7 @@ public class DspPipelineService : BackgroundService,
     private BandpassWindow _appliedRxBandpassWindow = BandpassWindow.Normal;
     private BandpassWindow _appliedTxBandpassWindow = BandpassWindow.Normal;
     private int _appliedZoomLevel = 1;
+    private int _appliedRx2ZoomLevel = 1;
     // PureSignal latched values — same change-detect pattern as the others
     // so OnRadioStateChanged only fires the (possibly heavy)
     // SetPsIntsAndSpi / SetPsRunCal calls when the value actually moves.
@@ -4400,8 +4401,14 @@ public class DspPipelineService : BackgroundService,
         if (s.ZoomLevel != _appliedZoomLevel)
         {
             engine.SetZoom(channel, s.ZoomLevel);
-            if (rx2Channel >= 0) engine.SetZoom(rx2Channel, s.ZoomLevel);
             _appliedZoomLevel = s.ZoomLevel;
+        }
+        // RX2 zooms independently (G2 stacked panes); engine zoom was always
+        // per-channel — only the state was shared.
+        if (rx2Channel >= 0 && s.Rx2ZoomLevel != _appliedRx2ZoomLevel)
+        {
+            engine.SetZoom(rx2Channel, s.Rx2ZoomLevel);
+            _appliedRx2ZoomLevel = s.Rx2ZoomLevel;
         }
 
         // ---- TwoTone (protocol-agnostic; PostGen mode=1 inside TXA) ----
@@ -5090,7 +5097,8 @@ public class DspPipelineService : BackgroundService,
         engine.SetAgc(channelId, agc);
         engine.SetSquelch(channelId, squelch);
         engine.SetRxBandpassWindow(channelId, s.RxFilterWindow);
-        engine.SetZoom(channelId, s.ZoomLevel);
+        // RX2 (rxIndex 1) seeds its OWN zoom; RX3+ still follow the global one.
+        engine.SetZoom(channelId, rxIndex == 1 ? s.Rx2ZoomLevel : s.ZoomLevel);
     }
 
     // iter5 (task #4): the four channel pumps that used to live here

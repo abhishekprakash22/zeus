@@ -123,8 +123,8 @@ VFO flag shows RX number, frequency, mode, filter width, and a live mini
 S-meter with S-point markings and an S readout (RX1 from the calibrated
 meter, RX2 estimated from its spectrum), highlighted on the active
 receiver. Both panes carry the dB scales with their level drags — on the spectrum
-and on the waterfall — plus a ZOOM control docked bottom-right (one radio
-zoom for now; both docks move together), and audio
+and on the waterfall — plus a ZOOM control docked bottom-right — each
+receiver zooms independently — and audio
 follows the active receiver — the inactive pane is muted until you tap
 it (both unmute when you leave the layout). With the drawer on, the whole workspace
 wears the graphite-and-amber G2 theme, and the workspace becomes two

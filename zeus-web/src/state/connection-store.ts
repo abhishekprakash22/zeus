@@ -162,6 +162,7 @@ export type ConnectionState = {
   nr3ModelName: string | null;
   nr3UsingBundledDefault: boolean;
   zoomLevel: ZoomLevel;
+  rx2ZoomLevel: ZoomLevel;
   // Workspace UI zoom (whole-percent cell-pitch scale; 100 = authored size).
   // Server-persisted; FlexWorkspace reads this to scale the panel grid.
   workspaceZoomPct: number;
@@ -197,6 +198,7 @@ export type ConnectionState = {
   setSelectedRxIndices: (indices: number[]) => void;
   toggleRxSelection: (index: number) => void;
   setZoomLevel: (level: ZoomLevel) => void;
+  setRx2ZoomLevel: (level: ZoomLevel) => void;
   setWorkspaceZoomPct: (pct: number) => void;
   setLastConnectedEndpoint: (ep: string | null) => void;
   setWisdomPhase: (phase: WisdomPhase) => void;
@@ -271,6 +273,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   nr3ModelName: null,
   nr3UsingBundledDefault: false,
   zoomLevel: 1,
+  rx2ZoomLevel: 1,
   workspaceZoomPct: 100,
   inflight: false,
   lastConnectedEndpoint: null,
@@ -342,6 +345,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         nr3ModelName: s.nr3ModelName,
         nr3UsingBundledDefault: s.nr3UsingBundledDefault,
         zoomLevel: s.zoomLevel,
+        rx2ZoomLevel: s.rx2ZoomLevel,
         workspaceZoomPct: s.workspaceZoomPct,
       };
     }),
@@ -395,6 +399,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         : { selectedRxIndices, focusedRxIndex };
     }),
   setZoomLevel: (zoomLevel) => set({ zoomLevel }),
+  setRx2ZoomLevel: (rx2ZoomLevel) => set({ rx2ZoomLevel }),
   setWorkspaceZoomPct: (workspaceZoomPct) => set({ workspaceZoomPct }),
   setLastConnectedEndpoint: (lastConnectedEndpoint) =>
     set({ lastConnectedEndpoint }),

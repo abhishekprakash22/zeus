@@ -4324,7 +4324,7 @@ public sealed class RadioService : IDisposable
             usingPersisted ? "persisted" : "factory");
     }
 
-    public StateDto SetZoom(int level)
+    public StateDto SetZoom(int level, int rx = 0)
     {
         // Accepts the full DSP range (1..16); Program.cs already range-checks
         // the HTTP payload against these same bounds. A prior powers-of-two
@@ -4334,7 +4334,7 @@ public sealed class RadioService : IDisposable
             throw new ArgumentException(
                 $"zoom level must be in [{SyntheticDspEngine.MinZoomLevel},{SyntheticDspEngine.MaxZoomLevel}]; got {level}",
                 nameof(level));
-        Mutate(s => s with { ZoomLevel = level });
+        Mutate(s => rx == 1 ? s with { Rx2ZoomLevel = level } : s with { ZoomLevel = level });
         return Snapshot();
     }
 

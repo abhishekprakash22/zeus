@@ -60,9 +60,12 @@ import { applyCtunZoomCenterAfterState, centerCtunForZoomIn, centerKiwiForZoomIn
 // yanked back by the next state broadcast — which is what made the
 // old "commit on mouseup" pattern unreliable when the release point
 // missed the input element.
-export function ZoomControl() {
-  const serverZoom = useConnectionStore((s) => s.zoomLevel);
-  const setLocalZoom = useConnectionStore((s) => s.setZoomLevel);
+export function ZoomControl({ receiver = 'A' }: { receiver?: 'A' | 'B' } = {}) {
+  // Receiver B (the G2 stack's RX2 pane) drives its OWN zoom; default 'A'
+  // keeps the desktop control byte-identical.
+  const isB = receiver === 'B';
+  const serverZoom = useConnectionStore((s) => (isB ? s.rx2ZoomLevel : s.zoomLevel));
+  const setLocalZoom = useConnectionStore((s) => (isB ? s.setRx2ZoomLevel : s.setZoomLevel));
   const applyState = useConnectionStore((s) => s.applyState);
   const connected = useConnectionStore((s) => s.status === 'Connected');
   const centeredLoHzRef = useRef<number | null>(null);
@@ -74,7 +77,7 @@ export function ZoomControl() {
   const liveSlider = useLiveSlider<ZoomLevel>({
     send: useCallback(
       (v: ZoomLevel, signal: AbortSignal) =>
-        setZoom(v, signal)
+        setZoom(v, isB ? 1 : 0, signal)
           .then((next) => {
             if (!signal.aborted) {
               applyState(next);
@@ -84,23 +87,25 @@ export function ZoomControl() {
           .catch(() => {
             /* next state poll will reconcile */
           }),
-      [applyState],
+      [applyState, isB],
     ),
   });
 
   const onSlide = useCallback(
     (v: ZoomLevel) => {
-      const cur = useConnectionStore.getState().zoomLevel;
-      const centeredLoHz = centerCtunForZoomIn(cur, v);
-      if (centeredLoHz != null) centeredLoHzRef.current = centeredLoHz;
-      else if (v <= cur) centeredLoHzRef.current = null;
-      // Zoom is global: the Kiwi slice re-centres on its own dial too (the RX1
-      // path above doesn't touch it).
-      centerKiwiForZoomIn(cur, v);
+      const st = useConnectionStore.getState();
+      const cur = isB ? st.rx2ZoomLevel : st.zoomLevel;
+      if (!isB) {
+        const centeredLoHz = centerCtunForZoomIn(cur, v);
+        if (centeredLoHz != null) centeredLoHzRef.current = centeredLoHz;
+        else if (v <= cur) centeredLoHzRef.current = null;
+        // The Kiwi slice mirrors only the classic RX1/global zoom.
+        centerKiwiForZoomIn(cur, v);
+      }
       setLocalZoom(v);
       liveSlider.push(v);
     },
-    [liveSlider, setLocalZoom],
+    [liveSlider, setLocalZoom, isB],
   );
 
   return (

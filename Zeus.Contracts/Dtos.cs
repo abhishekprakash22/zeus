@@ -1018,6 +1018,8 @@ public sealed record StateDto(
     int AttenDb = 0,
     NrConfig? Nr = null,
     int ZoomLevel = 1,
+    // RX2's own spectral zoom (G2 stacked panes; engine zoom is per-channel).
+    int Rx2ZoomLevel = 1,
     // Workspace UI zoom as a whole-percent scale of the panel-grid cell pitch
     // (column width + row height). 100 = authored size; below 100 shrinks the
     // cells so more grid fits the monitor (more usable panel space), above 100
@@ -1849,7 +1851,7 @@ public sealed record Nr2CoreConfigSetRequest(
 // sample-rate span; level=2 means VFO-centered half-span (×2 bins/Hz), and so
 // on. The span-centering math lives in the engine; this contract just carries
 // the discrete factor on the wire.
-public sealed record ZoomSetRequest(int Level);
+public sealed record ZoomSetRequest(int Level, int? Rx = null);
 
 // Workspace UI zoom — a whole-percent scale of the panel-grid cell pitch (see
 // StateDto.WorkspaceZoomPct). Distinct from ZoomSetRequest, which sets the

@@ -2727,11 +2727,11 @@ public static class ZeusEndpoints
             log.LogInformation("api.rx.zoom level={Level}", req.Level);
             if (req.Level < SyntheticDspEngine.MinZoomLevel || req.Level > SyntheticDspEngine.MaxZoomLevel)
                 return Results.BadRequest(new { error = $"zoom level must be in [{SyntheticDspEngine.MinZoomLevel},{SyntheticDspEngine.MaxZoomLevel}]; got {req.Level}" });
-            // Zoom is a global setting; mirror it onto the Kiwi slice so its
-            // waterfall span follows the slider too (it re-tunes the remote
-            // KiwiSDR's SET zoom and re-emits frames at the new Hz/pixel).
-            kiwi.SetZoom(req.Level);
-            return Results.Ok(r.SetZoom(req.Level));
+            // Rx null/0 = the classic global zoom (Kiwi slice mirrors it);
+            // Rx 1 = RX2's own zoom (G2 stacked panes) — Kiwi untouched.
+            var rx = req.Rx ?? 0;
+            if (rx == 0) kiwi.SetZoom(req.Level);
+            return Results.Ok(r.SetZoom(req.Level, rx));
         });
 
         // Workspace UI zoom — scales the panel-grid cell pitch (see

@@ -217,12 +217,10 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       <div style={{ ...paneSpectrum, flex: `0 0 calc(${(specFrac * 100).toFixed(1)}% - ${RATIO_H / 2}px)` }}>
         <Panadapter receiver={receiver} multiRx={false} />
       </div>
-      {/* ZOOM lives on each pane where the operator looks. The zoom itself is
-          the radio's single display zoom (POST /api/rx/zoom has no receiver
-          index), so both controls move together — independent per-receiver
-          zoom needs a backend leg and is queued. */}
+      {/* ZOOM lives on each pane, and each pane zooms its OWN receiver —
+          the backend applies zoom per DSP channel. */}
       <div style={zoomDock}>
-        <ZoomControl />
+        <ZoomControl receiver={rxIndex === 1 ? 'B' : 'A'} />
       </div>
       <div
         style={ratioBar}

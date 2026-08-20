@@ -210,6 +210,12 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const afGainDb = useConnectionStore((s) => s.receivers[rxIndex]?.afGainDb ?? 0);
   const agcTopDb = useConnectionStore((s) => s.agcTopDb);
   const splitEnabled = useConnectionStore((s) => s.splitEnabled);
+  // Shared DSP status for the flag chips. The engine fans ONE NrConfig to
+  // BOTH RX channels (DspPipelineService applies it to channel and
+  // rx2Channel alike), so the chips read the same on both flags — that is
+  // the truth of the pipeline, not a display shortcut. If per-receiver DSP
+  // configs ever land server-side, these chips are already per-flag.
+  const nrCfg = useConnectionStore((s) => s.nr);
   const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
   const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -358,6 +364,19 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           >
             STEP {stepHz >= 1000 ? `${stepHz / 1000}k` : stepHz}
           </span>
+        </div>
+        {/* DSP status: lit = engaged, dim = off (piHPSDR-style indicators).
+            NR chip names the engaged algorithm (NR/NR2/NR3/NR4), NB its
+            blanker (NB1/NB2). Read-only; the NB·NR sheet is the editor. */}
+        <div style={flagRow}>
+          <span style={{ ...dspChip, ...(nrCfg.nrMode !== 'Off' ? dspChipOn : null) }}>
+            {nrCfg.nrMode === 'Anr' ? 'NR' : nrCfg.nrMode === 'Emnr' ? 'NR2' : nrCfg.nrMode === 'Rnnr' ? 'NR3' : nrCfg.nrMode === 'Sbnr' ? 'NR4' : 'NR'}
+          </span>
+          <span style={{ ...dspChip, ...(nrCfg.nbMode !== 'Off' ? dspChipOn : null) }}>
+            {nrCfg.nbMode === 'Nb1' ? 'NB1' : nrCfg.nbMode === 'Nb2' ? 'NB2' : 'NB'}
+          </span>
+          <span style={{ ...dspChip, ...(nrCfg.anfEnabled ? dspChipOn : null) }}>ANF</span>
+          <span style={{ ...dspChip, ...(nrCfg.snbEnabled ? dspChipOn : null) }}>SNB</span>
         </div>
         <div style={sBarRow}>
           <div style={sBarShell}>
@@ -788,6 +807,21 @@ const sTickLabel: CSSProperties = {
   fontSize: 7,
   letterSpacing: '0.04em',
   color: 'var(--fg-3, #6a727d)',
+};
+
+const dspChip: CSSProperties = {
+  padding: '0 5px',
+  borderRadius: 3,
+  fontSize: 8,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  color: 'var(--fg-3, #545c66)',
+  border: '1px solid transparent',
+};
+
+const dspChipOn: CSSProperties = {
+  color: 'var(--accent, #4aa3df)',
+  border: '1px solid var(--accent, #4aa3df)',
 };
 
 const flagChip: CSSProperties = {

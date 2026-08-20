@@ -65,6 +65,13 @@ export function G2Drawer() {
       window.setTimeout(() => setSheet(null), 180);
     }
   };
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const toggleControls = () => {
+    setControlsOpen((v) => {
+      document.body.classList.toggle('g2-controls-open', !v);
+      return !v;
+    });
+  };
   const toggleNight = () => {
     setNight((n) => {
       document.body.classList.toggle('g2-night', !n);
@@ -81,6 +88,14 @@ export function G2Drawer() {
           bottom edge, and scale the hosted transport buttons to touch size.
           Kept as a stylesheet (not conditional render in App) so toggling the
           layout never remounts the transport's children. */}
+      <button
+        type="button"
+        className={controlsOpen ? 'g2-controls-btn on' : 'g2-controls-btn'}
+        onClick={toggleControls}
+        title="radio controls (step, front-end, AGC, SQL, AF...)"
+      >
+        CONTROLS
+      </button>
       <style>{`
         .g2-layout .transport { display: none !important; }
         /* G2 top-bar diet: the dense desktop control cluster (STEP / FRONT-END /
@@ -88,6 +103,51 @@ export function G2Drawer() {
            the flags (AF, AGC-T, STEP) and in the drawer sheets. The brand,
            status, and Disconnect stay. */
         .g2-layout .topbar-controls-shell { display: none !important; }
+        /* CONTROLS side panel (field request): the REAL desktop control
+           cluster — STEP, FRONT-END/S-ATT, AGC, SQL, DYN, AF, ROGER, VIEW —
+           re-homed as a left panel the side button toggles. Same DOM, same
+           handlers; only the dress changes, so nothing can drift out of
+           sync with the desktop. */
+        body.g2-controls-open .app.g2-layout .topbar-controls-shell {
+          display: flex !important;
+          position: fixed;
+          left: 58px;
+          top: 64px;
+          z-index: 460;
+          width: 420px;
+          max-width: calc(100vw - 120px);
+          max-height: calc(100vh - 200px);
+          overflow: auto;
+          padding: 10px;
+          border-radius: 10px;
+          border: 1px solid var(--line, #32373f);
+          background: rgba(13, 17, 24, 0.97);
+          box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+        }
+        body.g2-controls-open .app.g2-layout .topbar-controls {
+          flex-wrap: wrap;
+          row-gap: 12px;
+          overflow: visible;
+        }
+        .g2-controls-btn {
+          position: fixed;
+          left: 10px;
+          top: 128px;
+          z-index: 461;
+          width: 40px;
+          height: 64px;
+          border-radius: 8px;
+          border: 1px solid var(--line, #32373f);
+          background: var(--bg-2, #1c2129);
+          color: var(--fg-1, #c3cad3);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          writing-mode: vertical-rl;
+          text-orientation: mixed;
+          cursor: pointer;
+        }
+        .g2-controls-btn.on { color: var(--accent, #4aa3df); border-color: var(--accent, #4aa3df); }
         /* Night mode: one key dims the whole glass for the dark shack. */
         body.g2-night .app.g2-layout { filter: brightness(0.55); }
         /* The drawer is position:fixed — reserve its height so the layout's

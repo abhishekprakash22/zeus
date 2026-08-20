@@ -119,9 +119,26 @@ export function G2RxStack() {
   const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
   // Removable instrument cards (field request): ✕ hides a card; a restore
   // pill row appears top-right while anything is hidden. Session-local.
-  const [hiddenCards, setHiddenCards] = useState<string[]>([]);
-  const hideCard = (id: string) => setHiddenCards((h) => (h.includes(id) ? h : [...h, id]));
-  const showCard = (id: string) => setHiddenCards((h) => h.filter((x) => x !== id));
+  const [hiddenCards, setHiddenCards] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('zeus.g2.hiddenCards');
+      const v = raw ? JSON.parse(raw) : [];
+      return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const persistHidden = (h: string[]) => {
+    try {
+      localStorage.setItem('zeus.g2.hiddenCards', JSON.stringify(h));
+    } catch {
+      /* best-effort */
+    }
+    return h;
+  };
+  const hideCard = (id: string) =>
+    setHiddenCards((h) => (h.includes(id) ? h : persistHidden([...h, id])));
+  const showCard = (id: string) => setHiddenCards((h) => persistHidden(h.filter((x) => x !== id)));
 
   // Audio follows the ACTIVE receiver (field request): the inactive pane is
   // muted via the per-receiver mute the hero mixer uses. Best-effort — a
@@ -155,6 +172,7 @@ export function G2RxStack() {
       {!hiddenCards.includes('smeter') ? (
         <G2Card
           title="S-METER"
+          storageId="smeter"
           initial={{ x: -312, y: 8, w: 300, h: 170 }}
           onClose={() => hideCard('smeter')}
         >
@@ -164,6 +182,7 @@ export function G2RxStack() {
       {!hiddenCards.includes('filter-a') ? (
         <G2Card
           title="FILTER · RX1"
+          storageId="filter-a"
           initial={{ x: -312, y: 186, w: 300, h: 150 }}
           onClose={() => hideCard('filter-a')}
         >
@@ -173,6 +192,7 @@ export function G2RxStack() {
       {rx2Enabled && !hiddenCards.includes('filter-b') ? (
         <G2Card
           title="FILTER · RX2"
+          storageId="filter-b"
           initial={{ x: -312, y: 372, w: 300, h: 150 }}
           onClose={() => hideCard('filter-b')}
         >
@@ -316,7 +336,14 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       </div>
       <div
         data-g2-flag
-        style={{ ...flag, ...(active ? flagActive : null), pointerEvents: 'auto' }}
+        style={{
+          ...flag,
+          ...(active ? flagActive : null),
+          pointerEvents: 'auto',
+          // While the keypad or popover is open the flag must sit above every
+          // card and dock (field report: keypad buried and unusable).
+          zIndex: keypadOpen || popoverOpen ? 60 : 6,
+        }}
         onPointerDownCapture={(e) => {
           // Flag taps are flag business — they must not tune the pane
           // underneath; they DO activate the receiver so one tap works.
@@ -478,18 +505,45 @@ function formatMHz(hz: number): string {
 /** Draggable + resizable floating card. x negative = anchored from the
  *  right edge (so defaults hug top-right like the approved frame). Drag by
  *  the title strip, resize by the corner handle; session-only positions. */
+const CARD_STORE = 'zeus.g2.cards';
+
+function readCardBox(id: string): { x: number; y: number; w: number; h: number } | null {
+  try {
+    const raw = localStorage.getItem(CARD_STORE);
+    if (!raw) return null;
+    const all = JSON.parse(raw);
+    const b = all?.[id];
+    return b && [b.x, b.y, b.w, b.h].every((n: unknown) => Number.isFinite(n)) ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCardBox(id: string, box: { x: number; y: number; w: number; h: number }): void {
+  try {
+    const raw = localStorage.getItem(CARD_STORE);
+    const all = raw ? JSON.parse(raw) : {};
+    all[id] = box;
+    localStorage.setItem(CARD_STORE, JSON.stringify(all));
+  } catch {
+    // best-effort
+  }
+}
+
 function G2Card({
   title,
+  storageId,
   initial,
   onClose,
   children,
 }: {
   title: string;
+  storageId: string;
   initial: { x: number; y: number; w: number; h: number };
   onClose?: () => void;
   children: ReactNode;
 }) {
-  const [box, setBox] = useState(initial);
+  const [box, setBox] = useState(() => readCardBox(storageId) ?? initial);
   const mode = useRef<null | 'move' | 'size'>(null);
   const start = useRef({ px: 0, py: 0, x: 0, y: 0, w: 0, h: 0 });
 
@@ -515,6 +569,7 @@ function G2Card({
     }
   };
   const end = () => {
+    if (mode.current) writeCardBox(storageId, box);
     mode.current = null;
   };
 

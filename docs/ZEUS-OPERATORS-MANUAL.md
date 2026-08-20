@@ -118,8 +118,10 @@ a pick (PIN keeps them open). Tap a flag's frequency for a numeric keypad
 (direct entry in MHz or kHz), the **CTRL** chip for that receiver's AF /
 AGC-T / mute controls, and the STEP chip to cycle the tune step. Pinch on
 either pane zooms that receiver alone. The desktop header's control
-cluster is hidden in this layout — those controls live on the flags and
-in the sheets. The keys stretch to
+cluster is re-homed: the **CONTROLS** button on the left edge opens the
+full set (STEP, FRONT-END, AGC, SQL, AF, ROGER, VIEW...) as a touch
+panel. Card positions and hidden-card choices persist across restarts on
+this device. The keys stretch to
 fill the drawer edge to edge. Receivers split the glass 50/50 when RX2
 is enabled; with RX2 off, RX1 takes the whole display. Drag the bar
 inside each pane to set its spectrum/waterfall ratio. The analog S-meter

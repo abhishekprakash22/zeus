@@ -26,6 +26,7 @@ import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
 import { Waterfall } from '../Waterfall';
+import { ZoomControl } from '../ZoomControl';
 import { AnalogMeterPanel } from '../analog-meter/AnalogMeterPanel';
 import { FilterMiniPan } from '../filter/FilterMiniPan';
 import { useConnectionStore } from '../../state/connection-store';
@@ -215,6 +216,13 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
     >
       <div style={{ ...paneSpectrum, flex: `0 0 calc(${(specFrac * 100).toFixed(1)}% - ${RATIO_H / 2}px)` }}>
         <Panadapter receiver={receiver} multiRx={false} />
+      </div>
+      {/* ZOOM lives on each pane where the operator looks. The zoom itself is
+          the radio's single display zoom (POST /api/rx/zoom has no receiver
+          index), so both controls move together — independent per-receiver
+          zoom needs a backend leg and is queued. */}
+      <div style={zoomDock}>
+        <ZoomControl />
       </div>
       <div
         style={ratioBar}
@@ -426,6 +434,19 @@ const paneWaterfall: CSSProperties = {
   display: 'flex',
 };
 
+const zoomDock: CSSProperties = {
+  position: 'absolute',
+  right: 10,
+  bottom: 10,
+  zIndex: 6,
+  display: 'flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: 7,
+  border: '1px solid var(--line, #263041)',
+  background: 'rgba(13, 18, 26, 0.88)',
+};
+
 const ratioBar: CSSProperties = {
   flex: `0 0 ${RATIO_H}px`,
   display: 'flex',
@@ -514,6 +535,8 @@ const flag: CSSProperties = {
   top: 8,
   left: 10,
   zIndex: 6,
+  width: 218,
+  boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
   gap: 3,

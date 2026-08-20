@@ -733,7 +733,9 @@ export function Waterfall({
       )}
       {/* One global waterfall dB scale — only RX1 (leftmost) renders it, and
           only when the parent isn't drawing a grid-spanning scale itself. */}
-      {dbScale && rxIndex === 0 && !widebandDisplay && <WfDbScale />}
+      {/* Same rule as the panadapter's DbScale: RX1 in the shared/stitched
+          world, and any STANDALONE secondary pane (the G2 stack's RX2). */}
+      {dbScale && (rxIndex === 0 || !stitched) && !widebandDisplay && <WfDbScale />}
       {widebandDisplay && <FreqAxis receiver={receiver} stitched={stitched} />}
       {/* Dial-position cursor on BOTH halves (RX2) — each tracks its own VFO. */}
       <div

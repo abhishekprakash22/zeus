@@ -194,7 +194,10 @@ export function Panadapter({
       }
       // Pop is an RX weak-signal aid; the TX trace lives in a different dB
       // domain (speech against a calibrated scale), so leave it raw while keyed.
-      if (!popEnabled || moxOn || tunOn) return source;
+      // Primary only: the estimator's floor is a singleton trained on RxId-0
+      // frames (see Waterfall.tsx) — subtracting it from a secondary
+      // receiver's trace imprints RX1's band shape. Raw until per-RX banks.
+      if (!popEnabled || moxOn || tunOn || rxIndex !== 0) return source;
       let buf = enhScratch[enhSlot];
       if (!buf || buf.length !== source.length) {
         buf = new Float32Array(source.length);

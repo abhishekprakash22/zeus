@@ -1757,18 +1757,23 @@ public class DspPipelineService : BackgroundService,
 
     private static void TrimDdcTransitionBand(
         ref ReadOnlyMemory<float> pan, ref ReadOnlyMemory<float> wf,
-        ref int width, float stampedHzPerPixel, double sampleRateHz)
+        ref ushort width, float stampedHzPerPixel, double sampleRateHz)
     {
-        if (width <= 0 || stampedHzPerPixel <= 0 || sampleRateHz <= 0) return;
-        double spanHz = (double)width * stampedHzPerPixel;
+        // width is a ushort ref — it IS the DisplayFrame wire field's type
+        // (FrameBins' out param), and the CI compiler rightly refused the
+        // int version of this signature. All math stays in int; the store
+        // back is a checked-by-construction narrowing (keep < width ≤ 2048).
+        int w = width;
+        if (w <= 0 || stampedHzPerPixel <= 0 || sampleRateHz <= 0) return;
+        double spanHz = (double)w * stampedHzPerPixel;
         double keepHz = sampleRateHz * DisplayKeepFraction;
         if (spanHz <= keepHz) return;           // zoomed inside the flat passband
         int keep = (int)(keepHz / stampedHzPerPixel) & ~1;
-        if (keep <= 0 || keep >= width) return;
-        int start = (width - keep) / 2;
+        if (keep <= 0 || keep >= w) return;
+        int start = (w - keep) / 2;
         if (pan.Length >= start + keep) pan = pan.Slice(start, keep);
         if (wf.Length >= start + keep) wf = wf.Slice(start, keep);
-        width = keep;
+        width = (ushort)keep;
     }
 
     private static ReadOnlyMemory<float> FrameBins(

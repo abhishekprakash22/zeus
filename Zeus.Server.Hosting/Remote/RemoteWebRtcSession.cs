@@ -240,23 +240,45 @@ public sealed class RemoteWebRtcSession
 
         if (_frames is null)
             return false;
-        // Backpressure at the channel door (field: session hung after minutes
-        // on Wi-Fi). The sink's drop-oldest queue protects the DSP thread, but
-        // frames handed to send() buffer in SCTP without bound — a Wi-Fi
-        // stutter accumulates megabytes of STALE spectrum, latency climbs to
-        // minutes, and the session is effectively dead. Stale display frames
-        // are worthless: while the channel is backed up past the threshold,
-        // drop at the door — a fresher frame is at most tens of ms behind.
-        if (_frames.bufferedAmount > MaxBufferedFrameBytes)
-            return true;
+
+        // Display pacing + backpressure (field rounds 1-2: session hung, then
+        // 'stuck / restarts with hiccups' on Wi-Fi). A remote session never
+        // needs the full local frame rate: pace display frames to ~20 fps in
+        // the clear, stretching toward ~7 fps as the channel's SCTP buffer
+        // fills, and only past the hard ceiling drop at the door outright.
+        // Graceful degradation instead of freeze-then-catch-up oscillation.
+        // Meters/status are tiny and pass unpaced; audio rides the media
+        // track untouched.
+        if (frame.Length >= 1 && frame[0] == (byte)Zeus.Contracts.MsgType.DisplayFrame)
+        {
+            ulong buffered = _frames.bufferedAmount;
+            if (buffered > MaxBufferedFrameBytes)
+                return true; // hard ceiling — drop at the door
+            long gapMs = buffered > MaxBufferedFrameBytes / 2 ? SlowDisplayGapMs : NormalDisplayGapMs;
+            long now = Environment.TickCount64;
+            if (now - _lastDisplaySendMs < gapMs)
+                return true; // paced out — a fresher frame is right behind
+            _lastDisplaySendMs = now;
+        }
+        else if (_frames.bufferedAmount > MaxBufferedFrameBytes)
+        {
+            return true; // non-display under a choked channel: drop too
+        }
+
         _frames.send(frame);
         return true;
     }
 
-    /// <summary>SCTP buffered ceiling before display frames drop at the door
+    /// <summary>SCTP buffered ceiling before frames drop at the door
     /// (~a quarter second of full-rate spectrum; audio rides the media track
     /// and is unaffected).</summary>
     private const ulong MaxBufferedFrameBytes = 256 * 1024;
+
+    /// <summary>Display pacing: minimum inter-frame gap in the clear (~20 fps —
+    /// plenty for a remote panadapter) and under buffer pressure (~7 fps).</summary>
+    private const long NormalDisplayGapMs = 50;
+    private const long SlowDisplayGapMs = 150;
+    private long _lastDisplaySendMs;
 
     public void Close()
     {

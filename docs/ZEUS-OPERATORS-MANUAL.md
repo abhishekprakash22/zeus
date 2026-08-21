@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.145**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.146**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -130,7 +130,10 @@ digits to type a frequency (kHz) inline — plus the **CTRL** chip for that
 receiver's AF / AGC-T / mute controls, the STEP chip to cycle the tune
 step, and a DSP status row (NR / NB / ANF / SNB, lit when engaged; the
 NB·NR tab is the editor). RX2's waterfall wears the same enhanced texture as RX1's, built from
-its own band. The left rail holds
+its own band. The outer edges of every span (the receiver's filter
+transition band, where out-of-span signals fold back attenuated) render
+raw rather than enhanced, so the shoulders no longer bloom into bright
+columns the spectrum trace doesn't show. The left rail holds
 DISC (tap to arm SURE? in red, tap again within 3 s to disconnect — the
 armed button notes unsaved TX-audio edits), FULL SCR to enter or leave
 browser full screen, CONTROLS, and AUDIO PROC. While the G2 layout is on,

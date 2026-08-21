@@ -18,6 +18,7 @@
 // on a mid-session install — the host publishes plugin routes dynamically); 404
 // (not installed / activation failed) and 503 (shut down) both read as not-live.
 
+import { isRemoteMode } from '../remote/remote-client';
 import { getServerBaseUrl } from '../serverUrl';
 import { usePluginsStore } from '../plugins/state/plugins-store';
 import type { PluginDto } from '../plugins/api/plugins';
@@ -140,6 +141,17 @@ export function openDigitalEvents(h: DigitalEventsHandlers): () => void {
 
   const connect = () => {
     if (closed) return;
+    // Remote (WebRTC) sessions have no same-origin backend: on the static
+    // Pages host this EventSource gets index.html (text/html), aborts, and
+    // retries forever — the field console showed 58 aborted connections in
+    // a couple of minutes. SSE cannot ride the fetch-based api-tunnel
+    // (EventSource is not fetch), so in remote mode the digital plugin's
+    // event stream simply stays closed; the handlers see a permanent
+    // disconnected state, which is truthful.
+    if (isRemoteMode()) {
+      h.onConnectionChange?.(false);
+      return;
+    }
     // Relative on web/desktop; Capacitor builds prefix the configured LAN base
     // (EventSource bypasses the fetch interceptor, so resolve it explicitly).
     es = new EventSource(`${getServerBaseUrl()}${digitalPluginBase()}/events`);

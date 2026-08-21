@@ -20,7 +20,9 @@ const CONTEXT = new TextEncoder().encode('zeus-remote-access/v1');
 const ID_PROVER = new Uint8Array(0);
 const ID_VERIFIER = new Uint8Array(0);
 
-const DEFAULT_BROKER = 'https://remote.openhpsdrzeus.com';
+// The shipped production broker (G2 product path — mirrors RemoteDefaults on
+// the radio side). Self-hosters override per-link via `?broker=` below.
+const DEFAULT_BROKER = 'https://ananremote.com';
 
 /** Resolve the broker origin for internet connects, in priority order:
  *  1. explicit option, 2. `?broker=` URL param (self-hosted relays — lets a

@@ -113,6 +113,17 @@ export async function startRemoteClient(
   // internet loss). If the host doesn't enable it, no inbound track arrives and
   // RX audio keeps flowing through the existing PCM/WebAudio path — nothing here
   // fires. The unlock click is a user gesture, so autoplay is permitted.
+  // FIELD FIX (no RX audio on the remote PC): `track` fires DURING
+  // setRemoteDescription(answer), deep inside connectViaBroker — attaching
+  // the listener only after it resolves missed the event every single time,
+  // so the Opus track arrived and played nowhere. The receiver (and its
+  // track) already exist by now: attach the present one directly, and keep
+  // the listener for any future renegotiation.
+  const existingAudio = conn.pc
+    .getReceivers()
+    .map((r) => r.track)
+    .find((t): t is MediaStreamTrack => !!t && t.kind === 'audio');
+  if (existingAudio) playRemoteRxAudioTrack(new MediaStream([existingAudio]));
   conn.pc.addEventListener('track', (ev) => {
     if (ev.track.kind !== 'audio') return;
     playRemoteRxAudioTrack(ev.streams[0] ?? new MediaStream([ev.track]));

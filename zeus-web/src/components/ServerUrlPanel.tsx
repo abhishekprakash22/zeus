@@ -779,7 +779,7 @@ function RemotePasswordSection() {
         {hasPassword === null
           ? '…'
           : hasPassword
-            ? '● Password set — remote access can be enabled.'
+            ? '● Password set — remote access is armed.'
             : '○ No password — remote access is disabled.'}
       </div>
 

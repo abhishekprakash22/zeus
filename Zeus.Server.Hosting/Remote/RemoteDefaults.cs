@@ -32,8 +32,8 @@ namespace Zeus.Server.Hosting.Remote;
 public static class RemoteDefaults
 {
     /// <summary>Host-role signaling socket the radio keeps on the broker.</summary>
-    public const string BrokerSignalUrl = "wss://remote.apachelabs.com/signal?role=host";
+    public const string BrokerSignalUrl = "wss://ananremote.com/signal?role=host";
 
     /// <summary>Origin serving the remote client page and /go/&lt;callsign&gt; QR addresses.</summary>
-    public const string BrokerOrigin = "https://remote.apachelabs.com";
+    public const string BrokerOrigin = "https://ananremote.com";
 }

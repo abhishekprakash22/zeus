@@ -174,8 +174,23 @@ public sealed class P2AppUpdateService
         };
         using var p = Process.Start(psi);
         if (p is null) { Fail($"{file} failed to start"); return false; }
-        p.OutputDataReceived += (_, e) => { if (e.Data is { Length: > 0 } l) Append(l); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 } l) Append(l); };
+        // Keep the tool's last words: the settings card shows only the Fail
+        // line, and 'git pull --ff-only exited 1' without git's actual
+        // complaint sent an operator to the terminal to learn what git had
+        // already told us (field report). The full stream still lands in the
+        // update log via Append.
+        var tail = new List<string>(4);
+        void Remember(string l)
+        {
+            Append(l);
+            lock (tail)
+            {
+                tail.Add(l);
+                if (tail.Count > 3) tail.RemoveAt(0);
+            }
+        }
+        p.OutputDataReceived += (_, e) => { if (e.Data is { Length: > 0 } l) Remember(l); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 } l) Remember(l); };
         p.BeginOutputReadLine(); p.BeginErrorReadLine();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         try { await p.WaitForExitAsync(cts.Token); }
@@ -185,7 +200,13 @@ public sealed class P2AppUpdateService
             Fail($"{file} {args} timed out after {timeoutSeconds}s");
             return false;
         }
-        if (p.ExitCode != 0) { Fail($"{file} {args} exited {p.ExitCode}"); return false; }
+        if (p.ExitCode != 0)
+        {
+            string why;
+            lock (tail) { why = tail.Count > 0 ? $" — {string.Join(" | ", tail)}" : ""; }
+            Fail($"{file} {args} exited {p.ExitCode}{why}");
+            return false;
+        }
         return true;
     }
 

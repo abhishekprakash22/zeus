@@ -56,6 +56,7 @@ public sealed class SaturnFlashService
     private readonly TxService _tx;
     private readonly SaturnXdmaProbe _probe;
     private readonly IHttpClientFactory _http;
+    private readonly P2AppSupervisor _p2app;
     private readonly ILogger<SaturnFlashService> _log;
 
     private readonly object _lock = new();
@@ -66,11 +67,13 @@ public sealed class SaturnFlashService
 
     public SaturnFlashService(
         TxService tx, SaturnXdmaProbe probe,
-        IHttpClientFactory http, ILogger<SaturnFlashService> log)
+        IHttpClientFactory http, P2AppSupervisor p2app,
+        ILogger<SaturnFlashService> log)
     {
         _tx = tx;
         _probe = probe;
         _http = http;
+        _p2app = p2app;
         _log = log;
     }
 
@@ -101,10 +104,22 @@ public sealed class SaturnFlashService
             shelfHead = await resp.Content.ReadAsByteArrayAsync();
         }
         var flashHead = new byte[Math.Min(HeadBytes, shelfHead.Length)];
-        using (var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        // Quiet the register plane for the SPI head read: p2app hammers the
+        // same XDMA BAR continuously (supervised, it never rests), and
+        // interleaved traffic corrupts the flash controller handshake. Same
+        // discipline as the flash job below, just briefer.
+        var (cmpOk, cmpErr) = await _p2app.PauseForNativeSessionAsync();
+        if (!cmpOk)
+            return new { ok = false, error = cmpErr };
+        try
         {
+            using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
             SpiInit(fs);
             Command(fs, CmdRead4, PrimaryAddr, ReadOnlySpan<byte>.Empty, flashHead.Length, flashHead);
+        }
+        finally
+        {
+            _p2app.Resume();
         }
         bool match = flashHead.AsSpan().SequenceEqual(shelfHead.AsSpan(0, flashHead.Length));
         bool blank = flashHead.All(b => b == 0xFF);
@@ -178,6 +193,20 @@ public sealed class SaturnFlashService
                 throw new InvalidOperationException($"bitstream size {image.Length} is implausible for a Saturn image");
             _log.LogWarning("fpga: flashing PRIMARY slot with {Bytes} bytes from {Url}", image.Length, url);
 
+            // The flash engine and p2app share one XDMA register plane. The
+            // flashwriter predates p2app supervision — on a radio where the
+            // supervisor keeps p2app alive around the clock there is never a
+            // quiet moment, and the erase status poll reads interleaved
+            // garbage forever (field report: stuck at 'erasing primary
+            // slot'). Stop p2app for the duration; the supervisor respawns
+            // it the moment the job ends, success or failure. An externally
+            // managed p2app cannot be paused by Zeus — that refusal reaches
+            // the operator as this job's error.
+            SetPhase("erasing", 0, "pausing p2app for exclusive flash access");
+            var (pOk, pErr) = await _p2app.PauseForNativeSessionAsync();
+            if (!pOk)
+                throw new InvalidOperationException(pErr ?? "could not pause p2app for flashing");
+
             using var fs = new FileStream(UserDev, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
             SpiInit(fs);
 
@@ -227,6 +256,13 @@ public sealed class SaturnFlashService
         {
             _log.LogError(ex, "fpga: flash job failed");
             lock (_lock) { _phase = "error"; _error = ex.Message; }
+        }
+        finally
+        {
+            // Success, failure, or refusal — the radio's network personality
+            // comes back. A power-cycle (to load the new image) restarts the
+            // whole stack anyway.
+            _p2app.Resume();
         }
     }
 

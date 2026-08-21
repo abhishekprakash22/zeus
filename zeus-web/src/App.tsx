@@ -191,7 +191,15 @@ export default function App() {
   // password and owns that transport.
   const remoteMode = useMemo(() => isRemoteMode(), []);
   const adminRoute = useMemo(() => window.location.pathname.replace(/\/+$/, '') === '/admin', []);
-  const appAccessAllowed = useUserAccessStore((s) => s.session?.accessAllowed === true);
+  // Remote-client sessions never require a QRZ account: the radio's SPAKE2+
+  // session password is the sole authenticator (ADR-0008), and the hosted
+  // client page exists precisely so a G2 owner can hand out
+  // ananremote.com/go/<CALL> + password with no sign-ups. Upstream gated
+  // this hosted context on QRZ + subscription entitlements ('APP ACCESS
+  // blocked' — the exact wall the standalone build removes); the radio's
+  // own UI never enters remoteMode and is unaffected.
+  const appAccessAllowed =
+    useUserAccessStore((s) => s.session?.accessAllowed === true) || remoteMode;
   // Startup-race guards for the access gate (local builds allow the
   // un-authenticated session, so the gate should only ever appear for a REAL
   // denial from user management — not because the first session fetch hasn't

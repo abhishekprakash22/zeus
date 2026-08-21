@@ -240,9 +240,23 @@ public sealed class RemoteWebRtcSession
 
         if (_frames is null)
             return false;
+        // Backpressure at the channel door (field: session hung after minutes
+        // on Wi-Fi). The sink's drop-oldest queue protects the DSP thread, but
+        // frames handed to send() buffer in SCTP without bound — a Wi-Fi
+        // stutter accumulates megabytes of STALE spectrum, latency climbs to
+        // minutes, and the session is effectively dead. Stale display frames
+        // are worthless: while the channel is backed up past the threshold,
+        // drop at the door — a fresher frame is at most tens of ms behind.
+        if (_frames.bufferedAmount > MaxBufferedFrameBytes)
+            return true;
         _frames.send(frame);
         return true;
     }
+
+    /// <summary>SCTP buffered ceiling before display frames drop at the door
+    /// (~a quarter second of full-rate spectrum; audio rides the media track
+    /// and is unaffected).</summary>
+    private const ulong MaxBufferedFrameBytes = 256 * 1024;
 
     public void Close()
     {

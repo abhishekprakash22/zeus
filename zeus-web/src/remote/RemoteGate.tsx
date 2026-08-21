@@ -51,6 +51,33 @@ export function RemoteGate() {
         // over WebRTC and dispatchServerFrame feeds the same stores.
         useDisplayStore.getState().setConnected(true);
         setPhase('connected');
+        // Connection-death watchdog (field: the UI froze forever after a
+        // Wi-Fi hiccup). 'failed' is terminal — recover immediately.
+        // 'disconnected' often self-heals across a roam, so give ICE a
+        // grace window before declaring the session lost. Recovery returns
+        // to the password prompt with the password still filled, one click
+        // from reconnecting.
+        const pc = conn.pc;
+        let graceTimer: ReturnType<typeof setTimeout> | null = null;
+        const lost = () => {
+          if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
+          pc.removeEventListener('connectionstatechange', onState);
+          try { connRef.current?.close(); } catch { /* already down */ }
+          connRef.current = null;
+          useDisplayStore.getState().setConnected(false);
+          setError('Connection lost — press Connect to resume.');
+          setPhase('prompt');
+        };
+        const onState = () => {
+          if (pc.connectionState === 'failed') lost();
+          else if (pc.connectionState === 'disconnected') {
+            if (graceTimer == null) graceTimer = setTimeout(lost, 10_000);
+          } else if (pc.connectionState === 'connected' && graceTimer != null) {
+            clearTimeout(graceTimer);
+            graceTimer = null;
+          }
+        };
+        pc.addEventListener('connectionstatechange', onState);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Connection failed.');

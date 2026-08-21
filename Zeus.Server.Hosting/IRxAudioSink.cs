@@ -27,10 +27,12 @@ public interface IRxAudioSink
     /// (<see cref="RxAudioMuteState"/>). Used only for local monitor audio the
     /// operator explicitly asked to hear — Recorder playback and TX Monitor
     /// preview — so a muted radio still lets them monitor their own audio on the
-    /// PC output. The DEFAULT is a no-op so exempt audio never leaks to the
-    /// WebSocket fan-out or the onboard-speaker sinks; only
-    /// <see cref="NativeAudioSink"/> (the desktop PC output the operator hears)
-    /// overrides it. Real RX audio never travels this lane — the pipeline keeps it
+    /// PC output. The DEFAULT is a no-op so exempt audio never leaks to sinks
+    /// that shouldn't carry it (e.g. onboard-speaker sinks);
+    /// <see cref="NativeAudioSink"/> (the desktop PC output) and
+    /// <see cref="GatedWebSocketAudioSink"/> (streaming listeners, incl. remote
+    /// WebRTC sessions — the MON toggle means "let me hear it where I am")
+    /// override it. Real RX audio never travels this lane — the pipeline keeps it
     /// on <see cref="Publish"/>, which stays muted. Runs on the DSP tick thread
     /// under the same cost model as <see cref="Publish"/>.
     /// </summary>

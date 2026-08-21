@@ -30,4 +30,24 @@ internal sealed class GatedWebSocketAudioSink : IRxAudioSink
         if (!_hub.AudioStreamRequested) return;
         _hub.Broadcast(in frame);
     }
+
+    /// <summary>
+    /// Mute-exempt monitor audio (TX Monitor preview, Recorder playback) now
+    /// reaches streaming listeners too. Field find: a REMOTE operator keyed
+    /// MOX, saw their modulation on the TX display, toggled MON — and heard
+    /// nothing, because the exempt lane historically dead-ended at the desktop
+    /// NativeAudioSink (MON predates remote operation). An operator who
+    /// pressed MON asked to hear their processed TX audio wherever they are
+    /// listening; the hub's audio gate still applies, and while MON is on the
+    /// TX-suppressed silence publisher stands down, so this is the only audio
+    /// stream in flight — no interleave with the silence lane is possible.
+    /// (Remote self-monitor carries the WebRTC round trip, so the returned
+    /// audio is delayed — that is inherent to monitoring over a link, and MON
+    /// remains the operator's own toggle.)
+    /// </summary>
+    public void PublishExempt(in AudioFrame frame)
+    {
+        if (!_hub.AudioStreamRequested) return;
+        _hub.Broadcast(in frame);
+    }
 }

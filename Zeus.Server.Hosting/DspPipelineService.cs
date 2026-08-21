@@ -2013,9 +2013,10 @@ public class DspPipelineService : BackgroundService,
 
     // Fan out a mute-EXEMPT frame (local monitor audio the operator explicitly
     // asked to hear, such as Recorder playback or TX Monitor preview).
-    // Only NativeAudioSink honours it; every other sink inherits the interface's
-    // default no-op, so exempt playback reaches the desktop PC output but never
-    // the WebSocket fan-out or the onboard radio speakers.
+    // NativeAudioSink honours it (desktop PC output), and since the remote
+    // field round GatedWebSocketAudioSink does too — an operator who pressed
+    // MON hears their monitor wherever they listen, including a remote WebRTC
+    // session. Other sinks (onboard radio speakers) keep the default no-op.
     private void PublishExemptAudio(in AudioFrame frame)
     {
         for (int i = 0; i < _audioSinks.Length; i++)

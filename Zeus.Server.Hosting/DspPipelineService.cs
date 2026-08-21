@@ -1738,6 +1738,39 @@ public class DspPipelineService : BackgroundService,
         return width;
     }
 
+    // -----------------------------------------------------------------------
+    // DDC transition-band display trim (option B, field-picked after the
+    // display-side edge guard proved insufficient on the glass). The outer
+    // bins of a full-span frame live in the decimation chain's transition
+    // band (CIC + halfband shoulder), where out-of-span signals fold back
+    // 40-60 dB down; the enhancer faithfully amplified those ultra-stationary
+    // folded carriers into bright columns the pan didn't corroborate. Rather
+    // than teach every display layer about the shoulder, the frame simply no
+    // longer carries it: a symmetric central slice of the bins (zero-copy —
+    // they are Memory views), width restamped, CenterHz and HzPerPixel
+    // unchanged and still truthful. Every consumer downstream (axis,
+    // overlays, gestures, zoom, estimator) reads geometry from the frame's
+    // own stamps — the saga's lasting gift — so a narrower honest frame
+    // needs no client changes. Zoom-safe by construction: a zoomed span is
+    // already inside the flat passband and passes through untouched.
+    private const double DisplayKeepFraction = 0.88;
+
+    private static void TrimDdcTransitionBand(
+        ref ReadOnlyMemory<float> pan, ref ReadOnlyMemory<float> wf,
+        ref int width, float stampedHzPerPixel, double sampleRateHz)
+    {
+        if (width <= 0 || stampedHzPerPixel <= 0 || sampleRateHz <= 0) return;
+        double spanHz = (double)width * stampedHzPerPixel;
+        double keepHz = sampleRateHz * DisplayKeepFraction;
+        if (spanHz <= keepHz) return;           // zoomed inside the flat passband
+        int keep = (int)(keepHz / stampedHzPerPixel) & ~1;
+        if (keep <= 0 || keep >= width) return;
+        int start = (width - keep) / 2;
+        if (pan.Length >= start + keep) pan = pan.Slice(start, keep);
+        if (wf.Length >= start + keep) wf = wf.Slice(start, keep);
+        width = keep;
+    }
+
     private static ReadOnlyMemory<float> FrameBins(
         float[] source,
         float[] decimated,
@@ -6829,6 +6862,10 @@ public class DspPipelineService : BackgroundService,
                 ? FrameBins(wfBuf, _wfDecimatedBuf, displayPlan.Decimation, out _)
                 : InvalidFrameBins(_wfDecimatedBuf, displayPlan.Decimation, out _);
 
+            float stampedHzPerPixel = hzPerPixel * displayPlan.Decimation;
+            TrimDdcTransitionBand(
+                ref panFrameBins, ref wfFrameBins, ref frameWidth,
+                stampedHzPerPixel, sampleRate);
             var frame = new DisplayFrame(
                 Seq: NextDisplaySeq(),
                 TsUnixMs: nowMs,
@@ -6840,7 +6877,7 @@ public class DspPipelineService : BackgroundService,
                 // (audio passband centred on cw_pitch) then renders on top of
                 // the dial line via PassbandOverlay's `centerHz + filterLow..high`.
                 CenterHz: centerHz,
-                HzPerPixel: hzPerPixel * displayPlan.Decimation,
+                HzPerPixel: stampedHzPerPixel,
                 PanDb: panFrameBins,
                 WfDb: wfFrameBins);
 
@@ -6920,6 +6957,10 @@ public class DspPipelineService : BackgroundService,
                 float secHzPerPixel = ri == 1
                     ? (float)((double)sampleRate / Math.Max(1, state.Rx2ZoomLevel) / Width)
                     : hzPerPixel;
+                float secStampedHzPerPixel = secHzPerPixel * displayPlan.Decimation;
+                TrimDdcTransitionBand(
+                    ref secPanBins, ref secWfBins, ref secFrameWidth,
+                    secStampedHzPerPixel, sampleRate);
                 var secFrame = new DisplayFrame(
                     Seq: NextDisplaySeq(),
                     TsUnixMs: nowMs,
@@ -6927,7 +6968,7 @@ public class DspPipelineService : BackgroundService,
                     BodyFlags: secFlags,
                     Width: secFrameWidth,
                     CenterHz: rx.LoHz,
-                    HzPerPixel: secHzPerPixel * displayPlan.Decimation,
+                    HzPerPixel: secStampedHzPerPixel,
                     PanDb: secPanBins,
                     WfDb: secWfBins);
                 if (secFlags != DisplayBodyFlags.None)

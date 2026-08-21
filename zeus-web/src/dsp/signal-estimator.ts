@@ -1212,37 +1212,6 @@ type EstimatorBank = {
   lastHzPerPixel: number;
 };
 
-// ---------------------------------------------------------------------------
-// DDC edge guard. The outer bins of every spectrum row live in the
-// decimation chain's transition band (CIC + halfband shoulder in the
-// gateware), where strong signals just OUTSIDE the span fold back in,
-// 40-60 dB down. The raw trace barely lifts there — but the texture
-// enhancement's whole job is amplifying persistent coherent structure near
-// the floor, and a folded broadcast carrier is the most stationary signal
-// there is, so the shoulders bloomed into bright columns the pan didn't
-// show (field report, both receivers). The guard renders the transition
-// band honest: outer EDGE_RAW_FRAC fully raw (early-out — those bins now
-// cost LESS than before), a short linear blend to EDGE_FULL_FRAC, full
-// enhancement inside. Pure geometry, shared across banks.
-const EDGE_RAW_FRAC = 0.05;
-const EDGE_FULL_FRAC = 0.09;
-
-let edgeGuardCache: Float32Array | null = null;
-
-function edgeGuardFor(n: number): Float32Array {
-  let g = edgeGuardCache;
-  if (g !== null && g.length === n) return g;
-  g = new Float32Array(n);
-  const rawBins = Math.floor(n * EDGE_RAW_FRAC);
-  const fullBins = Math.max(rawBins + 1, Math.floor(n * EDGE_FULL_FRAC));
-  for (let i = 0; i < n; i++) {
-    const d = Math.min(i, n - 1 - i);
-    g[i] = d <= rawBins ? 0 : d >= fullBins ? 1 : (d - rawBins) / (fullBins - rawBins);
-  }
-  edgeGuardCache = g;
-  return g;
-}
-
 const estimatorBanks = new Map<number, EstimatorBank>();
 let activeBank = 0;
 
@@ -1907,15 +1876,7 @@ export function enhanceInto(raw: Float32Array, out: Float32Array, terrainOut?: F
   const conf = signalConfidence && signalConfidence.length === n ? signalConfidence : null;
   const { mean, texture } = updateDisplayTexture(raw, f, hold, conf, st);
   const span = estimateVisualAgcSpan(raw, f, hold, conf, mean, texture, st, baseSpan);
-  const guard = edgeGuardFor(n);
   for (let i = 0; i < n; i++) {
-    const w = guard[i]!;
-    if (w === 0) {
-      // Transition band: floor height, no sculpting — and no work.
-      out[i] = 0;
-      if (terrainOut && terrainOut.length === n) terrainOut[i] = 0;
-      continue;
-    }
     const snr = displaySnrForBin(raw, f, hold, conf, mean, texture, st, i, true);
     const textureValue = Number.isFinite(texture[i]!) ? texture[i]! : 0;
     const confidence = finiteConfidenceValue(conf, n, i);
@@ -1956,9 +1917,9 @@ export function enhanceInto(raw: Float32Array, out: Float32Array, terrainOut?: F
     v = clamp01(v + crestLift + terrain * ridgeCrest * confirmedEvidence * 0.10);
     const summitCeiling = 0.72 + 0.11 * ridgeCrest + 0.05 * Math.max(temporalEvidence, textureEvidence);
     const shaped = Math.min(v, summitCeiling);
-    out[i] = (gamma === 1 ? shaped : Math.pow(shaped, gamma)) * w;
+    out[i] = gamma === 1 ? shaped : Math.pow(shaped, gamma);
     if (terrainOut && terrainOut.length === n) {
-      terrainOut[i] = w * waterfallTerrainHeight01(
+      terrainOut[i] = waterfallTerrainHeight01(
         baseSnr,
         gate,
         textureValue,
@@ -1990,18 +1951,10 @@ export function enhanceWaterfallTextureInto(raw: Float32Array, out: Float32Array
   const hold = signalHold && signalHold.length === n ? signalHold : null;
   const conf = signalConfidence && signalConfidence.length === n ? signalConfidence : null;
   const { mean, texture } = updateDisplayTexture(raw, f, hold, conf, st);
-  const guard = edgeGuardFor(n);
   for (let i = 0; i < n; i++) {
     const sample = finiteSample(raw, i);
     if (sample === null) {
       out[i] = FALLBACK_FLOOR_DB;
-      continue;
-    }
-    const w = guard[i]!;
-    if (w === 0) {
-      // Transition band: raw dB, no sculpting — and no work.
-      out[i] = sample;
-      if (terrainOut && terrainOut.length === n) terrainOut[i] = 0;
       continue;
     }
     const liveSnr = optionalSnr(raw, f, n, i) ?? 0;
@@ -2036,9 +1989,9 @@ export function enhanceWaterfallTextureInto(raw: Float32Array, out: Float32Array
       nearFloor * (4.0 + 18.0 * lowEvidence) +
       stochasticSpeckle * 7.0 +
       (1 - confirmed) * smooth01(0, st.popFloorDb + 7, Math.max(0, st.popFloorDb + 4 - texturedSnr)) * 4.5;
-    out[i] = sample + (reliefDb - floorTuckDb) * w;
+    out[i] = sample + reliefDb - floorTuckDb;
     if (terrainOut && terrainOut.length === n) {
-      terrainOut[i] = w * waterfallTerrainHeight01(
+      terrainOut[i] = waterfallTerrainHeight01(
         baseSnr,
         st.popFloorDb,
         textureValue,

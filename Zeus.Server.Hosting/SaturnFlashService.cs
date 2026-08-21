@@ -117,6 +117,10 @@ public sealed class SaturnFlashService
             SpiInit(fs);
             Command(fs, CmdRead4, PrimaryAddr, ReadOnlySpan<byte>.Empty, flashHead.Length, flashHead);
         }
+        catch (Exception ex)
+        {
+            return new { ok = false, error = ex.Message };
+        }
         finally
         {
             _p2app.Resume();
@@ -285,6 +289,20 @@ public sealed class SaturnFlashService
         Reg(fs, SRR, SrrReset);
         Reg(fs, CR, CrEnable | CrMaster | CrManualSs | CrTxReset | CrRxReset | CrTransInhibit);
         Reg(fs, SSR, 0xFFFFFFFF);
+        // Identity sniff before trusting the core. A bus with nothing
+        // decoding this address reads all-ones; a live AXI Quad SPI can
+        // never read 0 (RX-empty is set after reset). Field lesson: the
+        // GOLDEN recovery gateware is not guaranteed to expose the
+        // flashwriter SPI core the way current images do — without this
+        // check the first transaction span forever in Command().
+        uint sr = Reg(fs, SR);
+        if (sr == 0xFFFFFFFF || sr == 0)
+            throw new InvalidOperationException(
+                $"SPI flash controller not responding (status reads 0x{sr:X8}) — " +
+                "the RUNNING gateware does not expose the flashwriter core at its expected address. " +
+                "If the radio is on the GOLDEN recovery image (identity shows FW 0.5), recover the " +
+                "primary slot with the Saturn flashwriter utility (Saturn/sw_tools on the Pi), " +
+                "power-cycle onto the restored primary, and in-app flashing will work again.");
     }
 
     /// <summary>One SPI transaction: cmd + 4-byte address (when addressed) +
@@ -312,8 +330,22 @@ public sealed class SaturnFlashService
         Reg(fs, CR, cr & ~CrTransInhibit);              // release the master
 
         int sent = 0, received = 0;
+        // A transaction is at most ~4 KB + header; even at a conservative
+        // SPI clock that is milliseconds. If the FIFOs stop moving —
+        // contention wedged the core, or the running gateware's core is not
+        // what we think it is — this loop historically span FOREVER (two
+        // field reports: CHECK stuck, then erase stuck, with p2app already
+        // paused). Bounded now: the failure names the exact register state
+        // instead of hanging the job.
+        long deadline = Environment.TickCount64 + 2000;
         while (received < total)
         {
+            if (Environment.TickCount64 > deadline)
+                throw new TimeoutException(
+                    $"SPI transaction stalled — cmd=0x{cmd:X2}, sent {sent}/{total}, " +
+                    $"received {received}, status=0x{Reg(fs, SR):X8}. The flash engine and the " +
+                    "running gateware are not agreeing; if the radio is on the GOLDEN image, use " +
+                    "the Saturn flashwriter utility to restore the primary slot first.");
             while (sent < total && (Reg(fs, SR) & SrTxFull) == 0)
             {
                 byte b = sent < header ? txPrefix[sent]

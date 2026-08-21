@@ -28,7 +28,7 @@ public static class RemoteQr
         }
     }
 
-    public const string DefaultBrokerOrigin = "https://openhpsdrzeus.com";
+    public const string DefaultBrokerOrigin = RemoteDefaults.BrokerOrigin;
 
     /// <summary>
     /// Canonical remote address for a callsign, e.g.

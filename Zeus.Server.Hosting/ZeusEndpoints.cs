@@ -4827,6 +4827,35 @@ public static class ZeusEndpoints
                 return Results.Ok(new { hasPassword = false });
             });
 
+        // -- Remote-access callsign (G2 product path) -------------------------
+        // The identity the broker announces. UI-first (Settings → Remote);
+        // ZEUS_REMOTE_CALLSIGN env still overrides for self-hosters/fleets,
+        // and with neither set the QRZ session identity is the fallback.
+        // Takes effect on the broker client's next reconnect cycle.
+        app.MapGet("/api/remote/callsign",
+            (Zeus.Server.Hosting.Remote.RemoteCallsignStore store) =>
+                Results.Ok(new { callsign = store.Get() }));
+
+        app.MapPost("/api/remote/callsign",
+            (Zeus.Server.Hosting.Remote.RemoteCallsignRequest req,
+             Zeus.Server.Hosting.Remote.RemoteCallsignStore store) =>
+            {
+                var norm = Zeus.Server.Hosting.Remote.RemoteCallsignStore.Normalize(req?.Callsign);
+                if (norm is null)
+                    return Results.BadRequest(new { error = "callsign must be 3-12 characters: letters, digits, /" });
+                store.Set(norm);
+                log.LogInformation("api.remote.callsign set");
+                return Results.Ok(new { callsign = norm });
+            });
+
+        app.MapDelete("/api/remote/callsign",
+            (Zeus.Server.Hosting.Remote.RemoteCallsignStore store) =>
+            {
+                store.Clear();
+                log.LogInformation("api.remote.callsign cleared");
+                return Results.Ok(new { callsign = (string?)null });
+            });
+
         // WebRTC signaling: answer the browser's offer with a password-gated session
         // (Phase 1). 403 when no password is set — there is no unauthenticated path.
         app.MapPost("/api/remote/connect",

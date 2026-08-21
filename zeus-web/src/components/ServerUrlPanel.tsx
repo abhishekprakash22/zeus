@@ -263,6 +263,7 @@ export function ServerUrlPanel() {
         </div>
       )}
 
+      <RemoteCallsignSection />
       <RemotePasswordSection />
 
       <RemoteDiagnosticsSection />
@@ -543,6 +544,144 @@ function RemoteDiagnosticsSection() {
 
       {notice && (
         <div style={{ marginTop: 12, fontSize: 11, color: 'var(--tx)' }}>{notice}</div>
+      )}
+    </div>
+  );
+}
+
+// Remote-access callsign — the identity the radio announces to the broker
+// (the G2 product path: type it here, done). The ZEUS_REMOTE_CALLSIGN env
+// var still overrides for self-hosters, and with neither set the QRZ
+// session identity is the fallback. Takes effect on the next broker
+// reconnect (within about a minute).
+function RemoteCallsignSection() {
+  const [current, setCurrent] = useState<string | null>(null);
+  const [call, setCall] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const r = await fetch('/api/remote/callsign');
+      const j = await r.json();
+      setCurrent(j.callsign ?? null);
+    } catch {
+      setCurrent(null);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const r = await fetch('/api/remote/callsign', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ callsign: call }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? 'Failed to save');
+      setCall('');
+      setNotice('Callsign saved — announced on the next broker reconnect.');
+      await refresh();
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await fetch('/api/remote/callsign', { method: 'DELETE' });
+      setNotice('Callsign cleared — identity falls back to QRZ sign-in.');
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <h3
+        style={{
+          margin: '0 0 14px',
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'var(--fg-2)',
+        }}
+      >
+        REMOTE CALLSIGN
+      </h3>
+
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.5, marginTop: 0 }}>
+        The identity your radio announces for remote operation — it names your
+        /go address and QR code. Just your callsign; no account needed. The
+        session password below remains the only thing that unlocks anything.
+      </p>
+
+      <div
+        style={{
+          marginTop: 12,
+          fontSize: 12,
+          fontWeight: 700,
+          color: current ? 'var(--accent)' : 'var(--fg-2)',
+        }}
+      >
+        {current ? `● ${current}` : '○ Not set — QRZ sign-in identity will be used.'}
+      </div>
+
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14 }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color: 'var(--fg-2)',
+          }}
+        >
+          {current ? 'Change callsign' : 'Set callsign'}
+        </span>
+        <input
+          type="text"
+          value={call}
+          onChange={(e) => setCall(e.target.value.toUpperCase())}
+          placeholder="VU2XYZ"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          maxLength={12}
+          style={{
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid var(--line)',
+            background: 'var(--bg-2)',
+            color: 'var(--fg-0)',
+            fontFamily: '"JetBrains Mono", Consolas, monospace',
+            letterSpacing: '0.06em',
+          }}
+        />
+      </label>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <button type="button" className="btn sm" disabled={busy || call.length < 3} onClick={() => void save()}>
+          SAVE
+        </button>
+        {current ? (
+          <button type="button" className="btn sm" disabled={busy} onClick={() => void clear()}>
+            CLEAR
+          </button>
+        ) : null}
+      </div>
+      {notice && (
+        <div style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-2)' }}>{notice}</div>
       )}
     </div>
   );

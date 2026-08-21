@@ -41,6 +41,7 @@ public sealed class RemoteBrokerClient : BackgroundService
     private readonly SupportRequestCoordinator _coord;
     private readonly SupportAvailabilityStore _availability;
     private readonly QrzService _qrz;
+    private readonly RemoteCallsignStore _callsigns;
     private readonly ILogger<RemoteBrokerClient> _log;
     private readonly string _brokerUrl;
 
@@ -48,8 +49,10 @@ public sealed class RemoteBrokerClient : BackgroundService
         RemotePasswordStore passwords, RemoteWebRtcService rtc,
         SupportWebRtcService support, SupportRequestCoordinator coord,
         SupportAvailabilityStore availability,
-        QrzService qrz, ILogger<RemoteBrokerClient> log)
+        QrzService qrz, RemoteCallsignStore callsigns,
+        ILogger<RemoteBrokerClient> log)
     {
+        _callsigns = callsigns;
         _passwords = passwords;
         _rtc = rtc;
         _support = support;
@@ -57,8 +60,11 @@ public sealed class RemoteBrokerClient : BackgroundService
         _availability = availability;
         _qrz = qrz;
         _log = log;
+        // Env override first (self-hosters, fleet provisioning), then the
+        // build's shipped default (RemoteDefaults — Apache infrastructure for
+        // G2 product builds; the one place to repoint).
         _brokerUrl = Environment.GetEnvironmentVariable("ZEUS_REMOTE_BROKER_URL")
-            ?? "wss://remote.openhpsdrzeus.com/signal?role=host";
+            ?? RemoteDefaults.BrokerSignalUrl;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -80,13 +86,17 @@ public sealed class RemoteBrokerClient : BackgroundService
                 continue;
             }
 
-            // Self-hosted relays don't need (or want) QRZ identity: the broker
-            // is untrusted by design (ADR-0007 — SPAKE2+ is the real auth), so
-            // against an operator-owned relay a locally declared callsign is
-            // sufficient. ZEUS_REMOTE_CALLSIGN=<CALL> opts in; the QRZ session
-            // header is simply omitted. Without the env var, behaviour is
-            // unchanged (QRZ identity required, as the public broker enforces).
+            // Identity resolution, most explicit wins: the ZEUS_REMOTE_CALLSIGN
+            // env var (self-hosters, fleet provisioning), then the callsign the
+            // operator typed into Settings → Remote (RemoteCallsignStore — the
+            // G2 product path, re-read every cycle so a UI change takes effect
+            // on the next reconnect), then the QRZ session identity as before.
+            // A locally declared callsign is sufficient against any broker:
+            // the broker is untrusted by design (ADR-0007) — SPAKE2+ is the
+            // real authenticator.
             var localCall = Environment.GetEnvironmentVariable("ZEUS_REMOTE_CALLSIGN");
+            if (string.IsNullOrWhiteSpace(localCall))
+                localCall = _callsigns.Get();
             var identity = !string.IsNullOrWhiteSpace(localCall)
                 ? (localCall.Trim().ToUpperInvariant(), string.Empty)
                 : await TryGetIdentityAsync(stoppingToken);

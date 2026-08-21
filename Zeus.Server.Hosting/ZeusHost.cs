@@ -410,6 +410,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<Zeus.Server.Hosting.Remote.WebRtcSpikeService>();
         // Remote-access session password verifier (SPAKE2+, ADR-0008).
         builder.Services.AddSingleton<Zeus.Server.Hosting.Remote.RemotePasswordStore>();
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Remote.RemoteCallsignStore>();
         // Loopback HttpClient for the read-only remote API tunnel. Post-unlock
         // GET/HEAD requests on the WebRTC "api" channel are proxied to this
         // server's own local Kestrel (127.0.0.1:HttpPort) and the response

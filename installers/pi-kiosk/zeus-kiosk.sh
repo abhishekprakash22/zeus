@@ -17,12 +17,16 @@ done
 #   sudo apt install unclutter
 command -v unclutter >/dev/null && unclutter -idle 2 -root &
 
+# --password-store=basic keeps Chromium out of gnome-keyring. On an auto-login
+# appliance PAM never unlocks the login keyring, so without this flag the first
+# launch after every boot pops an "unlock your login keyring" password dialog.
 BROWSER=$(command -v chromium-browser || command -v chromium)
 exec "$BROWSER" \
   --kiosk "$ZEUS_URL" \
   --start-fullscreen \
   --noerrdialogs \
   --disable-session-crashed-bubble \
+  --password-store=basic \
   --disable-infobars \
   --overscroll-history-navigation=0 \
   --disable-pinch \

@@ -1194,7 +1194,17 @@
 .m-tool-embed--rotator { aspect-ratio: 1 / 1.05; min-height: 380px; }
 .m-tool-embed--qrz { min-height: 520px; }
 .m-tool-embed--dsp { min-height: 600px; }
-.m-tool-embed--rx { min-height: 360px; padding: 6px; }
+.m-tool-embed--rx { min-height: 0; padding: 6px; }
+/* The ribbon's desktop body is a two-column grid (mini-pan | 280px presets);
+   in a 480-wide column that squeezed the mini-pan to a sliver (field: 'the
+   bandwidth display is squished'). Stack it: full-width mini-pan on top,
+   tall enough for a thumb on the cut handles, presets below. */
+.m-tool-embed--rx .filter-ribbon__body {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 10px;
+}
+.m-tool-embed--rx .filter-ribbon__minipan { height: 160px; min-height: 160px; }
+.m-tool-embed--rx .filter-ribbon__presets { width: 100%; box-sizing: border-box; }
 
 /* Remote link-quality chip (RemoteLinkChip renders fixed top-right for the
    desktop/G2 shell). On the phone the sticky topbar owns that corner — the

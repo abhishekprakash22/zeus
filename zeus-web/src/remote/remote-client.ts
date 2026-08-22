@@ -61,18 +61,68 @@ if (isRemoteMode()) {
 // PLC; we just attach the stream and let it play. One element, reused across
 // reconnects.
 let rxAudioEl: HTMLAudioElement | null = null;
+let rxAudioStream: MediaStream | null = null;
+let rxLevelTimer: ReturnType<typeof setInterval> | null = null;
+
+// Field-debug tap: the page measures its OWN received audio, so a silent-ear
+// report can be split into "track carries silence" vs "render path eats it"
+// with one console read instead of photographing webrtc-internals. Enable
+// with localStorage.setItem('zeus.remote.audiodebug','1') + reload; a line
+// logs each second with the decoded stream's RMS in dBFS. The AnalyserNode
+// is a pure tap (never connected onward) — it cannot affect playback.
+function startRxLevelTap(stream: MediaStream): void {
+  try {
+    if (localStorage.getItem('zeus.remote.audiodebug') !== '1') return;
+    if (rxLevelTimer) { clearInterval(rxLevelTimer); rxLevelTimer = null; }
+    const ctx = new AudioContext();
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    src.connect(an);
+    const buf = new Float32Array(an.fftSize);
+    rxLevelTimer = setInterval(() => {
+      an.getFloatTimeDomainData(buf as Float32Array<ArrayBuffer>);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = buf[i] ?? 0; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      const db = rms > 0 ? (20 * Math.log10(rms)).toFixed(1) : '-inf';
+      const el = rxAudioEl;
+      console.log(
+        `[rx-audio] rms=${db} dBFS | paused=${el?.paused} muted=${el?.muted} vol=${el?.volume} readyState=${el?.readyState}`,
+      );
+    }, 1000);
+  } catch (e) {
+    console.warn('[remote] rx level tap failed:', e);
+  }
+}
 
 function playRemoteRxAudioTrack(stream: MediaStream): void {
   if (typeof document === 'undefined') return;
+  rxAudioStream = stream;
   if (!rxAudioEl) {
     rxAudioEl = document.createElement('audio');
     rxAudioEl.autoplay = true;
-    // Not added to the DOM tree — an offscreen element still plays audio.
+    rxAudioEl.id = 'zeus-remote-rx-audio';
+    // In the DOM (hidden) rather than detached: reachable by console probes,
+    // visible to devtools, and immune to any detached-element edge cases.
+    rxAudioEl.style.display = 'none';
+    document.body.appendChild(rxAudioEl);
   }
   rxAudioEl.srcObject = stream;
   void rxAudioEl.play().catch((e) => {
     console.warn('[remote] RX audio track autoplay blocked:', e);
   });
+  startRxLevelTap(stream);
+  // Live repair lever for field debugging: rebuilds the player from scratch
+  // against the current stream. If silent audio snaps on after a kick, the
+  // element/render path was wedged; if not, the stream itself is silent.
+  (window as unknown as Record<string, unknown>).__zeusRxAudioKick = () => {
+    try { rxAudioEl?.remove(); } catch { /* detached */ }
+    rxAudioEl = null;
+    if (rxAudioStream) playRemoteRxAudioTrack(rxAudioStream);
+    return 'kicked';
+  };
+  (window as unknown as Record<string, unknown>).__zeusRxAudio = rxAudioEl;
 }
 
 function stopRemoteRxAudioTrack(): void {

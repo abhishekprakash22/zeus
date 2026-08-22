@@ -23,6 +23,29 @@ internal sealed class RemoteFrameSink : Zeus.Server.IClientSink, IDisposable
             SingleWriter = false,
         });
 
+    // AUDIO RIDES ALONE. Field find (the last layer of the MON-during-TX
+    // onion): audio frames shared the 8-slot lossy queue above with the
+    // full unpaced display-frame rate — display pacing happens AFTER
+    // dequeue, so the queue carries every DSP display tick. Transmission is
+    // the link's busiest moment in both directions (TX spectrum + meters out,
+    // mic RTP in), the drain falls behind, and drop-oldest evicts the
+    // monitor's audio frames indiscriminately — decimated Opus input, silence
+    // in the operator's ear. At unkey the mic stops, the queue unclogs, and
+    // the monitor's server-side tail sails through: the field-reported
+    // 'split second of MON audio at unkey', mechanism and all. RX-mode audio
+    // always survived because reception is the quiet time. Audio now has its
+    // own lane; spectrum can never evict it again. Thread safety holds by
+    // partition: this drain only ever carries 0x02 frames (Opus encoder +
+    // SendAudio), the frames drain only ever touches the data channel — the
+    // two paths share no mutable state beyond volatile session guards.
+    private readonly Channel<byte[]> _audioQueue = Channel.CreateBounded<byte[]>(
+        new BoundedChannelOptions(16)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false,
+        });
+
     private readonly Func<byte[], bool> _send;
     private readonly CancellationTokenSource _cts = new();
 
@@ -30,18 +53,26 @@ internal sealed class RemoteFrameSink : Zeus.Server.IClientSink, IDisposable
     public RemoteFrameSink(Func<byte[], bool> send)
     {
         _send = send;
-        _ = DrainAsync();
+        _ = DrainAsync(_queue);
+        _ = DrainAsync(_audioQueue);
     }
 
     public bool WantsDisplay => true;
 
-    public bool TryEnqueue(byte[] payload) => _queue.Writer.TryWrite(payload);
+    public bool TryEnqueue(byte[] payload)
+    {
+        bool isAudio = payload.Length >= 1
+            && payload[0] == (byte)Zeus.Contracts.MsgType.AudioPcm;
+        return isAudio
+            ? _audioQueue.Writer.TryWrite(payload)
+            : _queue.Writer.TryWrite(payload);
+    }
 
-    private async Task DrainAsync()
+    private async Task DrainAsync(Channel<byte[]> queue)
     {
         try
         {
-            await foreach (var payload in _queue.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
+            await foreach (var payload in queue.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
                 _send(payload);
         }
         catch (OperationCanceledException) { /* disposed */ }
@@ -52,5 +83,6 @@ internal sealed class RemoteFrameSink : Zeus.Server.IClientSink, IDisposable
     {
         _cts.Cancel();
         _queue.Writer.TryComplete();
+        _audioQueue.Writer.TryComplete();
     }
 }

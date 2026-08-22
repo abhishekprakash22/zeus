@@ -62,12 +62,21 @@ export function RemoteGate() {
         const lost = () => {
           if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
           pc.removeEventListener('connectionstatechange', onState);
+          conn.api.removeEventListener('close', onChannelClose);
+          conn.control.removeEventListener('close', onChannelClose);
           try { connRef.current?.close(); } catch { /* already down */ }
           connRef.current = null;
           useDisplayStore.getState().setConnected(false);
           setError('Connection lost — press Connect to resume.');
           setPhase('prompt');
         };
+        // Zombie-session guard (field find: MON/mixer/band silently dead while
+        // audio kept playing). The api and control channels can die
+        // independently of the peer connection — an oversized message closes
+        // just the channel. A session without its control paths is lost even
+        // though media still flows: recover to the prompt instead of leaving
+        // a radio you can hear but not command.
+        const onChannelClose = () => lost();
         const onState = () => {
           if (pc.connectionState === 'failed') lost();
           else if (pc.connectionState === 'disconnected') {
@@ -78,6 +87,8 @@ export function RemoteGate() {
           }
         };
         pc.addEventListener('connectionstatechange', onState);
+        conn.api.addEventListener('close', onChannelClose);
+        conn.control.addEventListener('close', onChannelClose);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Connection failed.');

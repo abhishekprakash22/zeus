@@ -88,13 +88,25 @@ public sealed class RemoteWebRtcSession
     // refused with 502 and larger requests with 413 — the chrome/control
     // endpoints are all small JSON; a giant body would be an export/dump or
     // bulk-import path we don't want to relay either direction.
-    private const int MaxResponseBytes = 1 * 1024 * 1024;
+    // FIELD LESSON (the zombie-session bug): a data-channel message larger
+    // than the peer's advertised maxMessageSize (~256 KB in every major
+    // browser) doesn't fail the request — the SPEC'S penalty is CLOSING THE
+    // CHANNEL. A big /api reply (the v2 diagnostics JSON) was sent as one
+    // message, the browser killed the api channel, and from then on every
+    // REST control (MON, mixer, band, mode) silently died while MOX and the
+    // media kept flowing — a session with live audio and dead controls.
+    // Replies now clamp safely below that ceiling; oversized ones 502.
+    // Chunked replies for genuinely large payloads = future work.
+    private const int MaxResponseBytes = 192 * 1024;
     private const int MaxRequestBytes = 1 * 1024 * 1024;
 
     // The LAN Browser proxy returns whole device pages with inlined CSS/images
     // (data URIs), which legitimately exceed the 1 MiB chrome cap. It's the one
     // endpoint whose large reply is expected, so it gets its own ceiling.
-    private const int LanProxyMaxResponseBytes = 10 * 1024 * 1024;
+    // Clamped to the same channel-safe bound: a larger single message kills
+    // the channel regardless of endpoint (see MaxResponseBytes). Restoring a
+    // big-page LAN proxy over the tunnel requires chunking, not a bigger cap.
+    private const int LanProxyMaxResponseBytes = 192 * 1024;
     private const string LanProxyPath = "/api/lan/proxy";
 
     /// <summary>

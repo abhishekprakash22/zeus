@@ -569,7 +569,14 @@ public sealed class TxMetersService : BackgroundService
                     // fail to protect. The TX-timeout guard above still runs under
                     // P3. Re-enable this trip once the P3 raw→watts calibration is
                     // confirmed against a known load.
-                    if (!_radio.IsProtocol3Active
+                    // Operator escape hatch: SWR protection OFF skips the
+                    // evaluation entirely and clears the sustain timer so a
+                    // later re-enable can't inherit a half-armed excursion.
+                    if (!_radio.SwrProtectionEnabled)
+                    {
+                        lock (_sync) _swrAboveThresholdSince = null;
+                    }
+                    else if (!_radio.IsProtocol3Active
                         && EvaluateSwrTrip(swr, DateTime.UtcNow, isTun, keyedAt) is { } tripReason)
                     {
                         // TryTripForAlert is idempotent — a second caller on the

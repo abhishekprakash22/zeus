@@ -25,7 +25,7 @@ import { HF_BANDS, usePaStore } from '../state/pa-store';
 import { useRadioStore } from '../state/radio-store';
 import { useTxStore } from '../state/tx-store';
 import { BOARD_LABELS } from '../api/radio';
-import { setTxTailDelay, setTxTimeout } from '../api/client';
+import { setSwrProtection, setTxTailDelay, setTxTimeout } from '../api/client';
 import type { PaBandSettings } from '../api/pa';
 import anvelinaLogo from '../assets/anvelina-logo.png';
 
@@ -308,6 +308,8 @@ export function PaSettingsPanel() {
   const capabilities = useRadioStore((s) => s.capabilities);
   const txTimeoutSec = useTxStore((s) => s.txTimeoutSec);
   const setTxTimeoutSecLocal = useTxStore((s) => s.setTxTimeoutSec);
+  const swrProtectionEnabled = useTxStore((s) => s.swrProtectionEnabled);
+  const setSwrProtectionLocal = useTxStore((s) => s.setSwrProtectionEnabled);
   const txMoxTailDelayMs = useTxStore((s) => s.txMoxTailDelayMs);
   const setTxMoxTailDelayMsLocal = useTxStore((s) => s.setTxMoxTailDelayMs);
 
@@ -503,6 +505,33 @@ export function PaSettingsPanel() {
               />
               Off
             </label>
+          </div>
+
+          <div
+            className="pa-field flex items-center gap-2 text-xs"
+            title="Automatic SWR trip: Zeus drops TX when the bridge reads above 2.5:1 on MOX (6:1 on TUN) for half a second. Turn it off only when you know why — a bridge reading you distrust, or a deliberately rough load you are matching through an external tuner. With it off nothing but the TX timeout protects the PA from a bad antenna. Desk-only: cannot be changed from a remote session."
+          >
+            <span>SWR Protection</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={swrProtectionEnabled}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setSwrProtectionLocal(on);
+                  setSwrProtection(on)
+                    .then((r) => setSwrProtectionLocal(r.swrProtectionEnabled))
+                    .catch(() => {});
+                }}
+                aria-label="Automatic SWR trip"
+              />
+              {swrProtectionEnabled ? 'On' : 'Off'}
+            </label>
+            {!swrProtectionEnabled && (
+              <span className="text-[10px]" style={{ color: 'var(--tx)' }}>
+                PA unguarded against bad SWR
+              </span>
+            )}
           </div>
 
           <div

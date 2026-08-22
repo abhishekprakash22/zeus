@@ -193,6 +193,9 @@ public sealed class RadioStateEntry
     // Old-school end-of-over roger beep. Default false preserves existing
     // transmit behaviour for legacy rows.
     public bool RogerBeepEnabled { get; set; }
+    // Automatic SWR trip. Default true so legacy rows missing this field
+    // hydrate with the guard that has always been in force.
+    public bool SwrProtectionEnabled { get; set; } = true;
     // TX timeout seconds. 0 = disabled (no guard); otherwise 30..600. Default
     // 120 = the historical FR-6 limit, so legacy rows missing this field
     // hydrate with the same guard that has always been in force. Issue #1270.

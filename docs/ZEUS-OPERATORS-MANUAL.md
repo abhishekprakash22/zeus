@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.163**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.164**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -185,6 +185,14 @@ receiver panes, on-glass filter displays) arrives in the next releases.
 - **Mic PTT wiring:** Settings → audio — *Mic PTT* enables/disables the mic
   switch keying the radio; *PTT on Tip* swaps tip/ring for non-Apache-wired
   mics. Both persist across restarts.
+
+- **PA guards:** Zeus drops TX automatically when SWR reads above 2.5:1 on
+  MOX (6:1 on TUN) for half a second, and when a single transmission runs
+  past the **TX Timeout** (default 120 s). Both live in Settings → TX.
+  **SWR Protection** can be switched off for a bridge reading you distrust
+  or a rough load you are matching through an external tuner — with it off
+  nothing but the timeout protects the PA; a red "PA unguarded" tag reminds
+  you. It is a desk-only control: a remote session cannot change it.
 
 **Antenna discipline is yours:** always have an antenna or dummy load on the
 active port before keying.

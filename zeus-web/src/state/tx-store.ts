@@ -254,6 +254,9 @@ export type TxState = {
   // the operator's last-set value.
   txTimeoutSec: number;
   setTxTimeoutSec: (s: number) => void;
+  // Automatic SWR trip. Server-authoritative, hydrated like txTimeoutSec.
+  swrProtectionEnabled: boolean;
+  setSwrProtectionEnabled: (on: boolean) => void;
   psMoxDelaySec: number;
   setPsMoxDelaySec: (s: number) => void;
   psLoopDelaySec: number;
@@ -439,6 +442,8 @@ export const useTxStore = create<TxState>()(
       setTxMoxTailDelayMs: (ms) => set({ txMoxTailDelayMs: ms }),
       rogerBeepEnabled: false,
       setRogerBeepEnabled: (on) => set({ rogerBeepEnabled: on }),
+      swrProtectionEnabled: true,
+      setSwrProtectionEnabled: (on) => set({ swrProtectionEnabled: on }),
       txTimeoutSec: 120,
       // 0 = disabled (kept as-is); any other value clamps to 30..600.
       setTxTimeoutSec: (s) =>
@@ -514,6 +519,7 @@ export const useTxStore = create<TxState>()(
           txMoxPreKeyDelayMs: s.txMoxPreKeyDelayMs,
           txMoxTailDelayMs: s.txMoxTailDelayMs,
           txTimeoutSec: s.txTimeoutSec,
+          swrProtectionEnabled: s.swrProtectionEnabled,
           psEnabled: s.psEnabled,
           psAuto: s.psAuto,
           psPtol: s.psPtol,

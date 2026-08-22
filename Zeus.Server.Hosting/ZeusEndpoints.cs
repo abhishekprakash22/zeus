@@ -2374,6 +2374,15 @@ public static class ZeusEndpoints
             return Results.Ok(new { rogerBeepEnabled = state.RogerBeepEnabled });
         });
 
+        // Automatic SWR trip on/off. OFF removes the PA's SWR guard (TX
+        // timeout still applies). Write-denied over the remote tunnel.
+        app.MapPost("/api/tx/swr-protection", (SwrProtectionSetRequest req, RadioService r) =>
+        {
+            log.LogWarning("api.tx.swrProtection enabled={Enabled}", req.Enabled);
+            var state = r.SetSwrProtectionEnabled(req.Enabled);
+            return Results.Ok(new { swrProtectionEnabled = state.SwrProtectionEnabled });
+        });
+
         // Hidden QRM test source. This arms a generated audio source into the
         // normal TX ingest path, but deliberately does not key MOX. It reaches
         // RF only while the operator has keyed TX.

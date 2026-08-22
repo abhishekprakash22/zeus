@@ -190,6 +190,7 @@ public sealed class RemoteWebRtcSession
     {
         "/api/app",
         "/api/tx/ps",
+        "/api/tx/swr-protection",   // PA guard off is a desk decision, never a remote one
         "/api/prefs/databases",
     };
 

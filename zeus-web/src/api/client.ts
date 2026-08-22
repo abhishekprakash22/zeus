@@ -431,6 +431,7 @@ export type RadioStateDto = {
   txMoxTailDelayMs: number;
   // Old-school end-of-over roger beep. Default off on older servers.
   rogerBeepEnabled: boolean;
+  swrProtectionEnabled: boolean;
   // TX timeout in seconds (issue #1270). Maximum single-transmission length
   // before the PA-protection guard fires. 0 = disabled (no guard); otherwise
   // server-clamped to [30, 600]. Legacy servers without this field fall back to
@@ -2579,6 +2580,9 @@ export function normalizeState(raw: unknown): RadioStateDto {
       typeof r.txMoxTailDelayMs === 'number' ? r.txMoxTailDelayMs : 0,
     rogerBeepEnabled:
       typeof r.rogerBeepEnabled === 'boolean' ? r.rogerBeepEnabled : false,
+    // Missing from an older server = the guard that has always been there.
+    swrProtectionEnabled:
+      typeof r.swrProtectionEnabled === 'boolean' ? r.swrProtectionEnabled : true,
     // 0 = disabled must be preserved (>=0), not coerced back to the 120 default.
     txTimeoutSec:
       typeof r.txTimeoutSec === 'number' && r.txTimeoutSec >= 0
@@ -6960,6 +6964,28 @@ export function setRogerBeep(
     (raw) => ({
       rogerBeepEnabled: Boolean((raw as { rogerBeepEnabled?: unknown }).rogerBeepEnabled),
     }),
+  );
+}
+
+// SWR protection: POST /api/tx/swr-protection { enabled }. Returns
+// { swrProtectionEnabled }. OFF removes the automatic SWR trip; TX timeout
+// is unaffected. Refused (403) over the remote tunnel.
+export function setSwrProtection(
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<{ swrProtectionEnabled: boolean }> {
+  return jsonFetch(
+    '/api/tx/swr-protection',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal,
+    },
+    (raw) => {
+      const v = (raw as { swrProtectionEnabled?: unknown }).swrProtectionEnabled;
+      return { swrProtectionEnabled: typeof v === 'boolean' ? v : true };
+    },
   );
 }
 

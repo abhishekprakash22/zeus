@@ -135,6 +135,7 @@ function mockState(nr: NrConfigDto): RadioStateDto {
     txMoxPreKeyDelayMs: 0,
     txMoxTailDelayMs: 0,
     rogerBeepEnabled: false,
+    swrProtectionEnabled: true,
     txTimeoutSec: 120,
     twoToneFreq1: 700,
     twoToneFreq2: 1900,

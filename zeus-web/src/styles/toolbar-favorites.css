@@ -33,7 +33,11 @@
    clip — that's the whole reason for portaling. ----- */
 .toolbar-fav__popover {
   position: fixed;
-  z-index: 400;
+  /* Above the G2 CONTROLS side panel (z 460/461) — the popover is portaled
+     into <body>, so it must outrank every fixed host the ⋯ button can live
+     in. Matches .agc-mode-menu, the other body-portaled transient menu.
+     Field: 'all filters / all bands / all steps open BEHIND the panel'. */
+  z-index: 1000;
   min-width: 240px;
   max-width: 360px;
   padding: 8px 10px 10px 10px;

@@ -1397,6 +1397,12 @@ public sealed record StateDto(
     // transmit behaviour until the operator explicitly enables it.
     bool RogerBeepEnabled = false,
 
+    // Automatic SWR trip (MOX 2.5:1 / TUN 6:1 sustained 500 ms → drop TX).
+    // Default ON. OFF is an expert escape hatch for a misreading bridge or a
+    // deliberately rough load (tuning a wire through an external ATU); the
+    // TX timeout stays in force regardless. Appended, same rationale as above.
+    bool SwrProtectionEnabled = true,
+
     // RX1's per-receiver split projection. RX2+ carry the same fields directly
     // on ReceiverDto. Session-only: a process always starts in simplex.
     bool SplitEnabled = false,
@@ -1755,6 +1761,10 @@ public sealed record TxTailDelaySetRequest(int DelayMs);
 
 /// <summary>Body of <c>POST /api/tx/roger-beep</c>.</summary>
 public sealed record RogerBeepSetRequest(bool Enabled);
+
+/// <summary>Body of <c>POST /api/tx/swr-protection</c>. See
+/// <see cref="StateDto.SwrProtectionEnabled"/>.</summary>
+public sealed record SwrProtectionSetRequest(bool Enabled);
 
 /// <summary>Body of <c>POST /api/tx/qrm</c>. Arms the hidden QRM source; it
 /// does not key MOX by itself.</summary>

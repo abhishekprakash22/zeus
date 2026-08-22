@@ -744,7 +744,8 @@ public sealed class RadioService : IDisposable
             CwPitchHz: CwOffset.CwPitchHz,
             CtunEnabled: rsSnap?.CtunEnabled ?? false,
             PreampOn: rsSnap?.PreampOn ?? false,
-            RogerBeepEnabled: rsSnap?.RogerBeepEnabled ?? false);
+            RogerBeepEnabled: rsSnap?.RogerBeepEnabled ?? false,
+            SwrProtectionEnabled: rsSnap?.SwrProtectionEnabled ?? true);
 
         _state = _state with { TxPhaseRotator = persistedTxPhaseRotator };
 
@@ -3012,6 +3013,24 @@ public sealed class RadioService : IDisposable
         get { lock (_sync) return _state.RogerBeepEnabled; }
     }
 
+    /// <summary>
+    /// Enable/disable the automatic SWR trip. Persisted with the radio-state
+    /// snapshot; default ON. Disabling removes the PA's SWR guard entirely —
+    /// the TX timeout is unaffected. Expert control; refused over the remote
+    /// tunnel (the desk decides).
+    /// </summary>
+    public StateDto SetSwrProtectionEnabled(bool enabled)
+    {
+        Mutate(s => s with { SwrProtectionEnabled = enabled });
+        return Snapshot();
+    }
+
+    /// <summary>Read by TxMetersService on every meter tick.</summary>
+    public bool SwrProtectionEnabled
+    {
+        get { lock (_sync) return _state.SwrProtectionEnabled; }
+    }
+
     /// <summary>Authoritative pre-key delay (ms) read by TxService on the MOX
     /// rising edge. Already PS-clamped.</summary>
     public int TxMoxPreKeyDelayMs => Volatile.Read(ref _txMoxPreKeyDelayMs);
@@ -4599,6 +4618,7 @@ public sealed class RadioService : IDisposable
                 TxMoxPreKeyDelayMs = snap.TxMoxPreKeyDelayMs,
                 TxMoxTailDelayMs = snap.TxMoxTailDelayMs,
                 RogerBeepEnabled = snap.RogerBeepEnabled,
+                SwrProtectionEnabled = snap.SwrProtectionEnabled,
                 TxTimeoutSec = snap.TxTimeoutSec,
                 RadioLoHz = snap.RadioLoHz,
                 // RX2 tuning persists from the canonical Receivers[1] entry (the

@@ -47,7 +47,14 @@ internal sealed class GatedWebSocketAudioSink : IRxAudioSink
     /// </summary>
     public void PublishExempt(in AudioFrame frame)
     {
-        if (!_hub.AudioStreamRequested) return;
+        // UNGATED, deliberately. Exempt frames exist only when the operator
+        // explicitly asked to hear something (MON, Recorder playback) — that
+        // press IS the audio request, and it must not defer to the passive
+        // stream-interest counter. Field data forced this: monitor frames
+        // measured LOUDER than the audible RX stream (-45 vs -55 dBFS) yet
+        // arrived nowhere; whatever the interest counter's state in that
+        // moment, an explicit monitor request outranks it. Broadcast with no
+        // listeners is a near-free early-out in the hub.
         _hub.Broadcast(in frame);
     }
 }

@@ -7353,7 +7353,8 @@ public class DspPipelineService : BackgroundService,
                     SampleCount: (ushort)monCount,
                     Samples: new ReadOnlyMemory<float>(audioBuf, 0, monCount));
                 CaptureAudioDiagnostics(
-                    _txMonitorMeterOnly ? "tx-monitor-meter-only" : "tx-monitor",
+                    _txMonitorMeterOnly ? "tx-monitor-meter-only"
+                        : rxAudioMuted ? "tx-monitor-exempt" : "tx-monitor",
                     in monFrame,
                     finalAudioRms,
                     finalAudioPeak,

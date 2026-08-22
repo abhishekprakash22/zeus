@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.147**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.163**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -277,7 +277,35 @@ including RX *and* TX. This is working and field-proven, but it is an
 
 ---
 
-## 12. Shutting down and exiting
+## 12. Remote operation
+
+Zeus Remote lets you operate the radio from a phone or PC anywhere with
+internet. Set a session password under Settings → SERVER and save your
+callsign; then open `https://ananremote.com/go/<CALLSIGN>` and enter the
+password. Both the radio and your browser dial *out* — no port forwarding,
+and it works behind carrier-grade NAT (a relay is used automatically when a
+direct path can't be found).
+
+**Link quality chip.** Once connected, a small chip sits in the top-right
+corner: signal bars (green good / amber fair / red poor), round-trip time in
+ms, RX-audio packet loss over the last second, and the spectrum frame rate
+actually arriving. `RELAY` lights when the session is riding the TURN relay.
+Hover it for jitter and path details. Expect roughly: good = under 150 ms
+and lossless; fair = up to 400 ms or occasional loss; poor = anything worse,
+at which point the display will drop frames before the audio does.
+
+**TX safety on a broken link.** A remote key-down is a *lease*, not a
+latch. Your browser pulses the radio four times a second; if the pulses stop
+while the radio is keyed by the remote session (MOX, TUN, or a CW message
+sent from the remote), the radio un-keys itself within about 1.5 seconds —
+it does not wait for the network stack to decide the link is dead. A session
+that goes completely silent for 30 seconds is torn down. On top of this the
+ordinary TX timeout (Settings → TX, default 120 s) still applies to every
+transmission, remote or local; leave it enabled when operating remotely.
+If the link drops mid-over, your client returns to the password prompt with
+MOX cleared — reconnecting never re-asserts a stale key-down.
+
+## 13. Shutting down and exiting
 
 - **⏻ SHUT DOWN** (header): tap, then confirm **SURE?** within ten seconds.
   Refused while transmitting. Powers the Pi down cleanly.
@@ -286,7 +314,7 @@ including RX *and* TX. This is working and field-proven, but it is an
 
 ---
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -301,7 +329,7 @@ including RX *and* TX. This is working and field-proven, but it is an
 
 ---
 
-## 14. Version and provenance
+## 15. Version and provenance
 
 Zeus is a GPL fork in the OpenHPSDR lineage. The FPGA keyer, Saturn register
 maps, p2app, and gateware come from the OpenHPSDR/Saturn community — see

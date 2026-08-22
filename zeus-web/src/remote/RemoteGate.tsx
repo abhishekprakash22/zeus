@@ -16,7 +16,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfirmDialog } from '../layout/ConfirmDialog';
 import { useDisplayStore } from '../state/display-store';
+import { useTxStore } from '../state/tx-store';
 import { getRemoteCallsign, startRemoteClient } from './remote-client';
+import { RemoteLinkChip } from './RemoteLinkChip';
 import type { RemoteConnection } from './connect';
 
 type Phase = 'prompt' | 'connecting' | 'connected';
@@ -67,6 +69,13 @@ export function RemoteGate() {
           try { connRef.current?.close(); } catch { /* already down */ }
           connRef.current = null;
           useDisplayStore.getState().setConnected(false);
+          // The host un-keys a dropped session (TX lease + Close() dead-man);
+          // mirror that here so the UI doesn't show a lit MOX — and so a
+          // reconnect can never start with a stale key-down to re-assert.
+          const tx = useTxStore.getState();
+          if (tx.moxOn) tx.setMoxOn(false);
+          if (tx.tunOn) tx.setTunOn(false);
+          if (tx.localMicArmed) tx.setLocalMicArmed(false);
           setError('Connection lost — press Connect to resume.');
           setPhase('prompt');
         };
@@ -96,8 +105,8 @@ export function RemoteGate() {
       });
   }, [callsign, password]);
 
-  // Once unlocked the gate has nothing to render — the live UI shows through.
-  if (phase === 'connected') return null;
+  // Once unlocked the gate steps aside — only the link-quality chip remains.
+  if (phase === 'connected') return <RemoteLinkChip conn={connRef.current} />;
 
   const connecting = phase === 'connecting';
 

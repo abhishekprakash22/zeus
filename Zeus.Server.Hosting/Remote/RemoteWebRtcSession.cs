@@ -46,6 +46,31 @@ public sealed class RemoteWebRtcSession
     // data-channel callback thread, read on the teardown thread.
     private volatile bool _remoteTxArmed;
 
+    // TX lease (field hardening, piece 3). Close() only fires once THIS side
+    // notices the peer is gone, and SIPSorcery's ICE/DTLS failure detection
+    // can take tens of seconds — a G2-1K keyed into an antenna for half a
+    // minute after the operator's phone lost signal is not a safety story.
+    // So a remote key-down is a LEASE, not a latch: the client pulses a
+    // 1-byte keepalive (0x23) on the control channel every ~250 ms for the
+    // life of the session; a watchdog un-keys the radio the moment the
+    // pulses stop while the radio is keyed, independent of ICE state.
+    // Keyed = radio truth (MoxState frames passing through TrySendFrame) AND
+    // remote-armed (this session asked for it) — a desk operator keying
+    // locally while a remote watches is never un-keyed by a remote hiccup.
+    private const byte MsgTypeTxLeaseKeepalive = 0x23;
+    private static readonly TimeSpan TxLeaseDeadline = TimeSpan.FromMilliseconds(1500);
+    // Host-side zombie guard: a session whose keepalives have stopped for this
+    // long is torn down (unwinds stream gates, frees the slot) without waiting
+    // for ICE to notice. Generous on purpose — browser tab throttling is the
+    // client's problem to solve (it pulses from a Worker), not a reason to
+    // drop an idle but healthy session.
+    private static readonly TimeSpan SessionLeaseDeadline = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan LeaseTickPeriod = TimeSpan.FromMilliseconds(250);
+    private long _lastKeepaliveMs;          // 0 = never received (lease not yet in force)
+    private volatile bool _radioKeyed;       // last MoxState seen on the wire
+    private Timer? _leaseTimer;
+    private int _leaseTripped;
+
     private RTCDataChannel? _control;
     private RTCDataChannel? _frames;
     private RTCDataChannel? _api;
@@ -250,6 +275,13 @@ public sealed class RemoteWebRtcSession
             return true;
         }
 
+        // Radio keyed truth for the TX lease watchdog: the hub broadcasts a
+        // MoxState edge on every key/unkey regardless of who keyed. Observe it
+        // on the way past — cheaper and more honest than re-deriving it from
+        // what this session asked for.
+        if (frame.Length >= 3 && frame[0] == (byte)Zeus.Contracts.MsgType.MoxState)
+            _radioKeyed = frame[1] != 0 || frame[2] != 0;
+
         if (_frames is null)
             return false;
 
@@ -295,6 +327,9 @@ public sealed class RemoteWebRtcSession
     public void Close()
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;
+
+        _leaseTimer?.Dispose();
+        _leaseTimer = null;
 
         // Dead-man TX safety: if this session left the radio keyed, drop the
         // carrier before tearing anything else down. A remote link that fails
@@ -371,12 +406,18 @@ public sealed class RemoteWebRtcSession
     /// </summary>
     private void OnControlMessage(byte[] data)
     {
-        if (_session.IsUnlocked
-            && data.Length >= 1
-            && data[0] is MsgTypeDisplayStreamRequest or MsgTypeAudioStreamRequest)
+        if (_session.IsUnlocked && data.Length >= 1)
         {
-            HandleStreamRequest(data);
-            return;
+            if (data[0] == MsgTypeTxLeaseKeepalive)
+            {
+                Volatile.Write(ref _lastKeepaliveMs, Environment.TickCount64);
+                return;
+            }
+            if (data[0] is MsgTypeDisplayStreamRequest or MsgTypeAudioStreamRequest)
+            {
+                HandleStreamRequest(data);
+                return;
+            }
         }
 
         _ = HandleControlAsync(data);
@@ -658,6 +699,11 @@ public sealed class RemoteWebRtcSession
     /// </summary>
     private void TrackTxKeying(string path, string? body)
     {
+        // CWX keys MOX server-side for the length of the message; a remote
+        // that sends text then vanishes is exactly the lease's case. Arm on
+        // send, disarm on abort; the MoxState off-edge clears the keyed flag.
+        if (path.Equals("/api/cw/send", StringComparison.OrdinalIgnoreCase)) { _remoteTxArmed = true; return; }
+        if (path.Equals("/api/cw/abort", StringComparison.OrdinalIgnoreCase)) { _remoteTxArmed = false; return; }
         if (!path.Equals("/api/tx/mox", StringComparison.OrdinalIgnoreCase)
             && !path.Equals("/api/tx/tun", StringComparison.OrdinalIgnoreCase))
             return;
@@ -672,6 +718,39 @@ public sealed class RemoteWebRtcSession
     }
 
     /// <summary>
+    /// TX lease watchdog tick (250 ms). Two deadlines on the same clock:
+    /// keyed + no pulse for 1.5 s → un-key NOW (the lease has lapsed);
+    /// no pulse for 30 s at all → the session is a zombie, tear it down.
+    /// Neither fires until the client's first pulse has arrived.
+    /// </summary>
+    private void LeaseTick()
+    {
+        if (_closed != 0) return;
+        long last = Volatile.Read(ref _lastKeepaliveMs);
+        if (last == 0) return; // lease not in force — old client, or not yet pulsing
+        long silent = Environment.TickCount64 - last;
+
+        if (silent >= (long)TxLeaseDeadline.TotalMilliseconds
+            && _remoteTxArmed && _radioKeyed
+            && Interlocked.Exchange(ref _leaseTripped, 1) == 0)
+        {
+            _remoteTxArmed = false;
+            _log.LogWarning("rtc.remote TX lease lapsed ({Silent} ms without keepalive while keyed) — un-keying", silent);
+            _ = BestEffortUnkeyAsync();
+        }
+        else if (silent < (long)TxLeaseDeadline.TotalMilliseconds)
+        {
+            _leaseTripped = 0; // pulses back: a fresh key-down earns a fresh lease
+        }
+
+        if (silent >= (long)SessionLeaseDeadline.TotalMilliseconds)
+        {
+            _log.LogWarning("rtc.remote no keepalive for {Silent} ms — closing zombie session", silent);
+            Close();
+        }
+    }
+
+    /// <summary>
     /// Best-effort un-key (MOX off + TUN off) over loopback when a keyed session
     /// drops. Fire-and-forget; never throws. Short per-request timeout so a
     /// wedged Kestrel can't hang teardown.
@@ -682,7 +761,7 @@ public sealed class RemoteWebRtcSession
         try
         {
             var client = _httpFactory.CreateClient(LoopbackHttpClientName);
-            foreach (var p in new[] { "/api/tx/mox", "/api/tx/tun" })
+            foreach (var p in new[] { "/api/cw/abort", "/api/tx/mox", "/api/tx/tun" })
             {
                 using var req = new HttpRequestMessage(HttpMethod.Post, _loopbackBaseUrl + p)
                 {
@@ -755,6 +834,12 @@ public sealed class RemoteWebRtcSession
                             _sink = new RemoteFrameSink(TrySendFrame);
                             _hub.AttachSink(_sinkId, _sink);
                         }
+
+                        // TX lease watchdog runs for the life of the unlocked
+                        // session. Armed only once the first keepalive lands,
+                        // so an old client that never pulses is unaffected
+                        // (it just keeps the pre-lease Close() dead-man).
+                        _leaseTimer = new Timer(_ => LeaseTick(), null, LeaseTickPeriod, LeaseTickPeriod);
 
                         Unlocked?.Invoke();
                     }

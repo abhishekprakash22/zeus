@@ -56,6 +56,53 @@ if (isRemoteMode()) {
   installApiTunnel();
 }
 
+// -- Link telemetry + TX lease -----------------------------------------------
+
+// Display frames that actually arrived this second. RTT/jitter/loss come from
+// pc.getStats(); this is the one number getStats can't give — the host paces
+// and drops spectrum frames under SCTP backpressure (RemoteWebRtcSession
+// .TrySendFrame), so the arriving rate is the most honest "is the display
+// about to stutter" signal there is.
+let displayFramesSinceRead = 0;
+export function takeDisplayFrameCount(): number {
+  const n = displayFramesSinceRead;
+  displayFramesSinceRead = 0;
+  return n;
+}
+
+// TX lease keepalive (host: RemoteWebRtcSession.LeaseTick). One byte, 0x23,
+// every 250 ms on the control channel for the life of the session. If the
+// pulses stop while the radio is keyed, the host un-keys within 1.5 s — no
+// waiting for ICE to notice the peer is gone. Driven from a Web Worker: page
+// timers in a hidden/minimized tab are throttled to 1 Hz, then ~1/min after
+// five minutes (Chrome intensive throttling), which would lapse the lease on
+// a perfectly healthy session. Worker timers are exempt. Falls back to a page
+// setInterval if a blob Worker is refused (CSP); the 1.5 s host deadline
+// still tolerates the 1 Hz foreground-throttle case.
+const TX_LEASE_KEEPALIVE = 0x23;
+const TX_LEASE_PERIOD_MS = 250;
+
+function startTxLeasePulse(control: RTCDataChannel): () => void {
+  const pulse = new Uint8Array([TX_LEASE_KEEPALIVE]);
+  const send = () => {
+    if (control.readyState !== 'open') return;
+    try { control.send(pulse); } catch { /* closing — watchdogs handle it */ }
+  };
+  let worker: Worker | null = null;
+  try {
+    const src = `setInterval(() => postMessage(0), ${TX_LEASE_PERIOD_MS});`;
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    worker = new Worker(url);
+    URL.revokeObjectURL(url);
+    worker.onmessage = send;
+    return () => { worker?.terminate(); worker = null; };
+  } catch (e) {
+    console.warn('[remote] lease pulse worker unavailable, using page timer:', e);
+    const t = setInterval(send, TX_LEASE_PERIOD_MS);
+    return () => clearInterval(t);
+  }
+}
+
 // Hidden <audio> sink for the radio's RX audio when it arrives on the WebRTC
 // media track (Opus-RX host path). The browser owns decode + jitter buffer +
 // PLC; we just attach the stream and let it play. One element, reused across
@@ -147,8 +194,15 @@ export async function startRemoteClient(
   const conn = await connectViaBroker({
     callsign,
     password,
-    onFrame: (data) => dispatchServerFrame(data),
+    onFrame: (data) => {
+      if (data.byteLength >= 1 && new Uint8Array(data, 0, 1)[0] === 0x01) displayFramesSinceRead++;
+      dispatchServerFrame(data);
+    },
   });
+
+  // TX lease: start pulsing the moment we're unlocked, before any key-down
+  // can happen. The host arms its watchdog on the first pulse.
+  const stopLeasePulse = startTxLeasePulse(conn.control);
 
   // Hand the read-write API tunnel its live "api" channel so queued + future
   // same-origin `/api/*` requests (reads AND control writes) flow to the radio's
@@ -204,6 +258,7 @@ export async function startRemoteClient(
   conn.pc.addEventListener('connectionstatechange', () => {
     const s = conn.pc.connectionState;
     if (s === 'closed' || s === 'failed' || s === 'disconnected') {
+      stopLeasePulse();
       setRemoteControlSender(null);
       // Clear the tunnel channel and fail pending API requests so the UI gets a
       // network-style rejection rather than hanging on a dead session.

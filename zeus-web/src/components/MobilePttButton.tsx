@@ -48,6 +48,7 @@ import { setMox } from '../api/client';
 import { ensureMicUplinkRunning, setMicUplinkTxForced } from '../audio/mic-uplink-session';
 import { waitForMicPcmTransportReady } from '../realtime/ws-client';
 import { useConnectionStore } from '../state/connection-store';
+import { isRemoteMode } from '../remote/remote-client';
 import { useTxStore } from '../state/tx-store';
 
 // Press-and-hold PTT for mobile. Pointer events mirror the spacebar-PTT
@@ -66,7 +67,14 @@ export function MobilePttButton() {
   const drive = useCallback(
     async (on: boolean) => {
       const gesture = ++gestureRef.current;
-      if (on) {
+      // Remote (WebRTC) sessions carry the operator's voice on the Opus
+      // media track, enabled from the tx-store moxOn edge by remote-client
+      // (conn.setMicEnabled). There is no /ws, so the PCM mic-uplink
+      // transport below can never become ready — waiting on it timed out
+      // and the key-down silently returned before setMox (field: 'PTT not
+      // functional' on the phone). Skip the PCM path entirely in remote mode.
+      const remote = isRemoteMode();
+      if (on && !remote) {
         try {
           const micReady = await ensureMicUplinkRunning();
           if (!micReady) return;
@@ -78,7 +86,7 @@ export function MobilePttButton() {
         }
         if (gesture !== gestureRef.current) return;
         setMicUplinkTxForced(true);
-      } else {
+      } else if (!remote) {
         setMicUplinkTxForced(false);
       }
 

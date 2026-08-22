@@ -85,13 +85,15 @@ export function DbScale({ receiver = 'A' }: { receiver?: 'A' | 'B' } = {}) {
     lastShiftApplied: number;
   } | null>(null);
 
+  const levelsLocked = useVfoLockStore((s) => s.levelsLocked);
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       // Honour the VFO/panel lock — when engaged, vertical drag on the dB
       // scale must not shift gain. The mobile padlock toggles this; on
       // desktop the flag stays false unless wired up. Pinch-to-zoom and
       // wheel-zoom paths are unaffected (they live in pan-tune-gesture).
-      if (useVfoLockStore.getState().locked) return;
+      const lk = useVfoLockStore.getState();
+      if (lk.locked || lk.levelsLocked) return;
       const rect = e.currentTarget.getBoundingClientRect();
       dragState.current = {
         startY: e.clientY,
@@ -162,7 +164,7 @@ export function DbScale({ receiver = 'A' }: { receiver?: 'A' | 'B' } = {}) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className="absolute left-0 top-5 bottom-0 z-10 w-10 cursor-ns-resize touch-none select-none bg-neutral-950/60"
+      className={`absolute left-0 top-5 bottom-0 z-10 w-10 select-none bg-neutral-950/60 ${levelsLocked ? '' : 'cursor-ns-resize touch-none'}`}
     >
       {ticks.map((t) => (
         <div

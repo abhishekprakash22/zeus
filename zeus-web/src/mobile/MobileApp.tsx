@@ -42,7 +42,8 @@ import { AgcSlider } from '../components/AgcSlider';
 import { DriveSlider } from '../components/DriveSlider';
 import { MicGainSlider } from '../components/MicGainSlider';
 import { TunePowerSlider } from '../components/TunePowerSlider';
-import { useVfoLockStore } from '../state/vfo-lock-store';
+import { levelsLockUnset, useVfoLockStore } from '../state/vfo-lock-store';
+import { getReceiverMode } from '../state/receiver-state';
 import { saveReceiverBandModeMemory } from '../util/band-memory';
 import { ConnectPanel } from '../components/ConnectPanel';
 import { LeafletWorldMap } from '../components/design/LeafletWorldMap';
@@ -109,6 +110,12 @@ export function MobileApp() {
   const lastEndpoint = useConnectionStore((s) => s.lastConnectedEndpoint);
   const vfoHz = useConnectionStore((s) => s.vfoHz);
   const mode = useConnectionStore((s) => s.mode);
+  // Seed the display-levels lock ON the first time the mobile shell mounts
+  // (never touched on desktop). The operator can flip it from the LEVELS
+  // button; after that the stored choice wins.
+  useEffect(() => {
+    if (levelsLockUnset()) useVfoLockStore.getState().setLevelsLocked(true);
+  }, []);
   const applyState = useConnectionStore((s) => s.applyState);
   const qrzHome = useQrzStore((s) => s.home);
   const qrzHasXml = useQrzStore((s) => s.hasXmlSubscription);
@@ -181,17 +188,9 @@ export function MobileApp() {
       <header className="m-topbar">
         <div className="m-brand">
           <span className="brand-mark m-brand-mark">
-            <svg className="brand-mark-logo" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                className="brand-mark-wave brand-mark-wave--top"
-                d="M3.2 8.2c1.55-1.2 3.1-1.2 4.65 0l.75.58c1.55 1.2 3.1 1.2 4.65 0l.75-.58c1.55-1.2 3.1-1.2 4.65 0l1.15.88"
-              />
-              <path
-                className="brand-mark-wave brand-mark-wave--bottom"
-                d="M3.2 15.8c1.55 1.2 3.1 1.2 4.65 0l.75-.58c1.55-1.2 3.1-1.2 4.65 0l.75.58c1.55 1.2 3.1 1.2 4.65 0l1.15-.88"
-              />
-              <path className="brand-mark-bolt" d="M13.4 2.5 7 12.1h4.15l-1.2 9.4L17 10.55h-4.25l.65-8.05Z" />
-            </svg>
+            {/* The modernised mark (branding/zeus-logo.svg — the app icon's
+                twin square-wave pulses) replaces the heritage bolt here. */}
+            <img className="m-brand-logo" src="/branding/zeus-logo.svg" alt="" aria-hidden="true" />
           </span>
           <span className="m-brand-text">
             <span className="m-brand-pre">OpenHpsdr</span>
@@ -283,8 +282,10 @@ export function MobileApp() {
                 <div className="m-vfo-side">
                   <div className="m-vfo-side-cell"><AudioToggle /></div>
                   <div className="m-vfo-side-cell"><VfoLockButton /></div>
+                  <div className="m-vfo-side-cell"><LevelsLockButton /></div>
                 </div>
               </div>
+              <RxStatusStrip />
             </Section>
 
             <SMeterSection />
@@ -716,6 +717,66 @@ function VfoLockButton() {
       )}
       <span className="m-lock-lbl">{locked ? 'LOCKED' : 'LOCK'}</span>
     </button>
+  );
+}
+
+// Display-levels padlock (field request): pins the panadapter + waterfall dB
+// scales so a scroll that starts over either scale can't re-level the
+// display. Independent of the VFO lock — tuning stays live while pinned.
+function LevelsLockButton() {
+  const locked = useVfoLockStore((s) => s.levelsLocked);
+  const toggle = useVfoLockStore((s) => s.toggleLevels);
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={locked}
+      aria-label={locked ? 'Display levels locked — tap to unlock' : 'Display levels unlocked — tap to lock'}
+      title={locked ? 'Display levels locked — the dB scales ignore drags' : 'Lock display levels'}
+      className={`btn m-lock-btn ${locked ? 'on' : ''}`}
+    >
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+        <path d="M4 19h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+        <path d="M6 16V9M10 16V5M14 16v-6M18 16V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+      </svg>
+      <span className="m-lock-lbl">{locked ? 'PINNED' : 'LEVELS'}</span>
+    </button>
+  );
+}
+
+// Receive-state strip under the VFO (field request: 'no critical parameters
+// such as NR/NB are displayed on the main screen'). Read-only truth from the
+// same stores the desktop flag chips use — mode, filter width, AGC, ATT/PRE,
+// NR/NB/ANF/SNB, SQL. Engaged chips light with the accent. Editors stay
+// where they are (Radio tab, RX Controls, DSP).
+function RxStatusStrip() {
+  const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
+  const rxMode = useConnectionStore((s) => getReceiverMode(s, focusedRxIndex));
+  const lo = useConnectionStore((s) => s.filterLowHz);
+  const hi = useConnectionStore((s) => s.filterHighHz);
+  const agc = useConnectionStore((s) => s.agc.mode);
+  const nr = useConnectionStore((s) => s.nr);
+  const sql = useConnectionStore((s) => s.squelch.enabled);
+  const preamp = useConnectionStore((s) => s.preampOn);
+  const widthHz = Math.abs(hi - lo);
+  const width = widthHz >= 1000 ? `${(widthHz / 1000).toFixed(1)}k` : `${widthHz}`;
+  const nrLabel = nr.nrMode === 'Anr' ? 'NR' : nr.nrMode === 'Emnr' ? 'NR2' : nr.nrMode === 'Rnnr' ? 'NR3' : nr.nrMode === 'Sbnr' ? 'NR4' : 'NR';
+  const nbLabel = nr.nbMode === 'Nb1' ? 'NB1' : nr.nbMode === 'Nb2' ? 'NB2' : 'NB';
+  const Chip = ({ on, children }: { on: boolean; children: ReactNode }) => (
+    <span className={`m-rxchip${on ? ' on' : ''}`}>{children}</span>
+  );
+  return (
+    <div className="m-rxstrip" aria-label="Receive status">
+      <Chip on>{String(rxMode)}</Chip>
+      <Chip on>{width}</Chip>
+      <Chip on>AGC {String(agc).toUpperCase()}</Chip>
+      <Chip on={preamp}>PRE</Chip>
+      <Chip on={nr.nrMode !== 'Off'}>{nrLabel}</Chip>
+      <Chip on={nr.nbMode !== 'Off'}>{nbLabel}</Chip>
+      <Chip on={!!nr.anfEnabled}>ANF</Chip>
+      <Chip on={!!nr.snbEnabled}>SNB</Chip>
+      <Chip on={sql}>SQL</Chip>
+    </div>
   );
 }
 

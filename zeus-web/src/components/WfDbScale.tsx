@@ -125,10 +125,12 @@ export function WfDbScale({ master = false }: WfDbScaleProps = {}) {
     lastShiftApplied: number;
   } | null>(null);
 
+  const levelsLocked = useVfoLockStore((s) => s.levelsLocked);
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       // VFO/panel lock — see DbScale.tsx; same gate, separate widget.
-      if (useVfoLockStore.getState().locked) return;
+      const lk = useVfoLockStore.getState();
+      if (lk.locked || lk.levelsLocked) return;
       const rect = e.currentTarget.getBoundingClientRect();
       dragState.current = {
         startY: e.clientY,
@@ -201,7 +203,7 @@ export function WfDbScale({ master = false }: WfDbScaleProps = {}) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className="absolute left-0 top-0 bottom-0 z-10 w-10 cursor-ns-resize touch-none select-none bg-neutral-950/60"
+      className={`absolute left-0 top-0 bottom-0 z-10 w-10 select-none bg-neutral-950/60 ${levelsLocked ? '' : 'cursor-ns-resize touch-none'}`}
     >
       {ticks.map((t) => (
         <div

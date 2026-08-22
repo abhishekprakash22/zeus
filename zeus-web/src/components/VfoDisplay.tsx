@@ -290,7 +290,13 @@ export function VfoDisplay({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
-            onBlur={cancelEdit}
+            // Commit on blur, don't cancel: the iOS decimal keypad has no
+            // Enter key — the only way out is the toolbar ✓ (blur), which
+            // used to throw the typed frequency away (field). commitEdit
+            // already no-ops on an unparseable or unchanged draft, so a
+            // stray tap-away with nothing typed still cancels cleanly.
+            onBlur={commitEdit}
+            enterKeyHint="go"
             aria-label={`${resolvedLabel} frequency in kHz`}
             style={{
               width: compact ? '100%' : 220,

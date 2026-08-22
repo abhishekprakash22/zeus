@@ -312,8 +312,34 @@
 }
 .m-vfo-side {
   display: grid;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
   gap: 6px;
+}
+/* Modernised brand mark in the topbar (branding/zeus-logo.svg). */
+.m-brand-logo { width: 28px; height: 28px; border-radius: 6px; display: block; }
+
+/* Receive-status strip under the VFO — read-only chips, engaged = accent. */
+.m-rxstrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.m-rxchip {
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  color: var(--fg-3, #545c66);
+  border: 1px solid var(--panel-border);
+  background: rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+.m-rxchip.on {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 /* Each side cell holds one component (AudioToggle / VfoLockButton). The
    inner buttons are forced to fill the cell so they line up edge-to-edge

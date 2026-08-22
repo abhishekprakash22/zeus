@@ -1195,6 +1195,17 @@
 .m-tool-embed--qrz { min-height: 520px; }
 .m-tool-embed--dsp { min-height: 600px; }
 .m-tool-embed--rx { min-height: 360px; padding: 6px; }
+
+/* Remote link-quality chip (RemoteLinkChip renders fixed top-right for the
+   desktop/G2 shell). On the phone the sticky topbar owns that corner — the
+   chip sat on the Disconnect button (field find). Drop it just below the
+   bar, still right-aligned, above the content. Inline style carries the
+   desktop position, hence !important. */
+
+body:has(.m-topbar) .remote-link-chip {
+  top: 50px !important;
+  right: 8px !important;
+}
 .m-tool-embed--rx .filter-ribbon--embedded { width: 100%; max-width: 100%; }
 
 /* Mobile-only tweaks that let the embedded panels read inside the

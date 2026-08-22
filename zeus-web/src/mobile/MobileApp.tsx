@@ -761,8 +761,8 @@ function Section({
 
 const TOOL_META: Record<MobileToolId, { name: string; desc: string; sub: string; icon: ReactNode }> = {
   rx: {
-    name: 'RX Filter',
-    desc: 'Bandwidth presets, low & high cut',
+    name: 'RX Controls',
+    desc: 'Filter presets, low/high cut, step, AGC-T',
     sub: 'Focused RX',
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden>
@@ -774,7 +774,7 @@ const TOOL_META: Record<MobileToolId, { name: string; desc: string; sub: string;
   },
   tx: {
     name: 'TX Controls',
-    desc: 'Step, AGC-T, drive, tune, mic gain',
+    desc: 'Drive, tune power, mic gain, PS',
     sub: 'RX1',
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden>
@@ -906,15 +906,7 @@ function ToolDetail({ tool, onBack }: { tool: MobileToolId; onBack: () => void }
         <span className="m-tool-page-title">{meta.name}</span>
         <span className="m-tool-page-sub">{meta.sub}</span>
       </header>
-      {tool === 'rx' && (
-        // Field request (remote on a phone): the desktop filter ribbon —
-        // preset chips + the mini-pan with draggable low/high cut — was the
-        // one RX control missing from the mobile shell (mode + band live on
-        // the Radio tab, NB/NR under DSP). Embedded form, same component.
-        <div className="m-tool-embed m-tool-embed--rx">
-          <FilterRibbon embedded />
-        </div>
-      )}
+      {tool === 'rx' && <RxToolView />}
       {tool === 'tx' && <TxToolView />}
       {tool === 'rotator' && (
         <div className="m-tool-embed m-tool-embed--rotator">
@@ -935,20 +927,41 @@ function ToolDetail({ tool, onBack }: { tool: MobileToolId; onBack: () => void }
   );
 }
 
+// RX tool view (field request, remote on a phone): the desktop filter
+// ribbon — preset chips + the mini-pan with draggable low/high cut — was the
+// one RX control missing from the mobile shell (mode + band live on the
+// Radio tab, NB/NR under DSP). Step and AGC-T move here from TX Controls,
+// where they never belonged. Embedded ribbon, same component, same stores.
+function RxToolView() {
+  return (
+    <>
+      <Section label="Filter">
+        <div className="m-tool-embed m-tool-embed--rx">
+          <FilterRibbon embedded />
+        </div>
+      </Section>
+      <Section label="Tuning">
+        <div className="m-controls">
+          <div className="m-control-row m-control-row--1">
+            <label className="m-control">
+              <span className="m-control-lbl">Step</span>
+              <TuningStepWidget />
+            </label>
+          </div>
+          <div className="m-slider-row"><AgcSlider /></div>
+        </div>
+      </Section>
+    </>
+  );
+}
+
 // TX tool view — the controls that previously lived under the Settings tab.
 // Lifted verbatim into its own component so the Tools router can route to it
-// without inflating MobileApp.
+// without inflating MobileApp. Step + AGC-T moved to RxToolView.
 function TxToolView() {
   return (
     <Section label="Controls">
       <div className="m-controls">
-        <div className="m-control-row m-control-row--1">
-          <label className="m-control">
-            <span className="m-control-lbl">Step</span>
-            <TuningStepWidget />
-          </label>
-        </div>
-        <div className="m-slider-row"><AgcSlider /></div>
         <div className="m-slider-row m-slider-row--lbl"><DriveSlider /></div>
         <div className="m-slider-row m-slider-row--lbl"><TunePowerSlider /></div>
         <div className="m-slider-row m-slider-row--lbl"><MicGainSlider /></div>

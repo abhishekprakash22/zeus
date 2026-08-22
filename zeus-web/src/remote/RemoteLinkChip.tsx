@@ -112,7 +112,7 @@ export function RemoteLinkChip({ conn }: { conn: RemoteConnection | null }) {
   const title = `RTT ${s.rttMs ?? '–'} ms · jitter ${s.jitterMs ?? '–'} ms · audio loss ${s.lossPct == null ? '–' : s.lossPct.toFixed(1)}% · ${s.fps} fps${s.relay ? ' · via TURN relay' : ' · direct'}`;
 
   return (
-    <div style={chip} title={title} aria-label={`Remote link ${s.verdict}: ${title}`}>
+    <div className="remote-link-chip" style={chip} title={title} aria-label={`Remote link ${s.verdict}: ${title}`}>
       <span style={barsWrap}>
         {[0, 1, 2, 3].map((i) => (
           <span

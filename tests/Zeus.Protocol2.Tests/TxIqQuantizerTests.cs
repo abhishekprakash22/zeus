@@ -133,4 +133,40 @@ public class TxIqQuantizerTests
         Assert.Equal(0, after.QueuedPackets);
         Assert.Equal(1, after.ResetDrainedPackets);
     }
+
+    [Theory]
+    [InlineData("mox-on")]
+    [InlineData("mox-off")]
+    public void TxIqSilenceGuard_QueuesFourZeroPacketsAfterStaleDrain(string edge)
+    {
+        // DUC last-sample guard: every transmit edge must leave true zeros in
+        // the radio's TX FIFO so a held TUN carrier can never air on the next
+        // voice key-down (bare-Saturn field find).
+        var client = new Protocol2Client(NullLogger<Protocol2Client>.Instance);
+        using var sock = new System.Net.Sockets.Socket(
+            System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Dgram,
+            System.Net.Sockets.ProtocolType.Udp);
+        typeof(Protocol2Client)
+            .GetField("_sock", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(client, sock);
+        typeof(Protocol2Client)
+            .GetField("_rxTask", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(client, Task.CompletedTask);
+        var iq = new float[240 * 2];
+        Array.Fill(iq, 0.9f);   // a TUN-like constant vector
+        client.SendTxIq(iq);
+
+        // Drive the same private pair SetMox/SetTune run (ResetTxIq → guard)
+        // without PushTransmitEdge's wire sends, which need a live radio.
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(Protocol2Client).GetMethod("ResetTxIq", flags)!.Invoke(client, null);
+        typeof(Protocol2Client).GetMethod("EnqueueTxIqSilenceGuard", flags)!.Invoke(client, new object[] { edge });
+        var diag = client.TxIqDiagnosticsSnapshot();
+
+        Assert.Equal(1, diag.ResetDrainedPackets);          // the stale tone packet went
+        Assert.Equal(4, diag.QueuedPackets);                // replaced by four packets of zeros
+        Assert.Equal(5u, diag.NextSequence);                // 1 tone + 4 guard
+        Assert.Equal(0, diag.ScratchComplexSamples);
+    }
 }

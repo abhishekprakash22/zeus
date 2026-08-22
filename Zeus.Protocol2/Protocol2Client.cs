@@ -1417,6 +1417,7 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     {
         _moxOn = on;
         ResetTxIq();
+        EnqueueTxIqSilenceGuard(on ? "mox-on" : "mox-off");
         // Unkey edge: apply any antenna selection deferred while keyed before the
         // HighPriority re-push, so the relay matrix switches at idle and the very
         // next HP frame carries the operator's new antenna. Only flush when fully
@@ -1429,8 +1430,52 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     {
         _tuneActive = on;
         ResetTxIq();
+        EnqueueTxIqSilenceGuard(on ? "tune-on" : "tune-off");
         if (!on && !_moxOn) FlushPendingAntennas();
         if (_rxTask is not null) PushTransmitEdge(on);
+    }
+
+    // DUC last-sample guard (field find, bare Saturn card 2026-08-22). The
+    // radio's TX FIFO → DUC path holds its LAST sample when the FIFO runs dry;
+    // it does not fall to zero. TUN is a 0 Hz PostGen tone = a constant IQ
+    // vector at ~full scale, so after TUN the held sample IS a carrier. The
+    // next key-down in a voice mode with no mic IQ flowing (no mic on the
+    // codec, browser mic not armed, digital source idle) then aired that
+    // carrier at full drive — "MOX in USB transmits like TUN". A CW key-down
+    // in between cleared it only because CW wrote zeros. Fix at the wire: on
+    // EVERY transmit edge, after the stale-queue drain, push a few packets of
+    // true zeros so the held sample is always 0 — at unkey (so nothing stale
+    // survives into RX) and again at key-down (belt and braces before the
+    // first mic IQ arrives). 4 × 240 = 960 samples = 5 ms at 192 kHz; the
+    // paced sender gets them out before any mic IQ is produced. Only when the
+    // sender is running (_rxTask) — a disconnected client queues nothing.
+    private const int TxIqSilenceGuardPackets = 4;
+    private long _txIqSilenceGuardEdges;
+
+    private void EnqueueTxIqSilenceGuard(string edge)
+    {
+        if (_sock is null || _rxTask is null) return;
+        lock (_txIqGate)
+        {
+            _txIqScratchCount = 0;
+            for (int n = 0; n < TxIqSilenceGuardPackets; n++)
+            {
+                var p = new byte[BufLen];   // all-zero IQ payload
+                WriteBeU32(p, 0, _seqCmdTxIq++);
+                DropStaleTxIqPacketsIfBackedUpLocked();
+                if (_txIqQueue.Writer.TryWrite(p))
+                {
+                    Interlocked.Increment(ref _txIqPacketsQueued);
+                    Interlocked.Increment(ref _txIqQueuedPackets);
+                }
+                else
+                {
+                    Interlocked.Increment(ref _txIqQueueWriteFailures);
+                }
+            }
+        }
+        Interlocked.Increment(ref _txIqSilenceGuardEdges);
+        _log.LogInformation("p2.txiq silence-guard edge={Edge} packets={N}", edge, TxIqSilenceGuardPackets);
     }
 
     /// <summary>

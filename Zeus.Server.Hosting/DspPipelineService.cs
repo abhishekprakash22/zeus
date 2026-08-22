@@ -7249,7 +7249,22 @@ public class DspPipelineService : BackgroundService,
                     SampleCount: (ushort)audioSampleCount,
                     Samples: new ReadOnlyMemory<float>(audioBuf, 0, audioSampleCount));
                 CaptureAudioDiagnostics("rx", in audioFrame, finalAudioRms, finalAudioPeak, txMonitorOn, squelch);
-                PublishAudio(in audioFrame);
+                // MONITORING MEANS HEARING ONLY THE MONITORED THING (the same
+                // rule Recorder SOLO enforces above). During TX the radio mutes
+                // its receive front end, but this chain keeps producing frames —
+                // near-silent ones, one-LSB noise around -96 dBFS. Publishing
+                // them alongside the monitor interleaves TWO streams into every
+                // single-stream consumer (the remote session's one Opus
+                // encoder): the continuous silence swamps the monitor's speech,
+                // and the operator's own field probe measured exactly that —
+                // -96 dBFS on the received track while the pipeline provably
+                // published -45 dBFS monitor frames. While transmitting with
+                // the monitor engaged, the monitor IS the audio: the RX frame
+                // stands down, exactly as the TX-suppressed publisher already
+                // does. NativeAudioSink listeners lose nothing — the monitor
+                // frame reaches them through its own publish this same tick.
+                if (!(txMonitorOn && suppressRxAudioForTx))
+                    PublishAudio(in audioFrame);
                 RxAudioAvailable?.Invoke(0, AudioOutputRateHz, new ReadOnlyMemory<float>(audioBuf, 0, audioSampleCount));
             }
             else if (!txMonitorOn && suppressRxAudioForTx)

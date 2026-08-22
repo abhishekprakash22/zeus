@@ -219,11 +219,17 @@ public sealed class TxService
         return false;
     }
 
-    private void ClearTxMonitorForTransmitStart()
-    {
-        if (!_radio.Snapshot().TxMonitorEnabled) return;
-        _radio.SetTxMonitor(new TxMonitorSetRequest(false));
-    }
+    // ClearTxMonitorForTransmitStart is GONE, deliberately. It force-disabled
+    // the TX monitor the moment MOX or TUN engaged — heritage from MON's birth
+    // as a MOX-off *preview* tool, when the only operator sat at the bench
+    // next to open speakers and a live mic (howl protection). Remote operation
+    // inverted the premise: monitoring DURING transmission is what MON is for
+    // on every rig, and the field bug it caused was maddening — MON engaged,
+    // key down, monitor silently un-requested, a split-second tail of audio at
+    // unkey as the only clue. The monitor now stays exactly where the operator
+    // put it, through keying and release, like every radio they've ever used.
+    // Feedback discipline (headphones near an open mic) is standard operating
+    // practice and the operator's call — MON remains their own toggle.
 
     /// <summary>Back-compat shim: callers that don't tag a source get
     /// <see cref="MoxSource.UI"/>, the master override. New callers should
@@ -336,8 +342,6 @@ public sealed class TxService
             txActiveCaptured = CaptureTxActiveChangeUnderLock();
         }
         RaiseTxActiveChanged(txActiveCaptured);
-
-        if (on) ClearTxMonitorForTransmitStart();
 
         if (on)
         {
@@ -459,7 +463,6 @@ public sealed class TxService
 
         if (req.Enabled)
         {
-            ClearTxMonitorForTransmitStart();
             if (wasTunOn) _pipeline.SetTxTune(false);
             // Arm PostGen + cache state (signed freqs for USB family, mag,
             // run=1) BEFORE flipping MOX so TXA pump sees a configured
@@ -527,8 +530,6 @@ public sealed class TxService
             txActiveCaptured = CaptureTxActiveChangeUnderLock();
         }
         RaiseTxActiveChanged(txActiveCaptured);
-
-        if (on) ClearTxMonitorForTransmitStart();
 
         if (wasMoxOn && on)
         {

@@ -748,10 +748,12 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
       const txStore = useTxStore.getState();
       if (moxOn) {
         txStore.setMoxOn(true);
-        txStore.setTxMonitorEnabled(false);
+        // Monitor flag deliberately NOT cleared here anymore: the server no
+        // longer auto-disables the TX monitor at key-down (the MOX-off-preview
+        // heritage behavior), so the button now tells the truth through a
+        // whole transmission instead of silently un-lighting at key time.
       } else if (tunOn) {
         txStore.setTunOn(true);
-        txStore.setTxMonitorEnabled(false);
       } else {
         txStore.setMoxOn(false);
         txStore.setTunOn(false);

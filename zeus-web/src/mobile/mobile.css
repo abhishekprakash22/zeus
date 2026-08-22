@@ -1194,6 +1194,8 @@
 .m-tool-embed--rotator { aspect-ratio: 1 / 1.05; min-height: 380px; }
 .m-tool-embed--qrz { min-height: 520px; }
 .m-tool-embed--dsp { min-height: 600px; }
+.m-tool-embed--rx { min-height: 360px; padding: 6px; }
+.m-tool-embed--rx .filter-ribbon--embedded { width: 100%; max-width: 100%; }
 
 /* Mobile-only tweaks that let the embedded panels read inside the
    480-wide column without their desktop-tile chrome fighting the

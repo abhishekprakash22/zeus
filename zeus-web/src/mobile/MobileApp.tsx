@@ -51,6 +51,7 @@ import { bandOf } from '../components/design/data';
 import { RotatorDialPanel } from '../layout/panels/RotatorDialPanel';
 import { QrzPanel } from '../layout/panels/QrzPanel';
 import { DspFlexPanel } from '../layout/panels/DspFlexPanel';
+import { FilterRibbon } from '../components/filter/FilterRibbon';
 import { useRotatorStore } from '../state/rotator-store';
 import {
   clampSplit,
@@ -89,7 +90,7 @@ function useMobileZoomLock(): void {
 }
 
 type MobileTab = 'radio' | 'tools';
-type MobileToolId = 'tx' | 'rotator' | 'qrz' | 'dsp';
+type MobileToolId = 'rx' | 'tx' | 'rotator' | 'qrz' | 'dsp';
 
 function normalizeAzimuth(deg: number | null | undefined): number | null {
   if (deg == null || !Number.isFinite(deg)) return null;
@@ -759,6 +760,18 @@ function Section({
 // ============================================================================
 
 const TOOL_META: Record<MobileToolId, { name: string; desc: string; sub: string; icon: ReactNode }> = {
+  rx: {
+    name: 'RX Filter',
+    desc: 'Bandwidth presets, low & high cut',
+    sub: 'Focused RX',
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M3 18h18" opacity="0.5" />
+        <path d="M4 18v-6h3V6h10v6h3v6" />
+        <path d="M9 14h6" opacity="0.6" />
+      </svg>
+    ),
+  },
   tx: {
     name: 'TX Controls',
     desc: 'Step, AGC-T, drive, tune, mic gain',
@@ -820,6 +833,7 @@ function ToolsGrid({ onPick }: { onPick: (id: MobileToolId) => void }) {
     id: MobileToolId;
     badge: { text: string; tone: 'green' | 'amber' | 'muted' };
   }> = [
+    { id: 'rx', badge: { text: 'Ready', tone: 'green' } },
     { id: 'tx', badge: { text: txBadge, tone: txBadge === 'Ready' ? 'green' : 'amber' } },
     {
       id: 'rotator',
@@ -892,6 +906,15 @@ function ToolDetail({ tool, onBack }: { tool: MobileToolId; onBack: () => void }
         <span className="m-tool-page-title">{meta.name}</span>
         <span className="m-tool-page-sub">{meta.sub}</span>
       </header>
+      {tool === 'rx' && (
+        // Field request (remote on a phone): the desktop filter ribbon —
+        // preset chips + the mini-pan with draggable low/high cut — was the
+        // one RX control missing from the mobile shell (mode + band live on
+        // the Radio tab, NB/NR under DSP). Embedded form, same component.
+        <div className="m-tool-embed m-tool-embed--rx">
+          <FilterRibbon embedded />
+        </div>
+      )}
       {tool === 'tx' && <TxToolView />}
       {tool === 'rotator' && (
         <div className="m-tool-embed m-tool-embed--rotator">

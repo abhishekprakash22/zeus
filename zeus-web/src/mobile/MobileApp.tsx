@@ -39,6 +39,9 @@ import { AudioToggle } from '../components/AudioToggle';
 import { BandButtons } from '../components/BandButtons';
 import { TuningStepWidget } from '../components/TuningStepWidget';
 import { AgcSlider } from '../components/AgcSlider';
+import { AttenuatorSlider } from '../components/AttenuatorSlider';
+import { PreampButton } from '../components/PreampButton';
+import { SquelchSlider } from '../components/SquelchSlider';
 import { DriveSlider } from '../components/DriveSlider';
 import { MicGainSlider } from '../components/MicGainSlider';
 import { TunePowerSlider } from '../components/TunePowerSlider';
@@ -823,7 +826,7 @@ function Section({
 const TOOL_META: Record<MobileToolId, { name: string; desc: string; sub: string; icon: ReactNode }> = {
   rx: {
     name: 'RX Controls',
-    desc: 'Filter presets, low/high cut, step, AGC-T',
+    desc: 'Filter, step, AGC-T, preamp, ATT, squelch',
     sub: 'Focused RX',
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden>
@@ -1010,6 +1013,17 @@ function RxToolView() {
             </label>
           </div>
           <div className="m-slider-row"><AgcSlider /></div>
+        </div>
+      </Section>
+      {/* Front end + squelch (field request): the desktop topbar's FRONT-END
+          (PRE + ATT) and SQL groups, same components. */}
+      <Section label="Front end">
+        <div className="m-controls">
+          <div className="m-frontend-row">
+            <PreampButton />
+            <div className="m-slider-row m-frontend-att"><AttenuatorSlider /></div>
+          </div>
+          <div className="m-slider-row m-slider-row--lbl"><SquelchSlider /></div>
         </div>
       </Section>
     </>

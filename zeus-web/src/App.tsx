@@ -1145,7 +1145,16 @@ export default function App() {
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'rgba(0,0,0,0.55)',
+          // Splash A "Pulse" — the radio's own disconnected screen (the Pi's
+          // splash, field request) wears the same face as the SERVER tab and
+          // the remote password screen. Scrim keeps the ConnectPanel legible;
+          // the blur still soft-focuses whatever UI sits beneath.
+          backgroundColor: 'rgba(0,0,0,0.45)',
+          backgroundImage:
+            'linear-gradient(180deg, rgba(10,10,12,0.25) 0%, rgba(10,10,12,0.6) 100%), url(/branding/splash-pulse.svg)',
+          backgroundSize: 'auto, cover',
+          backgroundPosition: 'left center, left center',
+          backgroundRepeat: 'no-repeat',
           backdropFilter: 'blur(4px)',
           pointerEvents: 'none',
           display: 'flex',

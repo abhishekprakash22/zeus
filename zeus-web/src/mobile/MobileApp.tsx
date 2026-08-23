@@ -14,6 +14,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
@@ -95,6 +96,58 @@ function useMobileZoomLock(): void {
 
 type MobileTab = 'radio' | 'tools';
 type MobileToolId = 'rx' | 'tx' | 'rotator' | 'qrz' | 'dsp';
+
+// G2 themes on the phone (field: 'the g2 schemes are not showing up on the
+// remote app'). Same palette set, same body[data-g2-theme] switch, same
+// localStorage key as the G2 layout's picker — mobile.css carries the .m-app
+// override block. TX red is never themed, matching the G2 rule.
+const MOBILE_THEMES = [
+  { id: 'zeus', label: 'ZEUS BLUE', accent: '#4aa3df' },
+  { id: 'amber', label: 'AMBER', accent: '#ffb545' },
+  { id: 'nightred', label: 'NIGHT RED', accent: '#ff5a4d' },
+  { id: 'phosphor', label: 'PHOSPHOR', accent: '#4ade80' },
+  { id: 'ice', label: 'ICE', accent: '#8ad8ff' },
+] as const;
+type MobileThemeId = (typeof MOBILE_THEMES)[number]['id'];
+const MOBILE_THEME_KEY = 'zeus.g2.theme';
+
+function readMobileTheme(): MobileThemeId {
+  try {
+    const v = localStorage.getItem(MOBILE_THEME_KEY);
+    return MOBILE_THEMES.some((t) => t.id === v) ? (v as MobileThemeId) : 'zeus';
+  } catch {
+    return 'zeus';
+  }
+}
+
+function ThemeRow() {
+  const [theme, setThemeState] = useState<MobileThemeId>(() => readMobileTheme());
+  useEffect(() => {
+    if (theme === 'zeus') delete document.body.dataset.g2Theme;
+    else document.body.dataset.g2Theme = theme;
+    try { localStorage.setItem(MOBILE_THEME_KEY, theme); } catch { /* private mode */ }
+  }, [theme]);
+  return (
+    <div className="m-theme-row" role="radiogroup" aria-label="Color theme">
+      <span className="m-theme-lbl">Theme</span>
+      {MOBILE_THEMES.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="radio"
+          aria-checked={theme === t.id}
+          className={`m-theme-chip${theme === t.id ? ' on' : ''}`}
+          style={{ '--chip-accent': t.accent } as CSSProperties}
+          onClick={() => setThemeState(t.id)}
+        >
+          <span className="m-theme-dot" />
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 
 function normalizeAzimuth(deg: number | null | undefined): number | null {
   if (deg == null || !Number.isFinite(deg)) return null;
@@ -937,6 +990,7 @@ function ToolsGrid({ onPick }: { onPick: (id: MobileToolId) => void }) {
           );
         })}
       </div>
+      <ThemeRow />
       <p className="m-tools-foot">
         Tools are configured on the desktop application.<br />
         Available widgets appear here.

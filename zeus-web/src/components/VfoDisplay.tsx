@@ -315,6 +315,32 @@ export function VfoDisplay({
           <span className="label-xs" style={{ alignSelf: 'center' }}>
             kHz
           </span>
+          {/* Explicit apply, independent of the OS keyboard chrome: some
+              iOS keyboards surface no Done/✓ at all (field screenshot), so
+              blur — the only other commit path — is unreachable without
+              hunting for the dismiss glyph. onPointerDown + preventDefault
+              runs the commit BEFORE the input's blur fires, so the two
+              paths can't race or double-fire (commitEdit clears editing
+              state; the following blur finds editing already false). */}
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              commitEdit();
+            }}
+            aria-label="Tune to the entered frequency"
+            className="btn sm"
+            style={{
+              alignSelf: 'center',
+              minHeight: 34,
+              padding: '0 12px',
+              fontWeight: 800,
+              color: 'var(--accent)',
+              borderColor: 'var(--accent)',
+            }}
+          >
+            GO
+          </button>
         </div>
       ) : (
         <button

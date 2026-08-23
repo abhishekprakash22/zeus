@@ -80,7 +80,40 @@ export function ServerUrlPanel() {
   };
 
   return (
-    <div style={{ maxWidth: 600 }}>
+    // Splash A "Pulse" (field-picked), full-bleed behind the connect card:
+    // the panel becomes the stage, the existing content floats on a card to
+    // the right over a soft scrim. The art is the wordmark's own square-wave
+    // identity, left-anchored, so the card never covers it.
+    <div
+      style={{
+        position: 'relative',
+        margin: '-4px 0 0',
+        minHeight: 560,
+        borderRadius: 'var(--r-md, 8px)',
+        overflow: 'hidden',
+        border: '1px solid var(--panel-border)',
+        backgroundColor: '#0a0a0c',
+        backgroundImage:
+          'linear-gradient(90deg, rgba(10,10,12,0.05) 45%, rgba(10,10,12,0.62) 100%), url(/branding/splash-pulse.svg)',
+        backgroundSize: 'auto, cover',
+        backgroundPosition: 'left center, left center',
+        backgroundRepeat: 'no-repeat',
+        padding: '18px 18px 18px',
+        display: 'flex',
+        justifyContent: 'flex-end',
+      }}
+    >
+    <div
+      style={{
+        maxWidth: 600,
+        width: 'min(600px, 100%)',
+        background: 'rgba(17, 17, 20, 0.94)',
+        border: '1px solid var(--panel-border)',
+        borderRadius: 'var(--r-md, 8px)',
+        padding: 18,
+        backdropFilter: 'blur(2px)',
+      }}
+    >
       <h3
         style={{
           margin: '0 0 14px',
@@ -269,6 +302,7 @@ export function ServerUrlPanel() {
       <RemoteDiagnosticsSection />
 
       <RemoteQrSection />
+    </div>
     </div>
   );
 }

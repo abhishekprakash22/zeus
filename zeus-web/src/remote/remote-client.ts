@@ -110,6 +110,24 @@ function startTxLeasePulse(control: RTCDataChannel): () => void {
 let rxAudioEl: HTMLAudioElement | null = null;
 let rxAudioStream: MediaStream | null = null;
 let rxLevelTimer: ReturnType<typeof setInterval> | null = null;
+let rxAudioMuted = false;
+const rxMuteListeners = new Set<(muted: boolean) => void>();
+
+// Operator mute for the remote audible path (field: 'Mute does nothing').
+// In a WebRTC session RX audio plays through the hidden element above — the
+// /ws audio client the AudioToggle drives elsewhere doesn't exist here, so
+// the toggle calls this instead. Sticky across reconnects (module state
+// survives; playRemoteRxAudioTrack re-applies it to the fresh element).
+export function setRemoteRxAudioMuted(muted: boolean): void {
+  rxAudioMuted = muted;
+  if (rxAudioEl) rxAudioEl.muted = muted;
+  for (const fn of rxMuteListeners) fn(muted);
+}
+export function isRemoteRxAudioMuted(): boolean { return rxAudioMuted; }
+export function subscribeRemoteRxAudioMuted(fn: (muted: boolean) => void): () => void {
+  rxMuteListeners.add(fn);
+  return () => rxMuteListeners.delete(fn);
+}
 
 // Field-debug tap: the page measures its OWN received audio, so a silent-ear
 // report can be split into "track carries silence" vs "render path eats it"
@@ -148,6 +166,7 @@ function playRemoteRxAudioTrack(stream: MediaStream): void {
   rxAudioStream = stream;
   if (!rxAudioEl) {
     rxAudioEl = document.createElement('audio');
+    rxAudioEl.muted = rxAudioMuted;
     rxAudioEl.autoplay = true;
     rxAudioEl.id = 'zeus-remote-rx-audio';
     // In the DOM (hidden) rather than detached: reachable by console probes,

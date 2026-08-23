@@ -45,7 +45,27 @@
 
 import { useEffect, useState } from 'react';
 import { getAudioClient, type AudioClientState } from '../audio/audio-client';
+import {
+  isRemoteMode,
+  isRemoteRxAudioMuted,
+  setRemoteRxAudioMuted,
+  subscribeRemoteRxAudioMuted,
+} from '../remote/remote-client';
 import { useCapabilitiesStore } from '../state/capabilities-store';
+
+// Radio-speaker mute (RxAudioMuteState on the host): in server mode the
+// audible path on a Pi/G2 is the radio's own codec, which the in-browser
+// audio client can't touch — so the toggle also posts here. Best-effort:
+// a LAN browser without the endpoint (old radio) just keeps browser-only.
+async function postSharedMuted(muted: boolean): Promise<void> {
+  try {
+    await fetch('/api/audio/mute', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ muted }),
+    });
+  } catch { /* older host or transient — browser-side state still applied */ }
+}
 
 // Desktop-mode (Photino) Mute/Unmute path. The webview's in-browser audio
 // decoder is opted out — RX audio reaches the operator via NativeAudioSink
@@ -73,7 +93,10 @@ async function postNativeMuted(muted: boolean): Promise<boolean> {
 export function AudioToggle() {
   const [state, setState] = useState<AudioClientState>({ kind: 'idle' });
   const hostMode = useCapabilitiesStore((s) => s.capabilities?.host ?? null);
-  const nativeAudio = hostMode === 'desktop';
+  const nativeAudio = hostMode === 'desktop' && !isRemoteMode();
+  const remote = isRemoteMode();
+  const [remoteMuted, setRemoteMuted] = useState(isRemoteRxAudioMuted);
+  useEffect(() => (remote ? subscribeRemoteRxAudioMuted(setRemoteMuted) : undefined), [remote]);
 
   // Server-side mute state for the desktop path. Hydrated from
   // /api/audio/native on mount and after each toggle.
@@ -135,14 +158,37 @@ export function AudioToggle() {
     );
   }
 
+  // Remote (WebRTC) path: RX audio plays through the hidden media-track
+  // element, not the /ws audio client — mute that element directly.
+  if (remote) {
+    const label = remoteMuted ? '▶ Unmute' : '■ Mute';
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <button
+          type="button"
+          onPointerUp={() => setRemoteRxAudioMuted(!remoteMuted)}
+          className={`btn tx-btn ${remoteMuted ? 'active' : ''}`}
+          title="Mute the RX audio on this device (the radio keeps receiving)."
+        >
+          <span className={`led ${remoteMuted ? 'on' : ''}`} style={{ marginRight: 6 }} />
+          {label}
+        </button>
+      </div>
+    );
+  }
+
   // Browser path (server mode + any LAN client of a shared desktop): the
-  // button gates the in-browser AudioContext that decodes WS audio frames.
+  // button gates the in-browser AudioContext that decodes WS audio frames —
+  // and mirrors the state to the host's shared mute so the radio's own
+  // speakers (the audible path on a Pi/G2 kiosk) follow the same button.
   const onClick = async () => {
     const client = getAudioClient();
     if (state.kind === 'playing' || state.kind === 'loading') {
       await client.stop();
+      void postSharedMuted(true);
     } else {
       await client.start();
+      void postSharedMuted(false);
     }
   };
 

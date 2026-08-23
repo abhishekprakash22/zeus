@@ -326,6 +326,21 @@ public static class ZeusEndpoints
             sink.SetMuted(body.Muted);
             return Results.Ok(new { supported = true, muted = sink.IsMuted });
         });
+        // Operator mute for the audible RX path, host-mode independent (field:
+        // 'Mute does nothing on the Pi'). Drives the shared RxAudioMuteState,
+        // which every subscribed sink honours — NativeAudioSink (Photino PC
+        // playback), RadioSpeakerAudioSink (P1 EP2 L/R), SaturnSpeakerAudioSink
+        // (P2 port-1028 radio speakers). On a Pi/G2 the audible path is the
+        // radio's own codec, which only this state can silence.
+        app.MapGet("/api/audio/mute", (RxAudioMuteState mute) =>
+            Results.Ok(new { muted = mute.IsMuted }));
+        app.MapPost("/api/audio/mute", (NativeMuteRequest body, RxAudioMuteState mute, ILoggerFactory lf) =>
+        {
+            mute.SetMuted(body.Muted);
+            lf.CreateLogger("api.audio").LogInformation("api.audio.mute muted={Muted}", body.Muted);
+            return Results.Ok(new { muted = mute.IsMuted });
+        });
+
         app.MapGet("/api/audio/devices", GetNativeAudioDevices);
         app.MapPut("/api/audio/devices", SetNativeAudioDevices);
 

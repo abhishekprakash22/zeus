@@ -20,6 +20,81 @@ public sealed class RemoteWebRtcService
     private readonly string? _loopbackBaseUrl;
     private readonly ConcurrentDictionary<Guid, RemoteWebRtcSession> _sessions = new();
 
+    // ---- Piece 3: single-operator policy -----------------------------------
+    // Exactly ONE remote session may hold the operator slot (be unlocked) at a
+    // time. First unlock wins; later correct-password attempts get auth-busy
+    // and close. The slot frees on session close, so a dropped operator can
+    // reconnect the moment their old session's teardown lands (the 30 s
+    // zombie lease bounds the worst case). Locked (pre-auth) sessions are not
+    // limited — they hold no radio state and the auth throttle bounds them.
+    private readonly object _operatorGate = new();
+    private RemoteWebRtcSession? _operator;
+
+    private bool TryAcquireOperator(RemoteWebRtcSession session)
+    {
+        lock (_operatorGate)
+        {
+            if (_operator is not null && !ReferenceEquals(_operator, session)) return false;
+            _operator = session;
+            return true;
+        }
+    }
+
+    private void ReleaseOperator(RemoteWebRtcSession session)
+    {
+        lock (_operatorGate)
+        {
+            if (ReferenceEquals(_operator, session)) _operator = null;
+        }
+    }
+
+    // ---- Piece 3: host-side auth rate limit --------------------------------
+    // The broker rate-limits signalling per IP, but /api/remote/connect is
+    // also reachable directly (LAN), and defense in depth costs nothing:
+    // after MaxAuthFailures failed password attempts in FailureWindow, new
+    // auth attempts are refused (auth-throttled) for LockoutPeriod. One
+    // shared throttle across sessions — the thing being protected is the
+    // password, not any one session.
+    private const int MaxAuthFailures = 5;
+    private static readonly TimeSpan FailureWindow = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan LockoutPeriod = TimeSpan.FromMinutes(5);
+    private readonly object _throttleGate = new();
+    private readonly Queue<long> _authFailuresMs = new();
+    private long _lockoutUntilMs;
+
+    /// <summary>0 = allowed; otherwise ms until auth attempts are accepted again.</summary>
+    internal long AuthRetryAfterMs()
+    {
+        lock (_throttleGate)
+        {
+            long now = Environment.TickCount64;
+            return _lockoutUntilMs > now ? _lockoutUntilMs - now : 0;
+        }
+    }
+
+    internal void RecordAuthFailure()
+    {
+        lock (_throttleGate)
+        {
+            long now = Environment.TickCount64;
+            _authFailuresMs.Enqueue(now);
+            while (_authFailuresMs.Count > 0 && now - _authFailuresMs.Peek() > FailureWindow.TotalMilliseconds)
+                _authFailuresMs.Dequeue();
+            if (_authFailuresMs.Count >= MaxAuthFailures)
+            {
+                _lockoutUntilMs = now + (long)LockoutPeriod.TotalMilliseconds;
+                _authFailuresMs.Clear();
+                _log.LogWarning("rtc.remote auth throttle ENGAGED — {N} failed password attempts in {Win} min; locked for {Lock} min",
+                    MaxAuthFailures, FailureWindow.TotalMinutes, LockoutPeriod.TotalMinutes);
+            }
+        }
+    }
+
+    internal void RecordAuthSuccess()
+    {
+        lock (_throttleGate) _authFailuresMs.Clear();
+    }
+
     public RemoteWebRtcService(
         RemotePasswordStore passwords, ILogger<RemoteWebRtcService> log,
         Zeus.Server.StreamingHub? hub = null,
@@ -31,6 +106,8 @@ public sealed class RemoteWebRtcService
         _httpFactory = httpFactory;
         _loopbackBaseUrl = loopbackBaseUrl;
     }
+
+    internal bool TryAcquireOperatorSlot(RemoteWebRtcSession s) => TryAcquireOperator(s);
 
     /// <summary>Whether remote access can be offered at all (a password is set).</summary>
     public bool RemoteEnabled => _passwords.HasPassword();
@@ -49,10 +126,11 @@ public sealed class RemoteWebRtcService
         var id = Guid.NewGuid();
         var ice = await GetIceServersAsync(ct);
         var session = new RemoteWebRtcSession(
-            verifier, _log, ice, _hub, _httpFactory, _loopbackBaseUrl);
+            verifier, _log, ice, _hub, _httpFactory, _loopbackBaseUrl, owner: this);
         _sessions[id] = session;
         session.Closed += () =>
         {
+            ReleaseOperator(session);
             if (_sessions.TryRemove(id, out _))
                 _log.LogInformation("rtc.remote session {Id} closed ({Count} active)", id, _sessions.Count);
         };

@@ -206,6 +206,15 @@ async function establish(
           case 'auth-fail':
             reject(new Error('incorrect password'));
             break;
+          case 'auth-busy':
+            // Single-operator policy: password was right, slot is taken.
+            reject(new Error('Another operator is connected to this radio.'));
+            break;
+          case 'auth-throttled': {
+            const mins = Math.max(1, Math.ceil((typeof msg.retryMs === 'number' ? msg.retryMs : 0) / 60000));
+            reject(new Error(`Too many failed password attempts — try again in ${mins} min.`));
+            break;
+          }
         }
       } catch (err) {
         reject(err as Error);

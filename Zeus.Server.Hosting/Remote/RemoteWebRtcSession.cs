@@ -71,6 +71,10 @@ public sealed class RemoteWebRtcSession
     private Timer? _leaseTimer;
     private int _leaseTripped;
 
+    // Piece 3: owner service — operator slot + shared auth throttle. Null in
+    // tests and the spike harness, in which case both policies are inert.
+    private readonly RemoteWebRtcService? _owner;
+
     private RTCDataChannel? _control;
     private RTCDataChannel? _frames;
     private RTCDataChannel? _api;
@@ -197,8 +201,10 @@ public sealed class RemoteWebRtcSession
     public RemoteWebRtcSession(
         RemoteVerifierMaterial verifier, ILogger log,
         IReadOnlyList<RTCIceServer>? iceServers = null, Zeus.Server.StreamingHub? hub = null,
-        IHttpClientFactory? httpFactory = null, string? loopbackBaseUrl = null)
+        IHttpClientFactory? httpFactory = null, string? loopbackBaseUrl = null,
+        RemoteWebRtcService? owner = null)
     {
+        _owner = owner;
         _verifier = verifier;
         _log = log;
         _hub = hub;
@@ -297,11 +303,36 @@ public sealed class RemoteWebRtcSession
         if (frame.Length >= 1 && frame[0] == (byte)Zeus.Contracts.MsgType.DisplayFrame)
         {
             ulong buffered = _frames.bufferedAmount;
-            if (buffered > MaxBufferedFrameBytes)
-                return true; // hard ceiling — drop at the door
-            long gapMs = buffered > MaxBufferedFrameBytes / 2 ? SlowDisplayGapMs : NormalDisplayGapMs;
             long now = Environment.TickCount64;
-            if (now - _lastDisplaySendMs < gapMs)
+            if (buffered > MaxBufferedFrameBytes)
+            {
+                // Hard ceiling — drop at the door, and treat it as congestion:
+                // multiplicative back-off of the pace (piece 3 bandwidth
+                // adaptation, AIMD). ×1.5 per congested drop, floor 4 fps.
+                long grown = Math.Min(MaxDisplayGapMs, (long)(Volatile.Read(ref _displayGapMs) * 3 / 2));
+                if (grown != Volatile.Read(ref _displayGapMs))
+                {
+                    Volatile.Write(ref _displayGapMs, grown);
+                    _log.LogDebug("rtc.remote pace back-off → {Gap} ms/frame", grown);
+                }
+                Volatile.Write(ref _lastCongestionMs, now);
+                return true;
+            }
+            // Additive recovery: after RecoveryQuietMs without touching the
+            // ceiling and with the buffer under a quarter of it, walk the gap
+            // back 10 ms per sent frame toward the 20 fps base.
+            long gap = Volatile.Read(ref _displayGapMs);
+            if (gap > NormalDisplayGapMs
+                && buffered < MaxBufferedFrameBytes / 4
+                && now - Volatile.Read(ref _lastCongestionMs) > RecoveryQuietMs)
+            {
+                gap = Math.Max(NormalDisplayGapMs, gap - 10);
+                Volatile.Write(ref _displayGapMs, gap);
+            }
+            // Half-full buffer still stretches the pace within the current
+            // envelope (the pre-adaptation behaviour, kept as the fast path).
+            long effectiveGap = buffered > MaxBufferedFrameBytes / 2 ? Math.Max(gap, SlowDisplayGapMs) : gap;
+            if (now - _lastDisplaySendMs < effectiveGap)
                 return true; // paced out — a fresher frame is right behind
             _lastDisplaySendMs = now;
         }
@@ -323,6 +354,12 @@ public sealed class RemoteWebRtcSession
     /// plenty for a remote panadapter) and under buffer pressure (~7 fps).</summary>
     private const long NormalDisplayGapMs = 50;
     private const long SlowDisplayGapMs = 150;
+    /// <summary>Adaptive pace ceiling (4 fps) and the quiet time required
+    /// before the gap walks back toward 20 fps (piece 3 AIMD).</summary>
+    private const long MaxDisplayGapMs = 250;
+    private const long RecoveryQuietMs = 3000;
+    private long _displayGapMs = NormalDisplayGapMs;
+    private long _lastCongestionMs;
     private long _lastDisplaySendMs;
 
     public void Close()
@@ -810,6 +847,16 @@ public sealed class RemoteWebRtcSession
                     break;
                 case "auth-share":
                 {
+                    // Piece 3 host auth throttle: refuse the attempt outright
+                    // while locked out — before any SPAKE2 math runs.
+                    long retryMs = _owner?.AuthRetryAfterMs() ?? 0;
+                    if (retryMs > 0)
+                    {
+                        _log.LogWarning("rtc.remote auth attempt during lockout ({Retry} ms remaining)", retryMs);
+                        try { _control!.send(JsonSerializer.Serialize(new { t = "auth-throttled", retryMs })); } catch { }
+                        Close();
+                        break;
+                    }
                     var share = Convert.FromBase64String(doc.RootElement.GetProperty("share").GetString()!);
                     var outcome = await _session.SubmitAuthAsync(share);
                     if (outcome.Action == RemoteSessionAction.Reply)
@@ -824,6 +871,18 @@ public sealed class RemoteWebRtcSession
                     var outcome = await _session.SubmitAuthAsync(confirm);
                     if (outcome.Action == RemoteSessionAction.Unlock)
                     {
+                        _owner?.RecordAuthSuccess();
+                        // Piece 3 single-operator policy: the password was
+                        // right, but the radio already has a remote operator.
+                        // Refuse the slot, tell the client why, close. The
+                        // desk UI is never part of this — it needs no slot.
+                        if (_owner is not null && !_owner.TryAcquireOperatorSlot(this))
+                        {
+                            _log.LogWarning("rtc.remote unlock refused — another operator holds the session");
+                            try { _control!.send(JsonSerializer.Serialize(new { t = "auth-busy" })); } catch { }
+                            Close();
+                            break;
+                        }
                         _control!.send(Json("auth-ok", "confirm", outcome.Reply.ToArray()));
                         _log.LogInformation("rtc.remote session UNLOCKED");
 
@@ -846,6 +905,7 @@ public sealed class RemoteWebRtcSession
                     }
                     else
                     {
+                        _owner?.RecordAuthFailure();
                         FailAndClose();
                     }
                     break;

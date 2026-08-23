@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.165**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.166**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -312,6 +312,19 @@ ordinary TX timeout (Settings → TX, default 120 s) still applies to every
 transmission, remote or local; leave it enabled when operating remotely.
 If the link drops mid-over, your client returns to the password prompt with
 MOX cleared — reconnecting never re-asserts a stale key-down.
+
+**One operator at a time.** Only one remote session can be unlocked; a
+second correct-password connection is told "Another operator is connected"
+and refused. The slot frees the moment the first session closes (worst
+case ~30 s if it vanished without disconnecting). The radio's own screen is
+never part of this — the desk always works.
+
+**Password lockout.** Five failed password attempts within ten minutes
+lock remote unlocking for five minutes. The client shows how long to wait.
+
+**Bandwidth adaptation.** On a struggling link the spectrum frame rate
+backs off automatically (down to ~4 fps) and climbs back to ~20 fps once
+the link clears; audio always takes priority and is unaffected.
 
 ## 13. Shutting down and exiting
 

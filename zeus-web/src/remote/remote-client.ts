@@ -109,6 +109,30 @@ function startTxLeasePulse(control: RTCDataChannel): () => void {
 // reconnects.
 let rxAudioEl: HTMLAudioElement | null = null;
 let rxAudioStream: MediaStream | null = null;
+
+// The live remote session, for gesture-context helpers. Set once unlocked,
+// cleared when the peer connection dies.
+let activeRemoteConn: RemoteConnection | null = null;
+
+/**
+ * Acquire/enable the remote voice mic INSIDE the caller's user gesture.
+ * Safari requires transient user activation for getUserMedia, and the normal
+ * mic path runs from a tx-store subscription reacting to the radio's MOX
+ * state echo — an async callback that lands seconds after the tap, outside
+ * the activation window whenever the round trip is slow (field: 'mic not
+ * enabled, reload several times, enables randomly' — the reloads that
+ * 'worked' were the fast round trips). Key buttons call this synchronously
+ * in their pointer handler so the permission prompt and track acquisition
+ * spend the tap's own activation. No-op off-remote or before unlock; the
+ * subscription still handles disable and any non-gesture keying.
+ */
+export function preArmRemoteMicFromGesture(): void {
+  const conn = activeRemoteConn;
+  if (!conn) return;
+  void conn.setMicEnabled(true).catch((e) => {
+    console.warn('[remote] mic pre-arm from gesture failed:', e);
+  });
+}
 let rxLevelTimer: ReturnType<typeof setInterval> | null = null;
 let rxAudioMuted = false;
 const rxMuteListeners = new Set<(muted: boolean) => void>();
@@ -175,8 +199,17 @@ function playRemoteRxAudioTrack(stream: MediaStream): void {
     document.body.appendChild(rxAudioEl);
   }
   rxAudioEl.srcObject = stream;
-  void rxAudioEl.play().catch((e) => {
+  void rxAudioEl.play().then(clearRxAudioBlocked).catch((e) => {
+    // Autoplay rejection (field: 'speaker not enabled, reload several times,
+    // enables randomly'): the track arrives AFTER Connect — SPAKE2+, ICE,
+    // sometimes TURN — and when that outlives the browser's transient user
+    // activation window (a few seconds after the tap), play() is refused.
+    // A reload only 'fixed' it when the handshake happened to finish fast.
+    // Instead of dying in the console, surface a chip and let the very next
+    // tap or keypress anywhere start playback — gestures are the currency
+    // autoplay policy trades in, so we spend the next one deliberately.
     console.warn('[remote] RX audio track autoplay blocked:', e);
+    armRxAudioGestureRetry();
   });
   startRxLevelTap(stream);
   // Live repair lever for field debugging: rebuilds the player from scratch
@@ -191,7 +224,63 @@ function playRemoteRxAudioTrack(stream: MediaStream): void {
   (window as unknown as Record<string, unknown>).__zeusRxAudio = rxAudioEl;
 }
 
+// ── RX-audio autoplay recovery ─────────────────────────────────────────────
+// State + chip for the blocked-autoplay path. The chip is plain DOM (no React
+// dependency — this module runs under every shell) and pointer-events:none so
+// the recovering tap lands on the page, not the chip.
+let rxAudioRetryCleanup: (() => void) | null = null;
+let rxAudioChip: HTMLElement | null = null;
+
+function showRxAudioChip(): void {
+  if (rxAudioChip || typeof document === 'undefined') return;
+  const chip = document.createElement('div');
+  chip.id = 'zeus-remote-audio-chip';
+  chip.textContent = '🔇 Tap anywhere to start audio';
+  chip.setAttribute('role', 'status');
+  chip.style.cssText =
+    'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);' +
+    'z-index:10001;pointer-events:none;padding:8px 14px;border-radius:999px;' +
+    'background:rgba(13,17,24,0.92);color:var(--fg-1,#c3cad3);' +
+    'border:1px solid var(--accent,#4aa3df);font:700 12px/1.2 system-ui,sans-serif;' +
+    'letter-spacing:0.04em;box-shadow:0 4px 16px rgba(0,0,0,0.4);';
+  document.body.appendChild(chip);
+  rxAudioChip = chip;
+}
+
+function clearRxAudioBlocked(): void {
+  rxAudioRetryCleanup?.();
+  rxAudioRetryCleanup = null;
+  rxAudioChip?.remove();
+  rxAudioChip = null;
+}
+
+function armRxAudioGestureRetry(): void {
+  if (rxAudioRetryCleanup || typeof window === 'undefined') return;
+  showRxAudioChip();
+  const retry = () => {
+    const el = rxAudioEl;
+    if (!el || !el.srcObject) {
+      clearRxAudioBlocked();
+      return;
+    }
+    void el.play().then(clearRxAudioBlocked).catch(() => {
+      // Still refused (shouldn't happen inside a gesture) — stay armed for
+      // the next one rather than giving up.
+    });
+  };
+  // pointerUP + keydown: the events Chromium and WebKit grant transient user
+  // activation on (a touchscreen pointerdown carries no activation yet — the
+  // same lesson the fullscreen restore learned on the G2 panel).
+  window.addEventListener('pointerup', retry, true);
+  window.addEventListener('keydown', retry, true);
+  rxAudioRetryCleanup = () => {
+    window.removeEventListener('pointerup', retry, true);
+    window.removeEventListener('keydown', retry, true);
+  };
+}
+
 function stopRemoteRxAudioTrack(): void {
+  clearRxAudioBlocked();
   if (!rxAudioEl) return;
   rxAudioEl.pause();
   rxAudioEl.srcObject = null;
@@ -222,6 +311,7 @@ export async function startRemoteClient(
   // TX lease: start pulsing the moment we're unlocked, before any key-down
   // can happen. The host arms its watchdog on the first pulse.
   const stopLeasePulse = startTxLeasePulse(conn.control);
+  activeRemoteConn = conn;
 
   // Hand the read-write API tunnel its live "api" channel so queued + future
   // same-origin `/api/*` requests (reads AND control writes) flow to the radio's
@@ -277,6 +367,7 @@ export async function startRemoteClient(
   conn.pc.addEventListener('connectionstatechange', () => {
     const s = conn.pc.connectionState;
     if (s === 'closed' || s === 'failed' || s === 'disconnected') {
+      if (activeRemoteConn === conn) activeRemoteConn = null;
       stopLeasePulse();
       setRemoteControlSender(null);
       // Clear the tunnel channel and fail pending API requests so the UI gets a

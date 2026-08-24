@@ -45,6 +45,7 @@
 
 import { useCallback } from 'react';
 import { setMox } from '../api/client';
+import { preArmRemoteMicFromGesture } from '../remote/remote-client';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
 
@@ -61,6 +62,11 @@ export function MoxButton() {
 
   const click = useCallback(() => {
     const next = !moxOn;
+    // Remote sessions: acquire/enable the voice mic NOW, inside this tap's
+    // user activation — the store-subscription path fires on the radio's MOX
+    // echo, which lands too late for Safari's getUserMedia gesture rule when
+    // the round trip is slow. No-op on LAN/desk. (See remote-client.ts.)
+    if (next) preArmRemoteMicFromGesture();
     void (async () => {
       // PERF_PASS_3_DEBUG: t0 — operator-initiated MOX edge wall-clock. Uncommitted.
       console.log('mox.client.release', performance.now(), 'next=', next);

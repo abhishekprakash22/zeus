@@ -48,7 +48,7 @@ import { setMox } from '../api/client';
 import { ensureMicUplinkRunning, setMicUplinkTxForced } from '../audio/mic-uplink-session';
 import { waitForMicPcmTransportReady } from '../realtime/ws-client';
 import { useConnectionStore } from '../state/connection-store';
-import { isRemoteMode } from '../remote/remote-client';
+import { isRemoteMode, preArmRemoteMicFromGesture } from '../remote/remote-client';
 import { useTxStore } from '../state/tx-store';
 
 // Press-and-hold PTT for mobile. Pointer events mirror the spacebar-PTT
@@ -74,6 +74,10 @@ export function MobilePttButton() {
       // and the key-down silently returned before setMox (field: 'PTT not
       // functional' on the phone). Skip the PCM path entirely in remote mode.
       const remote = isRemoteMode();
+      // Remote: acquire/enable the voice mic inside THIS press's activation —
+      // the MOX-echo path lands too late for Safari's getUserMedia gesture
+      // rule on slow round trips. Runs before any await so the gesture holds.
+      if (on && remote) preArmRemoteMicFromGesture();
       if (on && !remote) {
         try {
           const micReady = await ensureMicUplinkRunning();

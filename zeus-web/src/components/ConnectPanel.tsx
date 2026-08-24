@@ -1213,9 +1213,13 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
           left: 0,
           right: 0,
           height: 360,
-          backgroundImage: 'url(/zeus-clouds.jpg)',
+          // Pulse splash (field request): the discover dialog's hero was the
+          // Zeus-god artwork; it now wears the same square-wave identity as
+          // every other connect surface. Left-anchored art — position on the
+          // wordmark's side so the pulses fill the banner.
+          backgroundImage: 'url(/branding/splash-pulse.svg)',
           backgroundSize: 'cover',
-          backgroundPosition: 'center 18%',
+          backgroundPosition: 'left 32%',
           zIndex: 0,
           pointerEvents: 'none',
         }}

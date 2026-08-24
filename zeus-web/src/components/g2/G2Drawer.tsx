@@ -53,34 +53,15 @@ import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
 import { disconnectAll } from '../../util/disconnect-all';
 import { setReceiverMuted } from '../../api/client';
 import { useRadioStore } from '../../state/radio-store';
+import { G2_THEMES, useG2ThemeStore } from '../../state/g2-theme-store';
 import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
-// G2 themes (field request). A theme is a custom-property override set
-// scoped under body[data-g2-theme] — the components already speak
-// var(--accent)/var(--ok)/... so no component changes anywhere. Two rules:
-// TX/danger red is NEVER themed (MOX must read as MOX in every palette),
-// and the spectrum/waterfall are canvas-drawn — themes recolor the chrome,
-// not the RF. NIGHT (brightness) composes with any theme.
-const G2_THEMES = [
-  { id: 'zeus', label: 'ZEUS BLUE', accent: '#4aa3df' },
-  { id: 'amber', label: 'AMBER', accent: '#ffb545' },
-  { id: 'nightred', label: 'NIGHT RED', accent: '#ff5a4d' },
-  { id: 'phosphor', label: 'PHOSPHOR', accent: '#4ade80' },
-  { id: 'ice', label: 'ICE', accent: '#8ad8ff' },
-] as const;
-type G2ThemeId = (typeof G2_THEMES)[number]['id'];
-const THEME_KEY = 'zeus.g2.theme';
-
-function readTheme(): G2ThemeId {
-  try {
-    const v = localStorage.getItem(THEME_KEY);
-    return G2_THEMES.some((t) => t.id === v) ? (v as G2ThemeId) : 'zeus';
-  } catch {
-    return 'zeus';
-  }
-}
+// G2 themes moved to the shared store (state/g2-theme-store.ts) with the
+// palette CSS in styles/g2-themes.css — the theme is an app-level look
+// shared by the desktop DISPLAY settings pane, this SETUP sheet, and the
+// mobile ThemeRow. NIGHT (brightness) composes with any theme.
 
 // Two-deck drawer (option C, field-picked): a slim tab strip for the seven
 // page keys — they OPEN panels, tabs is what they are — over a full-height
@@ -179,19 +160,12 @@ export function G2Drawer() {
     },
     [],
   );
-  const [theme, setTheme] = useState<G2ThemeId>(() => readTheme());
-  useEffect(() => {
-    if (theme === 'zeus') delete document.body.dataset.g2Theme;
-    else document.body.dataset.g2Theme = theme;
-    try {
-      localStorage.setItem(THEME_KEY, theme);
-    } catch {
-      /* private mode */
-    }
-    return () => {
-      delete document.body.dataset.g2Theme;
-    };
-  }, [theme]);
+  // Theme lives in the shared store (applied to <body> there) — the drawer
+  // no longer un-themes on unmount: the palette is an app-level look that
+  // must survive leaving the G2 layout (field bug: it didn't reach the
+  // desktop/iPad shell at all).
+  const theme = useG2ThemeStore((s) => s.theme);
+  const setTheme = useG2ThemeStore((s) => s.setTheme);
   const [sheet, setSheet] = useState<SheetId>(null);
   // Sheets dismiss themselves after a selection (touch economy) unless pinned.
   const [pinned, setPinned] = useState(false);
@@ -400,34 +374,9 @@ export function G2Drawer() {
           cursor: pointer;
         }
         .g2-controls-btn.on { color: var(--accent, #4aa3df); border-color: var(--accent, #4aa3df); }
-        /* G2 themes: custom-property overrides, cascading to everything the
-           layout draws (drawer, rail, flags, cards, sheets). --tx stays red
-           everywhere by design. Derived tints via color-mix so gradients
-           follow the accent without per-theme hand tuning. */
-        body[data-g2-theme='amber'] .app.g2-layout,
-        body[data-g2-theme='amber'] .g2-controls-btn,
-        body[data-g2-theme='amber'] .g2-drawer {
-          --accent: #ffb545;
-          --ok: #ffd27a;
-        }
-        body[data-g2-theme='nightred'] .app.g2-layout,
-        body[data-g2-theme='nightred'] .g2-controls-btn,
-        body[data-g2-theme='nightred'] .g2-drawer {
-          --accent: #ff5a4d;
-          --ok: #ff8a7a;
-        }
-        body[data-g2-theme='phosphor'] .app.g2-layout,
-        body[data-g2-theme='phosphor'] .g2-controls-btn,
-        body[data-g2-theme='phosphor'] .g2-drawer {
-          --accent: #4ade80;
-          --ok: #86efac;
-        }
-        body[data-g2-theme='ice'] .app.g2-layout,
-        body[data-g2-theme='ice'] .g2-controls-btn,
-        body[data-g2-theme='ice'] .g2-drawer {
-          --accent: #8ad8ff;
-          --ok: #c4ecff;
-        }
+        /* G2 theme palette rules live app-wide in styles/g2-themes.css —
+           they cascade from .app so the drawer, rail, flags, cards, and
+           sheets all inherit. --tx stays red everywhere by design. */
         /* Rail order, top to bottom: DISC, FULL SCR, CONTROLS, AUDIO PROC.
            The rail starts at 60px — clear of the workspace docking button
            that owns the top-left corner (field report: DISC overlapped it).

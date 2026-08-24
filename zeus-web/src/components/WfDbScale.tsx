@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useTxStore } from '../state/tx-store';
-import { useVfoLockStore } from '../state/vfo-lock-store';
+import { levelsEffectivelyLocked, useVfoLockStore } from '../state/vfo-lock-store';
 import { useConnectionStore } from '../state/connection-store';
 import { floorNormalizationOffsetDb, referenceFloorDb } from '../dsp/floor-normalization';
 import { useRxDbWindowStore, type RxWfWindow } from '../state/rx-db-window-store';
@@ -125,12 +125,12 @@ export function WfDbScale({ master = false }: WfDbScaleProps = {}) {
     lastShiftApplied: number;
   } | null>(null);
 
-  const levelsLocked = useVfoLockStore((s) => s.levelsLocked);
+  const levelsLocked = useVfoLockStore(levelsEffectivelyLocked);
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       // VFO/panel lock — see DbScale.tsx; same gate, separate widget.
       const lk = useVfoLockStore.getState();
-      if (lk.locked || lk.levelsLocked) return;
+      if (lk.locked || levelsEffectivelyLocked(lk)) return;
       const rect = e.currentTarget.getBoundingClientRect();
       dragState.current = {
         startY: e.clientY,

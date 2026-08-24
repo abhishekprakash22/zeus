@@ -47,6 +47,7 @@ import { DriveSlider } from '../components/DriveSlider';
 import { MicGainSlider } from '../components/MicGainSlider';
 import { TunePowerSlider } from '../components/TunePowerSlider';
 import { levelsLockUnset, useVfoLockStore } from '../state/vfo-lock-store';
+import { G2_THEMES, useG2ThemeStore } from '../state/g2-theme-store';
 import { getReceiverMode } from '../state/receiver-state';
 import { saveReceiverBandModeMemory } from '../util/band-memory';
 import { ConnectPanel } from '../components/ConnectPanel';
@@ -98,39 +99,17 @@ type MobileTab = 'radio' | 'tools';
 type MobileToolId = 'rx' | 'tx' | 'rotator' | 'qrz' | 'dsp';
 
 // G2 themes on the phone (field: 'the g2 schemes are not showing up on the
-// remote app'). Same palette set, same body[data-g2-theme] switch, same
-// localStorage key as the G2 layout's picker — mobile.css carries the .m-app
-// override block. TX red is never themed, matching the G2 rule.
-const MOBILE_THEMES = [
-  { id: 'zeus', label: 'ZEUS BLUE', accent: '#4aa3df' },
-  { id: 'amber', label: 'AMBER', accent: '#ffb545' },
-  { id: 'nightred', label: 'NIGHT RED', accent: '#ff5a4d' },
-  { id: 'phosphor', label: 'PHOSPHOR', accent: '#4ade80' },
-  { id: 'ice', label: 'ICE', accent: '#8ad8ff' },
-] as const;
-type MobileThemeId = (typeof MOBILE_THEMES)[number]['id'];
-const MOBILE_THEME_KEY = 'zeus.g2.theme';
-
-function readMobileTheme(): MobileThemeId {
-  try {
-    const v = localStorage.getItem(MOBILE_THEME_KEY);
-    return MOBILE_THEMES.some((t) => t.id === v) ? (v as MobileThemeId) : 'zeus';
-  } catch {
-    return 'zeus';
-  }
-}
-
+// remote app'). The palette moved to the shared g2-theme-store — one store,
+// one localStorage key, one body[data-g2-theme] switch across the phone
+// shell, the G2 drawer, and the desktop DISPLAY settings pane; the palette
+// CSS is app-wide in styles/g2-themes.css. TX red is never themed.
 function ThemeRow() {
-  const [theme, setThemeState] = useState<MobileThemeId>(() => readMobileTheme());
-  useEffect(() => {
-    if (theme === 'zeus') delete document.body.dataset.g2Theme;
-    else document.body.dataset.g2Theme = theme;
-    try { localStorage.setItem(MOBILE_THEME_KEY, theme); } catch { /* private mode */ }
-  }, [theme]);
+  const theme = useG2ThemeStore((s) => s.theme);
+  const setThemeState = useG2ThemeStore((s) => s.setTheme);
   return (
     <div className="m-theme-row" role="radiogroup" aria-label="Color theme">
       <span className="m-theme-lbl">Theme</span>
-      {MOBILE_THEMES.map((t) => (
+      {G2_THEMES.map((t) => (
         <button
           key={t.id}
           type="button"
@@ -168,9 +147,18 @@ export function MobileApp() {
   const mode = useConnectionStore((s) => s.mode);
   // Seed the display-levels lock ON the first time the mobile shell mounts
   // (never touched on desktop). The operator can flip it from the LEVELS
-  // button; after that the stored choice wins.
+  // button; after that the stored choice wins. The shell also declares
+  // itself to the lock store: the lock only ever BITES while the mobile
+  // shell is mounted. Field bug — an iPad that once dipped under the
+  // mobile breakpoint (portrait / Split View) got the lock seeded into
+  // localStorage, then rendered the desktop shell where the dB scales
+  // honored the lock but no LEVELS button exists to release it.
   useEffect(() => {
+    useVfoLockStore.getState().setShellMobile(true);
     if (levelsLockUnset()) useVfoLockStore.getState().setLevelsLocked(true);
+    return () => {
+      useVfoLockStore.getState().setShellMobile(false);
+    };
   }, []);
   const applyState = useConnectionStore((s) => s.applyState);
   const qrzHome = useQrzStore((s) => s.home);

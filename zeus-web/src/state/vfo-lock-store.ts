@@ -24,6 +24,15 @@ export type VfoLockState = {
   levelsLocked: boolean;
   toggleLevels: () => void;
   setLevelsLocked: (locked: boolean) => void;
+  // True while the MOBILE shell is mounted (set by MobileApp). The levels
+  // lock only bites when this is true: it exists to stop accidental
+  // scroll-relevels on a phone, and must never pin the desktop/iPad or
+  // fullscreen shells — where no LEVELS button exists to release it.
+  // (Field bug: an iPad that once rendered the mobile shell under the
+  // 900px breakpoint carried the seeded lock into the desktop shell via
+  // the shared localStorage key, with no UI to unlock.)
+  shellMobile: boolean;
+  setShellMobile: (mobile: boolean) => void;
 };
 
 const LEVELS_KEY = 'zeus.display.levelsLock';
@@ -46,4 +55,11 @@ export const useVfoLockStore = create<VfoLockState>((set) => ({
   levelsLocked: readLevelsLock() ?? false,
   toggleLevels: () => set((s) => { writeLevelsLock(!s.levelsLocked); return { levelsLocked: !s.levelsLocked }; }),
   setLevelsLocked: (locked) => { writeLevelsLock(locked); set({ levelsLocked: locked }); },
+  shellMobile: false,
+  setShellMobile: (shellMobile) => set({ shellMobile }),
 }));
+
+/** The lock as the dB scales should feel it: only in the mobile shell. */
+export function levelsEffectivelyLocked(s: Pick<VfoLockState, 'levelsLocked' | 'shellMobile'>): boolean {
+  return s.levelsLocked && s.shellMobile;
+}

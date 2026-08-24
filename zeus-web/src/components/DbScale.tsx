@@ -46,7 +46,7 @@
 import { useCallback, useRef } from 'react';
 import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useTxStore } from '../state/tx-store';
-import { useVfoLockStore } from '../state/vfo-lock-store';
+import { levelsEffectivelyLocked, useVfoLockStore } from '../state/vfo-lock-store';
 
 // Tick stride in dB. Thetis defaults to 5 dB; our smaller canvas reads
 // cleaner at 10 dB. Tick label rendered at every stride, minor line between.
@@ -85,7 +85,7 @@ export function DbScale({ receiver = 'A' }: { receiver?: 'A' | 'B' } = {}) {
     lastShiftApplied: number;
   } | null>(null);
 
-  const levelsLocked = useVfoLockStore((s) => s.levelsLocked);
+  const levelsLocked = useVfoLockStore(levelsEffectivelyLocked);
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       // Honour the VFO/panel lock — when engaged, vertical drag on the dB
@@ -93,7 +93,7 @@ export function DbScale({ receiver = 'A' }: { receiver?: 'A' | 'B' } = {}) {
       // desktop the flag stays false unless wired up. Pinch-to-zoom and
       // wheel-zoom paths are unaffected (they live in pan-tune-gesture).
       const lk = useVfoLockStore.getState();
-      if (lk.locked || lk.levelsLocked) return;
+      if (lk.locked || levelsEffectivelyLocked(lk)) return;
       const rect = e.currentTarget.getBoundingClientRect();
       dragState.current = {
         startY: e.clientY,

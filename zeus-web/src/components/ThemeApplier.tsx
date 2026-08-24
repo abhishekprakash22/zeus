@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { useThemeStore } from '../state/theme-store';
+import { useConnectionStore } from '../state/connection-store';
 
 // ThemeApplier — single mounted instance (in App.tsx) that:
 //   1. sets `data-theme` on <html> when the operator picks Dark / Light;
@@ -29,6 +30,19 @@ export function ThemeApplier(): null {
   // own errors and falls back to the local cache.
   useEffect(() => {
     void hydrate();
+  }, [hydrate]);
+
+  // Re-hydrate when a connection comes UP: in a remote session the mount-time
+  // hydrate() above fires before the API tunnel exists, so the server-side
+  // theme choice never reached the client (same race as the display-settings
+  // store — the fetch fails silently and nothing retries after connect).
+  useEffect(() => {
+    let prev = useConnectionStore.getState().status;
+    return useConnectionStore.subscribe((s) => {
+      const status = s.status;
+      if (status === 'Connected' && prev !== 'Connected') void hydrate();
+      prev = status;
+    });
   }, [hydrate]);
 
   useEffect(() => {

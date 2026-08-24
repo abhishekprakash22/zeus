@@ -1402,3 +1402,27 @@ function clearLegacyLocalStorage(): void {
 }
 
 void hydrateFromServer();
+
+// Re-hydrate whenever a connection comes UP. The module-load hydrate above
+// races the session: in a REMOTE session the API tunnel does not exist yet
+// when this module loads, fetchDisplaySettings() fails silently, and the
+// defaults stood for the whole session — so a g2LayoutEnabled (or any other
+// server-persisted display setting) saved on the radio was never read back
+// (field bug: 'G2 touch drawer not retained on restart' — it was persisted
+// fine; the client just never asked again once the tunnel was ready).
+// Dynamic import keeps this module free of a static connection-store edge.
+void (async () => {
+  try {
+    const { useConnectionStore } = await import('./connection-store');
+    let prev = useConnectionStore.getState().status;
+    useConnectionStore.subscribe((s) => {
+      const status = s.status;
+      if (status === 'Connected' && prev !== 'Connected') {
+        void hydrateFromServer();
+      }
+      prev = status;
+    });
+  } catch {
+    /* never let wiring failures break the store */
+  }
+})();

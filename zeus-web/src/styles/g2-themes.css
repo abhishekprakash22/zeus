@@ -1,0 +1,30 @@
+/* G2 themes — custom-property overrides scoped under body[data-g2-theme],
+   applied to BOTH shells (.app desktop, .m-app mobile) so a palette picked
+   on any device styles every surface: desktop/iPad workspace, G2 drawer
+   layout, and the phone shell. Previously these rules lived in two scoped
+   copies (G2Drawer's <style> tag covered only .app.g2-layout + drawer
+   chrome; mobile.css covered only .m-app), which is why an iPad on the
+   desktop shell never themed. --tx stays red everywhere by design: MOX
+   must read as MOX in every palette. The spectrum/waterfall are
+   canvas-drawn — themes recolor the chrome, not the RF. */
+
+body[data-g2-theme='amber'] .app,
+body[data-g2-theme='amber'] .m-app {
+  --accent: #ffb545;
+  --ok: #ffd27a;
+}
+body[data-g2-theme='nightred'] .app,
+body[data-g2-theme='nightred'] .m-app {
+  --accent: #ff5a4d;
+  --ok: #ff8a7a;
+}
+body[data-g2-theme='phosphor'] .app,
+body[data-g2-theme='phosphor'] .m-app {
+  --accent: #4ade80;
+  --ok: #86efac;
+}
+body[data-g2-theme='ice'] .app,
+body[data-g2-theme='ice'] .m-app {
+  --accent: #8ad8ff;
+  --ok: #c4ecff;
+}

@@ -927,10 +927,7 @@
 .m-slider-row { display: block; }
 /* G2 themes on the phone: the same body[data-g2-theme] switch the G2 layout
    uses, scoped to the mobile shell. --tx is never themed (MOX stays red). */
-body[data-g2-theme='amber'] .m-app { --accent: #ffb545; --ok: #ffd27a; }
-body[data-g2-theme='nightred'] .m-app { --accent: #ff5a4d; --ok: #ff8a7a; }
-body[data-g2-theme='phosphor'] .m-app { --accent: #4ade80; --ok: #86efac; }
-body[data-g2-theme='ice'] .m-app { --accent: #8ad8ff; --ok: #c4ecff; }
+/* Palette rules moved to styles/g2-themes.css (app-wide, both shells). */
 
 .m-theme-row {
   display: flex;

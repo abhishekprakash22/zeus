@@ -11,6 +11,7 @@ import {
   type ThemeId,
   type TweakableToken,
 } from '../state/theme-store';
+import { G2_THEMES, useG2ThemeStore } from '../state/g2-theme-store';
 
 // Operator-facing label + group per tweakable token. "group" controls which
 // section of the panel renders the row — accent tokens get the friendly
@@ -195,6 +196,8 @@ const GROUP_ORDER: ReadonlyArray<TokenGroup> = ['accent', 'chassis', 'line', 'te
 export function ThemeSettingsPanel() {
   const theme = useThemeStore((s) => s.theme);
   const overrides = useThemeStore((s) => s.overrides);
+  const g2Theme = useG2ThemeStore((s) => s.theme);
+  const setG2Theme = useG2ThemeStore((s) => s.setTheme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const setOverride = useThemeStore((s) => s.setOverride);
   const resetOverrides = useThemeStore((s) => s.resetOverrides);
@@ -250,6 +253,37 @@ export function ThemeSettingsPanel() {
                   <span style={themeLabel}>{opt.label}</span>
                   <span style={themeBlurb}>{opt.blurb}</span>
                 </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div style={sectionHead}>
+          <h3 style={sectionH3}>G2 palettes</h3>
+          <p style={sectionP}>
+            Accent palettes from the G2 front-panel layout — one choice,
+            every surface: this workspace, the G2 drawer, and the phone
+            shell. TX red is never themed, and while a palette other than
+            Zeus Blue is active it takes the accent over any manual accent
+            override below.
+          </p>
+        </div>
+        <div style={g2Row} role="radiogroup" aria-label="G2 palette">
+          {G2_THEMES.map((t) => {
+            const active = g2Theme === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setG2Theme(t.id)}
+                style={g2Chip(active, t.accent)}
+              >
+                <span style={{ ...g2Dot, background: t.accent }} />
+                {t.label}
               </button>
             );
           })}
@@ -390,6 +424,36 @@ function themeCard(active: boolean): CSSProperties {
       : 'inset 0 0 0 1px rgba(255,255,255,0.02)',
   };
 }
+
+const g2Row: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+};
+
+function g2Chip(active: boolean, accent: string): CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 7,
+    padding: '7px 12px',
+    borderRadius: 8,
+    border: `1px solid ${active ? accent : 'var(--line, #32373f)'}`,
+    background: 'var(--bg-2, #1c2129)',
+    color: active ? accent : 'var(--fg-1, #c3cad3)',
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: '0.06em',
+    cursor: 'pointer',
+  };
+}
+
+const g2Dot: CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: 999,
+  flex: '0 0 auto',
+};
 
 const themeSwatch: CSSProperties = {
   width: 36,

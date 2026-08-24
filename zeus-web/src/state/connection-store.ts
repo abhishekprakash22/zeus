@@ -45,6 +45,16 @@
 
 import { create } from 'zustand';
 import { msSinceOptimisticTuneFor } from './view-center';
+
+// Optimistic-CTUN window: stamped by CtunButton on a local toggle; applyState
+// suppresses stream-applied ctunEnabled inside it (see the field comment).
+let lastOptimisticCtunAt = 0;
+export function noteOptimisticCtun(): void {
+  lastOptimisticCtunAt = Date.now();
+}
+function msSinceOptimisticCtun(): number {
+  return lastOptimisticCtunAt === 0 ? Number.POSITIVE_INFINITY : Date.now() - lastOptimisticCtunAt;
+}
 import {
   AGC_CONFIG_DEFAULT,
   NR_CONFIG_DEFAULT,
@@ -183,7 +193,7 @@ export type ConnectionState = {
    *  latest tune would otherwise rewind the dial mid-gesture (issue #597
    *  rubber-band). Suppression is time-boxed to the optimistic-tune window
    *  so a quiet dial always reconverges to server truth. */
-  applyState: (s: RadioStateDto, opts?: { trustVfo?: boolean }) => void;
+  applyState: (s: RadioStateDto, opts?: { trustVfo?: boolean; trustCtun?: boolean }) => void;
   setInflight: (v: boolean) => void;
   setBoardId: (id: string | null) => void;
   setConnectedProtocol: (p: ConnectedProtocol) => void;
@@ -334,7 +344,22 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         attOffsetDb: s.attOffsetDb,
         adcOverloadWarning: s.adcOverloadWarning,
         preampOn: s.preampOn,
-        ctunEnabled: s.ctunEnabled,
+        // CTUN stale-echo guard (field: remote CTUN button inverted after
+        // toggling, then every tune behaving as CTUN regardless of the
+        // button). The radio's state stream is edge-triggered, and over the
+        // remote tunnel a frame captured BEFORE the toggle can arrive AFTER
+        // the toggle's own response — last writer wins, the store flips back
+        // to the pre-toggle value, and with no later frame to correct it the
+        // client disagrees with the radio forever (the pan-tune gesture then
+        // drives every tune through the wrong path). On the LAN the next
+        // 20 ms state frame papered over the same race. Same cure as the VFO
+        // rubber-band: a time-boxed optimistic window after a local toggle
+        // in which only the toggle's own echo (trustCtun) may write the
+        // field; a quiet radio reconverges to server truth after it expires.
+        ctunEnabled:
+          (opts?.trustCtun ?? false) || msSinceOptimisticCtun() >= 1500
+            ? s.ctunEnabled
+            : prev.ctunEnabled,
         ritEnabled: s.ritEnabled,
         ritHz: s.ritHz,
         splitEnabled: s.splitEnabled,

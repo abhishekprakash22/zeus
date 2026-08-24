@@ -16,7 +16,7 @@
 
 import { useCallback } from 'react';
 import { setCtun } from '../api/client';
-import { useConnectionStore } from '../state/connection-store';
+import { noteOptimisticCtun, useConnectionStore } from '../state/connection-store';
 
 /**
  * CTUN (click-tune / centred tuning) toggle. When armed, a click anywhere on
@@ -34,9 +34,13 @@ export function CtunButton() {
   const click = useCallback(() => {
     if (!connected) return;
     const next = !ctunEnabled;
+    noteOptimisticCtun();
     useConnectionStore.setState({ ctunEnabled: next });
     setCtun(next)
-      .then((s) => useConnectionStore.getState().applyState(s))
+      // trustCtun: this response IS the toggle's own echo — always apply it
+      // (server-side refusals included). Stream frames inside the optimistic
+      // window are the in-flight stale ones the guard exists to ignore.
+      .then((s) => useConnectionStore.getState().applyState(s, { trustCtun: true }))
       .catch(() => useConnectionStore.setState({ ctunEnabled: !next }));
   }, [connected, ctunEnabled]);
 

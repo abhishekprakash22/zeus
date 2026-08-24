@@ -104,9 +104,14 @@ export function RemoteLinkChip({ conn }: { conn: RemoteConnection | null }) {
 
   if (!conn) return null;
 
-  const color = s.verdict === 'good' ? 'var(--ok, #4ade80)'
+  // Link quality is SEMANTIC color — green good / amber fair / red poor —
+  // and must never follow the G2 palettes (same rule as TX red). Before the
+  // palettes went app-wide these vars only themed inside the G2 layout; now
+  // --ok is amber under AMBER and --tx never themed but --ok did — a 'good'
+  // link read as a warning (field report). Literals, deliberately.
+  const color = s.verdict === 'good' ? '#4ade80'
     : s.verdict === 'fair' ? '#ffb545'
-    : s.verdict === 'poor' ? 'var(--tx, #ff5a4d)'
+    : s.verdict === 'poor' ? '#ff5a4d'
     : 'var(--fg-3, #545c66)';
   const lit = s.verdict === 'good' ? 4 : s.verdict === 'fair' ? 2 : s.verdict === 'poor' ? 1 : 0;
   const title = `RTT ${s.rttMs ?? '–'} ms · jitter ${s.jitterMs ?? '–'} ms · audio loss ${s.lossPct == null ? '–' : s.lossPct.toFixed(1)}% · ${s.fps} fps${s.relay ? ' · via TURN relay' : ' · direct'}`;

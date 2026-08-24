@@ -107,12 +107,26 @@ Connect, then operate from the workspace:
 Settings → Display → **G2 touch drawer** swaps the desktop transport bar for
 a two-deck keyboard while connected. The slim top strip holds the page
 tabs — **BAND**, **MODE**, **FILTER**, **NB·NR**, **RADIO**, **DISPLAY**,
+(the DISPLAY performance sheet also carries the spectrum-resolution knob
+described below),
 **TX** — each opening its bottom sheet for the focused receiver (the active
 tab wears an accent underline). The full-height row below holds the
 transmitter's own controls: **MOX**, **TUN**, **MON**, **PS**, **CTUN**,
 and — past a divider — **REC** (the same transport buttons, with all their
 safeguards, at finger size). A compact FWD / SWR / ALC readout (label,
-bar, value) sits inline in the transport row. DISPLAY also offers five G2
+bar, value) sits inline in the transport row.
+
+**Spectrum resolution (FFT).** Settings → DISPLAY (performance) selects the
+RX display analyzer FFT size: 8k, 16k (default), 32k, or 64k points. Finer
+bins sharpen zoomed-in spectra — at the Saturn's 1.536 MHz display rate 16k
+is about 94 Hz per bin, 64k about 23 Hz — which resolves individual carriers
+in a crowded CW pileup and FT8 sub-band structure. The trade is time
+resolution: a larger FFT fills more slowly, so keying smears wider on the
+waterfall. That is Fourier's bargain, not a defect. The setting is shared by
+both receivers and by every connected client (the analyzer is one instrument),
+persists on the radio, and applies live with at most a one-frame blink.
+
+DISPLAY also offers five G2
 themes (Zeus Blue, Amber, Night Red, Phosphor, Ice) that recolor the
 layout's chrome — TX red never changes, and the spectrum/waterfall keep
 their own colors; NIGHT dimming composes with any theme. Band, mode, and filter taps
@@ -321,6 +335,14 @@ never part of this — the desk always works.
 
 **Password lockout.** Five failed password attempts within ten minutes
 lock remote unlocking for five minutes. The client shows how long to wait.
+
+**TX source hint.** Keying MOX remotely while the radio's TX audio input is
+armed to a radio jack (front-panel mic, line-in, or XLR) shows a warning
+chip: your remote voice is deliberately NOT reaching the air, because the TX
+audio ingest is single-select — one source only, never a mix. Switch the TX
+audio input to **Host** in the radio's audio settings to transmit the
+browser mic. The chip is advisory and dismissable; it never changes the
+source for you.
 
 **Bandwidth adaptation.** On a struggling link the spectrum frame rate
 backs off automatically (down to ~4 fps) and climbs back to ~20 fps once

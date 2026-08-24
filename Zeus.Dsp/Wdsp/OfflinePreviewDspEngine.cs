@@ -169,6 +169,12 @@ public sealed class OfflinePreviewDspEngine : IDspEngine, ITxAudioPluginHost
         _tx.SetNotchTuneFrequencyHz(loHz);
     }
 
+    public void SetRxAnalyzerFftSize(int fftSize)
+    {
+        // Offline preview keeps its construction-time size; live resize is a
+        // radio-runtime concern.
+    }
+
     public void SetZoom(int channelId, int level)
     {
         _control.SetZoom(channelId, level);

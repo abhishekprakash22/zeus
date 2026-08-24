@@ -1102,7 +1102,10 @@ public class DspPipelineService : BackgroundService,
     // (#325) and every stable-LO consumer is byte-identical (see
     // LoHistoryRingTests regression).
     private readonly LoHistoryRing _loHistory = new();
-    private const int AnalyzerFftSizeForStamp = 16_384; // WdspDspEngine.AnalyzerFftSize
+    // RX display analyzer FFT size, mirrored from the persisted setting so the
+    // delay-compensated CenterHz stamp lag tracks the REAL fill time. Written
+    // from seed/apply, read on the stamp path — hence Volatile.
+    private int _rxDisplayFftSizeForStamp = DefaultRxDisplayFftSize;
     private const double CenterStampEmaLagMs = 20.0;    // fast-attack tau during gestures (Phase 0)
     private const double CenterStampTransportP1Ms = 40.0;
     private const double CenterStampTransportP2Ms = 15.0;
@@ -1499,6 +1502,7 @@ public class DspPipelineService : BackgroundService,
     // Default TX display analyzer params — mirror WdspDspEngine's constants and
     // the frontend's TX_DISPLAY_* defaults. Used when the persisted value is null.
     private const int DefaultTxDisplayFftSize = 16384;
+    private const int DefaultRxDisplayFftSize = 16384;
     private const int DefaultTxDisplayWindow = 2;
     private const double DefaultTxDisplayAvgTauMs = 175.0;
     private const double TxDisplayCalOffsetAbsDb = 60.0;
@@ -1512,6 +1516,12 @@ public class DspPipelineService : BackgroundService,
     {
         var dto = _displaySettings?.Get();
         Volatile.Write(ref _txDisplayCalOffsetDb, ResolveCalOffset(dto));
+        // RX display analyzer FFT size: seed the engine before any RX channel
+        // opens (empty-channel reconfigure just sets the working size) and keep
+        // the CenterHz stamp-lag model on the same number.
+        int rxFft = dto?.RxDisplayFftSize ?? DefaultRxDisplayFftSize;
+        Volatile.Write(ref _rxDisplayFftSizeForStamp, rxFft);
+        engine.SetRxAnalyzerFftSize(rxFft);
         engine.ConfigureTxDisplayAnalyzer(
             dto?.TxDisplayFftSize ?? DefaultTxDisplayFftSize,
             dto?.TxDisplayWindow ?? DefaultTxDisplayWindow,
@@ -1528,11 +1538,14 @@ public class DspPipelineService : BackgroundService,
         int fft = dto.TxDisplayFftSize ?? DefaultTxDisplayFftSize;
         int win = dto.TxDisplayWindow ?? DefaultTxDisplayWindow;
         double tauSec = (dto.TxDisplayAvgTauMs ?? DefaultTxDisplayAvgTauMs) / 1000.0;
+        int rxFft = dto.RxDisplayFftSize ?? DefaultRxDisplayFftSize;
+        Volatile.Write(ref _rxDisplayFftSizeForStamp, rxFft);
         var engine = CurrentEngine;
         if (engine is null) return;
         lock (_engineLock)
         {
             engine.ConfigureTxDisplayAnalyzer(fft, win, tauSec);
+            engine.SetRxAnalyzerFftSize(rxFft);
         }
     }
 
@@ -6827,7 +6840,7 @@ public class DspPipelineService : BackgroundService,
             // Stable LO (≥ stampLag with no tune) ⇒ identical to the old
             // `state.RadioLoHz` stamp, byte for byte.
             double fftFillMs = sampleRate > 0
-                ? AnalyzerFftSizeForStamp / (double)sampleRate * 1000.0
+                ? Volatile.Read(ref _rxDisplayFftSizeForStamp) / (double)sampleRate * 1000.0
                 : 0.0;
             double stampLagMs = 0.5 * fftFillMs
                 + (CenterStampLagOverrideMs

@@ -19,6 +19,7 @@ import { useDisplayStore } from '../state/display-store';
 import { useTxStore } from '../state/tx-store';
 import { getRemoteCallsign, startRemoteClient } from './remote-client';
 import { RemoteLinkChip } from './RemoteLinkChip';
+import { RemoteTxSourceHint } from './RemoteTxSourceHint';
 import type { RemoteConnection } from './connect';
 
 type Phase = 'prompt' | 'connecting' | 'connected';
@@ -106,7 +107,13 @@ export function RemoteGate() {
   }, [callsign, password]);
 
   // Once unlocked the gate steps aside — only the link-quality chip remains.
-  if (phase === 'connected') return <RemoteLinkChip conn={connRef.current} />;
+  if (phase === 'connected')
+    return (
+      <>
+        <RemoteLinkChip conn={connRef.current} />
+        <RemoteTxSourceHint />
+      </>
+    );
 
   const connecting = phase === 'connecting';
 

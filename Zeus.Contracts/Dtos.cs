@@ -2373,6 +2373,11 @@ public sealed record DisplaySettingsDto(
     int? TxDisplayFftSize = null,
     int? TxDisplayWindow = null,
     double? TxDisplayAvgTauMs = null,
+    //   RxDisplayFftSize     — WDSP RX display analyzer FFT size (power of two,
+    //     2048..65536). Finer bins sharpen zoomed-in spectra at the cost of
+    //     time resolution (longer fill). Display-only; shared by both
+    //     receivers and every client of the frame stream.
+    int? RxDisplayFftSize = null,
     bool WidebandDisplayEnabled = false,
     double DisplayMaxFrameRateHz = 30.0,
     int DisplayDecimation = 1,
@@ -2398,6 +2403,11 @@ public sealed record DisplaySettingsSetRequest(
     int? TxDisplayFftSize = null,
     int? TxDisplayWindow = null,
     double? TxDisplayAvgTauMs = null,
+    //   RxDisplayFftSize     — WDSP RX display analyzer FFT size (power of two,
+    //     2048..65536). Finer bins sharpen zoomed-in spectra at the cost of
+    //     time resolution (longer fill). Display-only; shared by both
+    //     receivers and every client of the frame stream.
+    int? RxDisplayFftSize = null,
     bool? WidebandDisplayEnabled = null,
     double? DisplayMaxFrameRateHz = null,
     int? DisplayDecimation = null,

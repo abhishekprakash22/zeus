@@ -577,7 +577,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     private readonly List<NotchDto> _manualNotches = new();
     private double _notchTuneFreqHz;
     private bool _notchDbUnavailable;
-    private readonly int _rxAnalyzerFftSize;
+    private int _rxAnalyzerFftSize; // settable via SetRxAnalyzerFftSize
 
     public WdspDspEngine(ILogger<WdspDspEngine>? logger = null, int rxAnalyzerFftSize = AnalyzerFftSize)
         : this(logger, new WdspTxControlNative(), registerNativeResolver: true, rxAnalyzerFftSize)
@@ -1181,6 +1181,27 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         double linear = Math.Pow(10.0, db / 20.0);
         NativeMethods.SetRXAPanelGain1(channelId, linear);
         _log.LogInformation("wdsp.setRxAfGain channel={Id} db={Db:F1} linear={Linear:F4}", channelId, db, linear);
+    }
+
+    public void SetRxAnalyzerFftSize(int fftSize)
+    {
+        int wanted = NormalizeRxAnalyzerFftSize(fftSize);
+        if (wanted == _rxAnalyzerFftSize) return;
+        _rxAnalyzerFftSize = wanted;
+        // Reconfigure every open RX channel at the new size. Analyzers are
+        // created with MaxFftSize capacity, so this is the same in-place
+        // SetAnalyzer re-call the zoom path makes — same AnalyzerLock
+        // discipline, same one-transient-frame cost, no recreate. Finer bins
+        // buy frequency resolution and spend time resolution (a longer FFT
+        // fill), which is physics, not implementation.
+        foreach (var (channelId, state) in _channels)
+        {
+            lock (state.AnalyzerLock)
+            {
+                ConfigureAnalyzer(channelId, state.SampleRateHz, InSize, state.PixelWidth, state.ZoomLevel, wanted, AnalyzerWindow, AnalyzerKaiserPi);
+            }
+        }
+        _log.LogInformation("wdsp.rxDisplay.fftSize -> {Fft}", wanted);
     }
 
     public void SetZoom(int channelId, int level)
@@ -2012,7 +2033,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
 
     internal static int NormalizeRxAnalyzerFftSize(int fftSize) => fftSize switch
     {
-        2048 or 4096 or 8192 or 16384 or 32768 => fftSize,
+        2048 or 4096 or 8192 or 16384 or 32768 or 65536 => fftSize,
         _ => AnalyzerFftSize,
     };
 

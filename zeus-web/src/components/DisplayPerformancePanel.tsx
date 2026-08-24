@@ -15,6 +15,7 @@ import {
   DISPLAY_MAX_FRAME_RATE_HZ_MIN,
   WATERFALL_UPDATE_PERIOD_MAX,
   WATERFALL_UPDATE_PERIOD_MIN,
+  RX_DISPLAY_FFT_SIZES,
   useDisplaySettingsStore,
 } from '../state/display-settings-store';
 
@@ -24,6 +25,8 @@ const WATERFALL_INTERVAL_PRESETS = [1, 2, 3, 4, 8] as const;
 export function DisplayPerformancePanel() {
   const displayMaxFrameRateHz = useDisplaySettingsStore((s) => s.displayMaxFrameRateHz);
   const displayDecimation = useDisplaySettingsStore((s) => s.displayDecimation);
+  const rxDisplayFftSize = useDisplaySettingsStore((s) => s.rxDisplayFftSize);
+  const setRxDisplayFftSize = useDisplaySettingsStore((s) => s.setRxDisplayFftSize);
   const waterfallUpdatePeriod = useDisplaySettingsStore((s) => s.waterfallUpdatePeriod);
   const setDisplayMaxFrameRateHz = useDisplaySettingsStore((s) => s.setDisplayMaxFrameRateHz);
   const setDisplayDecimation = useDisplaySettingsStore((s) => s.setDisplayDecimation);
@@ -57,6 +60,25 @@ export function DisplayPerformancePanel() {
             style={numberInput}
           />
         </div>
+        <div style={controlRow}>
+          <label style={label}>Spectrum resolution (FFT)</label>
+        </div>
+        <div style={presetGroup} role="group" aria-label="RX display FFT size">
+          {RX_DISPLAY_FFT_SIZES.map((size) => (
+            <PresetButton
+              key={size}
+              active={rxDisplayFftSize === size}
+              label={size >= 1024 ? `${size / 1024}k` : `${size}`}
+              onClick={() => setRxDisplayFftSize(size)}
+            />
+          ))}
+        </div>
+        <p style={hint}>
+          Finer bins sharpen zoomed-in spectra (16k ≈ 94 Hz/bin at 1.536 MHz;
+          64k ≈ 23 Hz). The trade is time resolution: larger FFTs fill slower,
+          so keying smears wider on the waterfall. Shared by both receivers.
+        </p>
+
         <div style={presetGroup} role="group" aria-label="Display refresh rate presets">
           {DISPLAY_FRAME_RATES.map((rate) => (
             <PresetButton

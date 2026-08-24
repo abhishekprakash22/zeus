@@ -2892,6 +2892,7 @@ public static class ZeusEndpoints
                 req.WfDbMin, req.WfDbMax, req.WfTxDbMin, req.WfTxDbMax,
                 req.TxDisplayCalOffsetDb, req.TxDisplayFftSize,
                 req.TxDisplayWindow, req.TxDisplayAvgTauMs,
+                req.RxDisplayFftSize,
                 req.WidebandDisplayEnabled,
                 req.DisplayMaxFrameRateHz,
                 req.DisplayDecimation,

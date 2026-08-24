@@ -176,6 +176,7 @@ public sealed class DisplaySettingsStore : IDisposable
                 WfTxDbMax: hasTxWfRange ? txWfMax : null,
                 TxDisplayCalOffsetDb: e.TxDisplayCalOffsetDb,
                 TxDisplayFftSize: e.TxDisplayFftSize,
+                RxDisplayFftSize: e.RxDisplayFftSize,
                 TxDisplayWindow: e.TxDisplayWindow,
                 TxDisplayAvgTauMs: e.TxDisplayAvgTauMs,
                 WidebandDisplayEnabled: e.WidebandDisplayEnabled,
@@ -198,6 +199,7 @@ public sealed class DisplaySettingsStore : IDisposable
         double? wfTxDbMin = null, double? wfTxDbMax = null,
         double? txDisplayCalOffsetDb = null, int? txDisplayFftSize = null,
         int? txDisplayWindow = null, double? txDisplayAvgTauMs = null,
+        int? rxDisplayFftSize = null,
         bool? widebandDisplayEnabled = null,
         double? displayMaxFrameRateHz = null,
         int? displayDecimation = null,
@@ -227,6 +229,7 @@ public sealed class DisplaySettingsStore : IDisposable
             // caller can update one knob without clobbering the others.
             if (IsValidCalOffset(txDisplayCalOffsetDb)) e.TxDisplayCalOffsetDb = txDisplayCalOffsetDb;
             if (IsValidFftSize(txDisplayFftSize)) e.TxDisplayFftSize = txDisplayFftSize;
+            if (IsValidFftSize(rxDisplayFftSize)) e.RxDisplayFftSize = rxDisplayFftSize;
             if (IsValidWindow(txDisplayWindow)) e.TxDisplayWindow = txDisplayWindow;
             if (IsValidAvgTauMs(txDisplayAvgTauMs)) e.TxDisplayAvgTauMs = txDisplayAvgTauMs;
             if (widebandDisplayEnabled.HasValue) e.WidebandDisplayEnabled = widebandDisplayEnabled.Value;
@@ -350,6 +353,7 @@ public sealed class DisplaySettingsEntry
     // smoothing, 0 dB cal offset).
     public double? TxDisplayCalOffsetDb { get; set; }
     public int? TxDisplayFftSize { get; set; }
+    public int? RxDisplayFftSize { get; set; }
     public int? TxDisplayWindow { get; set; }
     public double? TxDisplayAvgTauMs { get; set; }
     // Protocol-2 ADC snapshot display mode. False on legacy rows because bool

@@ -30,6 +30,7 @@ export type DisplaySettings = {
   // never stored a value → frontend uses its DEFAULT_TX_DISPLAY_* constants.
   txDisplayCalOffsetDb: number | null;
   txDisplayFftSize: number | null;
+  rxDisplayFftSize: number | null;
   txDisplayWindow: number | null;
   txDisplayAvgTauMs: number | null;
   widebandDisplayEnabled: boolean;
@@ -61,6 +62,7 @@ type DisplaySettingsDtoRaw = {
   wfTxDbMax?: number | null;
   txDisplayCalOffsetDb?: number | null;
   txDisplayFftSize?: number | null;
+  rxDisplayFftSize?: number | null;
   txDisplayWindow?: number | null;
   txDisplayAvgTauMs?: number | null;
   widebandDisplayEnabled?: boolean | null;
@@ -114,6 +116,7 @@ function normalize(raw: DisplaySettingsDtoRaw): DisplaySettings {
     wfTxDbMax: normalizeDbValue(raw.wfTxDbMax),
     txDisplayCalOffsetDb: normalizeDbValue(raw.txDisplayCalOffsetDb),
     txDisplayFftSize: normalizeDbValue(raw.txDisplayFftSize),
+    rxDisplayFftSize: normalizeDbValue(raw.rxDisplayFftSize),
     txDisplayWindow: normalizeDbValue(raw.txDisplayWindow),
     txDisplayAvgTauMs: normalizeDbValue(raw.txDisplayAvgTauMs),
     widebandDisplayEnabled: raw.widebandDisplayEnabled === true,
@@ -147,6 +150,10 @@ export async function updateDisplaySettings(
     fftSize?: number | null;
     window?: number | null;
     avgTauMs?: number | null;
+    // RX display analyzer FFT size rides in this options bag too — object
+    // properties are non-positional, so the eight positional call sites in
+    // display-settings-store stay untouched.
+    rxFftSize?: number | null;
   },
   widebandDisplayEnabled?: boolean | null,
   displayMaxFrameRateHz?: number | null,
@@ -174,6 +181,7 @@ export async function updateDisplaySettings(
       txDisplayFftSize: txDisplay?.fftSize,
       txDisplayWindow: txDisplay?.window,
       txDisplayAvgTauMs: txDisplay?.avgTauMs,
+      rxDisplayFftSize: txDisplay?.rxFftSize,
       widebandDisplayEnabled,
       displayMaxFrameRateHz,
       displayDecimation,

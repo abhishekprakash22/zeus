@@ -164,6 +164,12 @@ public sealed class SyntheticDspEngine : IDspEngine
 
     // Synthetic doesn't render from a real analyzer so zoom is a no-op for the
     // pixel output, but we still validate so bogus levels surface during dev.
+    public void SetRxAnalyzerFftSize(int fftSize)
+    {
+        // Synthetic spectrum has no FFT; accept and ignore so pipeline plumbing
+        // behaves identically under tests.
+    }
+
     public void SetZoom(int channelId, int level)
     {
         ValidateZoomLevel(level);

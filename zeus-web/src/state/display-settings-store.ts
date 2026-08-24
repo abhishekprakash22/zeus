@@ -91,6 +91,12 @@ export const TX_DISPLAY_WINDOWS: readonly { value: number; label: string }[] = [
 ];
 export const DEFAULT_TX_DISPLAY_CAL_OFFSET_DB = 0;
 export const DEFAULT_TX_DISPLAY_FFT_SIZE = 16384;
+// RX display analyzer FFT sizes the server accepts (WdspDspEngine's
+// NormalizeRxAnalyzerFftSize). Finer bins = sharper zoomed-in spectra, at the
+// cost of time resolution: a 65536 fill takes 4x as long as 16384, so keying
+// smears wider on the waterfall. That's Fourier, not implementation.
+export const RX_DISPLAY_FFT_SIZES = [8192, 16384, 32768, 65536];
+export const DEFAULT_RX_DISPLAY_FFT_SIZE = 16384;
 export const DEFAULT_TX_DISPLAY_WINDOW = 2;
 export const DEFAULT_TX_DISPLAY_AVG_TAU_MS = 175;
 // TX display auto-range default. OFF — the TX panadapter/waterfall follow the
@@ -459,6 +465,7 @@ function scheduleTxDisplaySave(): void {
         fftSize: s.txDisplayFftSize,
         window: s.txDisplayWindow,
         avgTauMs: s.txDisplayAvgTauMs,
+        rxFftSize: s.rxDisplayFftSize,
       },
       s.widebandDisplayEnabled,
       s.displayMaxFrameRateHz,
@@ -544,6 +551,8 @@ export type DisplaySettingsState = {
   // smoothing time-constant. Persisted server-side; applied to the engine live.
   txDisplayCalOffsetDb: number;
   txDisplayFftSize: number;
+  rxDisplayFftSize: number;
+  setRxDisplayFftSize: (v: number) => void;
   txDisplayWindow: number;
   txDisplayAvgTauMs: number;
   // TX display auto-range. While keyed, fit the TX panadapter + waterfall
@@ -723,6 +732,12 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
   txDbMax: initialTxRange.txDbMax,
   txDisplayCalOffsetDb: DEFAULT_TX_DISPLAY_CAL_OFFSET_DB,
   txDisplayFftSize: DEFAULT_TX_DISPLAY_FFT_SIZE,
+  rxDisplayFftSize: DEFAULT_RX_DISPLAY_FFT_SIZE,
+  setRxDisplayFftSize: (v) => {
+    if (!RX_DISPLAY_FFT_SIZES.includes(v)) return;
+    useDisplaySettingsStore.setState({ rxDisplayFftSize: v });
+    scheduleTxDisplaySave();
+  },
   txDisplayWindow: DEFAULT_TX_DISPLAY_WINDOW,
   txDisplayAvgTauMs: DEFAULT_TX_DISPLAY_AVG_TAU_MS,
   // Master enable for the TX display auto-fit. OFF by default
@@ -920,6 +935,12 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
     set({
       txDisplayCalOffsetDb: DEFAULT_TX_DISPLAY_CAL_OFFSET_DB,
       txDisplayFftSize: DEFAULT_TX_DISPLAY_FFT_SIZE,
+  rxDisplayFftSize: DEFAULT_RX_DISPLAY_FFT_SIZE,
+  setRxDisplayFftSize: (v) => {
+    if (!RX_DISPLAY_FFT_SIZES.includes(v)) return;
+    useDisplaySettingsStore.setState({ rxDisplayFftSize: v });
+    scheduleTxDisplaySave();
+  },
       txDisplayWindow: DEFAULT_TX_DISPLAY_WINDOW,
       txDisplayAvgTauMs: DEFAULT_TX_DISPLAY_AVG_TAU_MS,
       txAutoRange: DEFAULT_TX_AUTO_RANGE,
@@ -1360,6 +1381,9 @@ async function hydrateFromServer(): Promise<void> {
     // stored, so the in-memory default stands.
     ...(server.txDisplayCalOffsetDb !== null ? { txDisplayCalOffsetDb: server.txDisplayCalOffsetDb } : {}),
     ...(server.txDisplayFftSize !== null ? { txDisplayFftSize: server.txDisplayFftSize } : {}),
+    ...(server.rxDisplayFftSize !== null && server.rxDisplayFftSize !== undefined
+      ? { rxDisplayFftSize: server.rxDisplayFftSize }
+      : {}),
     ...(server.txDisplayWindow !== null ? { txDisplayWindow: server.txDisplayWindow } : {}),
     ...(server.txDisplayAvgTauMs !== null ? { txDisplayAvgTauMs: server.txDisplayAvgTauMs } : {}),
   });

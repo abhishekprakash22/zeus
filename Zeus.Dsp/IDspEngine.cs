@@ -208,6 +208,14 @@ public interface IDspEngine : IDisposable
     void SetNotchTuneFrequencyHz(double loHz);
 
     void SetZoom(int channelId, int level);
+
+    /// <summary>
+    /// Set the RX display analyzer FFT size (2048..65536, powers of two) and
+    /// reconfigure every open RX channel in place. Finer bins raise frequency
+    /// resolution at the cost of time resolution (longer FFT fill).
+    /// Out-of-range values snap to the 16384 default.
+    /// </summary>
+    void SetRxAnalyzerFftSize(int fftSize);
     int ReadAudio(int channelId, Span<float> output);
 
     bool TryGetDisplayPixels(int channelId, DisplayPixout which, Span<float> dbOut);

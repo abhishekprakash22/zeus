@@ -273,6 +273,7 @@ public class DspPipelineRx2RoutingTests
         public Zeus.Dsp.Nr3ModelLoadResult LoadNr3Model(string? modelFilePath) => Zeus.Dsp.Nr3ModelLoadResult.Unavailable;
         public void SetNotches(IReadOnlyList<NotchDto> notches) { }
         public void SetNotchTuneFrequencyHz(double loHz) { }
+        public void SetRxAnalyzerFftSize(int fftSize) { }
         public void SetZoom(int channelId, int level) { }
         public int ReadAudio(int channelId, Span<float> output) => 0;
         public bool TryGetDisplayPixels(int channelId, DisplayPixout which, Span<float> dbOut) => false;

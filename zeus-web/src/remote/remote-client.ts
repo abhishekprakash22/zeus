@@ -238,7 +238,11 @@ function showRxAudioChip(): void {
   chip.textContent = '🔇 Tap anywhere to start audio';
   chip.setAttribute('role', 'status');
   chip.style.cssText =
-    'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);' +
+    // Top-center, below the topbar: the chip is click-through (pointer-events:
+    // none) so the recovering tap lands on the page — bottom-center parked it
+    // over the G2 drawer's button deck, where 'tap anywhere' also pressed
+    // whatever sat underneath (field report). Nothing actionable lives here.
+    'position:fixed;top:64px;left:50%;transform:translateX(-50%);' +
     'z-index:10001;pointer-events:none;padding:8px 14px;border-radius:999px;' +
     'background:rgba(13,17,24,0.92);color:var(--fg-1,#c3cad3);' +
     'border:1px solid var(--accent,#4aa3df);font:700 12px/1.2 system-ui,sans-serif;' +

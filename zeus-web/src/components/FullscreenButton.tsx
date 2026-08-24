@@ -153,8 +153,19 @@ export function FullscreenButton() {
       }
       const physW = frameAnchor ? G2_FRAME_W : window.screen.width;
       const physH = frameAnchor ? G2_FRAME_H : window.screen.height;
-      const oversize =
-        window.innerWidth > physW * 1.02 || window.innerHeight > physH * 1.02;
+      // Compare orientation-agnostically: iPadOS reports window.screen in
+      // PORTRAIT-FIXED dimensions (820x1180 however the device is held), so a
+      // landscape fullscreen viewport (1180x820) 'exceeded' screen.width every
+      // second and the watchdog auto-exited until the cycle cap surrendered
+      // (field: 'takes 4-5 attempts to go full screen'). Sorting both pairs
+      // and comparing long-to-long / short-to-short is rotation-blind while
+      // still catching the kiosk's genuine stale mode (1920x1080 against the
+      // 1280x800 frame trips on the long edge exactly as before).
+      const vLong = Math.max(window.innerWidth, window.innerHeight);
+      const vShort = Math.min(window.innerWidth, window.innerHeight);
+      const pLong = Math.max(physW, physH);
+      const pShort = Math.min(physW, physH);
+      const oversize = vLong > pLong * 1.02 || vShort > pShort * 1.02;
       if (!oversize) {
         strikes = 0;
         return;

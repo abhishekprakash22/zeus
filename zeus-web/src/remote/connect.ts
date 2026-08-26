@@ -73,6 +73,8 @@ export interface RemoteConnectOptions {
   iceServers?: RTCIceServer[];
   /** Called with each binary radio frame after unlock. */
   onFrame?: (data: ArrayBuffer) => void;
+  /** Progress callback for the connect UI (stage labels, UI-only). */
+  onStage?: (stage: string) => void;
 }
 
 export interface BrokerConnectOptions {
@@ -81,6 +83,7 @@ export interface BrokerConnectOptions {
   /** Broker origin; defaults to remote.openhpsdrzeus.com. */
   brokerOrigin?: string;
   onFrame?: (data: ArrayBuffer) => void;
+  onStage?: (stage: string) => void;
 }
 
 /** Returns the answer SDP for a given offer (via whatever signalling transport). */
@@ -102,7 +105,7 @@ export function connectRemote(opts: RemoteConnectOptions): Promise<RemoteConnect
     return (await resp.json()).sdp as string;
   };
   return establish(
-    { password: opts.password, iceServers: opts.iceServers ?? DEFAULT_STUN, onFrame: opts.onFrame },
+    { password: opts.password, iceServers: opts.iceServers ?? DEFAULT_STUN, onFrame: opts.onFrame, onStage: opts.onStage },
     signal,
     1500, // LAN: host candidates are immediate
   );
@@ -117,7 +120,7 @@ export async function connectViaBroker(opts: BrokerConnectOptions): Promise<Remo
   const iceServers = await fetchIceServers(brokerOrigin);
   const signal: Signaler = (offerSdp) => brokerSignal(brokerOrigin, opts.callsign, offerSdp);
   return establish(
-    { password: opts.password, iceServers, onFrame: opts.onFrame },
+    { password: opts.password, iceServers, onFrame: opts.onFrame, onStage: opts.onStage },
     signal,
     5000, // internet: wait for STUN server-reflexive candidates
   );
@@ -126,10 +129,16 @@ export async function connectViaBroker(opts: BrokerConnectOptions): Promise<Remo
 // --- shared handshake core -------------------------------------------------
 
 async function establish(
-  opts: { password: string; iceServers: RTCIceServer[]; onFrame?: (d: ArrayBuffer) => void },
+  opts: {
+    password: string;
+    iceServers: RTCIceServer[];
+    onFrame?: (d: ArrayBuffer) => void;
+    onStage?: (stage: string) => void;
+  },
   signal: Signaler,
   iceTimeoutMs: number,
 ): Promise<RemoteConnection> {
+  const stage = (s2: string) => { try { opts.onStage?.(s2); } catch { /* UI only */ } };
   const pc = new RTCPeerConnection({ iceServers: opts.iceServers });
   const control = pc.createDataChannel('control'); // reliable, ordered
   const frames = pc.createDataChannel('frames', { ordered: false, maxRetransmits: 0 });
@@ -222,14 +231,58 @@ async function establish(
     };
   });
 
+  stage('Preparing a secure channel\u2026');
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   await iceComplete(pc, iceTimeoutMs);
 
+  stage('Reaching the radio\u2026');
   const answerSdp = await signal(pc.localDescription!.sdp);
   await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-  await unlocked;
+  // Field (first intercontinental test, India \u2192 California): the client sat
+  // on 'Connecting\u2026' for ten minutes with no error. Signalling had
+  // succeeded; ICE never completed \u2014 and `await unlocked` resolves only
+  // AFTER the data channel opens, so nothing ever timed out and nothing was
+  // ever reported. Password entry itself is validated over SPAKE2+ on that
+  // channel, so a hang here means the media path, not the password.
+  // The whole post-signal phase now carries a hard deadline and dies with a
+  // named stage instead of silence.
+  stage('Negotiating a media path\u2026');
+  let unlockStage = 'negotiating a media path';
+  const onIce = () => {
+    const st = pc.iceConnectionState;
+    if (st === 'connected' || st === 'completed') {
+      unlockStage = 'authenticating';
+      stage('Authenticating\u2026');
+    }
+  };
+  pc.addEventListener('iceconnectionstatechange', onIce);
+  const POST_SIGNAL_TIMEOUT_MS = 45_000;
+  try {
+    await Promise.race([
+      unlocked,
+      new Promise<never>((_, rej) =>
+        setTimeout(() => {
+          const relayOffered = opts.iceServers.some((s3) =>
+            ([] as string[]).concat(s3.urls as string[] | string).some((u) => u.startsWith('turn')),
+          );
+          rej(new Error(
+            unlockStage === 'authenticating'
+              ? 'Timed out while authenticating \u2014 the radio stopped answering. Try again.'
+              : relayOffered
+                ? 'Timed out negotiating a media path \u2014 direct and relay attempts both failed. This network may block WebRTC entirely; try another network (e.g. mobile data).'
+                : 'Timed out negotiating a media path \u2014 no relay was available (TURN unconfigured) and no direct path was found.',
+          ));
+        }, POST_SIGNAL_TIMEOUT_MS),
+      ),
+    ]);
+  } catch (e) {
+    try { pc.close(); } catch { /* already down */ }
+    throw e;
+  } finally {
+    pc.removeEventListener('iceconnectionstatechange', onIce);
+  }
   return {
     pc,
     frames,

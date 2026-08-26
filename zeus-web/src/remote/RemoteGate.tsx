@@ -24,11 +24,31 @@ import type { RemoteConnection } from './connect';
 
 type Phase = 'prompt' | 'connecting' | 'connected';
 
+const pwKey = (callsign: string) => `zeus.remote.pw.${callsign}`;
+
 export function RemoteGate() {
   const callsign = getRemoteCallsign() ?? '';
   const [password, setPassword] = useState('');
   const [phase, setPhase] = useState<Phase>('prompt');
   const [error, setError] = useState<string | null>(null);
+  const [stage, setStage] = useState<string | null>(null);
+  const [remember, setRemember] = useState(false);
+
+  // Remembered password (field request #2): opt-in, per device+callsign,
+  // 7-day expiry, saved only after a SUCCESSFUL unlock (never a guess), and
+  // cleared the moment a connect fails with a wrong password. The manual
+  // states the tradeoff: whoever holds this device can key the transmitter.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(pwKey(callsign));
+      if (!raw) return;
+      const j = JSON.parse(raw) as { pw?: string; exp?: number };
+      if (j.pw && typeof j.exp === 'number' && Date.now() < j.exp) {
+        setPassword(j.pw);
+        setRemember(true);
+      } else localStorage.removeItem(pwKey(callsign));
+    } catch { /* storage unavailable — prompt as usual */ }
+  }, [callsign]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const connRef = useRef<RemoteConnection | null>(null);
 
@@ -46,9 +66,18 @@ export function RemoteGate() {
     const pw = password;
     if (!pw) return;
     setError(null);
+    setStage('Contacting the broker\u2026');
     setPhase('connecting');
-    startRemoteClient(callsign, pw)
+    startRemoteClient(callsign, pw, (st) => setStage(st))
       .then((conn) => {
+        try {
+          if (remember) {
+            localStorage.setItem(
+              pwKey(callsign),
+              JSON.stringify({ pw, exp: Date.now() + 7 * 24 * 3600 * 1000 }),
+            );
+          } else localStorage.removeItem(pwKey(callsign));
+        } catch { /* storage unavailable */ }
         connRef.current = conn;
         // Flip the panadapter/UI to "connected" — display frames now arrive
         // over WebRTC and dispatchServerFrame feeds the same stores.
@@ -101,7 +130,12 @@ export function RemoteGate() {
         conn.control.addEventListener('close', onChannelClose);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Connection failed.');
+        const msg = err instanceof Error ? err.message : 'Connection failed.';
+        if (/incorrect password/i.test(msg)) {
+          try { localStorage.removeItem(pwKey(callsign)); } catch { /* ok */ }
+        }
+        setError(msg);
+        setStage(null);
         setPhase('prompt');
       });
   }, [callsign, password]);
@@ -158,6 +192,20 @@ export function RemoteGate() {
           }}
         />
       </form>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: 'var(--fg-2, #9aa3ad)', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={remember}
+          disabled={connecting}
+          onChange={(e) => setRemember(e.currentTarget.checked)}
+        />
+        Remember on this device for 7 days
+      </label>
+      {connecting && stage && (
+        <p aria-live="polite" style={{ marginTop: 8, fontSize: 12, color: 'var(--fg-2, #9aa3ad)' }}>
+          {stage}
+        </p>
+      )}
       {error && (
         <p role="alert" style={{ color: 'var(--tx)', marginTop: 8 }}>
           {error}

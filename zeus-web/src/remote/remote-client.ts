@@ -113,6 +113,13 @@ let rxAudioStream: MediaStream | null = null;
 // The live remote session, for gesture-context helpers. Set once unlocked,
 // cleared when the peer connection dies.
 let activeRemoteConn: RemoteConnection | null = null;
+let sessionPassword: string | null = null;
+
+/** The password that unlocked the current remote session (memory only) —
+ * used by destructive in-session confirmations (remote shutdown). */
+export function getSessionPassword(): string | null {
+  return sessionPassword;
+}
 
 /**
  * Acquire/enable the remote voice mic INSIDE the caller's user gesture.
@@ -302,10 +309,12 @@ function stopRemoteRxAudioTrack(): void {
 export async function startRemoteClient(
   callsign: string,
   password: string,
+  onStage?: (stage: string) => void,
 ): Promise<RemoteConnection> {
   const conn = await connectViaBroker({
     callsign,
     password,
+    onStage,
     onFrame: (data) => {
       if (data.byteLength >= 1 && new Uint8Array(data, 0, 1)[0] === 0x01) displayFramesSinceRead++;
       dispatchServerFrame(data);
@@ -316,6 +325,9 @@ export async function startRemoteClient(
   // can happen. The host arms its watchdog on the first pulse.
   const stopLeasePulse = startTxLeasePulse(conn.control);
   activeRemoteConn = conn;
+  // The session password, kept in memory only, for in-session confirmations
+  // (remote shutdown re-entry). Never persisted here; cleared with the session.
+  sessionPassword = password;
 
   // Hand the read-write API tunnel its live "api" channel so queued + future
   // same-origin `/api/*` requests (reads AND control writes) flow to the radio's
@@ -371,7 +383,7 @@ export async function startRemoteClient(
   conn.pc.addEventListener('connectionstatechange', () => {
     const s = conn.pc.connectionState;
     if (s === 'closed' || s === 'failed' || s === 'disconnected') {
-      if (activeRemoteConn === conn) activeRemoteConn = null;
+      if (activeRemoteConn === conn) { activeRemoteConn = null; sessionPassword = null; }
       stopLeasePulse();
       setRemoteControlSender(null);
       // Clear the tunnel channel and fail pending API requests so the UI gets a

@@ -344,6 +344,22 @@ audio input to **Host** in the radio's audio settings to transmit the
 browser mic. The chip is advisory and dismissable; it never changes the
 source for you.
 
+**Connect progress and timeouts.** The connect flow reports its stage live
+(contacting the broker, reaching the radio, negotiating a media path,
+authenticating) and gives up with a named reason after 45 seconds instead of
+sitting on "Connecting" forever. Password validation happens on the secured
+channel AFTER a media path exists — so a stall at "negotiating a media path"
+is the network, not the password.
+
+**Remember on this device.** The connect dialog can remember the session
+password on that device for 7 days (opt-in, per callsign, cleared by a wrong
+password). The tradeoff is yours to weigh: whoever holds that device can key
+your transmitter.
+
+**Remote shutdown guard.** ⏻ SHUT DOWN from a remote session demands the
+session password re-typed under an explicit warning — powering off remotely
+means nobody without physical access can switch the radio back on.
+
 **Bandwidth adaptation.** On a struggling link the spectrum frame rate
 backs off automatically (down to ~4 fps) and climbs back to ~20 fps once
 the link clears; audio always takes priority and is unaffected.

@@ -84,13 +84,21 @@ export function ServerUrlPanel() {
     // the panel becomes the stage, the existing content floats on a card to
     // the right over a soft scrim. The art is the wordmark's own square-wave
     // identity, left-anchored, so the card never covers it.
+    // Splash A "Pulse" behind the connect card — RESTRUCTURED after a field
+    // clip on the Pi's 1280×800: the art must never govern layout. The
+    // background is an absolutely-positioned layer under the card; the card
+    // is the only element in flow, so the settings pane scrolls exactly as
+    // far as the content goes, at every viewport height. No overflow:hidden
+    // anywhere on this path (that was the clipper); the rounded corners live
+    // on the background layer itself.
+    <div style={{ position: 'relative', margin: '-4px 0 0', padding: '18px 0 18px 18px' }}>
     <div
+      aria-hidden
       style={{
-        position: 'relative',
-        margin: '-4px 0 0',
-        minHeight: 560,
+        position: 'absolute',
+        inset: 0,
+        zIndex: 0,
         borderRadius: 'var(--r-md, 8px)',
-        overflow: 'hidden',
         border: '1px solid var(--panel-border)',
         backgroundColor: '#0a0a0c',
         backgroundImage:
@@ -98,20 +106,18 @@ export function ServerUrlPanel() {
         backgroundSize: 'auto, cover',
         backgroundPosition: 'left center, left center',
         backgroundRepeat: 'no-repeat',
-        padding: '18px 18px 18px',
-        display: 'flex',
-        justifyContent: 'flex-end',
       }}
-    >
+    />
     <div
       style={{
+        position: 'relative',
+        zIndex: 1,
         maxWidth: 600,
-        width: 'min(600px, 100%)',
+        marginLeft: 'auto',
         background: 'rgba(17, 17, 20, 0.94)',
         border: '1px solid var(--panel-border)',
         borderRadius: 'var(--r-md, 8px)',
         padding: 18,
-        backdropFilter: 'blur(2px)',
       }}
     >
       <h3

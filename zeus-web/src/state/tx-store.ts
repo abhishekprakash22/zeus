@@ -118,6 +118,8 @@ export enum AlertKind {
   // by useSwUpdatePrompt and consumed by AlertBanner; never sent on the wire,
   // so its value lives outside the wire-byte range to avoid collisions.
   FrontendUpdate = 1000,
+  // External amplifier protection (Ganymede / G2-1K) — sticky, carries a RESET AMP action.
+  AmpTrip = 4,
 }
 
 export type AlertAction = {

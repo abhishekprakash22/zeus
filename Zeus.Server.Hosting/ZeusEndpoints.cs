@@ -4881,6 +4881,18 @@ public static class ZeusEndpoints
                 return Results.Ok(new { callsign = (string?)null });
             });
 
+        // Ganymede / G2-1K amplifier protection controller (see
+        // Amp/GanymedeAmpService for the protocol). Status is poll-friendly;
+        // reset writes ZZZA32; to the controller.
+        app.MapGet("/api/amp/status", (Zeus.Server.Hosting.Amp.GanymedeAmpService amp) =>
+            Results.Ok(amp.StatusSnapshot()));
+        app.MapPost("/api/amp/reset", (Zeus.Server.Hosting.Amp.GanymedeAmpService amp, ILoggerFactory lf) =>
+        {
+            bool ok = amp.RequestReset();
+            if (!ok) lf.CreateLogger("api.amp").LogWarning("api.amp.reset with no controller connected");
+            return ok ? Results.Ok(new { ok = true }) : Results.Problem("amplifier controller not connected", statusCode: 503);
+        });
+
         // Availability of a callsign at the broker (anti-squat companion, so
         // the second owner of a shared call learns AT SAVE TIME that it's
         // taken and can pick CALL/2 instead of finding remote silently dead).

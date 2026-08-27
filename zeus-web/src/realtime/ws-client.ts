@@ -723,12 +723,25 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
       const kind = dv.getUint8(1);
       const msgBytes = new Uint8Array(ev.data, 2);
       const message = new TextDecoder('utf-8').decode(msgBytes);
-      useTxStore.getState().setAlert({ kind, message });
-      // A SWR / TX-timeout trip force-drops MOX on the server, which also
-      // disarms any running two-tone test. Clear the local latch so the
+      // Ganymede amp trips carry an inline RESET AMP action: ZZZA32; goes to
+      // the controller via the host (and over the remote tunnel unchanged).
+      const action =
+        kind === AlertKind.AmpTrip
+          ? {
+              label: 'RESET AMP',
+              onClick: () => {
+                void fetch('/api/amp/reset', { method: 'POST' }).catch(() => {
+                  /* controller offline — banner stays, operator retries */
+                });
+              },
+            }
+          : undefined;
+      useTxStore.getState().setAlert({ kind, message, action });
+      // A SWR / TX-timeout / amp trip force-drops MOX on the server, which
+      // also disarms any running two-tone test. Clear the local latch so the
       // TwoTone button doesn't stay lit (and desynced) after the trip —
       // moxOn/tunOn are cleared separately by the MoxStateFrame off-edge.
-      if (kind === AlertKind.SwrTrip || kind === AlertKind.TxTimeout) {
+      if (kind === AlertKind.SwrTrip || kind === AlertKind.TxTimeout || kind === AlertKind.AmpTrip) {
         useTxStore.getState().setTwoToneOn(false);
       }
       return;

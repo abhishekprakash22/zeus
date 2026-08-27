@@ -104,4 +104,9 @@ public enum AlertKind : byte
     TxTimeout = 1,
     OutOfBand = 2,
     TxTimeoutWarning = 3,
+    /// <summary>External amplifier protection trip (Ganymede / G2-1K):
+    /// the controller dropped bias and PTT in hardware and reported the
+    /// cause over CAT (ZZZAnn;). Sticky like SwrTrip; the banner carries
+    /// a RESET AMP action that writes ZZZA32; back to the controller.</summary>
+    AmpTrip = 4,
 }

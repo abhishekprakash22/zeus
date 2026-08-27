@@ -412,6 +412,8 @@ public static class ZeusHost
         builder.Services.AddSingleton<Zeus.Server.Hosting.Remote.RemotePasswordStore>();
         builder.Services.AddSingleton<Zeus.Server.Hosting.Remote.RemoteCallsignStore>();
         builder.Services.AddSingleton<Zeus.Server.Hosting.Remote.RemoteHostKeyStore>();
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Amp.GanymedeAmpService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<Zeus.Server.Hosting.Amp.GanymedeAmpService>());
         // Loopback HttpClient for the read-only remote API tunnel. Post-unlock
         // GET/HEAD requests on the WebRTC "api" channel are proxied to this
         // server's own local Kestrel (127.0.0.1:HttpPort) and the response

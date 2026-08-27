@@ -40,6 +40,7 @@ import { AudioToggle } from '../components/AudioToggle';
 import { BandButtons } from '../components/BandButtons';
 import { TuningStepWidget } from '../components/TuningStepWidget';
 import { AgcSlider } from '../components/AgcSlider';
+import { AlertBanner } from '../components/AlertBanner';
 import { AttenuatorSlider } from '../components/AttenuatorSlider';
 import { PreampButton } from '../components/PreampButton';
 import { SquelchSlider } from '../components/SquelchSlider';
@@ -318,6 +319,7 @@ export function MobileApp() {
         <MobileInstallPrompt />
         {activeTab === 'radio' ? (
           <>
+            <AlertBanner />
             <Section label="Frequency" meta="RX1">
               <div className="m-vfo-grid">
                 <div className="m-vfo-wrap">

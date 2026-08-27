@@ -369,6 +369,22 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+## G2-1K amplifier protection (Ganymede)
+
+On a G2-1K, the amplifier's protection controller trips in hardware —
+bias and PTT are dropped within microseconds of excessive reverse power,
+drain current, PSU voltage, heatsink temperature, or forward power — and
+reports the event to Zeus over its CAT link. Zeus removes drive
+immediately (same path as the SWR trip) and shows an amber banner naming
+the cause, on the radio and on every connected client including remote.
+When the fault is cleared, press **RESET AMP** on the banner (or the
+controller's own front-panel reset). If the fault is still present the
+controller trips again immediately — that is the protection working.
+
+The controller is found automatically on the radio's USB serial ports
+(it identifies itself; nothing to configure). To pin a specific port,
+set `ZEUS_GANYMEDE_PORT=/dev/ttyACM1` in the service environment.
+
 **Bandwidth adaptation.** On a struggling link the spectrum frame rate
 backs off automatically (down to ~4 fps) and climbs back to ~20 fps once
 the link clears; audio always takes priority and is unaffected.

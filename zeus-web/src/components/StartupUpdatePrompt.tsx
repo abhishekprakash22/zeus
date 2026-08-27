@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from 'react';
 import type { RepoUpdateStatus } from '../api/client';
+import { fetchUpdateStatus, getUpdateApplyStatus, postUpdateApply } from '../api/client';
 
 type Props = {
   status: RepoUpdateStatus | null;
@@ -23,6 +24,8 @@ function updateUrl(status: RepoUpdateStatus): string | null {
 
 export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props) {
   const [visible, setVisible] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [phaseText, setPhaseText] = useState<string | null>(null);
 
   useEffect(() => {
     if (!status || status.forceUpdate) return;
@@ -35,9 +38,65 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
   const url = updateUrl(status);
   const latest = status.latestVersion ?? status.releaseTag ?? 'latest';
 
+  // Field: UPDATE NOW here used to window.open() the release asset — a
+  // browser download that never installs anything, while the Updating
+  // panel's button did the real in-place apply. The toast now drives the
+  // SAME server-side apply (postUpdateApply + poll + reload-when-back),
+  // showing its phase inline. The browser-download behaviour survives only
+  // as the fallback when in-place apply is unsupported on this install.
   const openUpdate = () => {
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
     onDismiss();
+  };
+
+  const installNow = () => {
+    if (applying) return;
+    setApplying(true);
+    setPhaseText('starting…');
+    void postUpdateApply()
+      .then(async ({ ok }) => {
+        if (!ok) {
+          // In-place apply unavailable (portable/dev install) — fall back to
+          // the old open-the-asset behaviour so the button still helps.
+          setApplying(false);
+          openUpdate();
+          return;
+        }
+        let missedPolls = 0;
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 800));
+          try {
+            const cur = await getUpdateApplyStatus();
+            missedPolls = 0;
+            setPhaseText(`${cur.phase}… ${cur.percent ?? 0}%`);
+            if (cur.phase === 'failed' || cur.phase === 'unsupported') {
+              setApplying(false);
+              setPhaseText(cur.error ?? 'Update failed — see Settings → Updating.');
+              return;
+            }
+          } catch {
+            // Server going away during 'restarting' is the plan working.
+            missedPolls++;
+            if (missedPolls >= 2) {
+              setPhaseText('restarting…');
+              for (;;) {
+                await new Promise((r) => setTimeout(r, 1200));
+                try {
+                  await fetchUpdateStatus(false);
+                  window.location.reload();
+                  return;
+                } catch {
+                  /* still rebooting */
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch(() => {
+        setApplying(false);
+        setPhaseText('Could not start the update — see Settings → Updating.');
+      });
   };
 
   return (
@@ -88,10 +147,15 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
             Installed {status.installedVersion ?? 'unknown'}
             {status.releaseAssetName ? ` - ${status.releaseAssetName}` : ''}
           </div>
+          {phaseText && (
+            <div style={{ fontSize: 11, color: 'var(--accent)', lineHeight: 1.4, marginTop: 4 }}>
+              {phaseText}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn sm" onClick={onDismiss}>
+          <button type="button" className="btn sm" onClick={onDismiss} disabled={applying}>
             LATER
           </button>
           <button
@@ -104,8 +168,8 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
           >
             DETAILS
           </button>
-          <button type="button" className="btn sm active" onClick={openUpdate} disabled={!url}>
-            UPDATE NOW
+          <button type="button" className="btn sm active" onClick={installNow} disabled={applying}>
+            {applying ? 'INSTALLING…' : 'UPDATE NOW'}
           </button>
         </div>
       </div>

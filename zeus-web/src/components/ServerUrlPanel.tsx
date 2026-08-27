@@ -593,12 +593,32 @@ function RemoteCallsignSection() {
   const [call, setCall] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Anti-squat availability: unclaimed | yours | taken | unknown | null (no
+  // callsign / not yet checked). Checked on load for the saved call and again
+  // right after every save, so the second owner of a shared callsign learns
+  // HERE that it's taken — not from a silent broker refusal in the Pi log.
+  const [availability, setAvailability] = useState<string | null>(null);
+
+  const checkAvailability = async (c: string | null) => {
+    if (!c) {
+      setAvailability(null);
+      return;
+    }
+    try {
+      const r = await fetch(`/api/remote/callsign/availability?call=${encodeURIComponent(c)}`);
+      const j = await r.json();
+      setAvailability(typeof j.status === 'string' ? j.status : 'unknown');
+    } catch {
+      setAvailability('unknown');
+    }
+  };
 
   const refresh = async () => {
     try {
       const r = await fetch('/api/remote/callsign');
       const j = await r.json();
       setCurrent(j.callsign ?? null);
+      void checkAvailability(j.callsign ?? null);
     } catch {
       setCurrent(null);
     }
@@ -621,6 +641,7 @@ function RemoteCallsignSection() {
       setCall('');
       setNotice('Callsign saved — announced on the next broker reconnect.');
       await refresh();
+      // refresh() already re-checks, but make the intent explicit for readers.
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
@@ -631,6 +652,7 @@ function RemoteCallsignSection() {
   const clear = async () => {
     setBusy(true);
     setNotice(null);
+    setAvailability(null);
     try {
       await fetch('/api/remote/callsign', { method: 'DELETE' });
       setNotice('Callsign cleared — identity falls back to QRZ sign-in.');
@@ -716,6 +738,23 @@ function RemoteCallsignSection() {
       </div>
       {notice && (
         <div style={{ marginTop: 12, fontSize: 11, color: 'var(--fg-2)' }}>{notice}</div>
+      )}
+      {availability === 'taken' && (
+        <p style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: 'var(--tx)' }}>
+          <strong>{current}</strong> is already claimed by another radio — remote access will not
+          come online with it. Save a variant instead (e.g.{' '}
+          <code style={{ fontFamily: 'monospace' }}>{current}/2</code>), and share that address.
+        </p>
+      )}
+      {availability === 'yours' && (
+        <p style={{ marginTop: 8, fontSize: 12, color: 'var(--ok)' }}>
+          <strong>{current}</strong> is claimed by this radio.
+        </p>
+      )}
+      {availability === 'unclaimed' && (
+        <p style={{ marginTop: 8, fontSize: 12, color: 'var(--fg-2)' }}>
+          <strong>{current}</strong> is available — this radio will claim it when it next connects.
+        </p>
       )}
     </div>
   );

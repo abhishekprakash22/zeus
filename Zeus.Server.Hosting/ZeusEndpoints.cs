@@ -4881,6 +4881,47 @@ public static class ZeusEndpoints
                 return Results.Ok(new { callsign = (string?)null });
             });
 
+        // Availability of a callsign at the broker (anti-squat companion, so
+        // the second owner of a shared call learns AT SAVE TIME that it's
+        // taken and can pick CALL/2 instead of finding remote silently dead).
+        // Presents this radio's host key so an already-owned claim reads
+        // "yours". Proxied host-side because the key must never reach the
+        // browser. status: unclaimed | yours | taken | unknown (broker
+        // unreachable / older broker without the probe).
+        app.MapGet("/api/remote/callsign/availability",
+            async (string? call,
+                   IHttpClientFactory httpFactory,
+                   Zeus.Server.Hosting.Remote.RemoteHostKeyStore hostKey,
+                   CancellationToken ct) =>
+            {
+                var norm = Zeus.Server.Hosting.Remote.RemoteCallsignStore.Normalize(call);
+                if (norm is null)
+                    return Results.BadRequest(new { error = "callsign must be 3-12 characters: letters, digits, /" });
+                try
+                {
+                    var origin = Environment.GetEnvironmentVariable("ZEUS_REMOTE_BROKER_ORIGIN")?.Trim() is { Length: > 0 } o
+                        ? o
+                        : Zeus.Server.Hosting.Remote.RemoteDefaults.BrokerOrigin;
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(5));
+                    var client = httpFactory.CreateClient(Zeus.Server.Hosting.Remote.RemoteWebRtcService.TurnHttpClientName);
+                    using var req = new HttpRequestMessage(
+                        HttpMethod.Get, $"{origin}/callsign-check?callsign={Uri.EscapeDataString(norm)}");
+                    req.Headers.Add("X-Zeus-Host-Token", hostKey.GetOrCreate());
+                    using var resp = await client.SendAsync(req, timeout.Token);
+                    if (!resp.IsSuccessStatusCode)
+                        return Results.Ok(new { callsign = norm, status = "unknown" });
+                    using var doc = System.Text.Json.JsonDocument.Parse(await resp.Content.ReadAsStringAsync(timeout.Token));
+                    var status = doc.RootElement.TryGetProperty("status", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? st.GetString() : null;
+                    return Results.Ok(new { callsign = norm, status = status is "unclaimed" or "yours" or "taken" ? status : "unknown" });
+                }
+                catch
+                {
+                    return Results.Ok(new { callsign = norm, status = "unknown" });
+                }
+            });
+
         // WebRTC signaling: answer the browser's offer with a password-gated session
         // (Phase 1). 403 when no password is set — there is no unauthenticated path.
         app.MapPost("/api/remote/connect",

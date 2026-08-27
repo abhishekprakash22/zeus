@@ -187,6 +187,22 @@ export default {
 
     // WebSocket signaling. Host (radio) is QRZ-gated; client (browser) is open
     // (the radio's session password is the real gate — the broker only relays).
+    // Callsign availability probe (anti-squat companion): lets a radio tell
+    // its operator AT SAVE TIME whether the callsign's room is unclaimed,
+    // already theirs (their key matches the claim), or taken by someone else.
+    // Read-only — never creates or refreshes a claim; the WS host join does
+    // that. Rate-limited per IP like everything else.
+    if (url.pathname === '/callsign-check') {
+      if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
+      const callsign = (url.searchParams.get('callsign') ?? '').trim().toUpperCase();
+      if (!callsign) return Response.json({ error: 'callsign required' }, { status: 400 });
+      const id = env.SIGNAL_ROOM.idFromName(callsign);
+      const probe = new Request('https://room.internal/claim-check', {
+        headers: { 'X-Zeus-Host-Token': request.headers.get('X-Zeus-Host-Token') ?? '' },
+      });
+      return env.SIGNAL_ROOM.get(id).fetch(probe);
+    }
+
     if (url.pathname === '/signal') {
       if (await rateLimited(env, clientIp(request))) return new Response('rate limited', { status: 429 });
       if (request.headers.get('Upgrade') !== 'websocket') {

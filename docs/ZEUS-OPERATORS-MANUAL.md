@@ -340,7 +340,10 @@ lock remote unlocking for five minutes. The client shows how long to wait.
 broker it claims its callsign with a private key it generates and keeps;
 another radio trying to register the same callsign is refused. If you
 rebuild the radio and the key is lost, the old claim lapses after about
-sixty days offline and the fresh radio claims it again.
+sixty days offline and the fresh radio claims it again. The callsign card
+in Settings → SERVER shows the claim state after every save: available,
+claimed by this radio, or already taken — in which case save a variant
+(e.g. CALL/2) and share that address instead.
 
 **TX source hint.** Keying MOX remotely while the radio's TX audio input is
 armed to a radio jack (front-panel mic, line-in, or XLR) shows a warning

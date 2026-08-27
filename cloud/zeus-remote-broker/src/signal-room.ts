@@ -75,6 +75,13 @@ export class SignalRoom extends DurableObject<Env> {
       return this.createSupportRequest(request);
     }
 
+    // Read-only claim probe for the /callsign-check edge route: reports the
+    // room's claim state relative to the presented host token without ever
+    // creating or touching a claim.
+    if (url.pathname === '/claim-check') {
+      return Response.json({ status: await this.claimStatus(request.headers.get('X-Zeus-Host-Token') ?? '') });
+    }
+
     const roleParam = url.searchParams.get('role');
     const role: Att['role'] = roleParam === 'host' ? 'host' : roleParam === 'support' ? 'support' : 'client';
     const callsign = (request.headers.get('X-Operator-Callsign') ?? url.searchParams.get('callsign') ?? '')
@@ -139,6 +146,15 @@ export class SignalRoom extends DurableObject<Env> {
   // ---- host claim (anti-squat) ------------------------------------------
   private static readonly CLAIM_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60 days unseen → reclaimable
   private static readonly CLAIM_TOUCH_MS = 60 * 60 * 1000; // persist lastSeen at most hourly
+
+  /** 'unclaimed' | 'yours' | 'taken' — read-only, for the save-time probe. */
+  private async claimStatus(token: string): Promise<'unclaimed' | 'yours' | 'taken'> {
+    type Claim = { hash: string; created: number; lastSeen: number };
+    const claim = await this.ctx.storage.get<Claim>('hostClaim');
+    if (!claim || Date.now() - claim.lastSeen > SignalRoom.CLAIM_TTL_MS) return 'unclaimed';
+    if (token && (await sha256Hex(token)) === claim.hash) return 'yours';
+    return 'taken';
+  }
 
   private async checkHostClaim(token: string): Promise<{ ok: true } | { ok: false; reason: string }> {
     type Claim = { hash: string; created: number; lastSeen: number };

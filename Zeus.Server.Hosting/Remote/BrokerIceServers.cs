@@ -28,10 +28,17 @@ internal static class BrokerIceServers
     /// Broker endpoint that mints short-lived Cloudflare TURN credentials.
     /// Overridable for tests / self-hosted brokers via ZEUS_REMOTE_TURN_URL.
     /// </summary>
+    // The one-place rule (RemoteDefaults): the shipped TURN endpoint rides the
+    // same origin as the shipped broker. This literal previously pointed at
+    // upstream's broker — a fork radio with the env unset fetched TURN from a
+    // server it has no account on, fell back to STUN-only, and offered zero
+    // relay candidates: on CGNAT-vs-CGNAT paths (Jio/Airtel — the customer
+    // base) the client's own relay could not reach the host's srflx and the
+    // session died with "direct and relay attempts both failed".
     private static string TurnUrl =>
         Environment.GetEnvironmentVariable("ZEUS_REMOTE_TURN_URL")?.Trim() is { Length: > 0 } u
             ? u
-            : "https://remote.openhpsdrzeus.com/turn";
+            : RemoteDefaults.BrokerOrigin + "/turn";
 
     /// <summary>
     /// Gather the ICE servers for a host-side WebRTC answer. The host often sits

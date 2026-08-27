@@ -38,6 +38,12 @@ export function RemoteGate() {
   // 7-day expiry, saved only after a SUCCESSFUL unlock (never a guess), and
   // cleared the moment a connect fails with a wrong password. The manual
   // states the tradeoff: whoever holds this device can key the transmitter.
+  // A valid remembered password should not just pre-fill the field — it
+  // should take the operator straight in (field: 'asked for the password
+  // every time I open a new page'). One attempt per mount; a failure lands
+  // back on the prompt with the stored copy already cleared by the error
+  // path, so a password changed on the radio can never loop.
+  const [autoConnect, setAutoConnect] = useState(false);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(pwKey(callsign));
@@ -46,6 +52,7 @@ export function RemoteGate() {
       if (j.pw && typeof j.exp === 'number' && Date.now() < j.exp) {
         setPassword(j.pw);
         setRemember(true);
+        setAutoConnect(true);
       } else localStorage.removeItem(pwKey(callsign));
     } catch { /* storage unavailable — prompt as usual */ }
   }, [callsign]);
@@ -139,6 +146,14 @@ export function RemoteGate() {
         setPhase('prompt');
       });
   }, [callsign, password]);
+
+  useEffect(() => {
+    if (autoConnect && phase === 'prompt' && password) {
+      setAutoConnect(false);
+      connect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once when the restore lands
+  }, [autoConnect, password]);
 
   // Once unlocked the gate steps aside — only the link-quality chip remains.
   if (phase === 'connected')

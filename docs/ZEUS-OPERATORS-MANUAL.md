@@ -336,6 +336,12 @@ never part of this — the desk always works.
 **Password lockout.** Five failed password attempts within ten minutes
 lock remote unlocking for five minutes. The client shows how long to wait.
 
+**Your callsign is yours.** The first time this radio connects to the
+broker it claims its callsign with a private key it generates and keeps;
+another radio trying to register the same callsign is refused. If you
+rebuild the radio and the key is lost, the old claim lapses after about
+sixty days offline and the fresh radio claims it again.
+
 **TX source hint.** Keying MOX remotely while the radio's TX audio input is
 armed to a radio jack (front-panel mic, line-in, or XLR) shows a warning
 chip: your remote voice is deliberately NOT reaching the air, because the TX

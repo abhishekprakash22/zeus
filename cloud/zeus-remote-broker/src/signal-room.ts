@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { sha256Hex } from './qrz';
 import type { Env } from './types';
 
 /**
@@ -89,6 +90,23 @@ export class SignalRoom extends DurableObject<Env> {
       if (!ticket) return new Response('invalid or expired support ticket', { status: 401 });
     }
 
+    // Callsign anti-squat (piece 3, last item). Callsigns are public, so with
+    // QRZ verification off (the sovereign/self-hosted deployment) anyone could
+    // open role=host for someone else's call and sit in their room — a squat
+    // can't steal traffic (SPAKE2+ still gates every client) but it denies
+    // service and invites phishing. Claim-on-first-use: the first host to
+    // present X-Zeus-Host-Token binds this room to that token's SHA-256; later
+    // hosts must present the same token or are refused 403. A claim unseen for
+    // CLAIM_TTL lapses and the room is reclaimable (radio rebuilt, key lost).
+    // Tokenless hosts (pre-claim builds) keep working until a token-bearing
+    // host claims the room — back-compat with every shipped release.
+    if (role === 'host') {
+      const verdict = await this.checkHostClaim(request.headers.get('X-Zeus-Host-Token') ?? '');
+      if (!verdict.ok) {
+        return new Response(verdict.reason, { status: 403 });
+      }
+    }
+
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
@@ -116,6 +134,39 @@ export class SignalRoom extends DurableObject<Env> {
     }
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ---- host claim (anti-squat) ------------------------------------------
+  private static readonly CLAIM_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60 days unseen → reclaimable
+  private static readonly CLAIM_TOUCH_MS = 60 * 60 * 1000; // persist lastSeen at most hourly
+
+  private async checkHostClaim(token: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    type Claim = { hash: string; created: number; lastSeen: number };
+    const now = Date.now();
+    const claim = await this.ctx.storage.get<Claim>('hostClaim');
+    const expired = claim != null && now - claim.lastSeen > SignalRoom.CLAIM_TTL_MS;
+
+    if (!token) {
+      // Legacy host without a token: fine while the room is unclaimed (or the
+      // claim has lapsed); refused once someone has claimed it.
+      if (claim && !expired) {
+        return { ok: false, reason: 'callsign claimed by another radio — update Zeus (host key) or wait out the claim' };
+      }
+      return { ok: true };
+    }
+
+    const hash = await sha256Hex(token);
+    if (!claim || expired) {
+      await this.ctx.storage.put('hostClaim', { hash, created: now, lastSeen: now } satisfies Claim);
+      return { ok: true };
+    }
+    if (claim.hash !== hash) {
+      return { ok: false, reason: 'callsign claimed by another radio — this radio\'s host key does not match the claim' };
+    }
+    if (now - claim.lastSeen > SignalRoom.CLAIM_TOUCH_MS) {
+      await this.ctx.storage.put('hostClaim', { ...claim, lastSeen: now });
+    }
+    return { ok: true };
   }
 
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {

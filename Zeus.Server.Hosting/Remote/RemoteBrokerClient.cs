@@ -42,6 +42,7 @@ public sealed class RemoteBrokerClient : BackgroundService
     private readonly SupportAvailabilityStore _availability;
     private readonly QrzService _qrz;
     private readonly RemoteCallsignStore _callsigns;
+    private readonly RemoteHostKeyStore _hostKey;
     private readonly ILogger<RemoteBrokerClient> _log;
     private readonly string _brokerUrl;
 
@@ -50,9 +51,11 @@ public sealed class RemoteBrokerClient : BackgroundService
         SupportWebRtcService support, SupportRequestCoordinator coord,
         SupportAvailabilityStore availability,
         QrzService qrz, RemoteCallsignStore callsigns,
+        RemoteHostKeyStore hostKey,
         ILogger<RemoteBrokerClient> log)
     {
         _callsigns = callsigns;
+        _hostKey = hostKey;
         _passwords = passwords;
         _rtc = rtc;
         _support = support;
@@ -141,9 +144,25 @@ public sealed class RemoteBrokerClient : BackgroundService
         if (!string.IsNullOrEmpty(sessionKey))
             socket.Options.SetRequestHeader("X-QRZ-Session", sessionKey);
         socket.Options.SetRequestHeader("X-QRZ-Callsign", callsign);
+        // Anti-squat claim key (piece 3): binds this callsign's broker room to
+        // this radio on first connect; the broker refuses other hosts for it.
+        socket.Options.SetRequestHeader("X-Zeus-Host-Token", _hostKey.GetOrCreate());
+        socket.Options.CollectHttpResponseDetails = true;
 
         _log.LogInformation("remote broker: connecting to {Url} as {Callsign}", _brokerUrl, callsign);
-        await socket.ConnectAsync(new Uri(_brokerUrl), ct);
+        try
+        {
+            await socket.ConnectAsync(new Uri(_brokerUrl), ct);
+        }
+        catch (WebSocketException wex) when (socket.HttpStatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            // Anti-squat refusal: the room is claimed by a different host key.
+            _log.LogWarning(wex,
+                "remote broker refused {Callsign}: the callsign is claimed by another radio's host key. " +
+                "If this radio should own it, the claim lapses after ~60 days of that host being offline; " +
+                "self-hosters can clear the claim in the broker's SignalRoom storage.", callsign);
+            throw;
+        }
         _log.LogInformation("remote broker: host online for {Callsign}", callsign);
 
         // All outbound frames go through one queue + one send loop so the receive

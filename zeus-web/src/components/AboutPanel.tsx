@@ -48,10 +48,10 @@ function openExternalLink(url: string) {
   };
 }
 
-// Release date for the version this build ships against. Bump whenever
-// VersionPrefix in Directory.Build.props bumps. ISO 8601 so toLocaleDateString
-// renders sensibly in any locale.
-const RELEASE_DATE_ISO = '2026-07-05';
+// The "Built" line now comes from /api/version's builtUtc (the host binary's
+// own timestamp) — the hand-bumped RELEASE_DATE_ISO constant it replaces had
+// drifted seven weeks stale, which is exactly why a date maintained by hand
+// next to code doesn't belong in an About pane.
 // Note: v0.8.3 is a Windows-focused hotfix for v0.8.0..0.8.2. Fresh Windows
 // installs were silently broken without the Visual C++ Runtime present, and
 // even when running, Windows operators saw a growing 1-3 second MOX-engage
@@ -69,6 +69,7 @@ const RELEASE_DATE_ISO = '2026-07-05';
 
 type VersionInfo = {
   version: string;
+  builtUtc?: string | null;
 };
 
 export function AboutPanel() {
@@ -80,7 +81,11 @@ export function AboutPanel() {
     fetch('/api/version')
       .then((r) => r.json())
       .then((data) => {
-        setVersionInfo((prev) => ({ ...prev, version: data.version }));
+        setVersionInfo((prev) => ({
+          ...prev,
+          version: data.version,
+          builtUtc: typeof data.builtUtc === 'string' ? data.builtUtc : null,
+        }));
       })
       .catch((err) => {
         console.error('Failed to fetch version:', err);
@@ -115,16 +120,18 @@ export function AboutPanel() {
           </span>
         </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <span style={{ color: 'var(--fg-2)', marginRight: 8 }}>Released:</span>
-          <span style={{ color: 'var(--fg-1)', fontWeight: 600 }}>
-            {new Date(RELEASE_DATE_ISO).toLocaleDateString(undefined, {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}
-          </span>
-        </div>
+        {versionInfo.builtUtc && (
+          <div style={{ marginBottom: 12 }}>
+            <span style={{ color: 'var(--fg-2)', marginRight: 8 }}>Built:</span>
+            <span style={{ color: 'var(--fg-1)', fontWeight: 600 }}>
+              {new Date(versionInfo.builtUtc).toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </span>
+          </div>
+        )}
       </div>
 
       <div style={{ marginBottom: 20, paddingTop: 20, borderTop: '1px solid var(--panel-border)' }}>
@@ -166,6 +173,11 @@ export function AboutPanel() {
         <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-2)' }}>
           Copyright © 2025-2026 Brian Keating (EI6LF), Douglas J. Cerrato (KB2UKA), Christian
           Suarez (N9WAR), and contributors.
+        </p>
+        <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-2)' }}>
+          This build includes contributions by <strong>Apache Labs</strong> — G2-1K amplifier
+          protection and power calibration, remote operation, FreeDV/WSPR integration, and
+          Raspberry Pi appliance hardening.
         </p>
         <p style={{ margin: 0, lineHeight: 1.6, color: 'var(--fg-2)', fontSize: 11 }}>
           Licensed under GNU GPL v2 or later. See{' '}

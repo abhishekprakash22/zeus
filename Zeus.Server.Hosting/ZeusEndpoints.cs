@@ -60,7 +60,20 @@ public static class ZeusEndpoints
             var attr = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
                 .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
             var version = attr?.InformationalVersion ?? "unknown";
-            return Results.Ok(new { version });
+            // Build timestamp for the About panel's "Built" line — the host
+            // binary's own write time, so it can never drift from reality the
+            // way the old hand-bumped RELEASE_DATE_ISO constant did. Null when
+            // the probe fails; the About panel hides the line rather than
+            // showing a wrong date (also covers old-radio/new-web mixes).
+            string? builtUtc = null;
+            try
+            {
+                var path = assembly.Location;
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                    builtUtc = File.GetLastWriteTimeUtc(path).ToString("O");
+            }
+            catch { /* container/single-file edge — line simply hidden */ }
+            return Results.Ok(new { version, builtUtc });
         });
 
         // Operator manual. The PDF is built fresh from docs/manual each release

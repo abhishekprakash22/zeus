@@ -151,16 +151,21 @@ public sealed record RadioCalibration(
         MaxWatts: 100.0);
 
     /// <summary>
-    /// ANAN-G2-1K (Saturn FPGA, 1 kW PA). Same bridge constants as
-    /// <see cref="OrionMkII"/> but 1000 W rated for meter scaling.
-    /// Selected via <see cref="OrionMkIIVariant.G2_1K"/>. G8NJJ noted in
-    /// Thetis (<c>clsHardwareSpecific.cs:171</c>) that the 1K variant
-    /// "likely needs further changes for PA" — the bridge constants here
-    /// match G2 for parity until a real-radio operator dials them in.
+    /// ANAN-G2-1K (Saturn FPGA, 1 kW PA). Real-radio transfer supplied by
+    /// the G2-1K coupler's designer (2026-08): the directional coupler's
+    /// detector delivers <b>3.3 V at 1000 W</b> into the Saturn ADC
+    /// (full scale 3.3 V), square-law in between. In ComputeMeters terms:
+    /// RefVoltage = 3.3 (ADC full scale), AdcCalOffset = 0 (no measured
+    /// diode offset yet — adjust here if the low end reads high), and
+    /// BridgeVolt = 3.3² / 1000 = 0.010890 so full-scale ADC computes
+    /// exactly 1000 W. Supersedes the earlier G2-parity placeholder
+    /// (0.12 / 5.0 / 32), which read a 1 kW carrier as ~90 W. G8NJJ's
+    /// Thetis note (<c>clsHardwareSpecific.cs:171</c>) that the 1K
+    /// "likely needs further changes for PA" — this is that change.
     /// </summary>
     public static readonly RadioCalibration AnanG21K = new(
-        BridgeVolt: 0.12,
-        RefVoltage: 5.0,
-        AdcCalOffset: 32,
+        BridgeVolt: 3.3 * 3.3 / 1000.0,
+        RefVoltage: 3.3,
+        AdcCalOffset: 0,
         MaxWatts: 1000.0);
 }

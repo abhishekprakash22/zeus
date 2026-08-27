@@ -9,6 +9,7 @@ using Xunit;
 using Zeus.Contracts;
 using Zeus.Protocol1.Discovery;
 using Zeus.Server;
+using Zeus.Server.Hosting;
 
 namespace Zeus.Server.Tests;
 
@@ -137,14 +138,20 @@ public class RadioCalibrationsDispatchTests
     }
 
     [Fact]
-    public void OrionMkII_Variant_G2_1K_Same_Bridge_DifferentMaxWatts()
+    public void OrionMkII_Variant_G2_1K_CouplerTransfer_FullScaleIsOneKilowatt()
     {
-        // G2-1K shares G2's bridge constants (G8NJJ noted 1K may need
-        // different scaling but Thetis ships G2 numbers). MaxWatts = 1000.
+        // G2-1K coupler (designer-supplied, 2026-08): 3.3 V at the ADC =
+        // 1000 W, square-law. RefVoltage 3.3 / offset 0 / bridge 3.3²/1000.
         var cal = RadioCalibrations.For(HpsdrBoardKind.OrionMkII, OrionMkIIVariant.G2_1K);
         Assert.Same(RadioCalibration.AnanG21K, cal);
-        Assert.Equal(0.12, cal.BridgeVolt);
+        Assert.Equal(3.3, cal.RefVoltage);
+        Assert.Equal(0, cal.AdcCalOffset);
         Assert.Equal(1000.0, cal.MaxWatts);
+        // Full-scale ADC must read exactly rated power; half voltage = 250 W.
+        var (fullW, _, _) = TxMetersService.ComputeMeters(4095, 0, cal);
+        Assert.Equal(1000.0, fullW, 1);
+        var (halfW, _, _) = TxMetersService.ComputeMeters(4095.0 / 2, 0, cal);
+        Assert.Equal(250.0, halfW, 0);
     }
 
     [Theory]

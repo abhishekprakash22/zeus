@@ -27,6 +27,7 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
 import { Waterfall } from '../Waterfall';
 import { VfoDisplay } from '../VfoDisplay';
+import { G2ValueHud } from './G2ValueHud';
 import { ZoomControl } from '../ZoomControl';
 import { AnalogMeterPanel } from '../analog-meter/AnalogMeterPanel';
 import { FilterMiniPan } from '../filter/FilterMiniPan';
@@ -287,6 +288,8 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       <div style={{ ...paneSpectrum, flex: `0 0 calc(${(specFrac * 100).toFixed(1)}% - ${RATIO_H / 2}px)` }}>
         <Panadapter receiver={receiver} multiRx={false} />
       </div>
+      {/* Encoder HUD: only the ACTIVE pane answers the knobs. */}
+      {active ? <G2ValueHud rxIndex={rxIndex} /> : null}
       {/* ZOOM lives on each pane, and each pane zooms its OWN receiver —
           the backend applies zoom per DSP channel. */}
       <div style={zoomDock}>

@@ -424,6 +424,11 @@ public sealed class G2FrontPanelService : BackgroundService
                 // proven link re-arms the one-shot for the NEXT stall (each
                 // fresh P2 session needs its own p2app CAT thread upstream,
                 // so the next reconnect may legitimately stall again).
+                // A live CAT link that never identified gets ZZZS asked
+                // again each pass — the connect-time ask can race p2app's
+                // own tty bring-up, and an unanswered identify keeps the
+                // type-5 gate shut with the panel looking dead.
+                if (_catActive && _panelType != 5) Send("ZZZS;");
                 if (_catActive || _panelType == 5) { _catBounceSpent = false; continue; }
                 if (_catBounceSpent) continue;
                 if (!_store.Get().Enabled) continue;
@@ -518,6 +523,18 @@ public sealed class G2FrontPanelService : BackgroundService
         _activeBaud = 0;
         _log.LogInformation("g2panel.cat connected from {Remote} — serial path standing down", client.Client.RemoteEndPoint);
         RequestReconnect();   // break an open serial session; the loop idles while _catActive
+
+        // The serial path resets state and asks ZZZS at open; the CAT path
+        // must do the same. The identify p2app itself performs against the
+        // panel happens at p2app STARTUP — before this relay exists — so
+        // that reply is never forwarded here. Without our own ZZZS the
+        // type-5 gate stays shut and every button dies silently (field:
+        // CAT connected, panel dead, no g2panel.version in the log). ZZZI
+        // already proves the socket is write-through to the panel; ZZZS
+        // rides the same path and the Version reply opens the gate.
+        _panelType = 0;
+        Array.Fill(_lastLed, -1);
+        Send("ZZZS;");
 
         var buf = new byte[256];
         try

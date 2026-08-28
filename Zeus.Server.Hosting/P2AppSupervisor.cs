@@ -42,6 +42,7 @@ public sealed class P2AppSupervisor : BackgroundService
     private long _childBornMs;
     private int _backoffMs = 3000;
     private bool _noBinaryLogged;
+    private int _catBounces;
 
     public P2AppSupervisor(SaturnXdmaProbe probe, IConfiguration cfg, ILogger<P2AppSupervisor> log)
     { _probe = probe; _cfg = cfg; _log = log; }
@@ -56,6 +57,7 @@ public sealed class P2AppSupervisor : BackgroundService
                 binaryPath = _binaryPath,
                 restarts = _restarts,
                 lastExitCode = _lastExitCode,
+                catBounces = _catBounces,
             };
     }
 
@@ -120,6 +122,37 @@ public sealed class P2AppSupervisor : BackgroundService
     {
         _paused = false;
         lock (_lock) { _nextSpawnAtMs = 0; if (_mode == Mode.Paused) _mode = Mode.Probing; }
+    }
+
+    /// <summary>
+    /// The front-panel bridge saw a live P2 session but no CAT callback ever
+    /// arrived. Upstream p2app's CAT thread is born once per process life and
+    /// dies with the session it served — a p2app that predates the current
+    /// session will never dial the callback port again. Restarting the child
+    /// WHILE the session is up hands it a fresh CAT thread that latches the
+    /// stable port and connects within seconds (the field cure was exactly
+    /// `pkill p2app` at that moment). Owned children only: an Adopted p2app
+    /// belongs to the operator and is never touched — then this returns false
+    /// and the caller advises a manual restart instead. Never called during
+    /// MOX/TUNE (the caller checks) and inert while paused for a native
+    /// session.
+    /// </summary>
+    public async Task<bool> BounceOwnedChildAsync(string why)
+    {
+        lock (_lock)
+        {
+            if (_paused) return false;
+            if (_child is not { HasExited: false }) return false;   // Adopted / NoBinary / dead — nothing of ours to bounce
+        }
+        _log.LogInformation("p2app bounce — {Why}", why);
+        await StopChildAsync(why);
+        lock (_lock)
+        {
+            _catBounces++;
+            _nextSpawnAtMs = 0;        // respawn on the very next tick
+            _mode = Mode.Probing;
+        }
+        return true;
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)

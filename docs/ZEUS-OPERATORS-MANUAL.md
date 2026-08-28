@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.166**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.179**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -62,7 +62,11 @@ p2app is the small program that turns the Saturn board into a network radio.
 - **adopts** (leaves alone) a p2app you started yourself or run as a system
   service,
 - **pauses** it automatically when an expert native-PCIe session needs the
-  hardware, and brings it back after.
+  hardware, and brings it back after,
+- **restarts** it once, by itself, if the G2's front panel hasn't come
+  alive a few seconds into a session — the connection blips for a moment
+  and returns with the panel working. (If you run p2app yourself, Zeus
+  won't touch it; the log tells you to restart it instead.)
 
 Status any time: Settings → Updates → **P2APP** section, or
 `GET /api/p2app` for the curious (`Supervised`, `Adopted`, `Paused`, …).

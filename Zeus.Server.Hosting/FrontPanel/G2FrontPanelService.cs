@@ -66,6 +66,25 @@ public sealed class G2FrontPanelService : BackgroundService
     private volatile bool _catActive;
     private int _catPort;
 
+    // ---- CAT bounce watchdog (the once-per-session cure) ----------------
+    // The stable port (above) is necessary but not sufficient: upstream
+    // p2app's CAT thread runs while(SDRActive) and then DIES for that
+    // p2app's whole life — one CAT session per p2app process. A p2app that
+    // predates the current P2 session (fresh Zeus start over a supervised
+    // child, or any reconnect within one p2app life) will never dial the
+    // callback port again; the field cure was `pkill p2app` with the
+    // session up. So: when the panel is enabled, a P2 session has been up
+    // for a grace period, and NEITHER transport is delivering, ask the
+    // supervisor to restart its own p2app once — the fresh process dials
+    // the stable port within seconds. One attempt per stall: the latch
+    // re-arms only when a panel link actually comes up, so a bounce that
+    // doesn't cure can never loop. Never during MOX/TUNE, and never for a
+    // p2app Zeus doesn't own (logged advice instead).
+    private const int CatGraceMs = 8000;
+    private readonly P2AppSupervisor _p2app;
+    private long _p2SessionSinceMs;          // TickCount64 at P2 connect; 0 = down
+    private volatile bool _catBounceSpent;
+
     // Per-iteration linked CTS so a settings change (RequestReconnect) can break
     // the current session/idle wait and force the loop to re-resolve the device.
     private volatile CancellationTokenSource? _wakeCts;
@@ -92,9 +111,11 @@ public sealed class G2FrontPanelService : BackgroundService
         TxService tx,
         BandMemoryStore bandMemory,
         ToolbarSettingsStore toolbarSettings,
+        P2AppSupervisor p2app,
         ILogger<G2FrontPanelService> log,
         ILoggerFactory loggerFactory)
     {
+        _p2app = p2app;
         _opts = new G2PanelOptions();
         config.GetSection(G2PanelOptions.Section).Bind(_opts);
         _store = store;
@@ -106,9 +127,19 @@ public sealed class G2FrontPanelService : BackgroundService
         // A Settings change re-resolves the device and reconnects without a
         // server restart (enable toggled, COM port / baud edited).
         _store.Changed += OnSettingsChanged;
+        // Session lifecycle feeds the CAT bounce watchdog: the grace clock
+        // starts at P2 connect and stops at disconnect.
+        _radio.P2Connected += OnP2Connected;
+        _radio.P2Disconnected += OnP2Disconnected;
     }
 
     private void OnSettingsChanged() => RequestReconnect();
+
+    private void OnP2Connected(Zeus.Protocol2.Protocol2Client _) =>
+        Interlocked.Exchange(ref _p2SessionSinceMs, Environment.TickCount64);
+
+    private void OnP2Disconnected() =>
+        Interlocked.Exchange(ref _p2SessionSinceMs, 0);
 
     /// <summary>Break the current serial session / idle wait so the run loop
     /// re-reads settings and re-resolves the device. Safe to call from the
@@ -148,6 +179,7 @@ public sealed class G2FrontPanelService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _ = CatBounceWatchdogAsync(stoppingToken);
         while (!stoppingToken.IsCancellationRequested)
         {
             // Fresh linked CTS each pass so RequestReconnect() (settings change)
@@ -381,6 +413,40 @@ public sealed class G2FrontPanelService : BackgroundService
         }
     }
 
+    private async Task CatBounceWatchdogAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                // Panel alive on either transport — nothing to cure, and a
+                // proven link re-arms the one-shot for the NEXT stall (each
+                // fresh P2 session needs its own p2app CAT thread upstream,
+                // so the next reconnect may legitimately stall again).
+                if (_catActive || _panelType == 5) { _catBounceSpent = false; continue; }
+                if (_catBounceSpent) continue;
+                if (!_store.Get().Enabled) continue;
+                long since = Interlocked.Read(ref _p2SessionSinceMs);
+                if (since == 0 || Environment.TickCount64 - since < CatGraceMs) continue;
+                if (_tx.IsMoxOn || _tx.IsTunOn) continue;   // never yank the data path mid-transmit; retry after
+
+                _catBounceSpent = true;   // one attempt per stall, cure or not
+                bool bounced = await _p2app.BounceOwnedChildAsync(
+                    "panel enabled, P2 session up, no CAT callback in 8s — a fresh p2app will dial the stable port");
+                if (bounced)
+                    _log.LogInformation(
+                        "g2panel.cat.bounce — p2app restarted; the session will blip and reconnect, panel CAT should follow");
+                else
+                    _log.LogInformation(
+                        "g2panel.cat.stalled — no CAT callback and p2app is not Zeus-owned; " +
+                        "restart it yourself (pkill p2app) while the session is up");
+            }
+        }
+        catch (OperationCanceledException) { /* shutdown */ }
+        catch (Exception ex) { _log.LogDebug(ex, "g2panel.cat.watchdog fault"); }
+    }
+
     /// <summary>Start the CAT callback listener once and publish its port in
     /// the P2 high-priority packet. p2app connects only when a panel exists
     /// and a P2 session is up, so an idle listener costs nothing.</summary>
@@ -510,6 +576,8 @@ public sealed class G2FrontPanelService : BackgroundService
     public override void Dispose()
     {
         _store.Changed -= OnSettingsChanged;
+        _radio.P2Connected -= OnP2Connected;
+        _radio.P2Disconnected -= OnP2Disconnected;
         StopCatListener();
         ClosePort();
         base.Dispose();

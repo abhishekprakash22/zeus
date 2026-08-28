@@ -384,13 +384,35 @@ public sealed class G2FrontPanelService : BackgroundService
     /// <summary>Start the CAT callback listener once and publish its port in
     /// the P2 high-priority packet. p2app connects only when a panel exists
     /// and a P2 session is up, so an idle listener costs nothing.</summary>
+    // Fixed CAT callback port (loopback traffic only in practice; announced in
+    // the P2 HP packet). Chosen from the dynamic range, unregistered.
+    private const int StableCatPort = 51730;
+
     private void EnsureCatListener(CancellationToken serviceCt)
     {
         if (_catListener is not null) return;
         try
         {
-            var listener = new TcpListener(IPAddress.Any, 0);
-            listener.Start();
+            // A STABLE port, not an ephemeral one. p2app latches the CAT
+            // callback port from the first high-priority packet it examines
+            // and keeps it for its whole (long-lived, supervised) life — an
+            // ephemeral port meant only the first Zeus session after a p2app
+            // start ever connected; every Zeus restart announced a new number
+            // p2app ignored (field: manual p2app restart connects, fresh Zeus
+            // start doesn't). Same fixed port every session keeps the latch
+            // valid forever. Ephemeral fallback only if the port is taken.
+            TcpListener listener;
+            try
+            {
+                listener = new TcpListener(IPAddress.Any, StableCatPort);
+                listener.Start();
+            }
+            catch (SocketException)
+            {
+                listener = new TcpListener(IPAddress.Any, 0);
+                listener.Start();
+                _log.LogWarning("g2panel.cat stable port {Port} busy — ephemeral fallback (panel reconnect may need a p2app restart)", StableCatPort);
+            }
             _catListener = listener;
             _catPort = ((IPEndPoint)listener.LocalEndpoint).Port;
             Zeus.Protocol2.Protocol2Client.PanelCatAnnouncePort = _catPort;

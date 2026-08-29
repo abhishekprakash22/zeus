@@ -33,7 +33,13 @@ function snapshot(rxIndex: number): Watched[] {
 }
 
 export function G2ValueHud({ rxIndex }: { rxIndex: number }) {
+  // The chip stays MOUNTED once it has ever shown: visibility is pure
+  // opacity, so appearing is a ~90 ms fade instead of a cold mount, turning
+  // an encoder updates the text in place with no flicker, and release gives
+  // a long readable hold before a soft fade-out.
+  const HOLD_MS = 2500;
   const [text, setText] = useState<string | null>(null);
+  const [visible, setVisible] = useState(false);
   const prev = useRef<(number | undefined)[] | null>(null);
   const timer = useRef<number | null>(null);
 
@@ -49,8 +55,9 @@ export function G2ValueHud({ rxIndex }: { rxIndex: number }) {
         if (w?.value === undefined || before[i] === undefined) continue;
         if (w.value !== before[i]) {
           setText(`${w.label} ${w.fmt(w.value)}`);
+          setVisible(true);
           if (timer.current) window.clearTimeout(timer.current);
-          timer.current = window.setTimeout(() => setText(null), 1200);
+          timer.current = window.setTimeout(() => setVisible(false), HOLD_MS);
         }
       }
     };
@@ -64,15 +71,28 @@ export function G2ValueHud({ rxIndex }: { rxIndex: number }) {
   }, [rxIndex]);
 
   if (!text) return null;
-  return <div style={hud}>{text}</div>;
+  return (
+    <div
+      style={{
+        ...hud,
+        opacity: visible ? 1 : 0,
+        transform: `translateX(-50%) translateY(${visible ? 0 : -4}px)`,
+        transition: visible
+          ? 'opacity 90ms ease-out, transform 90ms ease-out'
+          : 'opacity 280ms ease-in, transform 280ms ease-in',
+      }}
+    >
+      {text}
+    </div>
+  );
 }
 
 const hud: CSSProperties = {
   position: 'absolute',
   top: 14,
   left: '50%',
-  transform: 'translateX(-50%)',
   zIndex: 40,
+  willChange: 'opacity, transform',
   padding: '6px 16px',
   borderRadius: 8,
   background: 'rgba(10,12,16,0.82)',

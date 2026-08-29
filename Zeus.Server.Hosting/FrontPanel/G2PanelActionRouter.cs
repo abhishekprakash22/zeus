@@ -279,7 +279,10 @@ public sealed class G2PanelActionRouter
 
     private void HandleVfo(int steps)
     {
-        Interlocked.Add(ref _pendingVfoTicks, steps);
+        // steps = RAW wire count. Shape per message (curve in auto, linear
+        // under a fixed divide) BEFORE accumulating — the curve is defined on
+        // per-message counts, and flush-time totals would hit it wrong.
+        Interlocked.Add(ref _pendingVfoTicks, EffectiveVfoTicks(steps, _vfoDivisor));
     }
 
     public bool FlushPendingVfo()
@@ -359,6 +362,36 @@ public sealed class G2PanelActionRouter
         fixedDivisor > 0
             ? Math.Clamp(fixedDivisor, MinVfoEncoderDivisor, MaxVfoEncoderDivisor)
             : VfoEncoderDivisorForStep(stepHz);
+
+    /// <summary>
+    /// ANDROMEDA VFO acceleration curve (deskhpsdr <c>andromeda_vfo_speedup</c>).
+    /// Index = raw step count reported by the panel per ZZZU/ZZZD message
+    /// (0..30); value = the accelerated count so faster spinning tunes
+    /// over-proportionally. Index 31 holds the multiplier for raw &gt; 30.
+    /// Applied per MESSAGE (the curve is defined on per-message raw counts,
+    /// never on flush-accumulated totals) — and ONLY in auto-divisor mode:
+    /// a superlinear input would defeat a linear fixed divide, which is
+    /// exactly the "skips 20-50 Hz unless turned dead slow" field failure.
+    /// </summary>
+    private static readonly int[] VfoSpeedup =
+    {
+          0,   1,   2,   3,   4,   5,   6,   7,
+          8,   9,  11,  12,  14,  17,  19,  22,
+         25,  29,  33,  38,  43,  48,  54,  61,
+         69,  77,  85,  95, 105, 116, 128,   4,
+    };
+
+    /// <summary>Per-message tick shaping. Auto (fixedDivisor 0) applies the
+    /// speedup curve — today's fast-band-cruising feel. A fixed divide takes
+    /// the raw wire count, so the dial is mechanically linear: exactly N
+    /// physical ticks per VFO step, at any rotation speed.</summary>
+    internal static int EffectiveVfoTicks(int rawSteps, int fixedDivisor)
+    {
+        if (fixedDivisor > 0) return rawSteps;
+        int magnitude = Math.Abs(rawSteps);
+        int accelerated = magnitude <= 30 ? VfoSpeedup[magnitude] : magnitude * VfoSpeedup[31];
+        return rawSteps < 0 ? -accelerated : accelerated;
+    }
 
     internal static (long LogicalSteps, long RemainderTicks) DivideVfoEncoderTicks(
         long accumulatedTicks,

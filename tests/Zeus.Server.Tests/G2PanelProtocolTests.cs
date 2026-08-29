@@ -47,10 +47,10 @@ public sealed class G2PanelProtocolTests
     }
 
     [Theory]
-    [InlineData("ZZZU05;", 5)]    // raw 5 -> speedup[5] = 5, up = +5
-    [InlineData("ZZZU13;", 17)]   // raw 13 -> speedup[13] = 17
-    [InlineData("ZZZD13;", -17)]  // down negates
-    [InlineData("ZZZU31;", 124)]  // raw 31 > 30 -> 31 * speedup[31](=4)
+    [InlineData("ZZZU05;", 5)]    // raw count, verbatim — up = +5
+    [InlineData("ZZZU13;", 13)]   // RAW: the speedup curve moved to the
+    [InlineData("ZZZD13;", -13)]  // router (auto-mode policy); down negates
+    [InlineData("ZZZU31;", 31)]   // raw > 30 passes through unshaped too
     public void Vfo_steps_apply_acceleration_curve(string cmd, int expected)
     {
         var ev = Assert.IsType<PanelEvent.Vfo>(Assert.Single(Decode(cmd)));

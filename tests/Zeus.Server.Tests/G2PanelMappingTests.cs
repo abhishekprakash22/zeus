@@ -201,6 +201,33 @@ public sealed class G2PanelMappingTests : IDisposable
         Assert.Equal(2, remainder);
     }
 
+    // ---- VFO tick shaping (acceleration curve vs linear fixed divide) --------
+
+    [Theory]
+    [InlineData(5, 5)]      // curve identity region
+    [InlineData(9, 9)]      // last identity entry
+    [InlineData(10, 11)]    // curve begins to accelerate
+    [InlineData(13, 17)]    // deskhpsdr table values preserved verbatim
+    [InlineData(30, 128)]
+    [InlineData(31, 124)]   // >30 → raw * multiplier(4)
+    [InlineData(-13, -17)]  // sign preserved
+    public void AutoMode_AppliesTheSpeedupCurve_Verbatim(int raw, int expected)
+    {
+        Assert.Equal(expected, G2PanelActionRouter.EffectiveVfoTicks(raw, 0));
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(13)]
+    [InlineData(31)]
+    [InlineData(-13)]
+    public void FixedDivisor_BypassesTheCurve_RawTicksVerbatim(int raw)
+    {
+        // The field failure: superlinear input defeats a linear divide
+        // (20-50 Hz jumps at moderate rotation). Fixed = mechanically linear.
+        Assert.Equal(raw, G2PanelActionRouter.EffectiveVfoTicks(raw, 10));
+    }
+
     [Fact]
     public void SettingsStore_PersistsVfoDivisor_AndClampsIt()
     {

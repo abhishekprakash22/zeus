@@ -371,9 +371,10 @@ export function RadioSettingsPanel() {
             VFO encoder divide
             <em>
               Panel ticks per VFO step. Auto derives it from the selected
-              tuning step (coarse steps stay controllable, 1&nbsp;Hz stays
-              responsive). A fixed value works like piHPSDR&apos;s VFO encoder
-              divisor — higher = slower, finer dial.
+              tuning step and applies the panel acceleration curve (spin fast
+              to cruise the band). A fixed value works like piHPSDR&apos;s VFO
+              encoder divisor and also bypasses the acceleration — mechanically
+              linear: exactly N ticks per step at any rotation speed.
             </em>
           </div>
           <select

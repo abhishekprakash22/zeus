@@ -37,9 +37,11 @@ public abstract record PanelEvent
     /// since the last report (1..9).</summary>
     public sealed record Encoder(int Id, int Ticks) : PanelEvent;
 
-    /// <summary>Main VFO dial. <see cref="Steps"/> is signed accelerated
-    /// encoder ticks. The action router divides these into logical VFO steps
-    /// before applying the operator's selected Hz step.</summary>
+    /// <summary>Main VFO dial. <see cref="Steps"/> is the signed RAW step
+    /// count from the wire (per ZZZU/ZZZD message). Acceleration is policy,
+    /// not framing — the action router applies the speedup curve in auto
+    /// mode and skips it under a fixed VFO divide, then divides into logical
+    /// VFO steps before applying the operator's selected Hz step.</summary>
     public sealed record Vfo(int Steps) : PanelEvent;
 
     /// <summary>The panel announced its identity (response to <c>ZZZS;</c>).
@@ -60,20 +62,6 @@ public sealed class AndromedaParser
     // Bounded accumulator: a runaway peer can't grow this without bound.
     private readonly System.Text.StringBuilder _buf = new(64);
     private const int MaxCommandLen = 64;
-
-    /// <summary>
-    /// ANDROMEDA VFO acceleration curve (deskhpsdr <c>andromeda_vfo_speedup</c>).
-    /// Index = raw step count reported by the panel (0..30); value = the
-    /// accelerated step count so faster spinning tunes over-proportionally.
-    /// Index 31 holds the multiplier applied for raw counts &gt; 30.
-    /// </summary>
-    private static readonly int[] VfoSpeedup =
-    {
-          0,   1,   2,   3,   4,   5,   6,   7,
-          8,   9,  11,  12,  14,  17,  19,  22,
-         25,  29,  33,  38,  43,  48,  54,  61,
-         69,  77,  85,  95, 105, 116, 128,   4,
-    };
 
     /// <summary>Feed a chunk of received characters; invokes <paramref name="emit"/>
     /// once per fully-decoded command.</summary>
@@ -122,11 +110,10 @@ public sealed class AndromedaParser
 
             case 'U': // ZZZUxx — VFO up (active receiver)
             case 'D': // ZZZDxx — VFO down
+                // RAW count only — the acceleration curve lives in the router
+                // (auto mode), so a fixed VFO divide can stay linear.
                 if (s.Length == 6 && TryTwo(s, 4, out int raw))
-                {
-                    int steps = raw <= 30 ? VfoSpeedup[raw] : raw * VfoSpeedup[31];
-                    return new PanelEvent.Vfo(kind == 'U' ? steps : -steps);
-                }
+                    return new PanelEvent.Vfo(kind == 'U' ? raw : -raw);
                 return null;
 
             case 'S': // ZZZSxxyyzzz — version announcement, xx = ANDROMEDA type

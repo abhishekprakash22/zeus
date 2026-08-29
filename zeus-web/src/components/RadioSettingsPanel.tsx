@@ -255,15 +255,17 @@ export function RadioSettingsPanel() {
                 width: '0.6rem',
                 height: '0.6rem',
                 borderRadius: '50%',
-                background: g2Connected ? 'var(--accent)' : 'var(--fg-3)',
-                boxShadow: g2Connected ? '0 0 6px var(--accent)' : 'none',
+                background: g2PanelType > 0 ? 'var(--accent)' : g2Connected ? '#d9a13b' : 'var(--fg-3)',
+                boxShadow: g2PanelType > 0 ? '0 0 6px var(--accent)' : 'none',
                 transition: 'background 60ms linear',
               }}
             />
-            <span style={{ color: g2Connected ? 'var(--accent)' : 'var(--fg-2)' }}>
-              {g2Connected
-                ? `connected${g2PanelType === 5 ? ' · G2-Ultra' : g2PanelType > 0 ? ` · type ${g2PanelType}` : ''}`
-                : 'not connected'}
+            <span style={{ color: g2PanelType > 0 ? 'var(--accent)' : g2Connected ? '#d9a13b' : 'var(--fg-2)' }}>
+              {g2PanelType > 0
+                ? `panel${g2PanelType === 5 ? ' · G2-Ultra' : ` · type ${g2PanelType}`}`
+                : g2Connected
+                  ? 'link up · no panel identified'
+                  : 'not connected'}
             </span>
             {g2Connected && g2ActivePath ? (
               <span style={{ color: 'var(--fg-3)', fontSize: '0.8em' }}>

@@ -10,6 +10,7 @@
 // the VFO.
 
 import { useEffect, useMemo, useState } from 'react';
+import type React from 'react';
 import {
   useG2PanelMappingStore,
   type G2PanelControl,
@@ -17,6 +18,15 @@ import {
 } from '../state/g2panel-mapping-store';
 
 const DEFAULT_SENTINEL = '__default__';
+
+// Responsive multi-column layout: the whole map fits the 1280×800 panel
+// without scrolling (~4 columns there; phones degrade to 1-2), so a
+// press-to-identify flash can never land off-screen.
+const GRID_STYLE: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+  gap: '0.3rem',
+};
 const FLASH_MS = 2500;
 
 function actionLabel(name: string): string {
@@ -45,28 +55,44 @@ function Row({
     <div
       style={{
         display: 'flex',
-        alignItems: 'center',
-        gap: '0.5rem',
-        padding: '0.2rem 0.35rem',
+        flexDirection: 'column',
+        gap: '0.15rem',
+        padding: '0.25rem 0.35rem',
         borderRadius: 4,
-        background: flash ? 'color-mix(in srgb, var(--accent) 28%, transparent)' : 'transparent',
+        border: '1px solid var(--bg-3, rgba(128,128,128,0.25))',
+        background: flash
+          ? 'color-mix(in srgb, var(--accent) 32%, transparent)'
+          : override
+            ? 'color-mix(in srgb, var(--accent) 8%, transparent)'
+            : 'transparent',
+        outline: flash ? '2px solid var(--accent)' : 'none',
         transition: 'background 300ms ease-out',
+        minWidth: 0,
       }}
       data-testid={`g2map-row-${kind}-${control.id}`}
     >
-      <span style={{ width: '2.2rem', color: 'var(--fg-3)', fontSize: '0.8em' }}>
-        {control.id}
-      </span>
-      <span style={{ flex: '0 0 7rem', fontWeight: override ? 600 : 400 }}>
-        {control.label}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.35rem', minWidth: 0 }}>
+        <span style={{ color: 'var(--fg-3)', fontSize: '0.75em' }}>{control.id}</span>
+        <span
+          style={{
+            fontWeight: override ? 600 : 400,
+            fontSize: '0.9em',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {control.label}
+        </span>
+      </div>
       {control.pinned ? (
-        <span style={{ color: 'var(--fg-3)', fontSize: '0.85em' }}>
+        <span style={{ color: 'var(--fg-3)', fontSize: '0.8em' }}>
           {control.defaultAction ? actionLabel(control.defaultAction) : ''} · pinned
         </span>
       ) : (
         <select
           className="ps-select-mini"
+          style={{ width: '100%', minWidth: 0 }}
           value={override ?? DEFAULT_SENTINEL}
           disabled={disabled}
           onChange={(e) =>
@@ -187,6 +213,7 @@ export function G2PanelMappingGrid() {
               <div style={{ color: 'var(--fg-2)', fontSize: '0.85em', margin: '0.3rem 0 0.1rem' }}>
                 Buttons
               </div>
+              <div style={GRID_STYLE}>
               {mapping.buttons.map((c) => (
                 <Row
                   key={`b${c.id}`}
@@ -216,10 +243,12 @@ export function G2PanelMappingGrid() {
                     onAssign={(bid, a) => void setOverride('button', bid, a)}
                   />
                 ))}
+              </div>
 
               <div style={{ color: 'var(--fg-2)', fontSize: '0.85em', margin: '0.4rem 0 0.1rem' }}>
                 Encoders
               </div>
+              <div style={GRID_STYLE}>
               {mapping.encoders.map((c) => (
                 <Row
                   key={`e${c.id}`}
@@ -246,6 +275,7 @@ export function G2PanelMappingGrid() {
                     onAssign={(eid, a) => void setOverride('encoder', eid, a)}
                   />
                 ))}
+              </div>
 
               <div style={{ marginTop: '0.5rem' }}>
                 <button

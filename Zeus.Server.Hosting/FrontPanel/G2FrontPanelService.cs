@@ -208,6 +208,22 @@ public sealed class G2FrontPanelService : BackgroundService
                 continue;
             }
 
+            if (_p2app.TtyBelongsToP2App)
+            {
+                // Radio host, p2app alive or imminent: the panel tty is
+                // p2app's even while the CAT link is down. Opening it here
+                // puts two readers on one line — the original disease — and
+                // worse, a p2app starting into that contention can lose its
+                // own ZZZS exchange with the panel and come up blind: no
+                // panel threads, no event forwarding, no identity announce,
+                // for that p2app's whole life. Field log: g2panel.open
+                // within 1 ms of every CAT drop, racing each fresh p2app.
+                // On this host the panel path is the CAT relay, full stop;
+                // idle and let the relay (and the bounce watchdog) work.
+                await DelaySafe(TimeSpan.FromSeconds(2), ct);
+                continue;
+            }
+
             var dev = ResolveDevice(eff.DevicePath, eff.Baud);
             if (dev is null)
             {

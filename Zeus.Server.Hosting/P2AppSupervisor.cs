@@ -62,6 +62,21 @@ public sealed class P2AppSupervisor : BackgroundService
     }
 
     /// <summary>
+    /// True while a p2app owns — or is about to own — this host's radio, and
+    /// with it the front-panel tty. Probing counts: it is exactly the startup
+    /// window in which a spawned p2app performs its own ZZZS exchange with
+    /// the panel, and a second reader on the line can steal the reply and
+    /// blind p2app's panel detection for its whole life. Backoff counts too —
+    /// the respawn is imminent. Only Disabled (not a radio host), NoBinary
+    /// (nothing to spawn) and Paused (native session; p2app stopped) leave
+    /// the tty free.
+    /// </summary>
+    public bool TtyBelongsToP2App
+    {
+        get { lock (_lock) return _mode is Mode.Probing or Mode.Supervised or Mode.Adopted or Mode.Backoff; }
+    }
+
+    /// <summary>
     /// Called before a native XDMA session opens the register plane. Stops
     /// the supervised child and verifies nothing else owns port 1024. The
     /// session must not start unless this returns ok — the check replaces

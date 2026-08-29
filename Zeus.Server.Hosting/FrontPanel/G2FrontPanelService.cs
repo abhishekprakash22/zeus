@@ -163,7 +163,8 @@ public sealed class G2FrontPanelService : BackgroundService
             Connected: _connected,
             ActiveDevicePath: _activePath,
             ActiveBaud: _activeBaud,
-            PanelType: _panelType);
+            PanelType: _panelType,
+            AssumeUltra: s.AssumeUltra);
     }
 
     // Stored settings layered over config: a stored value wins, else the
@@ -295,6 +296,12 @@ public sealed class G2FrontPanelService : BackgroundService
 
         // Ask the panel to identify itself; the ZZZS reply sets _panelType.
         Send("ZZZS;");
+        if (_store.Get().AssumeUltra)
+        {
+            _panelType = 5;
+            _log.LogInformation("g2panel.assume — operator override: treating serial panel as G2-Ultra (type 5)");
+            RefreshLeds();
+        }
 
         var ledLoop = LedPollLoop(ct);
         var panelFlushLoop = PanelFlushLoop(ct);
@@ -551,6 +558,17 @@ public sealed class G2FrontPanelService : BackgroundService
         _panelType = 0;
         Array.Fill(_lastLed, -1);
         Send("ZZZS;");
+
+        // piHPSDR trust model, opt-in: the operator has declared the panel a
+        // G2-Ultra, so the gate opens on configuration instead of waiting for
+        // an identify that some panel paths never deliver. ZZZS still goes
+        // out — a real Version reply simply confirms (or corrects) the type.
+        if (_store.Get().AssumeUltra)
+        {
+            _panelType = 5;
+            _log.LogInformation("g2panel.assume — operator override: treating CAT peer as G2-Ultra (type 5)");
+            RefreshLeds();
+        }
 
         var buf = new byte[256];
         try

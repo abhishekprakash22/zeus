@@ -3225,7 +3225,8 @@ public static class ZeusEndpoints
             store.Set(
                 enabled: req.Enabled ?? cur.Enabled,
                 devicePath: req.DevicePath ?? cur.DevicePath,
-                baud: req.Baud ?? cur.Baud);
+                baud: req.Baud ?? cur.Baud,
+                assumeUltra: req.AssumeUltra ?? cur.AssumeUltra);
             return Results.Ok(svc.Snapshot());
         });
 

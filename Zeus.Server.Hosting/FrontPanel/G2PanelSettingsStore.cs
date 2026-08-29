@@ -67,7 +67,7 @@ public sealed class G2PanelSettingsStore : IDisposable
     /// <summary>Replace the stored settings. <paramref name="devicePath"/> empty/
     /// null = auto-detect; <paramref name="baud"/> 0 = auto. Insert-then-Update
     /// (matching PttSettingsStore) avoids the LiteDB Id=0 upsert bug (PR #387).</summary>
-    public void Set(bool enabled, string? devicePath, int baud)
+    public void Set(bool enabled, string? devicePath, int baud, bool assumeUltra = false)
     {
         var normPath = string.IsNullOrWhiteSpace(devicePath) ? null : devicePath.Trim();
         var normBaud = baud > 0 ? baud : 0;
@@ -82,6 +82,7 @@ public sealed class G2PanelSettingsStore : IDisposable
                     Enabled = enabled,
                     DevicePath = normPath,
                     Baud = normBaud,
+                    AssumeUltra = assumeUltra,
                     UpdatedUtc = nowUtc,
                 });
             }
@@ -90,6 +91,7 @@ public sealed class G2PanelSettingsStore : IDisposable
                 existing.Enabled = enabled;
                 existing.DevicePath = normPath;
                 existing.Baud = normBaud;
+                existing.AssumeUltra = assumeUltra;
                 existing.UpdatedUtc = nowUtc;
                 _rows.Update(existing);
             }
@@ -110,5 +112,9 @@ public sealed class G2PanelSettingsEntry
     public string? DevicePath { get; set; }
     // Baud override. 0 = auto (config, then per-symlink default, then 9600).
     public int Baud { get; set; }
+    // Operator declaration: treat the panel as a G2-Ultra (ANDROMEDA type 5)
+    // without waiting for a ZZZS identify — the piHPSDR trust model. Default
+    // false: identify-gated, the historical behaviour.
+    public bool AssumeUltra { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }

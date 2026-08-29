@@ -650,7 +650,8 @@ public sealed record G2PanelSettingsDto(
     bool Connected,
     string? ActiveDevicePath,
     int ActiveBaud,
-    int PanelType);
+    int PanelType,
+    bool AssumeUltra = false);
 
 // Request body for PUT /api/radio/front-panel. Every field optional — only the
 // supplied ones change. DevicePath "" clears the override (back to auto-detect);
@@ -658,7 +659,8 @@ public sealed record G2PanelSettingsDto(
 public sealed record G2PanelSettingsSetRequest(
     bool? Enabled = null,
     string? DevicePath = null,
-    int? Baud = null);
+    int? Baud = null,
+    bool? AssumeUltra = null);
 
 public sealed record HardwareKeyingStatusDto(
     int SchemaVersion,

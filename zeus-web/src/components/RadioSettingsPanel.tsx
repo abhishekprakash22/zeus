@@ -78,6 +78,7 @@ export function RadioSettingsPanel() {
   const g2ActivePath = useG2PanelStore((s) => s.activeDevicePath);
   const g2ActiveBaud = useG2PanelStore((s) => s.activeBaud);
   const g2PanelType = useG2PanelStore((s) => s.panelType);
+  const g2AssumeUltra = useG2PanelStore((s) => s.assumeUltra);
   const g2Inflight = useG2PanelStore((s) => s.inflight);
   const loadG2 = useG2PanelStore((s) => s.load);
   const updateG2 = useG2PanelStore((s) => s.update);
@@ -292,6 +293,28 @@ export function RadioSettingsPanel() {
             />
             <span className="ps-check-box" />
             <span>Front-panel bridge</span>
+          </label>
+        </div>
+
+        <div className="ps-field">
+          <div className="ps-name">
+            Assume G2-Ultra panel
+            <em>
+              Route buttons and encoders without waiting for the panel to
+              identify itself — the piHPSDR trust model. Only enable this on a
+              radio whose panel really is a G2 / G2-Ultra: with the wrong panel
+              attached, buttons may map to the wrong actions, including MOX.
+            </em>
+          </div>
+          <label className="ps-check">
+            <input
+              type="checkbox"
+              checked={g2AssumeUltra}
+              disabled={g2Inflight}
+              onChange={(e) => void updateG2({ assumeUltra: e.target.checked })}
+            />
+            <span className="ps-check-box" />
+            <span>Assume G2-Ultra</span>
           </label>
         </div>
 

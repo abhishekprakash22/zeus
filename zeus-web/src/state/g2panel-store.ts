@@ -27,6 +27,8 @@ export interface G2PanelSettings {
   activeBaud: number;
   /** Live: ANDROMEDA console type from ZZZS (5 = G2-Ultra). 0 = not identified. */
   panelType: number;
+  /** Operator override: treat the panel as a G2-Ultra without an identify. */
+  assumeUltra: boolean;
 }
 
 const DEFAULTS: G2PanelSettings = {
@@ -37,6 +39,7 @@ const DEFAULTS: G2PanelSettings = {
   activeDevicePath: '',
   activeBaud: 0,
   panelType: 0,
+  assumeUltra: false,
 };
 
 function parse(raw: unknown): G2PanelSettings {
@@ -49,6 +52,7 @@ function parse(raw: unknown): G2PanelSettings {
     activeDevicePath: typeof r.activeDevicePath === 'string' ? r.activeDevicePath : '',
     activeBaud: typeof r.activeBaud === 'number' ? r.activeBaud : 0,
     panelType: typeof r.panelType === 'number' ? r.panelType : 0,
+    assumeUltra: typeof r.assumeUltra === 'boolean' ? r.assumeUltra : false,
   };
 }
 
@@ -59,7 +63,7 @@ export async function fetchG2PanelSettings(signal?: AbortSignal): Promise<G2Pane
 }
 
 export async function updateG2PanelSettings(
-  patch: { enabled?: boolean; devicePath?: string; baud?: number },
+  patch: { enabled?: boolean; devicePath?: string; baud?: number; assumeUltra?: boolean },
   signal?: AbortSignal,
 ): Promise<G2PanelSettings> {
   const res = await fetch('/api/radio/front-panel', {
@@ -79,7 +83,7 @@ interface G2PanelState extends G2PanelSettings {
   /** Hydrate settings + status from the REST snapshot. */
   load: () => Promise<void>;
   /** Update one or more settings (optimistic, server-authoritative). */
-  update: (patch: { enabled?: boolean; devicePath?: string; baud?: number }) => Promise<void>;
+  update: (patch: { enabled?: boolean; devicePath?: string; baud?: number; assumeUltra?: boolean }) => Promise<void>;
   __resetForTests: () => void;
 }
 
@@ -108,6 +112,7 @@ export const useG2PanelStore = create<G2PanelState>((set, get) => ({
       activeDevicePath: get().activeDevicePath,
       activeBaud: get().activeBaud,
       panelType: get().panelType,
+      assumeUltra: get().assumeUltra,
     };
     // Optimistic on the operator-settable fields; status fields keep prior
     // values until the server snapshot returns.

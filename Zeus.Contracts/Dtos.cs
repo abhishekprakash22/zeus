@@ -662,6 +662,28 @@ public sealed record G2PanelSettingsSetRequest(
     int? Baud = null,
     bool? AssumeUltra = null);
 
+// G2-Ultra front-panel mapping (GET/PUT/DELETE /api/radio/front-panel/mapping).
+// Buttons/Encoders = the known physical inventory with default action names and
+// the pinned flag (MOX/TUNE — not remappable, by design, no unlock); the
+// *Overrides dictionaries are keyed by input id (string for JSON) → action
+// name; LastInput is the press-to-identify stamp (any raw id the panel emitted,
+// including ids outside the inventory).
+public sealed record G2PanelMappingDto(
+    IReadOnlyList<G2PanelControlDto> Buttons,
+    IReadOnlyList<G2PanelControlDto> Encoders,
+    IReadOnlyList<string> ButtonActions,
+    IReadOnlyList<string> EncoderActions,
+    IReadOnlyDictionary<string, string> ButtonOverrides,
+    IReadOnlyDictionary<string, string> EncoderOverrides,
+    G2PanelLastInputDto? LastInput);
+
+public sealed record G2PanelControlDto(int Id, string Label, string? DefaultAction, bool Pinned = false);
+
+public sealed record G2PanelLastInputDto(string Kind, int Id, int AgeMs);
+
+// PUT body: one override. Action null/"" clears the override (back to default).
+public sealed record G2PanelMappingSetRequest(string Kind, int Id, string? Action = null);
+
 public sealed record HardwareKeyingStatusDto(
     int SchemaVersion,
     string? ActiveProtocol,

@@ -41,6 +41,15 @@ public sealed class G2FrontPanelService : BackgroundService
 {
     private readonly G2PanelOptions _opts;
     private readonly G2PanelSettingsStore _store;
+    private readonly G2PanelMappingStore _mappingStore;
+
+    // Press-to-identify: the last raw button/encoder event, recorded BEFORE
+    // the type-5 routing gate (telemetry only — nothing is routed by it), so
+    // the settings grid can flash the matching row and surface ids outside
+    // the default table (e.g. the panel's PS button). Immutable record swapped
+    // atomically; volatile read on the endpoint thread.
+    private sealed record PanelInputStamp(string Kind, int Id, long TickMs);
+    private volatile PanelInputStamp? _lastInput;
     private readonly RadioService _radio;
     private readonly TxService _tx;
     private readonly G2PanelActionRouter _router;
@@ -119,6 +128,7 @@ public sealed class G2FrontPanelService : BackgroundService
     public G2FrontPanelService(
         IConfiguration config,
         G2PanelSettingsStore store,
+        G2PanelMappingStore mappingStore,
         RadioService radio,
         TxService tx,
         BandMemoryStore bandMemory,
@@ -131,11 +141,16 @@ public sealed class G2FrontPanelService : BackgroundService
         _opts = new G2PanelOptions();
         config.GetSection(G2PanelOptions.Section).Bind(_opts);
         _store = store;
+        _mappingStore = mappingStore;
         _radio = radio;
         _tx = tx;
         _log = log;
         _router = new G2PanelActionRouter(radio, tx, bandMemory, toolbarSettings,
-            loggerFactory.CreateLogger<G2PanelActionRouter>());
+            loggerFactory.CreateLogger<G2PanelActionRouter>(),
+            mappingStore);
+        // A mapping write takes effect on the very next panel event — no
+        // reconnect, no restart.
+        _mappingStore.Changed += _router.ReloadOverrides;
         // A Settings change re-resolves the device and reconnects without a
         // server restart (enable toggled, COM port / baud edited).
         _store.Changed += OnSettingsChanged;
@@ -177,6 +192,33 @@ public sealed class G2FrontPanelService : BackgroundService
             ActiveBaud: _activeBaud,
             PanelType: _panelType,
             AssumeUltra: s.AssumeUltra);
+    }
+
+    /// <summary>Inventory + action catalogs + stored overrides + the
+    /// press-to-identify stamp. Backs GET /api/radio/front-panel/mapping.</summary>
+    public G2PanelMappingDto MappingSnapshot()
+    {
+        static G2PanelControlDto ToDto((int Id, string Label, string? DefaultAction, bool Pinned) c) =>
+            new(c.Id, c.Label, c.DefaultAction, c.Pinned);
+
+        var last = _lastInput;
+        G2PanelLastInputDto? lastDto = last is null
+            ? null
+            : new G2PanelLastInputDto(
+                last.Kind,
+                last.Id,
+                (int)Math.Clamp(Environment.TickCount64 - last.TickMs, 0, int.MaxValue));
+
+        return new G2PanelMappingDto(
+            Buttons: G2PanelActionRouter.ButtonInventory().Select(ToDto).ToArray(),
+            Encoders: G2PanelActionRouter.EncoderInventory().Select(ToDto).ToArray(),
+            ButtonActions: G2PanelActionRouter.ButtonActionNames(),
+            EncoderActions: G2PanelActionRouter.EncoderActionNames(),
+            ButtonOverrides: _mappingStore.Overrides(G2PanelMappingStore.KindButton)
+                .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
+            EncoderOverrides: _mappingStore.Overrides(G2PanelMappingStore.KindEncoder)
+                .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
+            LastInput: lastDto);
     }
 
     // Stored settings layered over config: a stored value wins, else the
@@ -372,6 +414,20 @@ public sealed class G2FrontPanelService : BackgroundService
     private void OnEvent(PanelEvent ev)
     {
         Interlocked.Exchange(ref _lastPanelEventMs, Environment.TickCount64);
+
+        // Identify telemetry (mapping grid row flash). Deliberately before the
+        // type-5 gate — reporting a raw id routes nothing — and deliberately
+        // NOT for VFO events, so spinning the dial can't hijack the flash.
+        switch (ev)
+        {
+            case PanelEvent.Button b:
+                _lastInput = new PanelInputStamp(G2PanelMappingStore.KindButton, b.Id, Environment.TickCount64);
+                break;
+            case PanelEvent.Encoder e:
+                _lastInput = new PanelInputStamp(G2PanelMappingStore.KindEncoder, e.Id, Environment.TickCount64);
+                break;
+        }
+
         if (ev is PanelEvent.Version ver)
         {
             _panelType = ver.Type;

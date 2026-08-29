@@ -35,14 +35,24 @@ namespace Zeus.Server.FrontPanel;
 /// have no Zeus backend yet (per-RX AGC top on the RX2 encoder); they log
 /// <c>g2panel.unmapped</c>. See <c>docs/lessons/g2-front-panel.md</c>.</para>
 ///
-/// <para><b>PureSignal:</b> the G2-Ultra panel has no PS push-button (only a
-/// status LED), so this router never arms PS. The KB2UKA no-auto-arm
-/// invariant is preserved structurally — there is no code path here that
-/// touches <c>SetPs</c>.</para>
+/// <para><b>Mapping layer:</b> a per-install <see cref="G2PanelMappingStore"/>
+/// can override any button or encoder assignment (Settings → Radio → Front
+/// Panel). An empty store is byte-for-byte today's defaults. MOX (7) and
+/// TUNE (6) are pinned unconditionally — overrides for them are ignored here
+/// and rejected at the API — and the main VFO knob is a separate ANDROMEDA
+/// event type that never consults the mapping layer. Overridden buttons fire
+/// on short press (tr01) regardless of the default's transition, so a
+/// remapped key always behaves like a plain push-button.</para>
+///
+/// <para><b>PureSignal:</b> no DEFAULT assignment arms PS — the KB2UKA
+/// no-auto-arm invariant. <see cref="ButtonAction.TogglePureSignal"/> exists
+/// only as a mappable action: PS can reach <c>SetPs</c> solely through an
+/// explicit operator-created override (this is how the panel's PS button,
+/// whose id lies outside the Thetis default table, gets bound).</para>
 /// </summary>
 public sealed class G2PanelActionRouter
 {
-    private enum ButtonAction
+    public enum ButtonAction
     {
         ToggleMuteRx2,
         ToggleMuteRx1,
@@ -82,9 +92,11 @@ public sealed class G2PanelActionRouter
         Band6,
         BandLfMf,
         ToggleDiversity,
+        // Mappable ONLY — never in the default table (KB2UKA no-auto-arm).
+        TogglePureSignal,
     }
 
-    private enum EncoderAction
+    public enum EncoderAction
     {
         AfRx2,
         AgcRx2,
@@ -172,18 +184,28 @@ public sealed class G2PanelActionRouter
     // Index cycled by the MULTI push-button; the MULTI encoder calls Apply.
     private readonly (string Name, EncoderAction Target)[] _multi;
 
+    // Per-install mapping overrides (null in tests → defaults-only, exactly
+    // the pre-feature behaviour). Caches are immutable dictionaries swapped
+    // whole on ReloadOverrides, so the serial read path never takes a lock.
+    private readonly G2PanelMappingStore? _mappings;
+    private volatile Dictionary<int, ButtonAction>? _buttonOverrides;
+    private volatile Dictionary<int, EncoderAction>? _encoderOverrides;
+
     public G2PanelActionRouter(
         RadioService radio,
         TxService tx,
         BandMemoryStore bandMemory,
         ToolbarSettingsStore toolbarSettings,
-        ILogger log)
+        ILogger log,
+        G2PanelMappingStore? mappings = null)
     {
         _radio = radio;
         _tx = tx;
         _bandMemory = bandMemory;
         _toolbarSettings = toolbarSettings;
         _log = log;
+        _mappings = mappings;
+        ReloadOverrides();
 
         _multi = new (string, EncoderAction)[]
         {
@@ -199,6 +221,42 @@ public sealed class G2PanelActionRouter
             ("Diversity Gain",  EncoderAction.DivGain),
             ("Diversity Phase", EncoderAction.DivPhase),
         };
+    }
+
+    /// <summary>Rebuild the override caches from the mapping store. Called at
+    /// construction and on every store write. Names are parsed strictly —
+    /// unknown actions (downgrade scenario) are ignored with a warning, and
+    /// overrides for the pinned MOX/TUNE buttons are dropped here as well as
+    /// rejected at the API, so a hand-edited DB can never move the key.</summary>
+    public void ReloadOverrides()
+    {
+        if (_mappings is null) return;
+
+        var buttons = new Dictionary<int, ButtonAction>();
+        foreach (var (id, name) in _mappings.Overrides(G2PanelMappingStore.KindButton))
+        {
+            if (id is TuneButtonId or MoxButtonId)
+            {
+                _log.LogWarning("g2panel.mapping.pinned-ignored button={Id}", id);
+                continue;
+            }
+            if (Enum.TryParse(name, ignoreCase: false, out ButtonAction a))
+                buttons[id] = a;
+            else
+                _log.LogWarning("g2panel.mapping.unknown-action kind=button id={Id} action={Action}", id, name);
+        }
+
+        var encoders = new Dictionary<int, EncoderAction>();
+        foreach (var (id, name) in _mappings.Overrides(G2PanelMappingStore.KindEncoder))
+        {
+            if (Enum.TryParse(name, ignoreCase: false, out EncoderAction a) && a != EncoderAction.Count)
+                encoders[id] = a;
+            else
+                _log.LogWarning("g2panel.mapping.unknown-action kind=encoder id={Id} action={Action}", id, name);
+        }
+
+        _buttonOverrides = buttons.Count > 0 ? buttons : null;
+        _encoderOverrides = encoders.Count > 0 ? encoders : null;
     }
 
     public void Dispatch(PanelEvent ev)
@@ -318,11 +376,17 @@ public sealed class G2PanelActionRouter
 
     // ---- Buttons (G2-Ultra map; Thetis MakeNewG2PanelDataset) ---------------
 
+    // Pinned unconditionally: the transmitter keys stay where the panel
+    // legend says they are. Overrides for these ids are ignored (and rejected
+    // at the API). Operator decision — there is deliberately no unlock.
+    internal const int TuneButtonId = 6;
+    internal const int MoxButtonId = 7;
+
     private void HandleButton(int p, int v)
     {
         // Derive transitions from the shared previous value, exactly as the
         // panel firmware expects (short press = tr01; long press = tr12).
-        var action = ButtonActionForTransition(p, _lastV, v);
+        var action = ResolveButtonAction(p, _lastV, v, _buttonOverrides);
         _lastV = v;
 
         if (action is not null)
@@ -399,6 +463,113 @@ public sealed class G2PanelActionRouter
     internal static string? G2UltraButtonActionNameForTransition(int p, int previousV, int v) =>
         ButtonActionForTransition(p, previousV, v)?.ToString();
 
+    /// <summary>Default table layered under the mapping store. Pinned buttons
+    /// (MOX/TUNE) always resolve through the default table. An overridden
+    /// button fires its action on short press (tr01) only — uniform push-button
+    /// semantics regardless of what transition the default used — which also
+    /// makes ids outside the Thetis table (26, 39, 40, 42+; e.g. the panel's
+    /// PS button) mappable.</summary>
+    internal static ButtonAction? ResolveButtonAction(
+        int p, int previousV, int v, IReadOnlyDictionary<int, ButtonAction>? overrides)
+    {
+        if (p is not (TuneButtonId or MoxButtonId)
+            && overrides is not null
+            && overrides.TryGetValue(p, out var mapped))
+        {
+            return previousV == 0 && v == 1 ? mapped : null;
+        }
+        return ButtonActionForTransition(p, previousV, v);
+    }
+
+    internal static EncoderAction? ResolveEncoderAction(
+        int p, IReadOnlyDictionary<int, EncoderAction>? overrides)
+    {
+        if (overrides is not null && overrides.TryGetValue(p, out var mapped))
+            return mapped;
+        return EncoderActionFor(p);
+    }
+
+    // ---- Mapping API surface (inventory + action catalogs) ------------------
+
+    /// <summary>Known G2-Ultra physical buttons: id, panel legend, the default
+    /// action name (at its natural transition), and the pinned flag. Ids the
+    /// panel can emit that are NOT listed here (26, 39, 40, 42+) are still
+    /// mappable — the settings grid surfaces them live via press-to-identify.</summary>
+    public static IReadOnlyList<(int Id, string Label, string? DefaultAction, bool Pinned)> ButtonInventory() => new[]
+    {
+        (1,  "RX2 AF push",  Name(ButtonAction.ToggleMuteRx2), false),
+        (2,  "RX1 AF push",  Name(ButtonAction.ToggleMuteRx1), false),
+        (3,  "MULTI push",   Name(ButtonAction.CycleMulti), false),
+        (4,  "ATU",          Name(ButtonAction.AtuTune), false),
+        (5,  "2TONE",        Name(ButtonAction.ToggleTwoTone), false),
+        (TuneButtonId, "TUNE", Name(ButtonAction.ToggleTune), true),
+        (MoxButtonId,  "MOX",  Name(ButtonAction.ToggleMox), true),
+        (8,  "CTUN",         Name(ButtonAction.ToggleCtun), false),
+        (9,  "LOCK",         Name(ButtonAction.ToggleLock), false),
+        (10, "A / B",        Name(ButtonAction.SwapVfos), false),
+        (11, "RIT/XIT",      Name(ButtonAction.CycleRitXit), false),
+        (12, "CLEAR",        Name(ButtonAction.ClearRitXit), false),
+        (13, "FLT RST",      Name(ButtonAction.FilterCutDefault), false),
+        (14, "MODE+",        Name(ButtonAction.ModePlus), false),
+        (15, "FILTER+",      Name(ButtonAction.FilterPlus), false),
+        (16, "BAND+",        Name(ButtonAction.BandPlus), false),
+        (17, "MODE−",        Name(ButtonAction.ModeMinus), false),
+        (18, "FILTER−",      Name(ButtonAction.FilterMinus), false),
+        (19, "BAND−",        Name(ButtonAction.BandMinus), false),
+        (20, "A▸B",          Name(ButtonAction.CopyAtoB), false),
+        (21, "B▸A",          Name(ButtonAction.CopyBtoA), false),
+        (22, "SPLIT",        Name(ButtonAction.ToggleSplit), false),
+        (23, "SNB",          Name(ButtonAction.ToggleSnb), false),
+        (24, "NB",           Name(ButtonAction.ToggleNb), false),
+        (25, "NR",           Name(ButtonAction.CycleNr), false),
+        (27, "160m",         Name(ButtonAction.Band160), false),
+        (28, "80m",          Name(ButtonAction.Band80), false),
+        (29, "60m",          Name(ButtonAction.Band60), false),
+        (30, "40m",          Name(ButtonAction.Band40), false),
+        (31, "30m",          Name(ButtonAction.Band30), false),
+        (32, "20m",          Name(ButtonAction.Band20), false),
+        (33, "17m",          Name(ButtonAction.Band17), false),
+        (34, "15m",          Name(ButtonAction.Band15), false),
+        (35, "12m",          Name(ButtonAction.Band12), false),
+        (36, "10m",          Name(ButtonAction.Band10), false),
+        (37, "6m",           Name(ButtonAction.Band6), false),
+        (38, "LF/MF",        Name(ButtonAction.BandLfMf), false),
+        (41, "DIV",          Name(ButtonAction.ToggleDiversity), false),
+    };
+
+    /// <summary>Known G2-Ultra encoders. The main VFO knob is a separate
+    /// ANDROMEDA event type (ZZZU/ZZZD) — fixed, never listed, never mappable.</summary>
+    public static IReadOnlyList<(int Id, string Label, string? DefaultAction, bool Pinned)> EncoderInventory() => new[]
+    {
+        (1,  "RX2 AF",       Name(EncoderAction.AfRx2), false),
+        (2,  "RX2 AGC",      Name(EncoderAction.AgcRx2), false),
+        (3,  "RX1 AF",       Name(EncoderAction.AfRx1), false),
+        (4,  "RX1 AGC",      Name(EncoderAction.AgcRx1), false),
+        (5,  "MULTI",        Name(EncoderAction.Multi), false),
+        (6,  "DRIVE",        Name(EncoderAction.Drive), false),
+        (7,  "RIT/ATTN",     Name(EncoderAction.RitXit), false),
+        (8,  "ATT",          Name(EncoderAction.Atten), false),
+        (9,  "FILTER HIGH",  Name(EncoderAction.FilterHigh), false),
+        (10, "FILTER LOW",   Name(EncoderAction.FilterLow), false),
+        (11, "DIV GAIN",     Name(EncoderAction.DivGain), false),
+        (12, "DIV PHASE",    Name(EncoderAction.DivPhase), false),
+    };
+
+    private static string? Name(ButtonAction a) => a.ToString();
+    private static string? Name(EncoderAction a) => a.ToString();
+
+    public static IReadOnlyList<string> ButtonActionNames() =>
+        Enum.GetNames<ButtonAction>();
+
+    public static IReadOnlyList<string> EncoderActionNames() =>
+        Enum.GetNames<EncoderAction>().Where(n => n != nameof(EncoderAction.Count)).ToArray();
+
+    public static bool IsValidButtonAction(string name) =>
+        Enum.TryParse<ButtonAction>(name, ignoreCase: false, out _);
+
+    public static bool IsValidEncoderAction(string name) =>
+        Enum.TryParse<EncoderAction>(name, ignoreCase: false, out var a) && a != EncoderAction.Count;
+
     private void ApplyButtonAction(ButtonAction action)
     {
         switch (action)
@@ -441,6 +612,7 @@ public sealed class G2PanelActionRouter
             case ButtonAction.Band6: SelectBand("6m"); break;
             case ButtonAction.BandLfMf: SelectLfMf(); break;
             case ButtonAction.ToggleDiversity: ToggleDiversity(); break;
+            case ButtonAction.TogglePureSignal: TogglePureSignal(); break;
         }
     }
 
@@ -448,7 +620,7 @@ public sealed class G2PanelActionRouter
 
     private void HandleEncoder(int p, int ticks)
     {
-        var action = EncoderActionFor(p);
+        var action = ResolveEncoderAction(p, _encoderOverrides);
         if (action is null) return;
 
         if (action == EncoderAction.Multi)
@@ -653,6 +825,17 @@ public sealed class G2PanelActionRouter
         var s = _radio.Snapshot();
         bool cur = index == 0 ? s.Rx1Muted : s.Rx2Muted;
         _radio.SetReceiverMuted(index, !cur);
+    }
+
+    // Reachable ONLY via an operator-created mapping override — never from a
+    // default assignment (KB2UKA no-auto-arm). Same seam as the on-screen PS
+    // key: flips the master arm, preserves the operator's cal-mode choice
+    // (Auto/Single). RadioService persists the state (commit-109 behaviour).
+    private void TogglePureSignal()
+    {
+        var s = _radio.Snapshot();
+        _radio.SetPs(new PsControlSetRequest(!s.PsEnabled, s.PsAuto, s.PsSingle));
+        _log.LogInformation("g2panel.ps {State}", !s.PsEnabled ? "armed" : "disarmed");
     }
 
     private void ToggleDiversity()

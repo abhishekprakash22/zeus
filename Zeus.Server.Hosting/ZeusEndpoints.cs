@@ -3230,6 +3230,56 @@ public static class ZeusEndpoints
             return Results.Ok(svc.Snapshot());
         });
 
+        // G2-Ultra front-panel mapping. GET = inventory + action catalogs +
+        // overrides + the press-to-identify stamp (polled by the settings grid;
+        // the stamp includes ids OUTSIDE the default table, which is how a
+        // button like the panel's PS key gets found and bound). PUT sets or
+        // clears ONE override; MOX (7) and TUNE (6) are pinned — rejected here
+        // AND ignored in the router, no unlock. DELETE resets every override.
+        // A write takes effect on the very next panel event.
+        app.MapGet("/api/radio/front-panel/mapping",
+            (Zeus.Server.FrontPanel.G2FrontPanelService svc) =>
+                Results.Ok(svc.MappingSnapshot()));
+
+        app.MapPut("/api/radio/front-panel/mapping",
+            (G2PanelMappingSetRequest req,
+             Zeus.Server.FrontPanel.G2PanelMappingStore mappings,
+             Zeus.Server.FrontPanel.G2FrontPanelService svc) =>
+        {
+            var kind = req.Kind?.Trim().ToLowerInvariant();
+            if (kind is not (Zeus.Server.FrontPanel.G2PanelMappingStore.KindButton
+                          or Zeus.Server.FrontPanel.G2PanelMappingStore.KindEncoder))
+                return Results.BadRequest(new { error = "kind must be 'button' or 'encoder'" });
+            if (req.Id is < 1 or > 99)
+                return Results.BadRequest(new { error = "id out of range (1-99)" });
+
+            bool isButton = kind == Zeus.Server.FrontPanel.G2PanelMappingStore.KindButton;
+            if (isButton && req.Id is Zeus.Server.FrontPanel.G2PanelActionRouter.TuneButtonId
+                                   or Zeus.Server.FrontPanel.G2PanelActionRouter.MoxButtonId)
+                return Results.BadRequest(new { error = "MOX and TUNE are pinned and cannot be remapped" });
+
+            var action = string.IsNullOrWhiteSpace(req.Action) ? null : req.Action.Trim();
+            if (action is not null)
+            {
+                bool valid = isButton
+                    ? Zeus.Server.FrontPanel.G2PanelActionRouter.IsValidButtonAction(action)
+                    : Zeus.Server.FrontPanel.G2PanelActionRouter.IsValidEncoderAction(action);
+                if (!valid)
+                    return Results.BadRequest(new { error = $"unknown {kind} action '{action}'" });
+            }
+
+            mappings.SetOverride(kind, req.Id, action);
+            return Results.Ok(svc.MappingSnapshot());
+        });
+
+        app.MapDelete("/api/radio/front-panel/mapping",
+            (Zeus.Server.FrontPanel.G2PanelMappingStore mappings,
+             Zeus.Server.FrontPanel.G2FrontPanelService svc) =>
+        {
+            mappings.ResetAll();
+            return Results.Ok(svc.MappingSnapshot());
+        });
+
         // Global (per-radio) TX-audio source (external-audio-jacks re-port). GET
         // surfaces the per-board capability gates + the RESOLVED (board-clamped)
         // source so the single-select picker shows only the jacks the connected

@@ -697,6 +697,9 @@ public static class ZeusHost
         // G2PanelSettingsStore (Radio Settings card); the service is a singleton
         // so the settings endpoint can read its live status + trigger a reconnect.
         builder.Services.AddSingleton<Zeus.Server.FrontPanel.G2PanelSettingsStore>();
+        // Per-install button/encoder mapping overrides (Settings → Radio →
+        // Front Panel grid). Empty store = the shipped Thetis-derived defaults.
+        builder.Services.AddSingleton<Zeus.Server.FrontPanel.G2PanelMappingStore>();
         builder.Services.AddSingleton<Zeus.Server.FrontPanel.G2FrontPanelService>();
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.FrontPanel.G2FrontPanelService>());

@@ -47,9 +47,28 @@ registered on every host. Override via configuration section `G2FrontPanel`:
 
 ## PureSignal safety
 
-The G2-Ultra panel has **no PS push-button** (only a status LED), so the router
-has *no* code path that arms PureSignal. The KB2UKA no-auto-arm invariant is
-preserved structurally — `SetPs` is never reachable from panel input.
+The original claim here — "the G2-Ultra panel has no PS push-button" — was
+**wrong** (field report: the panel's PS button pressed dead; its id lies in
+the range the Thetis default table doesn't cover, so events were silently
+dropped). The invariant that actually matters is preserved in its correct
+form: **no default assignment arms PureSignal**. `TogglePureSignal` exists
+only as a *mappable* action — `SetPs` is reachable from panel input solely
+through an explicit operator-created override in `G2PanelMappingStore`
+(bound via the settings grid's press-to-identify). The KB2UKA no-auto-arm
+invariant thus holds by policy rather than by absence of code.
+
+## Mapping layer
+
+`G2PanelMappingStore` (zeus-prefs.db, composite string ids `button:16`)
+overrides `buttonId → ButtonAction` / `encoderId → EncoderAction` on top of
+the Thetis defaults; an empty store is byte-for-byte the shipped map. MOX (7)
+and TUNE (6) are pinned unconditionally — rejected at the API *and* ignored
+in the router, so a hand-edited DB can't move the key — and the main VFO knob
+(ZZZU/ZZZD) is a separate event type that never consults the layer. An
+overridden button fires on short press (tr01) regardless of the default's
+transition. Press-to-identify records every raw button/encoder id *before*
+the type-5 routing gate (telemetry routes nothing), which is what lets ids
+outside the default table (26, 39, 40, 42+) be discovered and bound.
 
 ## Hardware PTT / footswitch & rear-panel I/O (NOT the front panel)
 

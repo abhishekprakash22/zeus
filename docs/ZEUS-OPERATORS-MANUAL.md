@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.181**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.188**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -103,6 +103,17 @@ Connect, then operate from the workspace:
   when Zeus talks to the panel directly and when you're connected through
   the radio's own p2app row (the panel's events are relayed automatically;
   the settings card shows which path is live).
+- **Remapping the panel:** the *Button & encoder mapping* grid on the same
+  card lets you reassign any button or encoder. Press a control on the
+  physical panel and its row flashes in the grid (press-to-identify) — this
+  also surfaces buttons the shipped map doesn't know, which then appear with
+  an *assign* picker. That is how you bind the panel's **PS** button: press
+  it, watch the detected row appear, and assign **TogglePureSignal**.
+  PureSignal is never armed by any default — only a mapping you create can
+  reach it. **MOX** and **TUNE** are pinned and cannot be remapped (a
+  transmitter key stays where the legend says it is), and the main VFO knob
+  is always the VFO. *Reset all* returns the whole panel to the shipped
+  defaults; changes take effect on the very next press, no restart.
 
 ---
 

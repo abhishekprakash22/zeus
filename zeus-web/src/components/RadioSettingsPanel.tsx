@@ -36,6 +36,7 @@ import {
 } from '../state/antenna-store';
 import { useHl2GpioStore } from '../state/hl2-gpio-store';
 import { RfFiltersSettingsCard } from './RfFiltersSettingsCard';
+import { G2PanelMappingGrid } from './G2PanelMappingGrid';
 
 // TX-audio source labels for the single-select control. The control is a radio-
 // button group (role="radiogroup") bound to the ONE TxAudioSource enum value —
@@ -363,6 +364,8 @@ export function RadioSettingsPanel() {
             <option value={115200}>115200</option>
           </select>
         </div>
+
+        <G2PanelMappingGrid />
       </div>
 
       {/* Audio Input — only when the connected board exposes a radio audio

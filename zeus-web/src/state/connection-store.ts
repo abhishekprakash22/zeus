@@ -194,6 +194,11 @@ export type ConnectionState = {
    *  rubber-band). Suppression is time-boxed to the optimistic-tune window
    *  so a quiet dial always reconverges to server truth. */
   applyState: (s: RadioStateDto, opts?: { trustVfo?: boolean; trustCtun?: boolean }) => void;
+  /** Apply a /ws VFO push frame (0x3B — front-panel knob, CAT, TCI). Honors
+   *  the same optimistic-tune windows as the poll so it can never rubber-band
+   *  a browser gesture, and stamps push freshness so a stale 1 Hz poll can't
+   *  flick the dial backward mid-spin. */
+  applyVfoPush: (vfoAHz: number, vfoBHz: number) => void;
   setInflight: (v: boolean) => void;
   setBoardId: (id: string | null) => void;
   setConnectedProtocol: (p: ConnectedProtocol) => void;
@@ -221,6 +226,17 @@ export type ConnectionState = {
 // predates the gesture: !trustVfo and a recent optimistic stamp), keep the
 // PREVIOUS entry's vfoHz but adopt every other server field. RX1 (index 0) is
 // read via the flat vfoHz field, which keeps its own dedicated guard above.
+// Timestamp of the last applied VFO push frame (0x3B). The 1 Hz poll answers
+// with state generated BEFORE the panel's latest step, so during a knob spin
+// a poll response would flick the numerals backward once a second; while
+// pushes are fresh, the poll keeps its hands off the VFO fields (everything
+// else in the poll still applies). Window comfortably covers one poll period.
+let lastVfoPushAtMs = 0;
+const VFO_PUSH_FRESH_MS = 1200;
+function vfoPushIsFresh(): boolean {
+  return Date.now() - lastVfoPushAtMs < VFO_PUSH_FRESH_MS;
+}
+
 function mergeReceivers(
   prev: ReceiverDto[],
   next: ReceiverDto[] | undefined,
@@ -229,7 +245,7 @@ function mergeReceivers(
   if (!next) return prev;
   if (trustVfo) return next;
   return next.map((r) => {
-    if (r.index < 1 || msSinceOptimisticTuneFor(r.index) >= 1500) return r;
+    if (r.index < 1 || (msSinceOptimisticTuneFor(r.index) >= 1500 && !vfoPushIsFresh())) return r;
     const prevEntry = prev.find((p) => p.index === r.index);
     return prevEntry ? { ...r, vfoHz: prevEntry.vfoHz } : r;
   });
@@ -291,6 +307,18 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   // pulse spuriously. The server overrides on attach with the real phase.
   wisdomPhase: 'ready',
   wisdomStatus: '',
+  applyVfoPush: (vfoAHz, vfoBHz) =>
+    set((prev) => {
+      lastVfoPushAtMs = Date.now();
+      return {
+        vfoHz: msSinceOptimisticTuneFor('A') >= 1500 ? vfoAHz : prev.vfoHz,
+        receivers: prev.receivers.map((r) =>
+          r.index === 1 && msSinceOptimisticTuneFor(1) >= 1500
+            ? { ...r, vfoHz: vfoBHz }
+            : r,
+        ),
+      };
+    }),
   applyState: (s, opts) =>
     set((prev) => {
       const trustVfo = opts?.trustVfo ?? true;
@@ -298,7 +326,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         status: s.status,
         endpoint: s.endpoint,
         vfoHz:
-          trustVfo || msSinceOptimisticTuneFor('A') >= 1500
+          trustVfo || (msSinceOptimisticTuneFor('A') >= 1500 && !vfoPushIsFresh())
             ? s.vfoHz
             : prev.vfoHz,
         rx2Enabled: s.rx2Enabled,

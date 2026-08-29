@@ -704,6 +704,12 @@ public static class ZeusHost
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.FrontPanel.G2FrontPanelService>());
 
+        // VFO state push (/ws 0x3B, ~30 Hz coalesced): every client's dial
+        // tracks non-self-originated tuning (front-panel knob, CAT, TCI) at
+        // display rate instead of the 1 Hz poll. Quiet dial = zero wire.
+        builder.Services.AddSingleton<VfoStatePushService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<VfoStatePushService>());
+
         // QRZ.com XML client. HttpClient default timeout is 100 s — cap at 10 s so a
         // hung login surfaces quickly in the UI.
         builder.Services.AddHttpClient("Qrz", c => c.Timeout = TimeSpan.FromSeconds(10));

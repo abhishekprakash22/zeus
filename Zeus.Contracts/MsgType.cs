@@ -247,6 +247,15 @@ public enum MsgType : byte
     // the next free byte 0x37.
     PttStatus = 0x37,
 
+    // Server → client (VFO state push). Broadcast — coalesced to ~30 Hz with
+    // a guaranteed trailing send — whenever either VFO changes from any
+    // source (front-panel knob, CAT, TCI, remote). Cures the 1 Hz poll-only
+    // dial: panel tuning showed the VFO numerals in one-second jumps while
+    // the spectrum scrolled live. Payload: [type:1][vfoAHz:i64 LE]
+    // [vfoBHz:i64 LE] = 17 bytes. See VfoStateFrame.cs. 0x38-0x3A are
+    // reserved below, so the next free byte is 0x3B.
+    VfoState = 0x3B,
+
     // 0x38 / 0x39 / 0x3A are RESERVED — Zeus Digital plugin era; never reuse.
     // The built-in FT8/FT4/WSPR suite broadcast Ft8Decode (0x38), WsprSpot
     // (0x39) and Ft8TxStatus (0x3A) JSON-envelope frames on these bytes until

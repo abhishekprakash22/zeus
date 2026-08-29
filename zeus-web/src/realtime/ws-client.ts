@@ -129,6 +129,11 @@ export const MSG_TYPE_BAND_PLAN_CHANGED = 0x1B;
 // TCI, SWR trip, TX timeout) so the frontend stays in sync even when the
 // edge originates outside the web UI.
 export const MSG_TYPE_MOX_STATE = 0x1c;
+// VFO state push (server → client, ~30 Hz coalesced while tuning). Cures the
+// 1 Hz-poll dial: front-panel / CAT / TCI tuning now moves the numerals at
+// display rate. Contract: Zeus.Contracts/VfoStateFrame.cs.
+export const MSG_TYPE_VFO_STATE = 0x3b;
+const VFO_STATE_BYTES = 17;
 const MOX_STATE_BYTES = 3;
 
 // WDSP wisdom status: 1 type byte + 1 phase byte (0=idle, 1=building, 2=ready)
@@ -748,6 +753,18 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
     }
     if (peekType === MSG_TYPE_BAND_PLAN_CHANGED) {
       void useBandPlanStore.getState().refresh();
+      return;
+    }
+    if (peekType === MSG_TYPE_VFO_STATE) {
+      if (ev.data.byteLength < VFO_STATE_BYTES) {
+        warnOnce('ws-vfo-state-short', `vfo state frame too short: ${ev.data.byteLength}`);
+        return;
+      }
+      const dv = new DataView(ev.data);
+      // i64 LE; Number() is exact for any HF/VHF/SHF frequency (< 2^53 Hz).
+      const vfoAHz = Number(dv.getBigInt64(1, true));
+      const vfoBHz = Number(dv.getBigInt64(9, true));
+      useConnectionStore.getState().applyVfoPush(vfoAHz, vfoBHz);
       return;
     }
     if (peekType === MSG_TYPE_MOX_STATE) {

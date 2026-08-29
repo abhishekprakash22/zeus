@@ -81,6 +81,18 @@ public sealed class G2FrontPanelService : BackgroundService
     // doesn't cure can never loop. Never during MOX/TUNE, and never for a
     // p2app Zeus doesn't own (logged advice instead).
     private const int CatGraceMs = 8000;
+    // ---- serial fallback (p2app abandoned the tty) ----------------------
+    // Upstream p2app consumes ZZZS and ZZZP on the tty itself and, when its
+    // startup detection fails, closes the tty and forwards NOTHING — while
+    // this service (since the hands-off change) politely never opens it.
+    // Net: a working panel can stream into a port nobody holds. So: stay
+    // hands-off through p2app's detection window, but if no panel event has
+    // arrived on ANY transport for FallbackQuietMs after that window, take
+    // the tty ourselves. Sticky for the life of the serial session; while
+    // active, LED writes go to the serial port even if the CAT relay is up.
+    private const int FallbackQuietMs = 15_000;
+    private volatile bool _serialFallback;
+    private long _lastPanelEventMs;
     private readonly P2AppSupervisor _p2app;
     private long _p2SessionSinceMs;          // TickCount64 at P2 connect; 0 = down
     private volatile bool _catBounceSpent;
@@ -201,7 +213,9 @@ public sealed class G2FrontPanelService : BackgroundService
             }
 
             EnsureCatListener(stoppingToken);
-            if (_catActive)
+            bool panelQuiet = Environment.TickCount64 - Interlocked.Read(ref _lastPanelEventMs) > FallbackQuietMs;
+            bool fallbackDue = panelQuiet && !_p2app.TtyDetectionGraceActive;
+            if (_catActive && !fallbackDue)
             {
                 // p2app is relaying the panel over TCP — the serial line
                 // belongs to p2app; opening it here would contend. Idle.
@@ -209,7 +223,7 @@ public sealed class G2FrontPanelService : BackgroundService
                 continue;
             }
 
-            if (_p2app.TtyBelongsToP2App)
+            if (_p2app.TtyBelongsToP2App && !fallbackDue)
             {
                 // Radio host, p2app alive or imminent: the panel tty is
                 // p2app's even while the CAT link is down. Opening it here
@@ -225,10 +239,17 @@ public sealed class G2FrontPanelService : BackgroundService
                 continue;
             }
 
+            _serialFallback = _catActive || _p2app.TtyBelongsToP2App;
+            if (_serialFallback)
+                _log.LogInformation(
+                    "g2panel.fallback — no panel traffic on any transport for {Quiet}s and p2app's detection window has passed; taking the serial line",
+                    FallbackQuietMs / 1000);
+
             var dev = ResolveDevice(eff.DevicePath, eff.Baud);
             if (dev is null)
             {
                 // No panel on this host — idle and re-probe. Quiet by design.
+                _serialFallback = false;
                 await DelaySafe(TimeSpan.FromSeconds(10), ct);
                 continue;
             }
@@ -252,6 +273,7 @@ public sealed class G2FrontPanelService : BackgroundService
             }
             finally
             {
+                _serialFallback = false;
                 ClosePort();
             }
         }
@@ -349,6 +371,7 @@ public sealed class G2FrontPanelService : BackgroundService
 
     private void OnEvent(PanelEvent ev)
     {
+        Interlocked.Exchange(ref _lastPanelEventMs, Environment.TickCount64);
         if (ev is PanelEvent.Version ver)
         {
             _panelType = ver.Type;
@@ -406,8 +429,10 @@ public sealed class G2FrontPanelService : BackgroundService
 
     private void Send(string cmd)
     {
-        // Whichever link carries the panel carries the LEDs.
-        var cat = _catStream;
+        // Whichever link carries the panel carries the LEDs. During serial
+        // fallback the CAT relay may be up but panel-less (p2app closed the
+        // tty), so the serial port is the panel path — write there.
+        var cat = _serialFallback ? null : _catStream;
         if (cat is not null)
         {
             try
@@ -544,8 +569,15 @@ public sealed class G2FrontPanelService : BackgroundService
         _connected = true;
         _activePath = $"p2app CAT ({client.Client.RemoteEndPoint})";
         _activeBaud = 0;
-        _log.LogInformation("g2panel.cat connected from {Remote} — serial path standing down", client.Client.RemoteEndPoint);
-        RequestReconnect();   // break an open serial session; the loop idles while _catActive
+        if (_serialFallback)
+        {
+            _log.LogInformation("g2panel.cat connected from {Remote} — serial fallback active, keeping the serial panel path", client.Client.RemoteEndPoint);
+        }
+        else
+        {
+            _log.LogInformation("g2panel.cat connected from {Remote} — serial path standing down", client.Client.RemoteEndPoint);
+            RequestReconnect();   // break an open serial session; the loop idles while _catActive
+        }
 
         // The serial path resets state and asks ZZZS at open; the CAT path
         // must do the same. The identify p2app itself performs against the

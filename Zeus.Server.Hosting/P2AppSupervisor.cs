@@ -77,6 +77,17 @@ public sealed class P2AppSupervisor : BackgroundService
     }
 
     /// <summary>
+    /// True while a freshly started (or freshly adopted) p2app may still be
+    /// running its startup panel detection — the ZZZS exchange on the tty
+    /// that must never be raced by a second reader. The panel bridge holds
+    /// its serial fallback until this window has passed.
+    /// </summary>
+    public bool TtyDetectionGraceActive =>
+        Environment.TickCount64 - Interlocked.Read(ref _ownershipStampMs) < 15_000;
+
+    private long _ownershipStampMs = Environment.TickCount64;
+
+    /// <summary>
     /// Called before a native XDMA session opens the register plane. Stops
     /// the supervised child and verifies nothing else owns port 1024. The
     /// session must not start unless this returns ok — the check replaces
@@ -220,7 +231,15 @@ public sealed class P2AppSupervisor : BackgroundService
             }
         }
 
-        if (PortInUse()) { lock (_lock) _mode = Mode.Adopted; return; }
+        if (PortInUse())
+        {
+            lock (_lock)
+            {
+                if (_mode != Mode.Adopted) Interlocked.Exchange(ref _ownershipStampMs, Environment.TickCount64);
+                _mode = Mode.Adopted;
+            }
+            return;
+        }
 
         var bin = FindBinary();
         if (bin is null)
@@ -261,6 +280,7 @@ public sealed class P2AppSupervisor : BackgroundService
             {
                 _child = p; _binaryPath = bin; _restarts++;
                 _childBornMs = Environment.TickCount64;
+                Interlocked.Exchange(ref _ownershipStampMs, Environment.TickCount64);
                 _mode = Mode.Supervised;
             }
             _log.LogInformation("p2app spawned pid={Pid} bin={Bin}", p.Id, bin);

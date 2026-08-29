@@ -1,6 +1,6 @@
 # Zeus Operator's Manual
 
-**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.188**
+**For the ANAN G2 / G2 Ultra and Zeus on the desktop · current through v0.15.189**
 
 Zeus is the radio's own face: an OpenHPSDR Protocol-1/2/3 client that runs on
 the radio itself (the internal Pi of a G2, or an attached Pi), on the 8-inch
@@ -114,6 +114,10 @@ Connect, then operate from the workspace:
   transmitter key stays where the legend says it is), and the main VFO knob
   is always the VFO. *Reset all* returns the whole panel to the shipped
   defaults; changes take effect on the very next press, no restart.
+- **VFO encoder divide:** on the same card, *Auto* derives the dial divisor
+  from the selected tuning step (the shipped behaviour); a fixed value works
+  like piHPSDR's VFO encoder divisor — that many panel ticks per VFO step,
+  so higher numbers give a slower, finer dial.
 
 ---
 

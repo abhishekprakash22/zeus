@@ -164,4 +164,64 @@ public sealed class G2PanelMappingTests : IDisposable
             new[] { G2PanelActionRouter.TuneButtonId, G2PanelActionRouter.MoxButtonId }, pinned);
         Assert.DoesNotContain(G2PanelActionRouter.EncoderInventory(), c => c.Pinned);
     }
+
+    // ---- VFO divisor (piHPSDR vfo_encoder_divisor model) ---------------------
+
+    [Fact]
+    public void VfoDivisor_ZeroIsAuto_StepDerived()
+    {
+        Assert.Equal(
+            G2PanelActionRouter.VfoEncoderDivisorForStep(100),
+            G2PanelActionRouter.EffectiveVfoDivisor(100, 0));
+    }
+
+    [Theory]
+    [InlineData(5, 5)]
+    [InlineData(1, 1)]
+    [InlineData(60, 60)]
+    [InlineData(999, 60)] // clamped to the max
+    public void VfoDivisor_FixedValue_OverridesStepDerivation(int fixedDivisor, int expected)
+    {
+        // Step would derive a different divisor; the fixed value must win.
+        Assert.Equal(expected, G2PanelActionRouter.EffectiveVfoDivisor(1, fixedDivisor));
+        Assert.Equal(expected, G2PanelActionRouter.EffectiveVfoDivisor(100_000, fixedDivisor));
+    }
+
+    [Fact]
+    public void DivideVfoEncoderTicks_HonoursFixedDivisor()
+    {
+        // 10 ticks / divisor 5 → 2 logical steps, no remainder — regardless of
+        // what the 1 Hz step would have derived (divisor 1).
+        var (steps, remainder) = G2PanelActionRouter.DivideVfoEncoderTicks(0, 10, 1, 5);
+        Assert.Equal(2, steps);
+        Assert.Equal(0, remainder);
+        // Remainder carries.
+        (steps, remainder) = G2PanelActionRouter.DivideVfoEncoderTicks(0, 7, 1, 5);
+        Assert.Equal(1, steps);
+        Assert.Equal(2, remainder);
+    }
+
+    [Fact]
+    public void SettingsStore_PersistsVfoDivisor_AndClampsIt()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"zeus-g2div-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var store = new G2PanelSettingsStore(
+                NullLogger<G2PanelSettingsStore>.Instance, dbPath))
+            {
+                store.Set(enabled: true, devicePath: null, baud: 0, assumeUltra: false, vfoDivisor: 15);
+                Assert.Equal(15, store.Get().VfoDivisor);
+                store.Set(enabled: true, devicePath: null, baud: 0, assumeUltra: false, vfoDivisor: 999);
+                Assert.Equal(60, store.Get().VfoDivisor); // clamped
+            }
+            using var reopened = new G2PanelSettingsStore(
+                NullLogger<G2PanelSettingsStore>.Instance, dbPath);
+            Assert.Equal(60, reopened.Get().VfoDivisor);
+        }
+        finally
+        {
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { }
+        }
+    }
 }

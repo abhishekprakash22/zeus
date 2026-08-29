@@ -151,6 +151,7 @@ public sealed class G2FrontPanelService : BackgroundService
         // A mapping write takes effect on the very next panel event — no
         // reconnect, no restart.
         _mappingStore.Changed += _router.ReloadOverrides;
+        _router.SetVfoDivisor(_store.Get().VfoDivisor);
         // A Settings change re-resolves the device and reconnects without a
         // server restart (enable toggled, COM port / baud edited).
         _store.Changed += OnSettingsChanged;
@@ -160,7 +161,14 @@ public sealed class G2FrontPanelService : BackgroundService
         _radio.P2Disconnected += OnP2Disconnected;
     }
 
-    private void OnSettingsChanged() => RequestReconnect();
+    private void OnSettingsChanged()
+    {
+        // The divisor is a router knob, not a serial-line property — push it
+        // live so it takes effect on the next flush; the reconnect covers the
+        // device/baud/enable half.
+        _router.SetVfoDivisor(_store.Get().VfoDivisor);
+        RequestReconnect();
+    }
 
     private void OnP2Connected(Zeus.Protocol2.Protocol2Client _) =>
         Interlocked.Exchange(ref _p2SessionSinceMs, Environment.TickCount64);
@@ -191,7 +199,8 @@ public sealed class G2FrontPanelService : BackgroundService
             ActiveDevicePath: _activePath,
             ActiveBaud: _activeBaud,
             PanelType: _panelType,
-            AssumeUltra: s.AssumeUltra);
+            AssumeUltra: s.AssumeUltra,
+            VfoDivisor: s.VfoDivisor);
     }
 
     /// <summary>Inventory + action catalogs + stored overrides + the

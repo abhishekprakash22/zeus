@@ -3221,12 +3221,15 @@ public static class ZeusEndpoints
         {
             if (req.Baud is int b && b is not (0 or 9600 or 115200))
                 return Results.BadRequest(new { error = $"unsupported baud {b} (use 0=auto, 9600, or 115200)" });
+            if (req.VfoDivisor is int d && d is < 0 or > 60)
+                return Results.BadRequest(new { error = $"vfoDivisor out of range (0=auto, 1-60)" });
             var cur = store.Get();
             store.Set(
                 enabled: req.Enabled ?? cur.Enabled,
                 devicePath: req.DevicePath ?? cur.DevicePath,
                 baud: req.Baud ?? cur.Baud,
-                assumeUltra: req.AssumeUltra ?? cur.AssumeUltra);
+                assumeUltra: req.AssumeUltra ?? cur.AssumeUltra,
+                vfoDivisor: req.VfoDivisor ?? cur.VfoDivisor);
             return Results.Ok(svc.Snapshot());
         });
 

@@ -29,6 +29,10 @@ export interface G2PanelSettings {
   panelType: number;
   /** Operator override: treat the panel as a G2-Ultra without an identify. */
   assumeUltra: boolean;
+  /** Fixed VFO encoder divide (N panel ticks per VFO step, 1-60); 0 = auto
+   *  (divisor derived from the selected tuning step — piHPSDR's
+   *  vfo_encoder_divisor model). */
+  vfoDivisor: number;
 }
 
 const DEFAULTS: G2PanelSettings = {
@@ -40,6 +44,7 @@ const DEFAULTS: G2PanelSettings = {
   activeBaud: 0,
   panelType: 0,
   assumeUltra: false,
+  vfoDivisor: 0,
 };
 
 function parse(raw: unknown): G2PanelSettings {
@@ -53,6 +58,7 @@ function parse(raw: unknown): G2PanelSettings {
     activeBaud: typeof r.activeBaud === 'number' ? r.activeBaud : 0,
     panelType: typeof r.panelType === 'number' ? r.panelType : 0,
     assumeUltra: typeof r.assumeUltra === 'boolean' ? r.assumeUltra : false,
+    vfoDivisor: typeof r.vfoDivisor === 'number' ? r.vfoDivisor : 0,
   };
 }
 
@@ -63,7 +69,7 @@ export async function fetchG2PanelSettings(signal?: AbortSignal): Promise<G2Pane
 }
 
 export async function updateG2PanelSettings(
-  patch: { enabled?: boolean; devicePath?: string; baud?: number; assumeUltra?: boolean },
+  patch: { enabled?: boolean; devicePath?: string; baud?: number; assumeUltra?: boolean; vfoDivisor?: number },
   signal?: AbortSignal,
 ): Promise<G2PanelSettings> {
   const res = await fetch('/api/radio/front-panel', {
@@ -83,7 +89,7 @@ interface G2PanelState extends G2PanelSettings {
   /** Hydrate settings + status from the REST snapshot. */
   load: () => Promise<void>;
   /** Update one or more settings (optimistic, server-authoritative). */
-  update: (patch: { enabled?: boolean; devicePath?: string; baud?: number; assumeUltra?: boolean }) => Promise<void>;
+  update: (patch: { enabled?: boolean; devicePath?: string; baud?: number; assumeUltra?: boolean; vfoDivisor?: number }) => Promise<void>;
   __resetForTests: () => void;
 }
 
@@ -113,6 +119,7 @@ export const useG2PanelStore = create<G2PanelState>((set, get) => ({
       activeBaud: get().activeBaud,
       panelType: get().panelType,
       assumeUltra: get().assumeUltra,
+      vfoDivisor: get().vfoDivisor,
     };
     // Optimistic on the operator-settable fields; status fields keep prior
     // values until the server snapshot returns.

@@ -80,6 +80,7 @@ export function RadioSettingsPanel() {
   const g2ActiveBaud = useG2PanelStore((s) => s.activeBaud);
   const g2PanelType = useG2PanelStore((s) => s.panelType);
   const g2AssumeUltra = useG2PanelStore((s) => s.assumeUltra);
+  const g2VfoDivisor = useG2PanelStore((s) => s.vfoDivisor);
   const g2Inflight = useG2PanelStore((s) => s.inflight);
   const loadG2 = useG2PanelStore((s) => s.load);
   const updateG2 = useG2PanelStore((s) => s.update);
@@ -362,6 +363,29 @@ export function RadioSettingsPanel() {
             <option value={0}>Auto</option>
             <option value={9600}>9600</option>
             <option value={115200}>115200</option>
+          </select>
+        </div>
+
+        <div className="ps-field">
+          <div className="ps-name">
+            VFO encoder divide
+            <em>
+              Panel ticks per VFO step. Auto derives it from the selected
+              tuning step (coarse steps stay controllable, 1&nbsp;Hz stays
+              responsive). A fixed value works like piHPSDR&apos;s VFO encoder
+              divisor — higher = slower, finer dial.
+            </em>
+          </div>
+          <select
+            className="ps-select-mini"
+            value={g2VfoDivisor}
+            disabled={g2Inflight || !g2Enabled}
+            onChange={(e) => void updateG2({ vfoDivisor: Number.parseInt(e.target.value, 10) })}
+          >
+            <option value={0}>Auto (step-based)</option>
+            {[1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60].map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
           </select>
         </div>
 

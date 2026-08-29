@@ -290,7 +290,7 @@ public sealed class G2PanelActionRouter
         try
         {
             int stepHz = _toolbarSettings.CurrentStepHz;
-            var divided = DivideVfoEncoderTicks(_vfoTickAccumulator, ticks, stepHz);
+            var divided = DivideVfoEncoderTicks(_vfoTickAccumulator, ticks, stepHz, _vfoDivisor);
             _vfoTickAccumulator = divided.RemainderTicks;
             if (divided.LogicalSteps == 0) return false;
 
@@ -346,12 +346,27 @@ public sealed class G2PanelActionRouter
         return Math.Clamp(divisor, MinVfoEncoderDivisor, MaxVfoEncoderDivisor);
     }
 
+    /// <summary>Fixed VFO encoder divide (piHPSDR vfo_encoder_divisor model):
+    /// N panel ticks per VFO step. 0 = auto (derived from the selected tuning
+    /// step — the historical behaviour). Pushed by the service from
+    /// G2PanelSettingsStore on start and on every settings write.</summary>
+    public void SetVfoDivisor(int divisor) =>
+        _vfoDivisor = divisor <= 0 ? 0 : Math.Clamp(divisor, MinVfoEncoderDivisor, MaxVfoEncoderDivisor);
+
+    private volatile int _vfoDivisor;
+
+    internal static int EffectiveVfoDivisor(int stepHz, int fixedDivisor) =>
+        fixedDivisor > 0
+            ? Math.Clamp(fixedDivisor, MinVfoEncoderDivisor, MaxVfoEncoderDivisor)
+            : VfoEncoderDivisorForStep(stepHz);
+
     internal static (long LogicalSteps, long RemainderTicks) DivideVfoEncoderTicks(
         long accumulatedTicks,
         long incomingTicks,
-        int stepHz)
+        int stepHz,
+        int fixedDivisor = 0)
     {
-        int divisor = VfoEncoderDivisorForStep(stepHz);
+        int divisor = EffectiveVfoDivisor(stepHz, fixedDivisor);
         long total = accumulatedTicks + incomingTicks;
         long logicalSteps = total / divisor;
         return (logicalSteps, total - logicalSteps * divisor);

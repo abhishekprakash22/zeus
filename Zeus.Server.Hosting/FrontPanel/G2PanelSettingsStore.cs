@@ -67,10 +67,11 @@ public sealed class G2PanelSettingsStore : IDisposable
     /// <summary>Replace the stored settings. <paramref name="devicePath"/> empty/
     /// null = auto-detect; <paramref name="baud"/> 0 = auto. Insert-then-Update
     /// (matching PttSettingsStore) avoids the LiteDB Id=0 upsert bug (PR #387).</summary>
-    public void Set(bool enabled, string? devicePath, int baud, bool assumeUltra = false)
+    public void Set(bool enabled, string? devicePath, int baud, bool assumeUltra = false, int vfoDivisor = 0)
     {
         var normPath = string.IsNullOrWhiteSpace(devicePath) ? null : devicePath.Trim();
         var normBaud = baud > 0 ? baud : 0;
+        var normDiv = Math.Clamp(vfoDivisor, 0, 60); // 0 = auto (step-derived)
         lock (_sync)
         {
             var existing = _rows.FindAll().FirstOrDefault();
@@ -83,6 +84,7 @@ public sealed class G2PanelSettingsStore : IDisposable
                     DevicePath = normPath,
                     Baud = normBaud,
                     AssumeUltra = assumeUltra,
+                    VfoDivisor = normDiv,
                     UpdatedUtc = nowUtc,
                 });
             }
@@ -92,6 +94,7 @@ public sealed class G2PanelSettingsStore : IDisposable
                 existing.DevicePath = normPath;
                 existing.Baud = normBaud;
                 existing.AssumeUltra = assumeUltra;
+                existing.VfoDivisor = normDiv;
                 existing.UpdatedUtc = nowUtc;
                 _rows.Update(existing);
             }
@@ -116,5 +119,9 @@ public sealed class G2PanelSettingsEntry
     // without waiting for a ZZZS identify — the piHPSDR trust model. Default
     // false: identify-gated, the historical behaviour.
     public bool AssumeUltra { get; set; }
+    // Fixed VFO encoder divide (piHPSDR vfo_encoder_divisor): N panel ticks
+    // per VFO step, 1-60. 0 = auto — divisor derived from the selected tuning
+    // step, the historical behaviour. Missing on pre-feature rows → 0.
+    public int VfoDivisor { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }

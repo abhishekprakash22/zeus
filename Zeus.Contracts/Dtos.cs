@@ -651,7 +651,9 @@ public sealed record G2PanelSettingsDto(
     string? ActiveDevicePath,
     int ActiveBaud,
     int PanelType,
-    bool AssumeUltra = false);
+    bool AssumeUltra = false,
+    // Fixed VFO encoder divide (N ticks per step, 1-60); 0 = auto (step-derived).
+    int VfoDivisor = 0);
 
 // Request body for PUT /api/radio/front-panel. Every field optional — only the
 // supplied ones change. DevicePath "" clears the override (back to auto-detect);
@@ -660,7 +662,8 @@ public sealed record G2PanelSettingsSetRequest(
     bool? Enabled = null,
     string? DevicePath = null,
     int? Baud = null,
-    bool? AssumeUltra = null);
+    bool? AssumeUltra = null,
+    int? VfoDivisor = null);
 
 // G2-Ultra front-panel mapping (GET/PUT/DELETE /api/radio/front-panel/mapping).
 // Buttons/Encoders = the known physical inventory with default action names and

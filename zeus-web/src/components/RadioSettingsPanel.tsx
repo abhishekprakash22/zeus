@@ -245,8 +245,11 @@ export function RadioSettingsPanel() {
           <div className="ps-name">
             Status
             <em>
-              Live bridge state. Connects automatically when the panel's serial
-              line is found; idle if no panel is wired to this host.
+              Live panel state. Green when a panel has identified itself
+              (serial or via p2app's relay). Amber means a transport is open —
+              usually p2app's CAT relay, which runs whenever the radio is
+              connected, even with no panel attached — but no panel has
+              answered on it. Grey when nothing is open.
             </em>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -265,7 +268,7 @@ export function RadioSettingsPanel() {
               {g2PanelType > 0
                 ? `panel${g2PanelType === 5 ? ' · G2-Ultra' : ` · type ${g2PanelType}`}`
                 : g2Connected
-                  ? 'link up · no panel identified'
+                  ? 'p2app relay up · no panel found'
                   : 'not connected'}
             </span>
             {g2Connected && g2ActivePath ? (

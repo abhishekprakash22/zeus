@@ -60,7 +60,23 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _radio.StateChanged += OnStateChanged;
+        _meter = new Timer(OnMeter, null, MeterPeriodMs, MeterPeriodMs);
+        _log.LogInformation("vfo.push.started intervalMs={Interval}", MinIntervalMs);
         return Task.CompletedTask;
+    }
+
+    // Observability: one aggregate line per 10 s WHILE frames flow (silent
+    // when the dial is quiet). `journalctl | grep vfo.push` answers "is the
+    // push alive" in one look — the .191 field round was archaeology for
+    // want of exactly this line.
+    private const int MeterPeriodMs = 10_000;
+    private Timer? _meter;
+    private long _sentInWindow;
+
+    private void OnMeter(object? _)
+    {
+        long n = Interlocked.Exchange(ref _sentInWindow, 0);
+        if (n > 0) _log.LogInformation("vfo.push sent={Count} last10s", n);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
@@ -71,6 +87,7 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
             _trailingArmed = false;
             _trailing.Change(Timeout.Infinite, Timeout.Infinite);
         }
+        _meter?.Change(Timeout.Infinite, Timeout.Infinite);
         return Task.CompletedTask;
     }
 
@@ -108,7 +125,11 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
             }
         }
 
-        if (sendNow) _hub.Broadcast(new VfoStateFrame(a, b));
+        if (sendNow)
+        {
+            _hub.Broadcast(new VfoStateFrame(a, b));
+            Interlocked.Increment(ref _sentInWindow);
+        }
     }
 
     private void OnTrailing(object? _)
@@ -128,6 +149,7 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
         try
         {
             _hub.Broadcast(new VfoStateFrame(a, b));
+            Interlocked.Increment(ref _sentInWindow);
         }
         catch (Exception ex)
         {
@@ -135,5 +157,9 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
         }
     }
 
-    public void Dispose() => _trailing.Dispose();
+    public void Dispose()
+    {
+        _trailing.Dispose();
+        _meter?.Dispose();
+    }
 }

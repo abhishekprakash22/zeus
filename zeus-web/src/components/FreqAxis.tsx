@@ -48,6 +48,7 @@ import { selectDisplaySlice, useDisplayStore } from '../state/display-store';
 import { useConnectionStore } from '../state/connection-store';
 import { cancelDrawBusFrame, requestDrawBusFrame } from '../realtime/draw-bus';
 import { getReceiverVfoHz, type ReceiverKey } from '../state/receiver-state';
+import { settledDialOffsetHz } from '../util/settled-dial-offset';
 import * as viewCenter from '../state/view-center';
 import * as viewZoom from '../state/view-zoom';
 import { useRulerPanGesture } from '../util/use-ruler-pan-gesture';
@@ -171,10 +172,7 @@ export function FreqAxis({ receiver = 'A', stitched = false }: FreqAxisProps = {
         // marker PINNED to the zero line during a glide (vfo and target
         // move in lockstep at input time) instead of leading off it and
         // easing back (operator feedback, 2026-06-12).
-        const vfoHz = getReceiverVfoHz(conn, receiver);
-        const dialOffsetHz = vc.isInitialized()
-          ? vfoHz - vc.getTargetCenterHz()
-          : vfoHz - layoutCenter;
+        const dialOffsetHz = settledDialOffsetHz(conn, receiver, vc);
         marker.style.left = `${((spanHz / 2 + dialOffsetHz) / spanHz) * 100}%`;
       }
     };
@@ -184,7 +182,14 @@ export function FreqAxis({ receiver = 'A', stitched = false }: FreqAxisProps = {
     const unsubVfo = useConnectionStore.subscribe((s, prev) => {
       // RX1 is the flat primary VFO; every secondary (RX2 = index 1, RX3+) lives
       // in the receivers[] array.
-      if (s.vfoHz !== prev.vfoHz || s.receivers !== prev.receivers) schedule();
+      if (
+        s.vfoHz !== prev.vfoHz ||
+        s.receivers !== prev.receivers ||
+        s.mode !== prev.mode ||
+        s.cwPitchHz !== prev.cwPitchHz ||
+        s.ctunEnabled !== prev.ctunEnabled
+      )
+        schedule();
     });
     const unsubFrame = useDisplayStore.subscribe((s, prev) => {
       if (selectDisplaySlice(s, receiver).lastSeq !== selectDisplaySlice(prev, receiver).lastSeq) schedule();

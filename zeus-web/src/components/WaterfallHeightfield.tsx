@@ -36,7 +36,8 @@ import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
 import { cancelDrawBusFrame, requestDrawBusFrame } from '../realtime/draw-bus';
-import { getReceiverVfoHz, rxIndexOf, type ReceiverKey } from '../state/receiver-state';
+import { rxIndexOf, type ReceiverKey } from '../state/receiver-state';
+import { settledDialOffsetHz } from '../util/settled-dial-offset';
 import * as viewCenter from '../state/view-center';
 import * as viewZoom from '../state/view-zoom';
 import { usePanTuneGesture, type PanTuneGestureOptions } from '../util/use-pan-tune-gesture';
@@ -501,10 +502,9 @@ export function WaterfallHeightfield({
       if (!viewport) return;
       const spanHz = viewport.spanHz;
       const c = useConnectionStore.getState();
-      const vfoHz = getReceiverVfoHz(c, receiver);
-      // Dial offset from THIS receiver's animated target center, so the cursor
-      // tracks the glide identically on both stitched halves.
-      const dialOffsetHz = vc.isInitialized() ? vfoHz - vc.getTargetCenterHz() : 0;
+      // Settled dial offset (see util/settled-dial-offset.ts): rigid outside
+      // CTUN so panel tuning can't make the cursor lead the frame stream.
+      const dialOffsetHz = settledDialOffsetHz(c, receiver, vc);
       cur.style.left = `${((spanHz / 2 + dialOffsetHz) / spanHz) * 100}%`;
     };
     const schedule = () => requestDrawBusFrame(update);
@@ -513,7 +513,14 @@ export function WaterfallHeightfield({
     const unsubConn = useConnectionStore.subscribe((s, prev) => {
       // RX1 is the flat primary VFO; every secondary (RX2 = index 1, RX3+) lives
       // in the receivers[] array.
-      if (s.vfoHz !== prev.vfoHz || s.receivers !== prev.receivers) schedule();
+      if (
+        s.vfoHz !== prev.vfoHz ||
+        s.receivers !== prev.receivers ||
+        s.mode !== prev.mode ||
+        s.cwPitchHz !== prev.cwPitchHz ||
+        s.ctunEnabled !== prev.ctunEnabled
+      )
+        schedule();
     });
     const unsubFrame = useDisplayStore.subscribe((s, prev) => {
       if (selectDisplaySlice(s, receiver).lastSeq !== selectDisplaySlice(prev, receiver).lastSeq) schedule();

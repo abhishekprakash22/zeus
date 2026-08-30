@@ -60,6 +60,7 @@ import {
   type ReceiverKey,
 } from '../state/receiver-state';
 import * as viewCenter from '../state/view-center';
+import { settledDialOffsetHz } from '../util/settled-dial-offset';
 import * as viewZoom from '../state/view-zoom';
 import { resolveSpectrumViewport } from '../util/wideband-view';
 
@@ -266,7 +267,7 @@ export function PassbandOverlay({
       // dial. In CW modes the LO is shifted by ±cwPitchHz from VFO, so
       // passCenter must land on the LO (not VFO) to place the rect correctly.
       const cwOffset = rxMode === 'CWU' ? -conn.cwPitchHz : rxMode === 'CWL' ? conn.cwPitchHz : 0;
-      const dialOffsetHz = vc.isInitialized() ? vfoHz - vc.getTargetCenterHz() : 0;
+      const dialOffsetHz = settledDialOffsetHz(conn, receiver, vc);
       const passCenter = view + dialOffsetHz + cwOffset;
       const startHz = view - spanHz / 2;
       const leftPct = ((passCenter + filterLowHz - startHz) / spanHz) * 100;

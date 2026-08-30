@@ -60,6 +60,7 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _radio.StateChanged += OnStateChanged;
+        _started = true;
         _meter = new Timer(OnMeter, null, MeterPeriodMs, MeterPeriodMs);
         _log.LogInformation("vfo.push.started intervalMs={Interval}", MinIntervalMs);
         return Task.CompletedTask;
@@ -72,6 +73,27 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
     private const int MeterPeriodMs = 10_000;
     private Timer? _meter;
     private long _sentInWindow;
+    private long _sentTotal;
+    private long _eventsSeen;
+    private long _lastSentAtTickMs;
+    private volatile bool _started;
+
+    /// <summary>Curl-able health snapshot (GET /api/radio/vfo-push-stats) —
+    /// removes any dependency on log plumbing for field diagnosis. eventsSeen
+    /// counts StateChanged deliveries (proves the subscription is wired even
+    /// while the dial is quiet); sentTotal counts broadcast frames.</summary>
+    public object Stats()
+    {
+        long last = Interlocked.Read(ref _lastSentAtTickMs);
+        return new
+        {
+            started = _started,
+            eventsSeen = Interlocked.Read(ref _eventsSeen),
+            sentTotal = Interlocked.Read(ref _sentTotal),
+            lastSentAgoMs = last == 0 ? (long?)null : Environment.TickCount64 - last,
+            vfoHz = _radio.Snapshot().VfoHz,
+        };
+    }
 
     private void OnMeter(object? _)
     {
@@ -93,6 +115,7 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
 
     private void OnStateChanged(StateDto s)
     {
+        Interlocked.Increment(ref _eventsSeen);
         long a = s.VfoHz;
         long b = s.Rx2().VfoHz;
         bool sendNow = false;
@@ -129,6 +152,8 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
         {
             _hub.Broadcast(new VfoStateFrame(a, b));
             Interlocked.Increment(ref _sentInWindow);
+            Interlocked.Increment(ref _sentTotal);
+            Interlocked.Exchange(ref _lastSentAtTickMs, Environment.TickCount64);
         }
     }
 
@@ -150,6 +175,8 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
         {
             _hub.Broadcast(new VfoStateFrame(a, b));
             Interlocked.Increment(ref _sentInWindow);
+            Interlocked.Increment(ref _sentTotal);
+            Interlocked.Exchange(ref _lastSentAtTickMs, Environment.TickCount64);
         }
         catch (Exception ex)
         {

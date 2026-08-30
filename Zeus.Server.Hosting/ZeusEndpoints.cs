@@ -3283,6 +3283,12 @@ public static class ZeusEndpoints
             return Results.Ok(svc.MappingSnapshot());
         });
 
+        // Field diagnosis for the VFO push (0x3B) with zero log-plumbing
+        // dependency: curl it before/after a 10 s knob spin. eventsSeen
+        // moving = StateChanged wired; sentTotal moving = frames leaving.
+        app.MapGet("/api/radio/vfo-push-stats",
+            (VfoStatePushService push) => Results.Ok(push.Stats()));
+
         // Global (per-radio) TX-audio source (external-audio-jacks re-port). GET
         // surfaces the per-board capability gates + the RESOLVED (board-clamped)
         // source so the single-select picker shows only the jacks the connected

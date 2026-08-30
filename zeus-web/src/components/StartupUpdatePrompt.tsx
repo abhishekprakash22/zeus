@@ -68,7 +68,7 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
           try {
             const cur = await getUpdateApplyStatus();
             missedPolls = 0;
-            setPhaseText(`${cur.phase}… ${cur.percent ?? 0}%`);
+            setPhaseText(`${cur.phase}… ${Math.round(cur.percent ?? 0)}%`);
             if (cur.phase === 'failed' || cur.phase === 'unsupported') {
               setApplying(false);
               setPhaseText(cur.error ?? 'Update failed — see Settings → Updating.');

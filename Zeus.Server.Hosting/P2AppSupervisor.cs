@@ -82,8 +82,17 @@ public sealed class P2AppSupervisor : BackgroundService
     /// that must never be raced by a second reader. The panel bridge holds
     /// its serial fallback until this window has passed.
     /// </summary>
+    // Hands-off window after each p2app (re)start so its own panel detection
+    // never races a second tty reader (the original two-reader disease).
+    // Detection runs in p2app's first couple of seconds; 5 s covers it with
+    // margin. Field consequence: on a stock p2app (which eats ZZZS/ZZZP and
+    // forwards nothing) the panel always arrives via the serial fallback at
+    // exactly grace-expiry — so this constant IS the panel's time-to-live
+    // after Zeus starts. It was 15 s; the extra 10 s protected nothing.
+    private const int TtyDetectionGraceMs = 5_000;
+
     public bool TtyDetectionGraceActive =>
-        Environment.TickCount64 - Interlocked.Read(ref _ownershipStampMs) < 15_000;
+        Environment.TickCount64 - Interlocked.Read(ref _ownershipStampMs) < TtyDetectionGraceMs;
 
     private long _ownershipStampMs = Environment.TickCount64;
 

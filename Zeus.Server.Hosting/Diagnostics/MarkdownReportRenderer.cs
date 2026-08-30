@@ -13,7 +13,7 @@ namespace Zeus.Server.Diagnostics;
 internal static class MarkdownReportRenderer
 {
     public const string GithubNewIssueBase =
-        "https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus/issues/new";
+        "https://github.com/abhishekprakash22/zeus/issues/new";
 
     /// <summary>Rough ceiling for the whole prefilled URL before we drop the log block.</summary>
     public const int MaxUrlLength = 7000;

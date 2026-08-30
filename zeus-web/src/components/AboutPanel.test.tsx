@@ -59,10 +59,10 @@ describe('AboutPanel external links', () => {
   });
 
   it('opens the GitHub link via the host bridge', () => {
-    clickLinkByText('github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus');
+    clickLinkByText('github.com/abhishekprakash22/zeus');
     expect(openExternalUrl).toHaveBeenCalledTimes(1);
     expect(openExternalUrl).toHaveBeenCalledWith(
-      'https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus',
+      'https://github.com/abhishekprakash22/zeus/tree/freedv-in-core',
     );
   });
 

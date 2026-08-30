@@ -24,6 +24,7 @@ import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { UninstallDialog } from './UninstallDialog';
 import { openExternalUrl } from './report-problem/openExternalUrl';
+import { runReport } from '../api/diagnostics';
 import { getServerBaseUrl } from '../serverUrl';
 
 // Open a link in the operator's real browser. Inside the Photino desktop shell
@@ -75,6 +76,31 @@ type VersionInfo = {
 export function AboutPanel() {
   const [versionInfo, setVersionInfo] = useState<VersionInfo>({ version: 'Loading...' });
   const [showUninstall, setShowUninstall] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  // "Report a problem": the backend's self-diagnostic surface
+  // (POST /api/diagnostics/report) assembles a redacted snapshot of radio /
+  // DSP / connection state plus the last log lines, and returns a prefilled
+  // GitHub new-issue URL on the Apache Labs tracker. Routed through
+  // openExternalUrl for the same Photino-webview reason as the links above.
+  const handleReportProblem = () => {
+    if (reportBusy) return;
+    setReportBusy(true);
+    setReportError(null);
+    runReport({ symptomId: null, freeText: null })
+      .then((result) => {
+        if (result.githubIssueUrl) {
+          openExternalUrl(result.githubIssueUrl);
+        } else {
+          setReportError('The diagnostic ran but returned no report URL.');
+        }
+      })
+      .catch((err: unknown) => {
+        setReportError(err instanceof Error ? err.message : 'Diagnostic run failed.');
+      })
+      .finally(() => setReportBusy(false));
+  };
 
   useEffect(() => {
     // Fetch current version on mount
@@ -105,7 +131,7 @@ export function AboutPanel() {
           color: 'var(--fg-0)',
         }}
       >
-        About OpenHPSDR Zeus
+        About ANAN Core
       </h3>
 
       <div style={{ marginBottom: 20 }}>
@@ -153,7 +179,12 @@ export function AboutPanel() {
           </a>
         </p>
         <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-1)' }}>
-          OpenHPSDR Zeus is a cross-platform SDR client for OpenHPSDR Protocol-1 and Protocol-2 radios.
+          ANAN Core is a cross-platform SDR client for OpenHPSDR Protocol-1 and Protocol-2 radios.
+        </p>
+        <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-1)' }}>
+          ANAN Core is Apache Labs&apos; build of the open-source Zeus project. In accordance
+          with the Zeus developers&apos; conditions on the nomenclature of derivative
+          distributions, Apache Labs has renamed its version <strong>ANAN Core</strong>.
         </p>
         <p style={{ margin: '0 0 12px 0', lineHeight: 1.6, color: 'var(--fg-1)' }}>
           This build: the <strong>freedv-in-core</strong> branch — FreeDV (700D/700E) and WSPR
@@ -180,18 +211,32 @@ export function AboutPanel() {
           Raspberry Pi appliance hardening.
         </p>
         <p style={{ margin: 0, lineHeight: 1.6, color: 'var(--fg-2)', fontSize: 11 }}>
-          Licensed under GNU GPL v2 or later. See{' '}
-          <a
-            href="https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus"
-            onClick={openExternalLink('https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus')}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: 'var(--accent)', textDecoration: 'underline' }}
-          >
-            github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus
-          </a>{' '}
-          for source code and documentation.
+          Licensed under GNU GPL v2 or later. Complete source code for this build is
+          available at the repository linked above.
         </p>
+      </div>
+
+      <div style={{ marginBottom: 20, paddingTop: 20, borderTop: '1px solid var(--panel-border)' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--fg-0)', marginBottom: 8 }}>
+          Report a Problem
+        </div>
+        <p style={{ margin: '0 0 10px', lineHeight: 1.5, color: 'var(--fg-2)', fontSize: 12 }}>
+          Found a bug? ANAN Core assembles a redacted diagnostic snapshot (radio, DSP, and
+          connection state plus recent log lines — passwords, email and network addresses,
+          and other secrets are scrubbed) and opens a pre-filled report on the Apache Labs
+          issue tracker.
+        </p>
+        <button
+          type="button"
+          className="btn sm"
+          onClick={handleReportProblem}
+          disabled={reportBusy}
+        >
+          {reportBusy ? 'COLLECTING DIAGNOSTICS…' : 'REPORT A PROBLEM…'}
+        </button>
+        {reportError && (
+          <p style={{ margin: '8px 0 0', color: 'var(--tx)', fontSize: 12 }}>{reportError}</p>
+        )}
       </div>
 
       {/* Danger zone — full reset / uninstall. Visual placement & copy are a
@@ -202,7 +247,7 @@ export function AboutPanel() {
           Danger Zone
         </div>
         <p style={{ margin: '0 0 10px', lineHeight: 1.5, color: 'var(--fg-2)', fontSize: 12 }}>
-          Completely remove Zeus and wipe all of its data for a fresh install. You'll be asked
+          Completely remove ANAN Core and wipe all of its data for a fresh install. You'll be asked
           to confirm, and you can back up your settings and logbook first.
         </p>
         <button
@@ -211,7 +256,7 @@ export function AboutPanel() {
           onClick={() => setShowUninstall(true)}
           style={{ borderColor: 'var(--tx)', color: 'var(--tx)' }}
         >
-          RESET &amp; UNINSTALL ZEUS…
+          RESET &amp; UNINSTALL ANAN CORE…
         </button>
       </div>
 

@@ -199,6 +199,12 @@ export type ConnectionState = {
    *  a browser gesture, and stamps push freshness so a stale 1 Hz poll can't
    *  flick the dial backward mid-spin. */
   applyVfoPush: (vfoAHz: number, vfoBHz: number) => void;
+  /** Apply a /ws full-state push frame (0x3C). Same semantics as the 1 Hz
+   *  poll apply (trustVfo:false — browser gestures win their window; the
+   *  30 Hz VFO frame stays authoritative for the dial via its own freshness
+   *  guard), and stamps push freshness so the poll stands down while frames
+   *  flow. */
+  applyStatePush: (s: RadioStateDto) => void;
   setInflight: (v: boolean) => void;
   setBoardId: (id: string | null) => void;
   setConnectedProtocol: (p: ConnectedProtocol) => void;
@@ -232,6 +238,12 @@ export type ConnectionState = {
 // pushes are fresh, the poll keeps its hands off the VFO fields (everything
 // else in the poll still applies). Window comfortably covers one poll period.
 let lastVfoPushAtMs = 0;
+// Same idea for the full-state push frame (0x3C): while these are fresh the
+// 1 Hz poll skips its apply entirely — the push carries the same DTO, newer.
+let lastStatePushAtMs = 0;
+export function statePushIsFresh(): boolean {
+  return Date.now() - lastStatePushAtMs < VFO_PUSH_FRESH_MS;
+}
 const VFO_PUSH_FRESH_MS = 1200;
 function vfoPushIsFresh(): boolean {
   return Date.now() - lastVfoPushAtMs < VFO_PUSH_FRESH_MS;
@@ -307,6 +319,10 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   // pulse spuriously. The server overrides on attach with the real phase.
   wisdomPhase: 'ready',
   wisdomStatus: '',
+  applyStatePush: (s) => {
+    lastStatePushAtMs = Date.now();
+    useConnectionStore.getState().applyState(s, { trustVfo: false });
+  },
   applyVfoPush: (vfoAHz, vfoBHz) =>
     set((prev) => {
       lastVfoPushAtMs = Date.now();

@@ -28,6 +28,7 @@
 // state block is lock-guarded; the hub enqueue is non-blocking drop-oldest
 // per client, safe to call under the lock's shadow but done outside it.
 
+using Microsoft.Extensions.Options;
 using Zeus.Contracts;
 
 namespace Zeus.Server;
@@ -35,6 +36,11 @@ namespace Zeus.Server;
 public sealed class VfoStatePushService : IHostedService, IDisposable
 {
     private const int MinIntervalMs = 33; // ~30 Hz — display rate, 17 B/frame
+    // Full-state frame (0x3C): 10 Hz is plenty for value readouts (AF, AGC,
+    // drive, filter, atten, RIT…) and keeps the JSON serialize + client
+    // apply cost modest on the glass, where the SPA shares the CM5 with the
+    // server. The dial keeps its dedicated 30 Hz 0x3B frame.
+    private const int StateIntervalMs = 100;
 
     private readonly RadioService _radio;
     private readonly StreamingHub _hub;
@@ -49,13 +55,29 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
     private long _pendingB;
     private bool _trailingArmed;
 
-    public VfoStatePushService(RadioService radio, StreamingHub hub, ILogger<VfoStatePushService> log)
+    public VfoStatePushService(
+        RadioService radio,
+        StreamingHub hub,
+        ILogger<VfoStatePushService> log,
+        IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions)
     {
         _radio = radio;
         _hub = hub;
         _log = log;
+        // The app's configured web options — the frame body must be
+        // byte-compatible with GET /api/state so the SPA reuses the poll's
+        // parse/apply path unchanged.
+        _json = jsonOptions.Value.SerializerOptions;
         _trailing = new Timer(OnTrailing, null, Timeout.Infinite, Timeout.Infinite);
+        _stateTrailing = new Timer(OnStateTrailing, null, Timeout.Infinite, Timeout.Infinite);
     }
+
+    private readonly System.Text.Json.JsonSerializerOptions _json;
+    private readonly Timer _stateTrailing;
+    private StateDto? _pendingState;
+    private long _lastStateSentTickMs;
+    private bool _stateTrailingArmed;
+    private long _stateSentTotal;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -91,6 +113,7 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
             eventsSeen = Interlocked.Read(ref _eventsSeen),
             sentTotal = Interlocked.Read(ref _sentTotal),
             lastSentAgoMs = last == 0 ? (long?)null : Environment.TickCount64 - last,
+            stateSentTotal = Interlocked.Read(ref _stateSentTotal),
             vfoHz = _radio.Snapshot().VfoHz,
         };
     }
@@ -110,12 +133,18 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
             _trailing.Change(Timeout.Infinite, Timeout.Infinite);
         }
         _meter?.Change(Timeout.Infinite, Timeout.Infinite);
+        lock (_sync)
+        {
+            _stateTrailingArmed = false;
+            _stateTrailing.Change(Timeout.Infinite, Timeout.Infinite);
+        }
         return Task.CompletedTask;
     }
 
     private void OnStateChanged(StateDto s)
     {
         Interlocked.Increment(ref _eventsSeen);
+        PushStateMaybe(s);
         long a = s.VfoHz;
         long b = s.Rx2().VfoHz;
         bool sendNow = false;
@@ -157,6 +186,67 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
         }
     }
 
+    // Full-state frame: same coalesce+trailing shape as the VFO frame, at
+    // 10 Hz. Serialization happens outside the lock and only when someone is
+    // connected (hub.HasClients) — an idle radio or empty hub costs nothing.
+    private void PushStateMaybe(StateDto s)
+    {
+        if (!_hub.HasClients) return;
+        bool sendNow = false;
+        lock (_sync)
+        {
+            _pendingState = s;
+            long now = Environment.TickCount64;
+            if (now - _lastStateSentTickMs >= StateIntervalMs)
+            {
+                _lastStateSentTickMs = now;
+                if (_stateTrailingArmed)
+                {
+                    _stateTrailingArmed = false;
+                    _stateTrailing.Change(Timeout.Infinite, Timeout.Infinite);
+                }
+                sendNow = true;
+            }
+            else if (!_stateTrailingArmed)
+            {
+                _stateTrailingArmed = true;
+                _stateTrailing.Change(Math.Max(1, StateIntervalMs - (now - _lastStateSentTickMs)), Timeout.Infinite);
+            }
+        }
+        if (sendNow) BroadcastState(s);
+    }
+
+    private void OnStateTrailing(object? _)
+    {
+        StateDto? s;
+        lock (_sync)
+        {
+            if (!_stateTrailingArmed) return;
+            _stateTrailingArmed = false;
+            s = _pendingState;
+            _lastStateSentTickMs = Environment.TickCount64;
+        }
+        if (s is not null)
+        {
+            try { BroadcastState(s); }
+            catch (Exception ex) { _log.LogWarning(ex, "state.push.trailing.error"); }
+        }
+    }
+
+    private void BroadcastState(StateDto s)
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(s, _json);
+            _hub.Broadcast(new StatePushFrame(json));
+            Interlocked.Increment(ref _stateSentTotal);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "state.push.serialize.error");
+        }
+    }
+
     private void OnTrailing(object? _)
     {
         long a, b;
@@ -187,6 +277,7 @@ public sealed class VfoStatePushService : IHostedService, IDisposable
     public void Dispose()
     {
         _trailing.Dispose();
+        _stateTrailing.Dispose();
         _meter?.Dispose();
     }
 }

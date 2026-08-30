@@ -134,6 +134,11 @@ export const MSG_TYPE_MOX_STATE = 0x1c;
 // display rate. Contract: Zeus.Contracts/VfoStateFrame.cs.
 export const MSG_TYPE_VFO_STATE = 0x3b;
 const VFO_STATE_BYTES = 17;
+// Full-state push (server → client, ~10 Hz coalesced while state changes).
+// Body = StateDto JSON, byte-compatible with GET /api/state — applied via the
+// poll's exact path, so encoder-driven values (AF, AGC, drive, filter…)
+// track the knobs live instead of waiting for the next poll tick.
+export const MSG_TYPE_STATE_PUSH = 0x3c;
 const MOX_STATE_BYTES = 3;
 
 // WDSP wisdom status: 1 type byte + 1 phase byte (0=idle, 1=building, 2=ready)
@@ -753,6 +758,17 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
     }
     if (peekType === MSG_TYPE_BAND_PLAN_CHANGED) {
       void useBandPlanStore.getState().refresh();
+      return;
+    }
+    if (peekType === MSG_TYPE_STATE_PUSH) {
+      try {
+        const json = new TextDecoder().decode(new Uint8Array(ev.data, 1));
+        const state = JSON.parse(json);
+        useConnectionStore.getState().applyStatePush(state);
+        useTxStore.getState().hydrateFromState(state);
+      } catch (err) {
+        warnOnce('ws-state-push-parse', `state push parse failed: ${String(err)}`);
+      }
       return;
     }
     if (peekType === MSG_TYPE_VFO_STATE) {

@@ -122,6 +122,7 @@ import { getAudioClient } from './audio/audio-client';
 import { setAudioHostMode } from './audio/host-mode';
 import { useMicUplink } from './audio/use-mic-uplink';
 import { disconnect, disconnectP2, disconnectP3, fetchState, fetchUpdateStatus, type RepoUpdateStatus } from './api/client';
+import { statePushIsFresh } from './state/connection-store';
 import { useConnectionStore } from './state/connection-store';
 import { getReceiverMode } from './state/receiver-state';
 import { useFreeDvWindowStore } from './state/freedv-window-store';
@@ -596,7 +597,11 @@ export default function App() {
       ctrl = new AbortController();
       try {
         const next = await fetchState(ctrl.signal);
-        if (!cancelled) {
+        if (!cancelled && !statePushIsFresh()) {
+          // Push frames (0x3C) carry the same DTO, fresher — while they flow
+          // the poll stands down so its older snapshot can't flick a
+          // just-turned value backward. The fetch itself still runs every
+          // tick as the connection liveness probe.
           // trustVfo:false — a poll response generated before the operator's
           // latest tune must not rewind the dial mid-gesture (issue #597).
           useConnectionStore.getState().applyState(next, { trustVfo: false });

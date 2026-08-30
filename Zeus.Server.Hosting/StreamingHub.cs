@@ -714,6 +714,22 @@ public sealed class StreamingHub
         }
     }
 
+    // Serialization of the state JSON is paid by the caller; this guard lets
+    // it skip that work entirely when nobody is listening.
+    public bool HasClients => !_clients.IsEmpty;
+
+    public void Broadcast(in StatePushFrame frame)
+    {
+        if (_clients.IsEmpty) return;
+        var payload = new byte[frame.ByteLength];
+        var writer = new FixedBufferWriter(payload, frame.ByteLength);
+        frame.Serialize(writer);
+        foreach (var client in _clients.Values)
+        {
+            if (!client.TryEnqueue(payload)) System.Threading.Interlocked.Increment(ref _dropsOther);
+        }
+    }
+
     public void Broadcast(in VfoStateFrame frame)
     {
         if (_clients.IsEmpty) return;

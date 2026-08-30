@@ -256,6 +256,17 @@ public enum MsgType : byte
     // reserved below, so the next free byte is 0x3B.
     VfoState = 0x3B,
 
+    // Server → client (full radio state push). Broadcast — coalesced to
+    // ~10 Hz with a guaranteed trailing send — whenever StateDto changes
+    // from ANY source. Completes what VfoState (0x3B) started: the VFO got
+    // a 30 Hz dedicated frame, but every OTHER value (AF, AGC, drive,
+    // filter, atten, RIT…) still rode the 1 Hz poll, so front-panel encoder
+    // turns showed on screen hundreds of ms late. Payload:
+    // [type:1][StateDto JSON UTF-8…] serialized with the app's configured
+    // web JSON options — byte-compatible with GET /api/state, so the client
+    // reuses the poll's exact apply path. See StatePushFrame.cs.
+    StatePush = 0x3C,
+
     // 0x38 / 0x39 / 0x3A are RESERVED — Zeus Digital plugin era; never reuse.
     // The built-in FT8/FT4/WSPR suite broadcast Ft8Decode (0x38), WsprSpot
     // (0x39) and Ft8TxStatus (0x3A) JSON-envelope frames on these bytes until

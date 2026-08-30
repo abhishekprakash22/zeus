@@ -306,11 +306,15 @@ public sealed class GanymedeAmpService : BackgroundService
         {
             // Same idempotent path as the SWR trip: MOX/TUN forced off, the
             // AlertFrame rides to every client (LAN and remote alike).
+            // The banner text is the operator-facing sentence — no bitmasks,
+            // no protocol vocabulary; the technical labels stay in the log
+            // line above and in /api/amp/status.
             _tx.TryTripForAlert(AlertKind.AmpTrip,
-                $"Amplifier tripped \u2014 {words}. Drive removed; press RESET AMP when the fault is cleared.");
+                $"Amplifier protection: {DescribeTripFriendly(mask)} Transmit is off \u2014 press RESET AMP once the fault is cleared.");
         }
     }
 
+    // Log lines and /api/amp/status keep the terse technical labels.
     internal static string[] DescribeTrip(int mask)
     {
         var list = new List<string>(3);
@@ -321,6 +325,20 @@ public sealed class GanymedeAmpService : BackgroundService
         if ((mask & 16) != 0) list.Add("excessive forward power");
         if ((mask & 64) != 0) list.Add("awaiting reset");
         return list.ToArray();
+    }
+
+    // The banner speaks in plain sentences: what happened, what to do.
+    // Bit 64 (awaiting reset) is state, not a cause — it never appears here.
+    internal static string DescribeTripFriendly(int mask)
+    {
+        var list = new List<string>(2);
+        if ((mask & 1) != 0) list.Add("High reflected power \u2014 check the antenna and feedline.");
+        if ((mask & 2) != 0) list.Add("PA current too high.");
+        if ((mask & 4) != 0) list.Add("Supply voltage out of range.");
+        if ((mask & 8) != 0) list.Add("Amplifier too hot \u2014 let it cool down.");
+        if ((mask & 16) != 0) list.Add("Output power too high \u2014 reduce drive.");
+        if (list.Count == 0) list.Add("Protection fault.");
+        return string.Join(" ", list);
     }
 
     private async Task SafeDelay(TimeSpan t, CancellationToken ct)

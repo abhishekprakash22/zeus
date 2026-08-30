@@ -79,7 +79,9 @@ export function AlertBanner() {
       <span className="label-xs" style={{ color: 'var(--power)' }}>
         ALERT
       </span>
-      <span className="mono" style={{ flex: 1, color: 'var(--fg-0)' }}>
+      {/* Sentence, not a log line: the server now sends operator-facing
+          wording for trips, so the mono face came off. */}
+      <span style={{ flex: 1, color: 'var(--fg-0)', fontSize: 13, lineHeight: 1.4 }}>
         {alert.message}
       </span>
       {alert.action && (

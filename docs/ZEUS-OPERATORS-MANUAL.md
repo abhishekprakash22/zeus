@@ -401,8 +401,11 @@ On a G2-1K, the amplifier's protection controller trips in hardware —
 bias and PTT are dropped within microseconds of excessive reverse power,
 drain current, PSU voltage, heatsink temperature, or forward power — and
 reports the event to Zeus over its CAT link. Zeus removes drive
-immediately (same path as the SWR trip) and shows an amber banner naming
-the cause, on the radio and on every connected client including remote.
+immediately (same path as the SWR trip) and shows an amber banner
+explaining the fault in plain language — what happened and what to do
+(e.g. "High reflected power — check the antenna and feedline") — on the
+radio and on every connected client including remote. Technical detail
+(the raw trip flags) stays in the log and `/api/amp/status`.
 When the fault is cleared, press **RESET AMP** on the banner (or the
 controller's own front-panel reset). If the fault is still present the
 controller trips again immediately — that is the protection working.

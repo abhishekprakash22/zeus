@@ -31,12 +31,29 @@ import {
   setRemoteControlSender,
 } from '../realtime/ws-client';
 
-/** Parse `?remote=<CALLSIGN>` from the current URL; '' / absent → not remote. */
+/**
+ * Resolve the remote callsign from the current URL; null → not remote.
+ *
+ * Two shapes are accepted, most explicit first:
+ *   `?remote=<CALL>`  — the canonical query form every client has used.
+ *   `/go/<CALL>`      — the printed / QR address. This used to depend on a
+ *                       Pages redirect living outside the repo; when a deploy
+ *                       shipped without it, `/go/<CALL>` fell through to the
+ *                       SPA fallback with no query, isRemoteMode() said false,
+ *                       and the hosted page showed the upstream QRZ wall
+ *                       instead of the password screen. The bundle now
+ *                       understands its own address, so no infra rule can
+ *                       break the printed link again (a `_redirects` file
+ *                       still ships alongside for the canonical rewrite).
+ */
 export function getRemoteCallsign(): string | null {
   try {
     const cs = new URLSearchParams(window.location.search).get('remote');
     const trimmed = cs?.trim();
-    return trimmed ? trimmed.toUpperCase() : null;
+    if (trimmed) return trimmed.toUpperCase();
+    const m = /^\/go\/([^/?#]+)\/?$/i.exec(window.location.pathname);
+    const fromPath = m?.[1] ? decodeURIComponent(m[1]).trim() : '';
+    return fromPath ? fromPath.toUpperCase() : null;
   } catch {
     return null;
   }

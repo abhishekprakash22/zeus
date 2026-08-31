@@ -42,4 +42,28 @@ describe('remote-client URL parsing', () => {
     expect(getRemoteCallsign()).toBeNull();
     expect(isRemoteMode()).toBe(false);
   });
+
+  it('reads the callsign from the /go/<CALL> path', () => {
+    window.history.replaceState(null, '', '/go/vk2kkk');
+    expect(getRemoteCallsign()).toBe('VK2KKK');
+    expect(isRemoteMode()).toBe(true);
+  });
+
+  it('accepts a trailing slash on /go/<CALL>', () => {
+    window.history.replaceState(null, '', '/go/n9war/');
+    expect(getRemoteCallsign()).toBe('N9WAR');
+  });
+
+  it('prefers ?remote over the /go/ path when both are present', () => {
+    window.history.replaceState(null, '', '/go/vk2kkk?remote=n9war');
+    expect(getRemoteCallsign()).toBe('N9WAR');
+  });
+
+  it('ignores a bare /go/ and unrelated paths', () => {
+    window.history.replaceState(null, '', '/go/');
+    expect(getRemoteCallsign()).toBeNull();
+    window.history.replaceState(null, '', '/settings');
+    expect(getRemoteCallsign()).toBeNull();
+    expect(isRemoteMode()).toBe(false);
+  });
 });

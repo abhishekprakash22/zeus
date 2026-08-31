@@ -1,0 +1,7 @@
+# Cloudflare Pages routing for the hosted remote client (app.ananremote.com).
+# Ships inside the bundle so every `wrangler pages deploy` of wwwroot carries
+# it — this rule used to live only in the dashboard, and a deploy without it
+# sent /go/<CALL> to the SPA fallback with no query (upstream QRZ wall).
+# The client also parses /go/<CALL> from the path itself (remote-client.ts),
+# so this rewrite is the canonical form, not a single point of failure.
+/go/:call   /?remote=:call   302

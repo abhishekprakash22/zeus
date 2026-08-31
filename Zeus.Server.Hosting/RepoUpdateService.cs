@@ -371,14 +371,22 @@ public sealed partial class RepoUpdateService
         if (string.IsNullOrWhiteSpace(value)) return false;
         var m = VersionPattern().Match(value);
         if (!m.Success) return false;
+        // Two-part tags (v1.00, v1.01 — the ANAN Core release line) are
+        // read as major.minor.0. Before this, a two-part version failed to
+        // parse at all and every compare fell into the "one side unparsable →
+        // any difference is an update" branch, which happens to roll forward
+        // but would also offer a downgrade or a rebuild of the same version.
+        // Minor is numeric: 1.01 → 1.1 and 1.10 → 1.10, so keep the minor as a
+        // two-digit counter (v1.02 … v1.99) and never mix in v1.1 alongside it.
+        int patch = m.Groups["patch"].Success ? int.Parse(m.Groups["patch"].Value) : 0;
         version = new Version(
             int.Parse(m.Groups["major"].Value),
             int.Parse(m.Groups["minor"].Value),
-            int.Parse(m.Groups["patch"].Value));
+            patch);
         return true;
     }
 
-    [GeneratedRegex(@"[vV]?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)")]
+    [GeneratedRegex(@"[vV]?(?<major>\d+)\.(?<minor>\d+)(?:\.(?<patch>\d+))?")]
     private static partial Regex VersionPattern();
 
     /// <summary>Pick the manifest asset matching this platform + architecture.

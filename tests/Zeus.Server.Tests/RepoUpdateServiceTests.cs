@@ -37,6 +37,14 @@ public class RepoUpdateServiceTests
     [InlineData("unknown", "0.9.1-main.20260620.abc1234", true)]
     // Empty manifest version → never an update.
     [InlineData("0.9.1-main.20260620.abc1234", "", false)]
+    // Two-part release tags (ANAN Core line): 0.15.x → 1.00 is an update,
+    // 1.00 → 1.01 is an update, 1.01 → 1.00 is a downgrade (never offered),
+    // and 1.01 → 1.01 is up to date.
+    [InlineData("0.15.199", "1.00", true)]
+    [InlineData("1.00", "1.01", true)]
+    [InlineData("1.01", "1.00", false)]
+    [InlineData("1.01", "1.01", false)]
+    [InlineData("v1.01", "1.1.0", false)]
     public void IsManifestNewer_HandlesRollingMainBuilds(string installed, string latest, bool expected)
     {
         Assert.Equal(expected, RepoUpdateService.IsManifestNewer(installed, latest));

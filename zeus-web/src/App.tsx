@@ -1482,7 +1482,7 @@ export default function App() {
             </svg>
           </div>
           <div className="brand-text">
-            <div className="brand-name mono">OpenHpsdr Zeus</div>
+            <div className="brand-name mono">ANAN Core</div>
             <div className="brand-sub label-xs hide-mobile">{brandSub}</div>
           </div>
         </div>

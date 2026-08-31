@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- OpenHPSDR Zeus — modernized mark.
+<!-- OpenHPSDR Core — modernized mark (ANAN Core).
      Heritage: the twin staggered square-wave pulses of the classic openHPSDR
      logo (the sampled-signal identity), redrawn as glowing traces on the dark
      slate of the Zeus UI, with the app's own blue accent ramp and a quiet
@@ -81,5 +81,5 @@
   <text x="256" y="462" text-anchor="middle"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
         font-size="86" font-weight="800" letter-spacing="6"
-        fill="#e8eef6">ZEUS</text>
+        fill="#e8eef6">CORE</text>
 </svg>

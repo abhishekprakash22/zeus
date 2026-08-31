@@ -104,9 +104,9 @@ export default defineConfig({
       includeAssets: ['mic-uplink-worklet.js'],
       injectRegister: null, // We handle registration manually
       manifest: {
-        name: 'Zeus',
-        short_name: 'Zeus',
-        description: 'Zeus WebSDR control surface',
+        name: 'ANAN Core',
+        short_name: 'Core',
+        description: 'ANAN Core — Protocol-2 SDR for the ANAN',
         theme_color: '#0a1220',
         background_color: '#0a1220',
         display: 'standalone',

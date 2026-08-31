@@ -238,8 +238,8 @@ export function MobileApp() {
             <img className="m-brand-logo" src="/branding/zeus-logo.svg" alt="" aria-hidden="true" />
           </span>
           <span className="m-brand-text">
-            <span className="m-brand-pre">OpenHpsdr</span>
-            <span className="m-brand-name">Zeus</span>
+            <span className="m-brand-pre">ANAN</span>
+            <span className="m-brand-name">CORE</span>
           </span>
         </div>
         <nav className="m-tabs" role="tablist" aria-label="Mobile sections">

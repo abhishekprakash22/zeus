@@ -166,6 +166,11 @@ public sealed partial class RepoUpdateService
     /// the live AppImage. Runs after every applied update and once at startup,
     /// so the shortcut survives deletion, path moves, and manual installs.
     /// A launcher without our marker (user-customized) is never touched.</summary>
+    /// <summary>Product name on the managed Desktop launcher. Part of the
+    /// up-to-date check so an existing launcher is rewritten once when the
+    /// name changes (the ANAN Core cutover), not only when Exec/Icon move.</summary>
+    private const string LauncherName = "ANAN Core";
+
     public void EnsureDesktopShortcut()
     {
         try
@@ -185,14 +190,15 @@ public sealed partial class RepoUpdateService
                 if (!existing.Contains(ShortcutMarker, StringComparison.Ordinal))
                     return;                       // the operator made this their own
                 if (existing.Contains($"Exec=\"{appImage}\"", StringComparison.Ordinal)
-                    && existing.Contains($"Icon={icon}", StringComparison.Ordinal))
-                    return;                       // already correct, artwork included
+                    && existing.Contains($"Icon={icon}", StringComparison.Ordinal)
+                    && existing.Contains($"Name={LauncherName}", StringComparison.Ordinal))
+                    return;                       // already correct, artwork and name included
             }
 
             string content =
                 "[Desktop Entry]\n" +
                 "Type=Application\n" +
-                "Name=OpenHPSDR Zeus\n" +
+                $"Name={LauncherName}\n" +
                 "Comment=Software-defined radio (self-updating AppImage)\n" +
                 $"Exec=\"{appImage}\"\n" +
                 $"Icon={icon}\n" +

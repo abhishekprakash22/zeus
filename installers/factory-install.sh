@@ -99,7 +99,7 @@ if [ -d "$DESKTOP_DIR" ]; then
   cat > "$DESKTOP_DIR/openhpsdr-zeus.desktop" << EOF
 [Desktop Entry]
 Type=Application
-Name=OpenHPSDR Zeus
+Name=ANAN Core
 Comment=Software-defined radio (self-updating AppImage)
 Exec="$APP_PATH"
 Icon=radio

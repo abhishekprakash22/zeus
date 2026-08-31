@@ -332,9 +332,20 @@ public sealed class RemoteWebRtcSession
             // Half-full buffer still stretches the pace within the current
             // envelope (the pre-adaptation behaviour, kept as the fast path).
             long effectiveGap = buffered > MaxBufferedFrameBytes / 2 ? Math.Max(gap, SlowDisplayGapMs) : gap;
-            if (now - _lastDisplaySendMs < effectiveGap)
-                return true; // paced out — a fresher frame is right behind
-            _lastDisplaySendMs = now;
+            // Pace PER RECEIVER. Field find (remote RX2 blank, audio fine):
+            // one shared timestamp meant RX1's frame took the slot and RX2's,
+            // arriving a millisecond later inside the gap, was paced out as
+            // "a fresher frame is right behind" — but the fresher frame was
+            // RX1's next one. RX2 never won a slot. Each RxId now keeps its
+            // own clock; the congestion envelope (gap/AIMD) stays shared
+            // because it describes the channel, not a receiver.
+            int rx = frame.Length > Zeus.Contracts.WireFormat.HeaderSize
+                ? frame[Zeus.Contracts.WireFormat.HeaderSize]
+                : 0;
+            if (rx >= _lastDisplaySendMs.Length) rx = _lastDisplaySendMs.Length - 1;
+            if (now - _lastDisplaySendMs[rx] < effectiveGap)
+                return true; // paced out — a fresher frame for this receiver is right behind
+            _lastDisplaySendMs[rx] = now;
         }
         else if (_frames.bufferedAmount > MaxBufferedFrameBytes)
         {
@@ -360,7 +371,9 @@ public sealed class RemoteWebRtcSession
     private const long RecoveryQuietMs = 3000;
     private long _displayGapMs = NormalDisplayGapMs;
     private long _lastCongestionMs;
-    private long _lastDisplaySendMs;
+    // Last display send per RxId (index = first body byte); slot 7 pools any
+    // higher ids so an unexpected value can never index out of range.
+    private readonly long[] _lastDisplaySendMs = new long[8];
 
     public void Close()
     {

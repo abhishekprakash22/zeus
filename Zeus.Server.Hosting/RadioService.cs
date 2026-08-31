@@ -197,6 +197,7 @@ public sealed class RadioService : IDisposable
         public double AfGainDb;
         public byte AdcSource;   // 0 = ADC0 (same antenna as RX1) by default
         public bool Muted;       // per-RX audio mute (RXOutputGain=0 equivalent)
+        public double AgcTopDb = DefaultAgcTopDb;   // manual AGC-T baseline (no Auto servo on RX3+)
     }
     private readonly ExtraReceiver[] _extraReceivers = CreateExtraReceivers();
     private static ExtraReceiver[] CreateExtraReceivers()
@@ -355,22 +356,20 @@ public sealed class RadioService : IDisposable
     private const double AgcThreshMaxDbm = 2.0;
     private const double AgcTopMinDb = -20.0;
     private const double AgcTopMaxDb = 120.0;
-    private double _agcOffsetDb;
-    private long _lastAgcTickMs = long.MinValue;
-    private long _lastAutoAgcVfoHz = long.MinValue;
-    private readonly double[] _noiseFloorWindow = new double[AgcNoiseFloorWindowSamples];
-    private int _noiseFloorWindowIdx;
-    private int _noiseFloorWindowFill;
-    // Which source is currently filling the floor window (0 none / 1 spectrum /
-    // 2 S-meter fallback) and the last time a real spectrum floor arrived
-    // (Environment.TickCount64 ms). Together these (a) keep the two differently-
-    // calibrated sources from being mixed in one percentile window, and (b) make
-    // the loop fall back to the S-meter ONLY after the spectrum has been absent
-    // long enough to be a true outage, not a single dropped frame — without this,
-    // a sustained stale-spectrum period under steady RX would freeze tracking.
-    private int _autoAgcWindowSource;
-    private long _lastSpectrumFloorMs = long.MinValue;
     private const long AgcSpectrumStaleMs = 1500;  // 3 ticks; > normal frame gaps
+    // One Auto-AGC-T servo per receiver (index 0 = RX1, 1 = RX2). Each owns
+    // its own floor window, source tag, throttle, fast-attack VFO memory and
+    // offset (see AutoAgcServo). RX1's offset is published on the flat
+    // StateDto.AgcOffsetDb; RX2's on Receivers[1].AgcOffsetDb. The window/
+    // source bookkeeping that used to live here moved into the servo class
+    // unchanged — the loop is the same Thetis-faithful one, now instantiable.
+    private readonly AutoAgcServo[] _agcServos =
+    {
+        new(AgcNoiseFloorWindowSamples, AgcNoiseFloorMinSamples, AgcNoiseFloorPercentile,
+            AgcDeadbandDb, AgcFastAttackVfoDeltaHz, AgcSpectrumStaleMs),
+        new(AgcNoiseFloorWindowSamples, AgcNoiseFloorMinSamples, AgcNoiseFloorPercentile,
+            AgcDeadbandDb, AgcFastAttackVfoDeltaHz, AgcSpectrumStaleMs),
+    };
 
     // 100 ms between 1-dB steps. Events arrive at ~1.2 kHz (192 kSps), so
     // without throttling the offset would saturate at 31 dB in ~30 ms. At 10 Hz
@@ -649,6 +648,11 @@ public sealed class RadioService : IDisposable
         int hydFilterHighB = rsSnap?.FilterHighHzB ?? rsSnap?.FilterHighHz ?? 2850;
         string? hydPresetB = rsSnap?.FilterPresetNameB ?? rsSnap?.FilterPresetName ?? "VAR1";
         double hydAfGainB = Math.Clamp(rsSnap?.Rx2AfGainDb ?? 0.0, -50.0, 20.0);
+        // RX2's own AGC-T baseline + Auto arm (per-receiver AGC-T). The servo
+        // offset always starts at 0 — it is a control-loop accumulator that
+        // re-seeds from RX2's band floor, exactly as RX1's does.
+        double hydAgcTopB = Math.Clamp(rsSnap?.Rx2AgcTopDb ?? DefaultAgcTopDb, MinAgcTopDb, MaxAgcTopDb);
+        bool hydAutoAgcB = rsSnap?.Rx2AutoAgcEnabled ?? false;
 
         _state = new(
             Status: ConnectionStatus.Disconnected,
@@ -766,7 +770,8 @@ public sealed class RadioService : IDisposable
                     VfoHz: hydVfoB, Mode: hydModeB,
                     FilterLowHz: hydFilterLowB, FilterHighHz: hydFilterHighB,
                     FilterPresetName: hydPresetB, AfGainDb: hydAfGainB,
-                    SampleRateHz: _state.SampleRate, Muted: _state.Rx2Muted),
+                    SampleRateHz: _state.SampleRate, Muted: _state.Rx2Muted,
+                    AgcTopDb: hydAgcTopB, AgcOffsetDb: 0.0, AutoAgcEnabled: hydAutoAgcB),
             },
         };
 
@@ -1374,7 +1379,9 @@ public sealed class RadioService : IDisposable
         int? filterLowHz = null,
         int? filterHighHz = null,
         double? afGainDb = null,
-        string? filterPresetName = null)
+        string? filterPresetName = null,
+        double? agcTopDb = null,
+        bool? autoAgcEnabled = null)
     {
         // RX1 (0) and RX2 (1) live on the flat StateDto fields, but the uniform
         // numeric model means /api/receivers/{index} must drive every receiver.
@@ -1406,6 +1413,16 @@ public sealed class RadioService : IDisposable
             }
             if (adcSource is byte a)
                 Mutate(s => WithReceiverAdcSource(s, index, a));
+            // Per-receiver AGC-T: RX1 keeps its canonical setters (they own the
+            // persisted baseline + the #733 manual-take-over rule); RX2 has its twins.
+            if (agcTopDb is double top)
+            {
+                if (index == 1) SetRx2AgcTop(top); else SetAgcTop(top);
+            }
+            if (autoAgcEnabled is bool auto)
+            {
+                if (index == 1) SetRx2AutoAgc(auto); else SetAutoAgc(auto);
+            }
             return Snapshot();
         }
         if (index < 2 || index >= _extraReceivers.Length)
@@ -1423,6 +1440,9 @@ public sealed class RadioService : IDisposable
             if (filterHighHz is int fh) e.FilterHighHz = fh;
             if (filterPresetName is string fp) e.FilterPresetName = fp;
             if (afGainDb is double af) e.AfGainDb = Math.Clamp(af, -50.0, 20.0);
+            // RX3+ carry a manual AGC-T baseline only (no Auto servo — they have
+            // no meter stream); the DSP applies it to that DDC's channel.
+            if (agcTopDb is double top) e.AgcTopDb = Math.Clamp(top, MinAgcTopDb, MaxAgcTopDb);
             if (enabled is bool en)
             {
                 e.Enabled = en;
@@ -1455,6 +1475,12 @@ public sealed class RadioService : IDisposable
     public StateDto SetRx2(Rx2SetRequest req)
     {
         ArgumentNullException.ThrowIfNull(req);
+        // Per-receiver AGC-T rides the same request but has its own setters so
+        // the manual-take-over / arm semantics stay in one place each.
+        if (req.AgcTopDb is double agcTop) SetRx2AgcTop(agcTop);
+        if (req.AutoAgcEnabled is bool autoAgc) SetRx2AutoAgc(autoAgc);
+        if (req.Enabled is null && req.VfoBHz is null && req.AudioMode is null && req.AfGainDb is null)
+            return Snapshot();
         long previousTx;
         lock (_sync) previousTx = TxFrequencyHzLocked(_state);
         Mutate(s =>
@@ -2694,16 +2720,13 @@ public sealed class RadioService : IDisposable
             {
                 // Turning auto off: reset the offset to zero so AGC-T returns
                 // to the user's baseline immediately.
-                _agcOffsetDb = 0.0;
-                _lastAgcTickMs = long.MinValue;
-                ResetAutoAgcNoiseFloorWindow();
+                _agcServos[0].Disarm();
                 _state = _state with { AgcOffsetDb = 0.0 };
             }
             else
             {
                 // Turning auto on: reset timer + window so we recalibrate.
-                _lastAgcTickMs = long.MinValue;
-                ResetAutoAgcNoiseFloorWindow();
+                _agcServos[0].Arm();
             }
         }
         var snap = Snapshot();
@@ -2716,6 +2739,52 @@ public sealed class RadioService : IDisposable
         return snap;
     }
 
+    /// <summary>RX2's Auto-AGC-T arm — the independent twin of <see cref="SetAutoAgc"/>.
+    /// RX2's servo tracks RX2's own panadapter floor and S-meter and publishes
+    /// its offset on Receivers[1].AgcOffsetDb.</summary>
+    public StateDto SetRx2AutoAgc(bool enabled)
+    {
+        bool changed = false;
+        lock (_sync)
+        {
+            if (_state.Rx2().AutoAgcEnabled == enabled) return _state;
+            changed = true;
+            if (!enabled)
+            {
+                _agcServos[1].Disarm();
+                _state = WithRx2(_state, r => r with { AutoAgcEnabled = false, AgcOffsetDb = 0.0 });
+            }
+            else
+            {
+                _agcServos[1].Arm();
+                _state = WithRx2(_state, r => r with { AutoAgcEnabled = true });
+            }
+        }
+        var snap = Snapshot();
+        if (changed)
+        {
+            _stateDirty = true;
+            FlushState();
+        }
+        StateChanged?.Invoke(snap);
+        return snap;
+    }
+
+    /// <summary>RX2's AGC-T baseline (30..90) — the independent twin of
+    /// <see cref="SetAgcTop"/>. Grabbing it takes manual control of RX2: Auto
+    /// is disarmed and its offset zeroed so the effective ceiling equals the
+    /// slider exactly (issue #733's rule, applied per receiver).</summary>
+    public StateDto SetRx2AgcTop(double topDb)
+    {
+        double clamped = Math.Clamp(topDb, MinAgcTopDb, MaxAgcTopDb);
+        Mutate(s =>
+        {
+            _agcServos[1].Disarm();
+            return WithRx2(s, r => r with { AgcTopDb = clamped, AgcOffsetDb = 0.0, AutoAgcEnabled = false });
+        });
+        return Snapshot();
+    }
+
     // Drops the auto-AGC noise-floor window so the next samples re-seed the floor
     // estimate from scratch. This is Thetis's "fast-attack": a band change,
     // attenuator step, preamp/LNA toggle, power-on, or a TX pause all invalidate
@@ -2725,9 +2794,9 @@ public sealed class RadioService : IDisposable
     // Caller MUST hold _sync.
     private void ResetAutoAgcNoiseFloorWindow()
     {
-        _noiseFloorWindowFill = 0;
-        _noiseFloorWindowIdx = 0;
-        _autoAgcWindowSource = 0;
+        // Band/attenuator/preamp events invalidate every receiver's floor —
+        // the front end is shared — so both servos re-seed.
+        foreach (var servo in _agcServos) servo.ResetWindow();
     }
 
     /// <summary>
@@ -2740,16 +2809,21 @@ public sealed class RadioService : IDisposable
     /// slope=0 for canned modes) are the same WDSP uses, so the only free term is
     /// <see cref="AgcThreshCalOffsetDb"/>.
     /// </summary>
-    internal double AutoAgcTopFromNoiseFloor(double noiseFloorDbm)
+    internal double AutoAgcTopFromNoiseFloor(double noiseFloorDbm) =>
+        AutoAgcTopFromNoiseFloor(noiseFloorDbm, _state.FilterLowHz, _state.FilterHighHz, _state.SampleRate);
+
+    // Per-receiver form: the passband is the one thing in the conversion that
+    // differs between RX1 and RX2 (RX2 runs its own filter edges).
+    internal static double AutoAgcTopFromNoiseFloor(double noiseFloorDbm, int filterLowHz, int filterHighHz, int sampleRate)
     {
         // 1) Desired AGC threshold (Thetis: floor + userOffset − cal), clamped.
         double thresh = Math.Clamp(
             noiseFloorDbm + AutoAgcOffsetDb - AgcThreshCalOffsetDb,
             AgcThreshMinDbm, AgcThreshMaxDbm);
         // 2) WDSP bandwidth/FFT term: 10·log10((fhigh−flow)·size/rate) (wcpAGC.c:482).
-        //    fhigh−flow is the RX passband width WDSP runs (our _state filter edges).
-        double bwHz = Math.Max(1.0, Math.Abs(_state.FilterHighHz - _state.FilterLowHz));
-        double rate = Math.Max(1.0, _state.SampleRate);
+        //    fhigh−flow is the RX passband width WDSP runs (this receiver's filter edges).
+        double bwHz = Math.Max(1.0, Math.Abs(filterHighHz - filterLowHz));
+        double rate = Math.Max(1.0, sampleRate);
         double noiseOffset = 10.0 * Math.Log10(bwHz * AgcThreshFftSize / rate);
         // 3) top = 20·log10(max_gain) = 20·log10(out_target) − 20·log10(var_gain)
         //    − (thresh + noiseOffset). Canned modes run slope 0 ⇒ var_gain 1 ⇒ its
@@ -2788,135 +2862,55 @@ public sealed class RadioService : IDisposable
     // Zeus-only ADC-overload cut that pumped strong signals; Thetis's servo
     // tracks the noise floor and nothing else (see the windowReady block below).
     internal void HandleRxMetersForAutoAgc(double signalDbm, double spectrumFloorDbm, double adcPkDbfs, double agcGainDb, long nowMs)
+        => HandleReceiverMetersForAutoAgc(0, signalDbm, spectrumFloorDbm, nowMs);
+
+    /// <summary>
+    /// Per-receiver Auto-AGC-T tick. RX1 (0) publishes its offset on the flat
+    /// StateDto.AgcOffsetDb; RX2 (1) on Receivers[1].AgcOffsetDb. Each servo
+    /// reads ITS receiver's Auto arm, baseline, passband and VFO, so RX2's loop
+    /// seats RX2's knee at RX2's floor with no coupling to RX1. The Thetis
+    /// tick does ONE thing — seat the AGC threshold at the settled noise floor
+    /// (console.cs tmrAutoAGC_Tick:46066); there is deliberately no reaction to
+    /// instantaneous level or ADC peak (an earlier Zeus-only "overload
+    /// protection" manufactured loudness pumping and was removed).
+    /// </summary>
+    internal void HandleReceiverMetersForAutoAgc(int rxIndex, double signalDbm, double spectrumFloorDbm, long nowMs)
     {
+        if (rxIndex < 0 || rxIndex >= _agcServos.Length) return;
         bool changedOffset = false;
         double newOffset = 0.0;
         double noiseFloor = double.NaN;
 
         lock (_sync)
         {
-            if (!_state.AutoAgcEnabled) return;
             if (_mox) return;   // Pause during TX
-            bool hasSpectrumFloor = double.IsFinite(spectrumFloorDbm) && spectrumFloorDbm > -250.0;
-            bool hasSignalMeter = double.IsFinite(signalDbm) && signalDbm > -250.0;
-            if (!hasSpectrumFloor && !hasSignalMeter) return;
-
-            // If we paused for longer than the analysis window (TX,
-            // just-toggled-on, RX dropout) the
-            // window may hold stale samples — clear before re-accumulating.
-            if (_lastAgcTickMs != long.MinValue && nowMs - _lastAgcTickMs > AgcNoiseFloorWindowSamples * 500)
+            var servo = _agcServos[rxIndex];
+            if (rxIndex == 0)
             {
-                ResetAutoAgcNoiseFloorWindow();
+                if (!_state.AutoAgcEnabled) return;
+                if (!servo.Tick(signalDbm, spectrumFloorDbm, nowMs, _state.VfoHz, _state.AgcTopDb,
+                        AutoAgcTopFromNoiseFloor, out noiseFloor))
+                    return;
+                _state = _state with { AgcOffsetDb = servo.OffsetDb };
             }
-
-            // Fast-attack: a band-scale VFO move makes the old band's samples
-            // meaningless, so drop the window and re-seed to the new band's floor
-            // (Thetis re-seeds in ~1 s on a > 0.5 MHz change). A small in-band
-            // tune does NOT reset — only a band-change-scale jump.
-            if (_lastAutoAgcVfoHz != long.MinValue &&
-                Math.Abs(_state.VfoHz - _lastAutoAgcVfoHz) > AgcFastAttackVfoDeltaHz)
+            else
             {
-                ResetAutoAgcNoiseFloorWindow();
+                var rx2 = _state.Rx2();
+                if (!rx2.AutoAgcEnabled) return;
+                int lo = rx2.FilterLowHz, hi = rx2.FilterHighHz, rate = _state.SampleRate;
+                if (!servo.Tick(signalDbm, spectrumFloorDbm, nowMs, rx2.VfoHz, rx2.AgcTopDb,
+                        floor => AutoAgcTopFromNoiseFloor(floor, lo, hi, rate), out noiseFloor))
+                    return;
+                _state = WithRx2(_state, r => r with { AgcOffsetDb = servo.OffsetDb });
             }
-            _lastAutoAgcVfoHz = _state.VfoHz;
-
-            if (_lastAgcTickMs != long.MinValue && nowMs - _lastAgcTickMs < 500)
-                return;
-            _lastAgcTickMs = nowMs;
-
-            // Choose the floor source for this tick. A real spectrum floor (#806)
-            // always wins. A BRIEF spectrum dropout (< AgcSpectrumStaleMs) is
-            // treated as transient — hold the window rather than inject the
-            // S-meter proxy, which sits on a different scale and moves with the
-            // signal. Only a SUSTAINED outage (stale frame / <64 valid bins for
-            // longer than that, e.g. an engine that genuinely never produces a
-            // spectrum) falls back to signalDbm, so the loop keeps tracking
-            // instead of freezing. The two sources are never mixed in one
-            // percentile window: switching source re-seeds the window.
-            if (hasSpectrumFloor) _lastSpectrumFloorMs = nowMs;
-            bool spectrumRecent = _lastSpectrumFloorMs != long.MinValue &&
-                                  nowMs - _lastSpectrumFloorMs < AgcSpectrumStaleMs;
-            int floorSource;        // 0 hold, 1 spectrum, 2 S-meter fallback
-            double floorSample;
-            if (hasSpectrumFloor) { floorSource = 1; floorSample = spectrumFloorDbm; }
-            else if (spectrumRecent) { floorSource = 0; floorSample = 0.0; }   // transient: hold
-            else if (hasSignalMeter) { floorSource = 2; floorSample = signalDbm; }
-            else { floorSource = 0; floorSample = 0.0; }
-            if (floorSource != 0)
-            {
-                if (_autoAgcWindowSource != 0 && _autoAgcWindowSource != floorSource)
-                    ResetAutoAgcNoiseFloorWindow();
-                _autoAgcWindowSource = floorSource;
-                _noiseFloorWindow[_noiseFloorWindowIdx] = floorSample;
-                _noiseFloorWindowIdx = (_noiseFloorWindowIdx + 1) % _noiseFloorWindow.Length;
-                if (_noiseFloorWindowFill < _noiseFloorWindow.Length) _noiseFloorWindowFill++;
-            }
-
-            // Act as soon as we have a few samples (~1.5 s) — don't wait to fill
-            // the whole window. The percentile is computed over however many
-            // samples we have, which is enough to place the floor and start
-            // converging fast.
-            bool windowReady = _noiseFloorWindowFill >= AgcNoiseFloorMinSamples;
-            double desiredOffset = _agcOffsetDb;
-            if (windowReady)
-            {
-                // Robust floor estimate: a low percentile of the window rejects
-                // transient signal energy so we track the true noise, not peaks.
-                // stackalloc (≤ AgcNoiseFloorWindowSamples doubles) keeps the
-                // 500 ms loop allocation-free — no per-tick GC pressure.
-                Span<double> sorted = stackalloc double[_noiseFloorWindowFill];
-                for (int i = 0; i < _noiseFloorWindowFill; i++)
-                    sorted[i] = _noiseFloorWindow[i];
-                sorted.Sort();
-                int floorIndex = Math.Clamp(
-                    (int)Math.Round((sorted.Length - 1) * AgcNoiseFloorPercentile),
-                    0,
-                    sorted.Length - 1);
-                noiseFloor = sorted[floorIndex];
-
-                // Thetis auto-AGC-T: drive the AGC *threshold* (knee) to the noise
-                // floor and let WDSP derive the max-gain ("AGC-T top"). That top
-                // becomes the effective AGC-T; AgcOffsetDb carries it relative to
-                // the operator baseline so state/slider reflect it and the existing
-                // SetAgcTop(AgcTopDb+AgcOffsetDb) apply path pushes the same
-                // max_gain SetRXAAGCThresh would have. Manual AGC-T is untouched:
-                // SetAgcTop zeroes the offset and disables auto, so this never runs
-                // in manual mode.
-                double autoTop = AutoAgcTopFromNoiseFloor(noiseFloor);
-                desiredOffset = autoTop - _state.AgcTopDb;
-            }
-            // Thetis's auto-AGC-T tick (console.cs tmrAutoAGC_Tick:46066) does ONE
-            // thing: seat the AGC threshold at the SETTLED noise floor. It never
-            // reacts to instantaneous signal level or ADC peak. An earlier Zeus-only
-            // "ADC overload protection" used to cut the effective AGC-T whenever WDSP
-            // was cutting hard AND the ADC ran hot — which, on a steady strong
-            // signal, pulled the gain down and then released it as the signal paused.
-            // That MANUFACTURED the loudness pumping operators reported ("a strong
-            // signal goes low then high"). Removed: the noise-floor servo alone is
-            // the Thetis-faithful, non-pumping behaviour. Recovering from a genuine
-            // ADC overload is the operator's RF-gain / attenuation call (auto-ATT
-            // owns that path) — it is not the audio AGC loop's job, and post-ADC AGC
-            // cannot un-clip an already-overdriven sample anyway. When the floor
-            // window isn't ready yet, desiredOffset simply holds the current offset.
-
-            double delta = desiredOffset - _agcOffsetDb;
-            // Deadband: ignore sub-0.5 dB wobble so a jumpy floor estimate can't
-            // dither the gain every tick. Above it, JUMP straight to the target
-            // (no slew) — the floor window is the smoother, so the target moves
-            // gently in steady state and snaps only on a real band change.
-            if (Math.Abs(delta) < AgcDeadbandDb) return;
-
-            _agcOffsetDb = desiredOffset;
-
-            _state = _state with { AgcOffsetDb = _agcOffsetDb };
-            newOffset = _agcOffsetDb;
+            newOffset = servo.OffsetDb;
             changedOffset = true;
         }
 
         if (changedOffset)
         {
             StateChanged?.Invoke(Snapshot());
-            _log.LogDebug("auto-agc offset={Offset}dB noisefloor={Floor}dBm", newOffset, noiseFloor);
+            _log.LogDebug("auto-agc rx={Rx} offset={Offset}dB noisefloor={Floor}dBm", rxIndex + 1, newOffset, noiseFloor);
         }
     }
 
@@ -3775,9 +3769,7 @@ public sealed class RadioService : IDisposable
         // deliberate mode the operator re-enables from its own toggle.
         Mutate(s =>
         {
-            _agcOffsetDb = 0.0;
-            _lastAgcTickMs = long.MinValue;
-            ResetAutoAgcNoiseFloorWindow();
+            _agcServos[0].Disarm();
             return s with { AgcTopDb = clamped, AgcOffsetDb = 0.0, AutoAgcEnabled = false };
         });
         // Persist only the user-baseline (AgcTopDb); the offset is live-recomputed.
@@ -4459,7 +4451,8 @@ public sealed class RadioService : IDisposable
         FilterLowHz: s.FilterLowHz, FilterHighHz: s.FilterHighHz,
         FilterPresetName: s.FilterPresetName,
         AfGainDb: s.RxAfGainDb, SampleRateHz: s.SampleRate,
-        Muted: s.Rx1Muted);
+        Muted: s.Rx1Muted,
+        AgcTopDb: s.AgcTopDb, AgcOffsetDb: s.AgcOffsetDb, AutoAgcEnabled: s.AutoAgcEnabled);
 
     private static StateDto WithReceiverAdcSource(StateDto s, int index, byte adcSource)
     {
@@ -4514,7 +4507,8 @@ public sealed class RadioService : IDisposable
                 FilterLowHz: s.FilterLowHz, FilterHighHz: s.FilterHighHz,
                 FilterPresetName: s.FilterPresetName,
                 AfGainDb: s.RxAfGainDb, SampleRateHz: s.SampleRate,
-                Muted: s.Rx1Muted),
+                Muted: s.Rx1Muted,
+                AgcTopDb: s.AgcTopDb, AgcOffsetDb: s.AgcOffsetDb, AutoAgcEnabled: s.AutoAgcEnabled),
             // index 1 = RX2: its VFO / mode / filter / AF gain are authoritative
             // in the array itself (the flat VFO-B fields are gone). Carry the
             // existing tuning forward and overlay the flat RX2 control fields
@@ -4543,7 +4537,7 @@ public sealed class RadioService : IDisposable
                 FilterLowHz: e.FilterLowHz, FilterHighHz: e.FilterHighHz,
                 FilterPresetName: e.FilterPresetName,
                 AfGainDb: e.AfGainDb, SampleRateHz: s.SampleRate,
-                Muted: e.Muted));
+                Muted: e.Muted, AgcTopDb: e.AgcTopDb));
         }
         // Non-hardware KiwiSDR slice (reserved index KiwiReceiverIndex). Appended
         // out of the contiguous DDC run — it is a remote receiver, not a DDC, so
@@ -4632,6 +4626,8 @@ public sealed class RadioService : IDisposable
                 FilterPresetNameB = rx2Snap.FilterPresetName,
                 Rx2AudioMode = snap.Rx2AudioMode,
                 Rx2AfGainDb = rx2Snap.AfGainDb,
+                Rx2AgcTopDb = rx2Snap.AgcTopDb,
+                Rx2AutoAgcEnabled = rx2Snap.AutoAgcEnabled,
                 TxVfo = snap.TxVfo,
                 CtunEnabled = snap.CtunEnabled,
                 Notches = notches.Select(n => new RadioStateNotchEntry

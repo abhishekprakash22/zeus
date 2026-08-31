@@ -123,6 +123,28 @@ export function getReceiverMode(state: ConnState, key: ReceiverKey) {
   return receiverEntry(state, idx)?.mode ?? state.mode;
 }
 
+// Per-receiver AGC-T. RX1 reads the flat store fields (the server projects
+// them onto Receivers[0] too, but the flat fields are the optimistic-update
+// path for the slider); RX2+ read their own Receivers entry, falling back to
+// RX1 for servers that pre-date per-receiver AGC-T.
+export function getReceiverAgcTopDb(state: ConnState, key: ReceiverKey): number {
+  const idx = rxIndexOf(key);
+  if (idx === 0) return state.agcTopDb;
+  return receiverEntry(state, idx)?.agcTopDb ?? state.agcTopDb;
+}
+
+export function getReceiverAgcOffsetDb(state: ConnState, key: ReceiverKey): number {
+  const idx = rxIndexOf(key);
+  if (idx === 0) return state.agcOffsetDb;
+  return receiverEntry(state, idx)?.agcOffsetDb ?? 0;
+}
+
+export function getReceiverAutoAgcEnabled(state: ConnState, key: ReceiverKey): boolean {
+  const idx = rxIndexOf(key);
+  if (idx === 0) return state.autoAgcEnabled;
+  return receiverEntry(state, idx)?.autoAgcEnabled ?? false;
+}
+
 export function getReceiverFilterLowHz(state: ConnState, key: ReceiverKey): number {
   const idx = rxIndexOf(key);
   if (idx === 0) return state.filterLowHz;

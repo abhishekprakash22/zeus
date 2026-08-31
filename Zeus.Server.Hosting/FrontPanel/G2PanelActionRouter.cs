@@ -752,9 +752,10 @@ public sealed class G2PanelActionRouter
 
     private void AdjustAgcRx2(int ticks)
     {
-        // Zeus currently exposes AGC-T as one shared receiver-DSP ceiling.
-        // Keep the DeskHPSDR RX2 AGC encoder live by driving that shared slider.
-        AdjustAgcTop(ticks);
+        // RX2 owns its AGC-T now (per-receiver AGC-T + Auto-AGC-T). The RX2
+        // encoder drives RX2's baseline only; RX1's is untouched.
+        var s = _radio.Snapshot();
+        _radio.SetRx2(new Rx2SetRequest(AgcTopDb: s.Rx2().AgcTopDb + ticks * AgcStepDb));
     }
 
     private void AdjustAgcTop(int ticks)

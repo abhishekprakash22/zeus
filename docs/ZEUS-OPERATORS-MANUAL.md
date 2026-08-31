@@ -167,10 +167,17 @@ display for the dark shack). BAND/MODE/FILTER sheets close themselves after
 a pick (PIN keeps them open).a pick (PIN keeps them open). Each pane's flag carries the real VFO
 readout — scroll the wheel over a digit to step that decade, or click the
 digits to type a frequency (kHz) inline — plus the **CTRL** chip for that
-receiver's AF / AGC-T / mute controls, the STEP chip to cycle the tune
+receiver's AF / AGC-T / AUTO AGC / mute controls, the STEP chip to cycle the tune
 step, and a DSP status row (NR / NB / ANF / SNB, lit when engaged; the
 NB·NR tab is the editor). RX2's waterfall wears the same enhanced texture as RX1's, built from
-its own band. The outer edges of every span (the receiver's filter
+its own band. AGC-T is per receiver: RX1 and RX2 each have their own AGC-T
+baseline and their own Auto-AGC-T, which tracks that receiver's own band
+noise floor (Auto on RX2 keys off RX2's panadapter). The top-bar AGC slider
+follows the focused receiver, like MODE and FILTER; the G2 front panel's
+RX2 AGC encoder drives RX2's AGC-T only, and its value flashes on the RX2
+pane whichever receiver is active. Grabbing a receiver's AGC-T slider
+takes manual control of that receiver (its Auto turns off); the other
+receiver is unaffected. The outer edges of every span (the receiver's filter
 transition band, where out-of-span signals fold back attenuated) render
 raw rather than enhanced, so the shoulders no longer bloom into bright
 columns the spectrum trace doesn't show. The left rail holds

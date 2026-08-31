@@ -1009,7 +1009,18 @@ public sealed record ReceiverDto(
     // "Kiwi") for non-hardware software receivers such as the KiwiSDR slice that
     // occupy a reserved high index (WireContract.KiwiReceiverIndex). Defaulted so
     // pre-name wire frames deserialize unchanged.
-    string? Name = null);
+    string? Name = null,
+    // ---- Per-receiver AGC-T (independent Auto-AGC-T per receiver) ----
+    // AgcTopDb is the operator baseline (30..90, Thetis rx_agc_max_gain),
+    // AgcOffsetDb the live Auto-AGC-T servo offset on top of it, and
+    // AutoAgcEnabled the servo arm. RX1 (index 0) is projected from the flat
+    // StateDto AgcTopDb / AgcOffsetDb / AutoAgcEnabled fields; RX2 (index 1)
+    // and RX3+ are authoritative here. Each receiver's WDSP channel receives
+    // its own effective ceiling (AgcTopDb + AgcOffsetDb). Defaulted so
+    // pre-per-receiver wire frames deserialize unchanged.
+    double AgcTopDb = 90.0,
+    double AgcOffsetDb = 0.0,
+    bool AutoAgcEnabled = false);
 
 public sealed record StateDto(
     ConnectionStatus Status,
@@ -1531,7 +1542,11 @@ public sealed record Rx2SetRequest(
     bool? Enabled = null,
     long? VfoBHz = null,
     Rx2AudioMode? AudioMode = null,
-    double? AfGainDb = null);
+    double? AfGainDb = null,
+    // RX2's own AGC-T baseline (30..90) and Auto-AGC-T arm. Setting the
+    // baseline disarms Auto on RX2, exactly as SetAgcTop does for RX1.
+    double? AgcTopDb = null,
+    bool? AutoAgcEnabled = null);
 
 /// <summary>Configure one receiver by index (RX1=0, RX2=1, RX3+=2..) for the
 /// full multi-DDC model — the body of <c>POST /api/receivers/{index}</c>. Every
@@ -1550,7 +1565,11 @@ public sealed record ReceiverSetRequest(
     // from. Optimistic-only round-trip so the RX3+ passband shows the preset
     // label the operator picked, exactly as RX2 carries FilterPresetNameB. The
     // cuts in FilterLowHz/FilterHighHz remain authoritative for the DSP.
-    string? FilterPresetName = null);
+    string? FilterPresetName = null,
+    // Per-receiver AGC-T baseline (30..90) and Auto-AGC-T arm. Setting the
+    // baseline disarms Auto for that receiver (same rule as /api/agcGain on RX1).
+    double? AgcTopDb = null,
+    bool? AutoAgcEnabled = null);
 
 /// <summary>Body of <c>POST /api/kiwi</c> — configure the KiwiSDR slice
 /// receiver. Every field is optional; only supplied fields change.

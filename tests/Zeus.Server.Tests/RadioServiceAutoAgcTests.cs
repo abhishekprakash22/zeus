@@ -409,4 +409,67 @@ public sealed class RadioServiceAutoAgcTests : IDisposable
         using var radio = NewRadio();
         Assert.Null(radio.Snapshot().AgcThresholdDbm);
     }
+
+    // ---- Per-receiver AGC-T: RX2 runs its own servo on its own state ----
+
+    [Fact]
+    public void Rx2AgcTop_IsIndependentOfRx1()
+    {
+        using var radio = NewRadio();
+        radio.SetAgcTop(60.0);
+        radio.SetRx2(new Zeus.Contracts.Rx2SetRequest(AgcTopDb: 45.0));
+        var s = radio.Snapshot();
+        Assert.Equal(60.0, s.AgcTopDb);
+        Assert.Equal(45.0, s.Rx2().AgcTopDb);
+        // The Receivers array projects both: index 0 mirrors the flat RX1 fields.
+        Assert.Equal(60.0, s.Receivers![0].AgcTopDb);
+        Assert.Equal(45.0, s.Receivers![1].AgcTopDb);
+    }
+
+    [Fact]
+    public void Rx2AutoAgc_TracksItsOwnFloor_WithoutMovingRx1()
+    {
+        // RX2 armed, RX1 manual. Feeding RX2's servo a quiet floor seats RX2's
+        // knee and leaves RX1's offset at zero; feeding RX1's servo does nothing
+        // because RX1's Auto is off.
+        using var radio = NewRadio();
+        radio.SetAgcTop(60.0);
+        radio.SetRx2(new Zeus.Contracts.Rx2SetRequest(AgcTopDb: 50.0, AutoAgcEnabled: true));
+
+        for (int i = 0; i < 4; i++)
+            radio.HandleReceiverMetersForAutoAgc(1, signalDbm: -50.0, spectrumFloorDbm: -105.0, nowMs: i * 500);
+        for (int i = 0; i < 4; i++)
+            radio.HandleRxMetersForAutoAgc(-100.0, -105.0, double.NaN, double.NaN, i * 500);
+
+        var s = radio.Snapshot();
+        var rx2 = s.Rx2();
+        Assert.True(rx2.AutoAgcEnabled);
+        Assert.Equal(
+            RadioService.AutoAgcTopFromNoiseFloor(-105.0, rx2.FilterLowHz, rx2.FilterHighHz, s.SampleRate) - 50.0,
+            rx2.AgcOffsetDb);
+        Assert.True(rx2.AgcOffsetDb > 0.0, "RX2 tracks its quiet floor");
+        Assert.Equal(0.0, s.AgcOffsetDb);
+        Assert.False(s.AutoAgcEnabled);
+    }
+
+    [Fact]
+    public void Rx2AgcTop_ManualTakeOver_DisarmsRx2AutoOnly()
+    {
+        // Grabbing RX2's slider disarms RX2's Auto and zeroes its offset (#733
+        // rule, per receiver) while RX1's Auto keeps running.
+        using var radio = NewRadio();
+        radio.SetAutoAgc(true);
+        radio.SetRx2(new Zeus.Contracts.Rx2SetRequest(AutoAgcEnabled: true));
+        for (int i = 0; i < 4; i++)
+            radio.HandleReceiverMetersForAutoAgc(1, -50.0, -105.0, i * 500);
+        Assert.NotEqual(0.0, radio.Snapshot().Rx2().AgcOffsetDb);
+
+        radio.SetRx2(new Zeus.Contracts.Rx2SetRequest(AgcTopDb: 70.0));
+
+        var s = radio.Snapshot();
+        Assert.False(s.Rx2().AutoAgcEnabled);
+        Assert.Equal(0.0, s.Rx2().AgcOffsetDb);
+        Assert.Equal(70.0, s.Rx2().AgcTopDb);
+        Assert.True(s.AutoAgcEnabled, "RX1 Auto untouched");
+    }
 }

@@ -49,10 +49,16 @@ import {
   setAgc,
   setAgcTop,
   setAutoAgc,
+  setReceiver,
   type AgcConfigDto,
   type AgcMode,
 } from '../api/client';
 import { useConnectionStore } from '../state/connection-store';
+import {
+  getReceiverAgcOffsetDb,
+  getReceiverAgcTopDb,
+  getReceiverAutoAgcEnabled,
+} from '../state/receiver-state';
 import { useLiveSlider } from '../hooks/useLiveSlider';
 
 // AGC top (max gain) in dB. 90 is the loudest the AGC drives (the Thetis
@@ -129,10 +135,17 @@ function ParamRow(props: {
   );
 }
 
-export function AgcSlider() {
-  const userAgc = useConnectionStore((s) => s.agcTopDb);
-  const offsetDb = useConnectionStore((s) => s.agcOffsetDb);
-  const autoEnabled = useConnectionStore((s) => s.autoAgcEnabled);
+// AGC-T is per receiver: the slider edits the FOCUSED receiver's baseline and
+// Auto arm (like the mode / filter controls beside it), or an explicit
+// rxIndex when a caller pins it. RX1 goes through the canonical /api/agcGain
+// + /api/autoAgc setters; RX2+ through /api/receivers/{i}, which the server
+// routes to that receiver's own setters and its own Auto-AGC-T servo.
+export function AgcSlider({ rxIndex }: { rxIndex?: number } = {}) {
+  const focusedRxIndex = useConnectionStore((s) => s.focusedRxIndex);
+  const rx = rxIndex ?? focusedRxIndex;
+  const userAgc = useConnectionStore((s) => getReceiverAgcTopDb(s, rx));
+  const offsetDb = useConnectionStore((s) => getReceiverAgcOffsetDb(s, rx));
+  const autoEnabled = useConnectionStore((s) => getReceiverAutoAgcEnabled(s, rx));
   const connected = useConnectionStore((s) => s.status === 'Connected');
   const applyState = useConnectionStore((s) => s.applyState);
   const agc = useConnectionStore((s) => s.agc);
@@ -164,14 +177,14 @@ export function AgcSlider() {
   const liveSlider = useLiveSlider<number>({
     send: useCallback(
       (v: number, signal: AbortSignal) =>
-        setAgcTop(v, signal)
+        (rx === 0 ? setAgcTop(v, signal) : setReceiver(rx, { agcTopDb: v }, signal))
           .then((next) => {
             if (!signal.aborted) applyState(next);
           })
           .catch(() => {
             /* next poll will reconcile; don't noisily log on abort */
           }),
-      [applyState],
+      [applyState, rx],
     ),
   });
 
@@ -180,14 +193,16 @@ export function AgcSlider() {
     autoAbort.current?.abort();
     const ac = new AbortController();
     autoAbort.current = ac;
-    setAutoAgc(!autoEnabled, ac.signal)
+    (rx === 0
+      ? setAutoAgc(!autoEnabled, ac.signal)
+      : setReceiver(rx, { autoAgcEnabled: !autoEnabled }, ac.signal))
       .then((next) => {
         if (!ac.signal.aborted) applyState(next);
       })
       .catch(() => {
         /* state subscription will reconcile on next broadcast */
       });
-  }, [autoEnabled, connected, applyState]);
+  }, [autoEnabled, connected, applyState, rx]);
 
   const sendAgc = useCallback(
     (next: AgcConfigDto) => {

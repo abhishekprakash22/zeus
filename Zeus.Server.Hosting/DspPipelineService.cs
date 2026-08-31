@@ -753,6 +753,12 @@ public class DspPipelineService : BackgroundService,
         // the freshly-opened channel snaps to the operator's target instead
         // of dragging from a stale 0 dB. See AfGainSlewMaxDbPerTick.
         public double AppliedAfGainDb = double.NaN;
+        // Per-receiver AGC-T slew state (Receivers[i].AgcTopDb + AgcOffsetDb),
+        // same NaN-sentinel contract as AppliedAfGainDb: snap on first push.
+        public double AppliedAgcCeilingDb = double.NaN;
+        // Scratch for RX2's Auto-AGC-T floor estimate — TryNoiseFloorFromDisplayBins
+        // compacts + sorts in place, so PanBuf (which feeds the frame) is copied.
+        public readonly float[] AgcFloorBuf = new float[Width];
     }
     private readonly SecondaryRx[] _secondaryRx;
     private int _sampleRateHz;
@@ -4353,18 +4359,17 @@ public class DspPipelineService : BackgroundService,
         // a smooth ceiling; the secondary RX block fans the same slewed dB
         // to every active secondary so RX2..N see one consistent ceiling
         // this tick (and don't double-step against the main-block push).
+        // Per-receiver AGC-T: this block drives RX1's channel only. Every
+        // secondary receiver slews its OWN effective ceiling
+        // (Receivers[i].AgcTopDb + AgcOffsetDb) inside
+        // ApplyStateToSecondaryRxChannel — RX2 has its own baseline and its own
+        // Auto-AGC-T servo, so the old "fan RX1's ceiling to everyone" is gone.
         double effectiveAgcTarget = s.AgcTopDb + s.AgcOffsetDb;
         if (effectiveAgcTarget != _appliedAgcCeilingDb)
         {
             _appliedAgcCeilingDb = StepTowardCappedDb(
                 _appliedAgcCeilingDb, effectiveAgcTarget, AgcTopSlewMaxDbPerTick);
             engine.SetAgcTop(channel, _appliedAgcCeilingDb);
-            if (rx2Channel >= 0) engine.SetAgcTop(rx2Channel, _appliedAgcCeilingDb);
-            for (int ri = 2; ri < MaxReceivers; ri++)
-            {
-                int sec = Volatile.Read(ref _secondaryRx[ri].ChannelId);
-                if (sec >= 0) engine.SetAgcTop(sec, _appliedAgcCeilingDb);
-            }
         }
         // (Removed: the manual AGC "knee" push. WDSP's threshold and AGC-T are
         // the SAME register (max_gain) — driving both independently clobbered
@@ -4899,7 +4904,10 @@ public class DspPipelineService : BackgroundService,
         // any RX2..N channels will be reopened too and need to snap to their
         // operator value rather than drag from a stale slewed dB.
         for (int i = 1; i < MaxReceivers; i++)
+        {
             _secondaryRx[i].AppliedAfGainDb = double.NaN;
+            _secondaryRx[i].AppliedAgcCeilingDb = double.NaN;
+        }
         _appliedTxMicGainLinear = micLinearInit;
         _appliedTxLevelerMaxGainDb = s.LevelerMaxGainDb;
         _appliedNr = nr;
@@ -4944,6 +4952,15 @@ public class DspPipelineService : BackgroundService,
         return r is null
             ? (RxMode.USB, 0L, 100, 2850, 0.0)
             : (r.Mode, r.VfoHz, r.FilterLowHz, r.FilterHighHz, r.AfGainDb);
+    }
+
+    // Effective AGC-T for a secondary receiver: its own baseline plus its own
+    // Auto-AGC-T offset (RX2 runs a servo; RX3+ carry a manual baseline only).
+    // Falls back to RX1's effective value when the receiver isn't projected yet.
+    private static double SecondaryAgcCeilingDb(StateDto s, int rxIndex)
+    {
+        var r = s.Receivers is { } rs && rxIndex >= 0 && rxIndex < rs.Count ? rs[rxIndex] : null;
+        return r is null ? s.AgcTopDb + s.AgcOffsetDb : r.AgcTopDb + r.AgcOffsetDb;
     }
 
     // Convenience helper: open/sync/close the WDSP channel for one secondary
@@ -4994,6 +5011,7 @@ public class DspPipelineService : BackgroundService,
         // NaN = "no value applied yet" — a future reopen snaps to the
         // operator's target instead of slewing from this stale value.
         _secondaryRx[rxIndex].AppliedAfGainDb = double.NaN;
+        _secondaryRx[rxIndex].AppliedAgcCeilingDb = double.NaN;
         try { engine.CloseChannel(chan); }
         catch (Exception ex)
         {
@@ -5013,6 +5031,7 @@ public class DspPipelineService : BackgroundService,
             // See SecondaryRx.AppliedAfGainDb — engine swap discards any
             // prior slewed state, so the new channel snaps to its target.
             _secondaryRx[i].AppliedAfGainDb = double.NaN;
+            _secondaryRx[i].AppliedAgcCeilingDb = double.NaN;
         }
     }
 
@@ -5142,7 +5161,15 @@ public class DspPipelineService : BackgroundService,
         // see the same rate-capped dB as RX1 (no extra fan-out wiring
         // needed at the slew-advance site). Pushing every tick re-applies
         // the value on a freshly-opened channel for free.
-        engine.SetAgcTop(channelId, _appliedAgcCeilingDb);
+        // Per-receiver AGC-T ceiling, slewed per SecondaryRx exactly like AF
+        // gain below (same click-train rationale as RX1's main-block slew).
+        double agcTarget = SecondaryAgcCeilingDb(s, rxIndex);
+        double agcNext = double.IsNaN(rx.AppliedAgcCeilingDb)
+            ? agcTarget
+            : StepTowardCappedDb(rx.AppliedAgcCeilingDb, agcTarget, AgcTopSlewMaxDbPerTick);
+        if (double.IsNaN(rx.AppliedAgcCeilingDb) || agcNext != rx.AppliedAgcCeilingDb)
+            engine.SetAgcTop(channelId, agcNext);
+        rx.AppliedAgcCeilingDb = agcNext;
         // Per-secondary AF-gain slew: each receiver has its own slider
         // (Receivers[i].AfGainDb) so the rate-cap state is per-SecondaryRx.
         // NaN sentinel = "no value applied yet" — snaps on the first push
@@ -6941,6 +6968,23 @@ public class DspPipelineService : BackgroundService,
                 anySecondary = true;
 
                 bool secPan = engine.TryGetDisplayPixels(secChan, DisplayPixout.Panadapter, rx.PanBuf);
+                // RX2 Auto-AGC-T: feed RX2's servo from RX2's OWN panadapter
+                // floor (this channel's pixels, calibrated onto the S-meter dBm
+                // scale like RX1's path) with RX2's own RXA S-meter as the
+                // sustained-outage fallback. The servo throttles itself to
+                // 500 ms; the percentile sort only runs while Auto is armed.
+                if (ri == 1 && secPan && state.Receivers is { } rsAgc && rsAgc.Count > 1 && rsAgc[1].AutoAgcEnabled)
+                {
+                    double rx2Cal = RadioCalibrations.RxMeterOffsetDb(_radio.EffectiveBoardKind, _radio.EffectiveOrionMkIIVariant);
+                    rx.PanBuf.AsSpan().CopyTo(rx.AgcFloorBuf);
+                    double rx2Floor = TryNoiseFloorFromDisplayBins(
+                            rx.AgcFloorBuf, AutoAgcFloorPercentile, AutoAgcFloorMinValidBins, out double f)
+                        ? f + rx2Cal : double.NaN;
+                    double rx2Raw = engine.GetRxaSignalDbm(secChan);
+                    double rx2Dbm = double.IsFinite(rx2Raw) && rx2Raw > -399.0
+                        ? ApplyRxMeterCalibration(rx2Raw, rx2Cal) : double.NaN;
+                    _radio.HandleReceiverMetersForAutoAgc(1, rx2Dbm, rx2Floor, Environment.TickCount64);
+                }
                 // Secondary waterfall shares PIXOUT 0's pixels with the pan.
                 // Field-established on the G2 bench: a secondary analyzer's
                 // pixout 1 returned ANOTHER channel's rows (RX2's waterfall

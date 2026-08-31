@@ -499,6 +499,13 @@ export type ReceiverDto = {
   // Per-receiver audio mute (Thetis chkMUT/chkRX2Mute). The hero mixer + VFO
   // panel drive this via POST /api/receivers/{index}/mute.
   muted: boolean;
+  // Per-receiver AGC-T: operator baseline (30..90), live Auto-AGC-T servo
+  // offset on top of it, and the Auto arm. Index 0 mirrors the flat RX1
+  // fields; RX2+ are authoritative here. Optional so older servers that
+  // pre-date per-receiver AGC-T still type-check (readers fall back to RX1).
+  agcTopDb?: number;
+  agcOffsetDb?: number;
+  autoAgcEnabled?: boolean;
 };
 
 // Mirrors Zeus.Contracts.KiwiConfigDto — status of the KiwiSDR slice receiver.
@@ -6161,6 +6168,10 @@ export function setReceiver(
     filterHighHz?: number;
     afGainDb?: number;
     filterPresetName?: string | null;
+    // Per-receiver AGC-T baseline / Auto arm (index 0 routes to the RX1
+    // setters server-side; setting the baseline disarms that receiver's Auto).
+    agcTopDb?: number;
+    autoAgcEnabled?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<RadioStateDto> {

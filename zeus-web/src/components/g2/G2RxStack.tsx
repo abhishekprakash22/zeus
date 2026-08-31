@@ -39,10 +39,13 @@ import {
   getReceiverMode,
   getReceiverFilterLowHz,
   getReceiverFilterHighHz,
+  getReceiverAgcTopDb,
+  getReceiverAgcOffsetDb,
+  getReceiverAutoAgcEnabled,
   rxIndexOf,
   type ReceiverKey,
 } from '../../state/receiver-state';
-import { setReceiverMuted, setReceiver, setAgcTop } from '../../api/client';
+import { setReceiverMuted, setReceiver } from '../../api/client';
 import { useToolbarFavoritesStore } from '../../state/toolbar-favorites-store';
 
 const RATIO_H = 10;
@@ -209,7 +212,11 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const applyState = useConnectionStore((s) => s.applyState);
   const muted = useConnectionStore((s) => s.receivers[rxIndex]?.muted ?? false);
   const afGainDb = useConnectionStore((s) => s.receivers[rxIndex]?.afGainDb ?? 0);
-  const agcTopDb = useConnectionStore((s) => s.agcTopDb);
+  // Per-receiver AGC-T: this pane's own baseline / Auto state (RX1 reads the
+  // flat fields, RX2 its Receivers entry) — no longer the shared slider.
+  const agcTopDb = useConnectionStore((s) => getReceiverAgcTopDb(s, receiver));
+  const agcOffsetDb = useConnectionStore((s) => getReceiverAgcOffsetDb(s, receiver));
+  const autoAgcEnabled = useConnectionStore((s) => getReceiverAutoAgcEnabled(s, receiver));
   const splitEnabled = useConnectionStore((s) => s.splitEnabled);
   // Shared DSP status for the flag chips. The engine fans ONE NrConfig to
   // BOTH RX channels (DspPipelineService applies it to channel and
@@ -289,7 +296,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         <Panadapter receiver={receiver} multiRx={false} />
       </div>
       {/* Encoder HUD: only the ACTIVE pane answers the knobs. */}
-      {active ? <G2ValueHud rxIndex={rxIndex} /> : null}
+      <G2ValueHud rxIndex={rxIndex} sharedControls={active} />
       {/* ZOOM lives on each pane, and each pane zooms its OWN receiver —
           the backend applies zoom per DSP channel. */}
       <div style={zoomDock}>
@@ -422,18 +429,28 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
               <span style={popLabel}>AGC-T</span>
               <input
                 type="range"
-                min={20}
-                max={120}
+                min={30}
+                max={90}
                 step={1}
                 value={agcTopDb}
+                disabled={autoAgcEnabled}
                 style={{ flex: 1, minWidth: 0, width: '100%' }}
                 onChange={(e) => {
                   const db = Number(e.target.value);
-                  void setAgcTop(db).then(applyState).catch(() => {});
+                  void setReceiver(rxIndex, { agcTopDb: db }).then(applyState).catch(() => {});
                 }}
               />
-              <span style={popVal}>{agcTopDb}</span>
+              <span style={popVal}>{Math.round(agcTopDb + agcOffsetDb)}</span>
             </label>
+            <button
+              type="button"
+              style={{ ...popBtn, background: autoAgcEnabled ? 'var(--accent, #4aa3df)' : undefined }}
+              onClick={() =>
+                void setReceiver(rxIndex, { autoAgcEnabled: !autoAgcEnabled }).then(applyState).catch(() => {})
+              }
+            >
+              {autoAgcEnabled ? 'AUTO AGC ON' : 'AUTO AGC'}
+            </button>
             <button
               type="button"
               style={{ ...popBtn, background: muted ? 'var(--accent, #4aa3df)' : undefined }}

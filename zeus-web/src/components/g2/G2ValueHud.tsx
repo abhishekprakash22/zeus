@@ -16,14 +16,23 @@ const num = (v: number) => `${Math.round(v)}`;
 const hz = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)} Hz`;
 const pct = (v: number) => `${Math.round(v)}%`;
 
-function snapshot(rxIndex: number): Watched[] {
+// Per-receiver controls (AF, AGC-T) are watched on EVERY pane, so the RX2
+// encoder answers on the RX2 pane even while RX1 is the active one. The
+// shared controls (ATT, SQL, RIT, drive, mic) belong to the radio, not a
+// receiver, and are watched only on the active pane.
+function snapshot(rxIndex: number, sharedControls: boolean): Watched[] {
   const s = useConnectionStore.getState();
   const t = useTxStore.getState();
   const rx = s.receivers[rxIndex];
   const af = rxIndex === 0 ? s.rxAfGainDb : rx?.afGainDb;
-  return [
+  const agc = rxIndex === 0 ? s.agcTopDb : rx?.agcTopDb;
+  const perReceiver: Watched[] = [
     { label: 'AF', value: af ?? undefined, fmt: db },
-    { label: 'AGC-T', value: s.agcTopDb, fmt: num },
+    { label: 'AGC-T', value: agc ?? undefined, fmt: num },
+  ];
+  if (!sharedControls) return perReceiver;
+  return [
+    ...perReceiver,
     { label: 'ATT', value: s.attenDb, fmt: (v) => `${Math.round(v)} dB` },
     { label: 'SQL', value: s.squelch?.level, fmt: num },
     { label: 'RIT', value: s.ritHz, fmt: hz },
@@ -32,7 +41,7 @@ function snapshot(rxIndex: number): Watched[] {
   ];
 }
 
-export function G2ValueHud({ rxIndex }: { rxIndex: number }) {
+export function G2ValueHud({ rxIndex, sharedControls = true }: { rxIndex: number; sharedControls?: boolean }) {
   // The chip stays MOUNTED once it has ever shown: visibility is pure
   // opacity, so appearing is a ~90 ms fade instead of a cold mount, turning
   // an encoder updates the text in place with no flicker, and release gives
@@ -46,7 +55,7 @@ export function G2ValueHud({ rxIndex }: { rxIndex: number }) {
   useEffect(() => {
     prev.current = null; // re-baseline when the active pane changes
     const tick = () => {
-      const now = snapshot(rxIndex);
+      const now = snapshot(rxIndex, sharedControls);
       const before = prev.current;
       prev.current = now.map((w) => w.value);
       if (!before) return; // first snapshot is a baseline, never a flash
@@ -68,7 +77,7 @@ export function G2ValueHud({ rxIndex }: { rxIndex: number }) {
       unsubB();
       if (timer.current) window.clearTimeout(timer.current);
     };
-  }, [rxIndex]);
+  }, [rxIndex, sharedControls]);
 
   if (!text) return null;
   return (

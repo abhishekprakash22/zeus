@@ -415,7 +415,7 @@ function PrefsDatabaseRow() {
             <strong className="mono">
               {(databases ?? []).find((db) => db.relativePath === pendingSwitch)?.name ?? pendingSwitch}
             </strong>{' '}
-            and restart Zeus?
+            and restart ANAN Core?
           </p>
         </ConfirmDialog>
       )}
@@ -1271,7 +1271,7 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
               textShadow: '0 1px 2px rgba(0,0,0,0.8)',
             }}
           >
-            ZEUS
+            ANAN CORE
           </span>
           <span
             className="label-xs"
@@ -1290,7 +1290,7 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
             type="button"
             onClick={() => setPendingQuit(true)}
             className="btn sm"
-            title="Close Zeus"
+            title="Close ANAN Core"
           >
             Exit
           </button>
@@ -1561,7 +1561,7 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
             {' '}({endpointFor(pendingTakeover) || pendingTakeover.ipAddress}) is
             in use by another client. Taking it over sends a stop command that
             disconnects whoever is currently using it — including an active
-            transmission — and then connects Zeus.
+            transmission — and then connects ANAN Core.
           </p>
         </ConfirmDialog>
       )}
@@ -1582,13 +1582,13 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
             <strong>{pendingManualTakeover.ip}:{pendingManualTakeover.port}</strong>{' '}
             is in use by another controller. Taking it over sends a stop command
             that disconnects whoever is currently using it — including an active
-            transmission — and then connects Zeus.
+            transmission — and then connects ANAN Core.
           </p>
         </ConfirmDialog>
       )}
       {pendingQuit && (
         <ConfirmDialog
-          title="Exit Zeus?"
+          title="Exit ANAN Core?"
           confirmLabel="Exit"
           cancelLabel="Cancel"
           intent="danger"
@@ -1596,7 +1596,7 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
           onCancel={() => setPendingQuit(false)}
         >
           <p style={{ margin: 0 }}>
-            This closes Zeus and stops the backend. Any active radio connection
+            This closes ANAN Core and stops the backend. Any active radio connection
             will be dropped.
           </p>
         </ConfirmDialog>
@@ -1845,7 +1845,7 @@ function ManualMode(p: ManualModeProps) {
           title={
             p.board === 'Auto'
               ? 'Auto-detect: discovery picks the board.'
-              : 'Override active: Zeus will treat this radio as the selected board, ignoring auto-detection. Wrong choice can produce wrong drive levels — use only if you know your hardware combination is misreported (e.g. Anvelina + ANAN 200D PA).'
+              : 'Override active: ANAN Core will treat this radio as the selected board, ignoring auto-detection. Wrong choice can produce wrong drive levels — use only if you know your hardware combination is misreported (e.g. Anvelina + ANAN 200D PA).'
           }
         >
           {MANUAL_BOARD_OPTIONS.map((b) => (

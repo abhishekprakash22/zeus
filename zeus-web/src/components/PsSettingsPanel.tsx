@@ -91,7 +91,8 @@ export function PsSettingsPanel() {
   const psFeedbackLevel = useTxStore((s) => s.psFeedbackLevel);
   const psCalState = useTxStore((s) => s.psCalState);
   const psCorrecting = useTxStore((s) => s.psCorrecting);
-  const psCorrectionDb = useTxStore((s) => s.psCorrectionDb);
+  const psImd3Dbc = useTxStore((s) => s.psImd3Dbc);
+  const psImd5Dbc = useTxStore((s) => s.psImd5Dbc);
   const psMaxTxEnvelope = useTxStore((s) => s.psMaxTxEnvelope);
   const psCalibrationStalled = useTxStore((s) => s.psCalibrationStalled);
   // Used to gate the "correcting" indicator — WDSP's info[14] stays high
@@ -259,17 +260,16 @@ export function PsSettingsPanel() {
   const elapsedMs = Date.now() - t0Ref.current;
   const elapsedLabel = formatElapsed(elapsedMs);
 
-  // Correction sparkline — keep a short rolling history so the operator
-  // can see whether the inverse-model dB number is jittering or stable.
+  // IMD3 sparkline — a short rolling history of the live two-tone readout so
+  // the operator can watch the products fall as the predistorter converges
+  // (and see whether the number is jittering or stable). Only measured
+  // samples are recorded; NaN (two-tone off / unmeasurable) leaves it alone.
   const sparkRef = useRef<number[]>([]);
   useEffect(() => {
-    // Only record while actively predistorting RF — info[14] persists across
-    // MOX cycles, so without the keyed gate the sparkline would fill with
-    // stale post-key samples.
-    if (!isCorrecting) return;
-    sparkRef.current.push(psCorrectionDb);
+    if (!Number.isFinite(psImd3Dbc)) return;
+    sparkRef.current.push(psImd3Dbc);
     if (sparkRef.current.length > SPARK_LEN) sparkRef.current.shift();
-  }, [psCorrectionDb, isCorrecting]);
+  }, [psImd3Dbc]);
 
   const sparkPoints = buildSparkline(sparkRef.current);
 
@@ -446,12 +446,19 @@ export function PsSettingsPanel() {
               </div>
             </div>
 
-            <div className="ps-peak">
+            <div className="ps-peak" title="Two-tone intermodulation measured live on the TX spectrum — the post-PA feedback when PS is armed. Key two-tone to measure; Reset, then let it converge, to see before/after.">
               <div className="ps-peak-row">
-                <span className="ps-peak-nm">Correction</span>
+                <span className="ps-peak-nm">IMD3</span>
                 <span className="ps-peak-val">
-                  {isCorrecting ? `+${psCorrectionDb.toFixed(2)}` : '—'}
-                  {isCorrecting ? <small>dB</small> : null}
+                  {Number.isFinite(psImd3Dbc) ? psImd3Dbc.toFixed(1) : '—'}
+                  {Number.isFinite(psImd3Dbc) ? <small>dBc</small> : null}
+                </span>
+              </div>
+              <div className="ps-peak-row">
+                <span className="ps-peak-nm">IMD5</span>
+                <span className="ps-peak-val">
+                  {Number.isFinite(psImd5Dbc) ? psImd5Dbc.toFixed(1) : '—'}
+                  {Number.isFinite(psImd5Dbc) ? <small>dBc</small> : null}
                 </span>
               </div>
               <div className="ps-spark">
@@ -465,7 +472,7 @@ export function PsSettingsPanel() {
                 </svg>
               </div>
               <div className="ps-help">
-                Last samples · stability of the inverse model.
+                Recent IMD3 samples · falls as the predistorter converges.
               </div>
             </div>
           </div>
@@ -763,7 +770,9 @@ export function PsSettingsPanel() {
           <span>Calibration</span>
           {isCorrecting ? (
             <span className="saved">
-              {`converged · ${psCorrectionDb.toFixed(2)} dB`}
+              {Number.isFinite(psImd3Dbc)
+                ? `converged · IMD3 ${psImd3Dbc.toFixed(1)} dBc`
+                : 'converged · correcting'}
             </span>
           ) : isReady ? (
             <span className="saved">curve loaded · idle</span>

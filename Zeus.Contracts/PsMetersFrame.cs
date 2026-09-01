@@ -25,11 +25,21 @@ using System.Buffers.Binary;
 
 namespace Zeus.Contracts;
 
-// PureSignal stage meters. 19 bytes total:
+// PureSignal stage meters. 23 bytes total:
 //
 //   [0x18] [feedbackLevel:f32] [correctionDb:f32]
 //          [calState:u8] [correcting:u8]
 //          [maxTxEnvelope:f32]
+//          [imd3Dbc:f32] [imd5Dbc:f32]
+//
+// Imd3Dbc / Imd5Dbc — two-tone intermodulation measured LIVE from the TX
+//                     panadapter bins (the post-PA feedback spectrum when
+//                     PureSignal is armed): worst of the 2f1−f2 / 2f2−f1
+//                     (resp. 3f1−2f2 / 3f2−2f1) products relative to the mean
+//                     tone level, in dBc (negative; −30 means products 30 dB
+//                     below the tones). NaN when not measurable (two-tone
+//                     off, tones not found, bins too coarse). Readers that
+//                     receive the older 19-byte frame treat both as NaN.
 //
 // FeedbackLevel — WDSP GetPSInfo info[4], 0..256 raw (UI normalises to 0..1).
 // CorrectionDb — derived correction-depth in dB (RMS of the recent calcc
@@ -49,9 +59,13 @@ public readonly record struct PsMetersFrame(
     float CorrectionDb,
     byte CalState,
     bool Correcting,
-    float MaxTxEnvelope)
+    float MaxTxEnvelope,
+    float Imd3Dbc = float.NaN,
+    float Imd5Dbc = float.NaN)
 {
-    public const int ByteLength = 1 + 4 + 4 + 1 + 1 + 4;
+    public const int ByteLength = 1 + 4 + 4 + 1 + 1 + 4 + 4 + 4;
+    /// <summary>Pre-IMD layout; still accepted on read.</summary>
+    public const int LegacyByteLength = 1 + 4 + 4 + 1 + 1 + 4;
 
     public void Serialize(IBufferWriter<byte> writer)
     {
@@ -62,13 +76,15 @@ public readonly record struct PsMetersFrame(
         span[9] = CalState;
         span[10] = Correcting ? (byte)1 : (byte)0;
         BinaryPrimitives.WriteSingleLittleEndian(span.Slice(11, 4), MaxTxEnvelope);
+        BinaryPrimitives.WriteSingleLittleEndian(span.Slice(15, 4), Imd3Dbc);
+        BinaryPrimitives.WriteSingleLittleEndian(span.Slice(19, 4), Imd5Dbc);
         writer.Advance(ByteLength);
     }
 
     public static PsMetersFrame Deserialize(ReadOnlySpan<byte> bytes)
     {
-        if (bytes.Length < ByteLength)
-            throw new InvalidDataException($"PsMetersFrame requires {ByteLength} bytes, got {bytes.Length}");
+        if (bytes.Length < LegacyByteLength)
+            throw new InvalidDataException($"PsMetersFrame requires {LegacyByteLength} bytes, got {bytes.Length}");
         if (bytes[0] != (byte)MsgType.PsMeters)
             throw new InvalidDataException($"expected PsMeters (0x{(byte)MsgType.PsMeters:X2}), got 0x{bytes[0]:X2}");
         return new PsMetersFrame(
@@ -76,6 +92,8 @@ public readonly record struct PsMetersFrame(
             CorrectionDb: BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(5, 4)),
             CalState: bytes[9],
             Correcting: bytes[10] != 0,
-            MaxTxEnvelope: BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(11, 4)));
+            MaxTxEnvelope: BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(11, 4)),
+            Imd3Dbc: bytes.Length >= ByteLength ? BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(15, 4)) : float.NaN,
+            Imd5Dbc: bytes.Length >= ByteLength ? BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(19, 4)) : float.NaN);
     }
 }

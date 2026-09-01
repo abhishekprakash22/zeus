@@ -612,12 +612,15 @@ public sealed class TxMetersService : BackgroundService
                 if (snap.PsEnabled && _pipe.CurrentEngine is IDspEngine ps)
                 {
                     var psm = ps.GetPsStageMeters();
+                    var (imd3, imd5) = _pipe.LastTwoToneImd;
                     var psFrame = new PsMetersFrame(
                         FeedbackLevel: psm.FeedbackLevel,
                         CorrectionDb: psm.CorrectionDb,
                         CalState: psm.CalState,
                         Correcting: psm.Correcting,
-                        MaxTxEnvelope: psm.MaxTxEnvelope);
+                        MaxTxEnvelope: psm.MaxTxEnvelope,
+                        Imd3Dbc: (float)imd3,
+                        Imd5Dbc: (float)imd5);
                     _hub.Broadcast(psFrame);
                     // Mirror the live read-out into the StateDto so REST/state
                     // pollers see it too — same pattern PA/Mic meters use.

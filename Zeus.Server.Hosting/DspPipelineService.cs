@@ -3940,6 +3940,35 @@ public class DspPipelineService : BackgroundService,
     /// and tests don't exercise it.</summary>
     public Zeus.Protocol2.Protocol2Client? CurrentP2Client => _p2Client;
 
+    // Latest two-tone IMD readout from the TX panadapter (NaN when not
+    // measurable). Written on the display tick, read by TxMetersService for
+    // the PS meters frame.
+    private double _lastImd3Dbc = double.NaN;
+    private double _lastImd5Dbc = double.NaN;
+    private readonly MedianWindow _imd3Median = new(5);
+    private readonly MedianWindow _imd5Median = new(5);
+
+    // Tiny fixed-size median for the IMD readout (display-tick thread only).
+    private sealed class MedianWindow
+    {
+        private readonly double[] _ring;
+        private int _fill, _idx;
+        public MedianWindow(int n) { _ring = new double[n]; }
+        public void Clear() { _fill = 0; _idx = 0; }
+        public double Push(double v)
+        {
+            _ring[_idx] = v;
+            _idx = (_idx + 1) % _ring.Length;
+            if (_fill < _ring.Length) _fill++;
+            Span<double> tmp = stackalloc double[_fill];
+            for (int i = 0; i < _fill; i++) tmp[i] = _ring[i];
+            tmp.Sort();
+            return tmp[_fill / 2];
+        }
+    }
+    public (double Imd3Dbc, double Imd5Dbc) LastTwoToneImd
+        => (Volatile.Read(ref _lastImd3Dbc), Volatile.Read(ref _lastImd5Dbc));
+
     /// <summary>
     /// Manually set the PS TX feedback attenuation (operator alternative to
     /// AutoAttenuate). Pushes the value to the connected radio — HL2 via the
@@ -6918,6 +6947,34 @@ public class DspPipelineService : BackgroundService,
                     _calPanCenterHz = centerHz;
                     _calPanSnapshotMs = (long)nowMs;
                 }
+            }
+
+            // Live two-tone IMD readout (PureSignal float panel / tab). Only
+            // while the two-tone generator is on and the pan is the TX-side
+            // spectrum — with PS armed that's the post-PA feedback, so the
+            // products are the amplifier's, measured before/during/after
+            // the predistorter converges. NaN whenever it can't be measured
+            // honestly (see TwoToneImdAnalyzer).
+            if (pan && state.TwoToneEnabled && (panSource == "tx" || panSource == "ps-feedback"))
+            {
+                var txMode = state.TxReceiverIndex == 1 ? state.Rx2().Mode : state.Mode;
+                bool lsb = txMode is RxMode.LSB or RxMode.CWL or RxMode.DIGL;
+                bool ok = TwoToneImdAnalyzer.TryMeasure(
+                    panBuf, hzPerPixel, centerHz, RadioService.TxFrequencyHz(state),
+                    state.TwoToneFreq1, state.TwoToneFreq2, lsb,
+                    out double imd3, out double imd5);
+                // Publish a short median (last 5 measured frames) so the
+                // readout reflects the products, not frame-to-frame display
+                // jitter. NaN frames are skipped, not averaged in.
+                Volatile.Write(ref _lastImd3Dbc, ok ? _imd3Median.Push(imd3) : double.NaN);
+                Volatile.Write(ref _lastImd5Dbc, ok && double.IsFinite(imd5) ? _imd5Median.Push(imd5) : double.NaN);
+            }
+            else if (!state.TwoToneEnabled)
+            {
+                _imd3Median.Clear();
+                _imd5Median.Clear();
+                Volatile.Write(ref _lastImd3Dbc, double.NaN);
+                Volatile.Write(ref _lastImd5Dbc, double.NaN);
             }
             if (wf)
             {

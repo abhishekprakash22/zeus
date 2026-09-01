@@ -45,7 +45,8 @@ export function PsStatusPopover() {
   const psFeedbackLevel = useTxStore((s) => s.psFeedbackLevel);
   const psCalState = useTxStore((s) => s.psCalState);
   const psCorrecting = useTxStore((s) => s.psCorrecting);
-  const psCorrectionDb = useTxStore((s) => s.psCorrectionDb);
+  const psImd3Dbc = useTxStore((s) => s.psImd3Dbc);
+  const psImd5Dbc = useTxStore((s) => s.psImd5Dbc);
   const psMaxTxEnvelope = useTxStore((s) => s.psMaxTxEnvelope);
   const psHwPeak = useTxStore((s) => s.psHwPeak);
   const psAuto = useTxStore((s) => s.psAuto);
@@ -141,10 +142,16 @@ export function PsStatusPopover() {
             <dt>Mode</dt>
             <dd>{modeLabel}</dd>
           </div>
-          <div className="ps-popover-row">
-            <dt>Correction</dt>
+          <div className="ps-popover-row" title="Two-tone 3rd-order products relative to the tones, measured live on the TX spectrum (post-PA when PS is armed). Key two-tone to measure.">
+            <dt>IMD3</dt>
             <dd className="mono">
-              {psEnabled && psCorrecting ? `+${psCorrectionDb.toFixed(2)} dB` : '—'}
+              {Number.isFinite(psImd3Dbc) ? `${psImd3Dbc.toFixed(1)} dBc` : '—'}
+            </dd>
+          </div>
+          <div className="ps-popover-row" title="Two-tone 5th-order products relative to the tones.">
+            <dt>IMD5</dt>
+            <dd className="mono">
+              {Number.isFinite(psImd5Dbc) ? `${psImd5Dbc.toFixed(1)} dBc` : '—'}
             </dd>
           </div>
         </dl>

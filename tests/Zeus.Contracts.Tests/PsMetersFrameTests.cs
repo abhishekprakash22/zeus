@@ -36,13 +36,15 @@ public class PsMetersFrameTests
             CorrectionDb: -42.3f,
             CalState: 7,
             Correcting: true,
-            MaxTxEnvelope: 0.7321f);
+            MaxTxEnvelope: 0.7321f,
+            Imd3Dbc: -31.5f,
+            Imd5Dbc: -44.25f);
 
         var writer = new ArrayBufferWriter<byte>();
         frame.Serialize(writer);
 
         Assert.Equal(PsMetersFrame.ByteLength, writer.WrittenCount);
-        Assert.Equal(15, writer.WrittenCount);
+        Assert.Equal(23, writer.WrittenCount);
 
         var decoded = PsMetersFrame.Deserialize(writer.WrittenSpan);
         Assert.Equal(frame.FeedbackLevel, decoded.FeedbackLevel);
@@ -50,6 +52,24 @@ public class PsMetersFrameTests
         Assert.Equal(frame.CalState, decoded.CalState);
         Assert.Equal(frame.Correcting, decoded.Correcting);
         Assert.Equal(frame.MaxTxEnvelope, decoded.MaxTxEnvelope);
+        Assert.Equal(frame.Imd3Dbc, decoded.Imd3Dbc);
+        Assert.Equal(frame.Imd5Dbc, decoded.Imd5Dbc);
+    }
+
+    [Fact]
+    public void Deserialize_AcceptsLegacyLength_ImdAsNaN()
+    {
+        // A pre-IMD (15-byte) producer: IMD fields read as NaN, the rest intact.
+        var full = new PsMetersFrame(100f, -1f, 6, true, 0.5f, -30f, -40f);
+        var writer = new ArrayBufferWriter<byte>();
+        full.Serialize(writer);
+        var legacy = writer.WrittenSpan.Slice(0, PsMetersFrame.LegacyByteLength);
+
+        var decoded = PsMetersFrame.Deserialize(legacy);
+        Assert.Equal(100f, decoded.FeedbackLevel);
+        Assert.Equal(6, decoded.CalState);
+        Assert.True(float.IsNaN(decoded.Imd3Dbc));
+        Assert.True(float.IsNaN(decoded.Imd5Dbc));
     }
 
     [Fact]
@@ -73,7 +93,7 @@ public class PsMetersFrameTests
     [Fact]
     public void Deserialize_RejectsTruncated()
     {
-        var buf = new byte[PsMetersFrame.ByteLength - 1];
+        var buf = new byte[PsMetersFrame.LegacyByteLength - 1];
         buf[0] = (byte)MsgType.PsMeters;
         Assert.Throws<InvalidDataException>(() => PsMetersFrame.Deserialize(buf));
     }

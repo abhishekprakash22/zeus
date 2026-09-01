@@ -308,6 +308,11 @@ export type TxState = {
   psCalState: number;
   psCorrecting: boolean;
   psMaxTxEnvelope: number;
+  // Live two-tone IMD from the TX panadapter (post-PA feedback when PS is
+  // armed), dBc, worse of the two products vs the mean tone. NaN when the
+  // two-tone generator is off or the measurement isn't trustworthy.
+  psImd3Dbc: number;
+  psImd5Dbc: number;
   // Hydrated from server state — true when calcc has been alive (PS armed +
   // keyed) for >5 s without producing a fit. Drives the HW-peak warning
   // banner in the PURESIGNAL panel. Server-side detection in
@@ -319,6 +324,8 @@ export type TxState = {
     calState: number;
     correcting: boolean;
     maxTxEnvelope: number;
+    imd3Dbc?: number;
+    imd5Dbc?: number;
   }) => void;
 
   // ---- Two-tone test generator (TXA PostGen mode=1; protocol-agnostic).
@@ -481,6 +488,8 @@ export const useTxStore = create<TxState>()(
       psCalState: 0,
       psCorrecting: false,
       psMaxTxEnvelope: 0,
+      psImd3Dbc: NaN,
+      psImd5Dbc: NaN,
       psCalibrationStalled: false,
       setPsMeters: (m) => set({
         psFeedbackLevel: nonNegativeFinite(m.feedbackLevel),
@@ -488,6 +497,8 @@ export const useTxStore = create<TxState>()(
         psCalState: finiteInteger(m.calState, 0),
         psCorrecting: m.correcting,
         psMaxTxEnvelope: nonNegativeFinite(m.maxTxEnvelope),
+        psImd3Dbc: Number.isFinite(m.imd3Dbc) ? (m.imd3Dbc as number) : NaN,
+        psImd5Dbc: Number.isFinite(m.imd5Dbc) ? (m.imd5Dbc as number) : NaN,
       }),
 
       // Two-tone — defaults match pihpsdr.

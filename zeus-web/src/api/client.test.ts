@@ -332,6 +332,16 @@ describe('normalizeState', () => {
     expect(s.nr.nbMode).toBe('Nb2');
     expect(s.nr.nbThreshold).toBe(42);
   });
+
+  it('lowercases the PascalCase psFeedbackSource the server emits (0x3C push regression)', () => {
+    // The state push frame carries JsonStringEnumConverter's PascalCase names.
+    // The panels compare against the normalised lowercase forms; a raw push
+    // (pre-fix) left both coupler radio buttons unlit.
+    const ext = normalizeState({ status: 2, psFeedbackSource: 'External' });
+    expect(ext.psFeedbackSource).toBe('external');
+    const int = normalizeState({ status: 2, psFeedbackSource: 'Internal' });
+    expect(int.psFeedbackSource).toBe('internal');
+  });
 });
 
 describe('normalizeNrMode / normalizeNbMode', () => {

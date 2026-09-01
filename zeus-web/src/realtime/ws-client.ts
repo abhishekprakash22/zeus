@@ -57,6 +57,7 @@ import {
   useDisplayStore,
 } from '../state/display-store';
 import { AlertKind, useTxStore } from '../state/tx-store';
+import { normalizeState } from '../api/client';
 import { useBandPlanStore } from '../state/bandPlan';
 import { useRxMetersStore } from '../state/rx-meters-store';
 import { useAudioSuiteStore } from '../state/audio-suite-store';
@@ -763,7 +764,12 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
     if (peekType === MSG_TYPE_STATE_PUSH) {
       try {
         const json = new TextDecoder().decode(new Uint8Array(ev.data, 1));
-        const state = JSON.parse(json);
+        // Same DTO as /api/state, so it MUST take the same normaliser. Fed raw,
+        // the push carried the server's PascalCase enums ("External") straight
+        // into the stores while the panels compare against the normalised
+        // lowercase forms — the PureSignal coupler radio buttons went dark a
+        // few ms after every click, as soon as the post-Mutate push landed.
+        const state = normalizeState(JSON.parse(json));
         useConnectionStore.getState().applyStatePush(state);
         useTxStore.getState().hydrateFromState(state);
       } catch (err) {

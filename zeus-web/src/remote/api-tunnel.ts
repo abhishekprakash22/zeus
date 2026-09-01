@@ -37,17 +37,17 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const LAN_PROXY_PREFIX = '/api/lan/proxy';
 const LAN_PROXY_TIMEOUT_MS = 60_000;
 
+// Absolute per-request cap, measured from creation. A request may wait for
+// the session, be dispatched, silently retried once, even survive a channel
+// drop and replay — but past this it fails no matter what, preserving the
+// file's invariant that a never-connecting session cannot hang a caller.
+const HARD_CAP_MS = 45_000;
+
 interface TunnelResponse {
   id: number;
   status: number;
   headers?: Record<string, string>;
   body?: string;
-}
-
-interface Pending {
-  resolve: (r: TunnelResponse) => void;
-  reject: (e: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 interface QueuedRequest {
@@ -56,6 +56,20 @@ interface QueuedRequest {
   method: string;
   body?: string;
   contentType?: string;
+}
+
+interface Pending {
+  resolve: (r: TunnelResponse) => void;
+  reject: (e: Error) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+  req: QueuedRequest;
+  // 0 = still queued (never sent); 1 = first send in flight; 2 = silent
+  // retry in flight. A second in-flight timeout is final.
+  attempt: 0 | 1 | 2;
+  // Epoch ms past which the request fails regardless of phase (HARD_CAP_MS).
+  hardDeadline: number;
+  // Per-dispatch deadline for this request (LAN proxy pages get the long one).
+  dispatchTimeoutMs: number;
 }
 
 let installed = false;
@@ -95,8 +109,64 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return 'GET';
 }
 
+/** Arm p's timer for at most `ms`, clipped to the hard cap. */
+function schedule(p: Pending, ms: number): void {
+  if (p.timer) clearTimeout(p.timer);
+  const remaining = p.hardDeadline - Date.now();
+  p.timer = setTimeout(() => onRequestTimeout(p), Math.max(0, Math.min(ms, remaining)));
+}
+
+function fail(p: Pending, message: string): void {
+  if (p.timer) clearTimeout(p.timer);
+  pending.delete(p.req.id);
+  const qi = queue.findIndex((q) => q.id === p.req.id);
+  if (qi >= 0) queue.splice(qi, 1);
+  p.reject(new Error(message));
+}
+
+/**
+ * Phase timeout for one request. While QUEUED (attempt 0) the only deadline
+ * is the hard cap — a request must not burn its dispatch budget waiting for
+ * the session to come up (the fresh-page-load race: boot RPCs used to expire
+ * in the queue during SPAKE2+/relay wake-up, then a manual retry worked
+ * because the channel was open by then). Once DISPATCHED, a first timeout
+ * earns ONE silent retry — re-sent immediately if the channel is open, or
+ * re-queued for the next channel if it dropped; a second timeout is final.
+ * Zeus's /api surface is set-state (never toggle), so a silent re-send of a
+ * mutating request is safe: applying the same state twice is a no-op.
+ */
+function onRequestTimeout(p: Pending): void {
+  p.timer = null;
+  if (Date.now() >= p.hardDeadline) {
+    fail(p, p.attempt === 0
+      ? 'Remote API request timed out waiting for the session.'
+      : 'Remote API request timed out.');
+    return;
+  }
+  if (p.attempt === 0) {
+    // Queued phase: the only timer running is the hard-cap clip, so reaching
+    // here without the cap elapsed just re-arms the wait.
+    schedule(p, HARD_CAP_MS);
+    return;
+  }
+  if (p.attempt === 1) {
+    p.attempt = 2;
+    if (channel && channel.readyState === 'open') {
+      dispatch(p);
+    } else {
+      queue.push(p.req);
+      schedule(p, HARD_CAP_MS);
+    }
+    return;
+  }
+  fail(p, 'Remote API request timed out.');
+}
+
 /** Send the request over the channel now (channel is open + unlocked). */
-function dispatch(req: QueuedRequest): void {
+function dispatch(p: Pending): void {
+  const req = p.req;
+  if (p.attempt === 0) p.attempt = 1;
+  schedule(p, p.dispatchTimeoutMs);
   const msg: Record<string, unknown> = { id: req.id, method: req.method, path: req.path };
   if (req.body !== undefined) msg.body = req.body;
   if (req.contentType !== undefined) msg.contentType = req.contentType;
@@ -118,22 +188,24 @@ function tunnel(
   const id = nextId++;
   // The LAN Browser proxy reply is legitimately slow (whole-page inline on the
   // radio host); everything else is small chrome JSON on the default deadline.
-  const timeoutMs = path.startsWith(LAN_PROXY_PREFIX)
+  // The dispatch deadline runs from SEND, not from creation — time spent
+  // queued waiting for the session only counts against the hard cap.
+  const dispatchTimeoutMs = path.startsWith(LAN_PROXY_PREFIX)
     ? LAN_PROXY_TIMEOUT_MS
     : REQUEST_TIMEOUT_MS;
   return new Promise<TunnelResponse>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      // Drop any still-queued copy so a flush can't resurrect a dead id.
-      const qi = queue.findIndex((q) => q.id === id);
-      if (qi >= 0) queue.splice(qi, 1);
-      reject(new Error('Remote API request timed out.'));
-    }, timeoutMs);
-
-    pending.set(id, { resolve, reject, timer });
     const req: QueuedRequest = { id, path, method, body, contentType };
-    if (channel && channel.readyState === 'open') dispatch(req);
-    else queue.push(req);
+    const p: Pending = {
+      resolve, reject, timer: null, req,
+      attempt: 0, hardDeadline: Date.now() + HARD_CAP_MS, dispatchTimeoutMs,
+    };
+    pending.set(id, p);
+    if (channel && channel.readyState === 'open') {
+      dispatch(p);
+    } else {
+      queue.push(req);
+      schedule(p, HARD_CAP_MS);
+    }
   });
 }
 
@@ -187,7 +259,7 @@ function onChannelMessage(ev: MessageEvent): void {
   }
   const p = pending.get(msg.id);
   if (!p) return;
-  clearTimeout(p.timer);
+  if (p.timer) clearTimeout(p.timer);
   pending.delete(msg.id);
   p.resolve(msg);
 }
@@ -201,13 +273,21 @@ function onChannelMessage(ev: MessageEvent): void {
 export function setApiChannel(ch: RTCDataChannel | null): void {
   if (ch === null) {
     channel = null;
-    const err = new Error('Remote API channel closed.');
+    // Session drop is no longer a mass rejection. In-flight requests that
+    // still have a silent retry left are re-queued and replay on the next
+    // channel (set-state semantics make the replay safe); anything already
+    // on its retry fails now. Queued requests just keep waiting under their
+    // hard cap — exactly what they were doing before the drop.
     for (const [, p] of pending) {
-      clearTimeout(p.timer);
-      p.reject(err);
+      if (p.attempt === 0) continue;                 // still queued; untouched
+      if (p.attempt === 1) {
+        p.attempt = 2;
+        queue.push(p.req);
+        schedule(p, HARD_CAP_MS);
+      } else {
+        fail(p, 'Remote API channel closed.');
+      }
     }
-    pending.clear();
-    queue.length = 0;
     return;
   }
 
@@ -218,7 +298,11 @@ export function setApiChannel(ch: RTCDataChannel | null): void {
   };
 
   const flush = () => {
-    while (queue.length) dispatch(queue.shift()!);
+    while (queue.length) {
+      const req = queue.shift()!;
+      const p = pending.get(req.id);
+      if (p) dispatch(p);
+    }
   };
   if (ch.readyState === 'open') flush();
   else ch.onopen = flush;
@@ -258,7 +342,7 @@ export function __resetApiTunnelForTests(): void {
   originalFetch = null;
   channel = null;
   nextId = 1;
-  for (const [, p] of pending) clearTimeout(p.timer);
+  for (const [, p] of pending) if (p.timer) clearTimeout(p.timer);
   pending.clear();
   queue.length = 0;
 }

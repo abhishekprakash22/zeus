@@ -183,14 +183,88 @@ describe('api-tunnel fetch shim', () => {
     await respPromise;
   });
 
-  it('fails pending requests with a network-style error on disconnect', async () => {
+  it('replays an in-flight request on the next channel after a disconnect', async () => {
+    // A dropped session no longer mass-rejects: the in-flight request spends
+    // its one silent retry as a replay on the reconnected channel.
     const ch = new FakeChannel();
     setApiChannel(ch as unknown as RTCDataChannel);
 
     const p = window.fetch('/api/state');
     expect(ch.sent.length).toBe(1);
+    const { id } = lastRequest(ch);
 
-    setApiChannel(null); // disconnect
+    setApiChannel(null); // disconnect — request survives, queued for replay
+
+    const ch2 = new FakeChannel();
+    setApiChannel(ch2 as unknown as RTCDataChannel);
+    expect(ch2.sent.length).toBe(1);
+    expect(lastRequest(ch2).id).toBe(id);
+
+    ch2.reply({ id, status: 200, body: '{"ok":true}' });
+    const res = await p;
+    expect(res.status).toBe(200);
+  });
+
+  it('fails an in-flight request whose retry is also lost to a disconnect', async () => {
+    const ch = new FakeChannel();
+    setApiChannel(ch as unknown as RTCDataChannel);
+    const p = window.fetch('/api/state');
+    setApiChannel(null);            // first drop → queued for replay
+    const ch2 = new FakeChannel();
+    setApiChannel(ch2 as unknown as RTCDataChannel);   // replay dispatched
+    expect(ch2.sent.length).toBe(1);
+    setApiChannel(null);            // second drop: the retry is spent
     await expect(p).rejects.toThrow(/closed/i);
+  });
+
+  it('does not expire a queued request on the dispatch deadline (boot race)', async () => {
+    // The fresh-page-load race: RPCs fired before the session is up used to
+    // arm their 15 s deadline at enqueue and die in the queue. The dispatch
+    // deadline now runs from SEND; queued time counts only against the hard cap.
+    vi.useFakeTimers();
+    try {
+      const p = window.fetch('/api/state'); // no channel yet → queued
+      vi.advanceTimersByTime(20_000);       // past REQUEST_TIMEOUT_MS
+
+      const ch = new FakeChannel();
+      setApiChannel(ch as unknown as RTCDataChannel); // session up → flush
+      expect(ch.sent.length).toBe(1);
+      const { id } = lastRequest(ch);
+      ch.reply({ id, status: 200, body: '{"late":"boot"}' });
+      const res = await p;
+      expect(res.status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('silently retries once on a dispatch timeout, then fails on the second', async () => {
+    vi.useFakeTimers();
+    try {
+      const ch = new FakeChannel();
+      setApiChannel(ch as unknown as RTCDataChannel);
+      const p = window.fetch('/api/state');
+      expect(ch.sent.length).toBe(1);
+
+      vi.advanceTimersByTime(15_001);       // first deadline → silent retry
+      expect(ch.sent.length).toBe(2);
+      expect(lastRequest(ch).path).toBe('/api/state');
+
+      vi.advanceTimersByTime(15_001);       // second deadline → final
+      await expect(p).rejects.toThrow(/timed out/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('enforces the hard cap when the session never arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const p = window.fetch('/api/state'); // queued forever — no channel
+      vi.advanceTimersByTime(45_001);
+      await expect(p).rejects.toThrow(/waiting for the session/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

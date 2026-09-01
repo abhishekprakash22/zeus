@@ -623,14 +623,25 @@ export function PsSettingsPanel() {
           </h4>
 
           {psCalibrationStalled ? (
-            <div
-              className="ps-stall-banner"
-              role="status"
-              aria-live="polite"
-              title="PureSignal has been keyed for more than 5 seconds without completing a calibration fit. This almost always means HW peak is set higher than the actual TX envelope peak — calcc bin 15 never fills."
-            >
-              ⚠ PS not converging — set HW peak just above your observed TX peak (~5%).
-            </div>
+            feedbackRound > 181 ? (
+              <div
+                className="ps-stall-banner"
+                role="status"
+                aria-live="polite"
+                title="PureSignal has been keyed for more than 5 seconds without completing a calibration fit, and the feedback level is above the 128–181 window: the feedback tap is clipping the ADC, so no fit can complete. Auto-attenuate steps the feedback attenuator up on its own; otherwise raise Feedback atten or lower drive until the level sits near 150."
+              >
+                ⚠ PS not converging — feedback is clipping ({feedbackRound} vs 128–181). Raise Feedback atten or lower drive; Auto-attenuate is stepping.
+              </div>
+            ) : (
+              <div
+                className="ps-stall-banner"
+                role="status"
+                aria-live="polite"
+                title="PureSignal has been keyed for more than 5 seconds without completing a calibration fit. With the feedback level in or below the window this almost always means HW peak is set higher than the actual TX envelope peak — calcc bin 15 never fills."
+              >
+                ⚠ PS not converging — set HW peak just above your observed TX peak (~5%).
+              </div>
+            )
           ) : null}
 
           <FieldRow

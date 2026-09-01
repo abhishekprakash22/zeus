@@ -61,6 +61,12 @@ public sealed class PsAutoAttenuateService : BackgroundService
     private const double IdealFeedback = 152.293;
     private const int FeedbackLowThreshold = 128;
     private const int FeedbackHighThreshold = 181;
+    // Hot-side escape: how long a keyed, over-window feedback may sit with
+    // no fresh fit before the attenuator is stepped on time rather than on a
+    // fit. Longer than one full calcc collect at the default Ints/Spi so a
+    // fit that IS about to land still gets to authorise the step normally.
+    private static readonly TimeSpan HotStallStep = TimeSpan.FromMilliseconds(1500);
+    private long _hotStallSinceMs;
 
     // 10 Hz tick. Same cadence Thetis runs timer2code at when PS is armed and
     // the form has focus (PSForm.cs:204-209, m_bQuckAttenuate=false default).
@@ -391,6 +397,7 @@ public sealed class PsAutoAttenuateService : BackgroundService
         }
         if (!_tx.IsMoxOn && !_tx.IsTwoToneOn)
         {
+            _hotStallSinceMs = 0;
             // If MOX dropped while the dance was mid-flight (state == SetNewValues
             // or RestoreOperation), Monitor-state has already issued
             // SetPsControl(false, false) → calcc reset=1. Without a restore here,
@@ -456,9 +463,20 @@ public sealed class PsAutoAttenuateService : BackgroundService
             {
                 _stallWarned = true;
                 _radio.SetPsCalibrationStalled(true);
-                _log.LogWarning(
-                    "psAutoAttn.stall info5=0 for {ElapsedMs}ms — hw_peak likely too high for current drive (calcc bin 15 never fills). Lower HW peak in PURESIGNAL panel.",
-                    now - _stallStartTickMs);
+                // Two opposite causes share this symptom; say the right one.
+                // Hot (feedback over the window): the tap is clipping the ADC —
+                // needs attenuation / less drive, and Auto-attenuate's hot-side
+                // escape is now walking it. Quiet/zero: the reference never
+                // reaches calcc's top bin — HW peak too high for the drive.
+                int stallFb = (int)Math.Round(stallPsm.FeedbackLevel);
+                if (stallFb > FeedbackHighThreshold)
+                    _log.LogWarning(
+                        "psAutoAttn.stall info5=0 for {ElapsedMs}ms fb={Fb} — feedback tap is clipping the ADC (window {Lo}..{Hi}); raise feedback attenuation or lower drive. Auto-attenuate is stepping.",
+                        now - _stallStartTickMs, stallFb, FeedbackLowThreshold, FeedbackHighThreshold);
+                else
+                    _log.LogWarning(
+                        "psAutoAttn.stall info5=0 for {ElapsedMs}ms fb={Fb} — hw_peak likely too high for current drive (calcc bin 15 never fills). Lower HW peak in PURESIGNAL panel.",
+                        now - _stallStartTickMs, stallFb);
             }
         }
         else if (_stallStartTickMs != 0)
@@ -848,10 +866,38 @@ public sealed class PsAutoAttenuateService : BackgroundService
                 if (_lastCalibrationAttempts >= 0
                     && psm.CalibrationAttempts == _lastCalibrationAttempts)
                 {
-                    LogGate($"p2.skip=no-new-calc info5={psm.CalibrationAttempts} fb={feedback}");
+                    // Hot-side escape (G2 bench, internal coupler at two-tone):
+                    // feedback pinned at ~425 against the 128..181 window,
+                    // observed peak on the HW peak, info5 never leaving 0 —
+                    // the tap is clipping the ADC, so calcc never completes a
+                    // fit, so the fit-gated walk above never steps: the mirror
+                    // of the #1248 deaf deadlock. A clipping tap can only be
+                    // cured by MORE attenuation, and no fit will ever arrive
+                    // to authorise it — so authorise it on time instead: while
+                    // keyed and hot with no fresh fit for HotStallStep, walk
+                    // the attenuator up by the Thetis ddB step and re-check.
+                    long nowHot = Environment.TickCount64;
+                    bool hot = feedback > FeedbackHighThreshold && _currentAttnDb < TxAttnMaxDb;
+                    if (!hot) _hotStallSinceMs = 0;
+                    else if (_hotStallSinceMs == 0) _hotStallSinceMs = nowHot;
+                    if (!hot || nowHot - _hotStallSinceMs < (long)HotStallStep.TotalMilliseconds)
+                    {
+                        LogGate($"p2.skip=no-new-calc info5={psm.CalibrationAttempts} fb={feedback}");
+                        return;
+                    }
+                    _hotStallSinceMs = 0;
+                    _p2DeltaDb = Math.Max(1, ComputeAttnStepDb(feedback));
+                    _p2SavedAuto = s.PsAuto;
+                    _p2SavedSingle = s.PsSingle;
+                    engine.SetPsControl(autoCal: false, singleCal: false);
+                    _log.LogInformation(
+                        "psAutoAttn.p2.monitor hot-stall fb={Fb} info5={Cal} delta={Delta} attn={Db} — tap clipping, no fit can complete; stepping attenuation on time",
+                        feedback, psm.CalibrationAttempts, _p2DeltaDb, _currentAttnDb);
+                    _p2State = P2AutoAttState.SetNewValues;
                     return;
                 }
                 _lastCalibrationAttempts = psm.CalibrationAttempts;
+                _hotStallSinceMs = 0;
 
                 // info[4] == 0 → usually calcc hasn't completed a fit yet.
                 // EXCEPT on the G2E: a very cold tap COMPLETES fits whose

@@ -1213,13 +1213,16 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
           left: 0,
           right: 0,
           height: 360,
-          // Pulse splash (field request): the discover dialog's hero was the
-          // Zeus-god artwork; it now wears the same square-wave identity as
-          // every other connect surface. Left-anchored art — position on the
-          // wordmark's side so the pulses fill the banner.
+          // Discover-dialog hero = the connect splash. Fit the art's FULL
+          // height into the band (auto 100%) and anchor left, so whatever
+          // the artwork puts low in its frame — the ANAN Core wordmark — is
+          // inside the visible band rather than under the fade. The previous
+          // cover + 'left 32%' crop was tuned for the old pulse art and
+          // showed the empty upper-left of the new one.
           backgroundImage: 'url(/branding/splash-pulse.svg)',
-          backgroundSize: 'cover',
-          backgroundPosition: 'left 32%',
+          backgroundSize: 'auto 100%',
+          backgroundPosition: 'left center',
+          backgroundRepeat: 'no-repeat',
           zIndex: 0,
           pointerEvents: 'none',
         }}
@@ -1232,8 +1235,10 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
           left: 0,
           right: 0,
           height: 360,
+          // Fade only the bottom edge into the panel so the wordmark, which
+          // sits in the lower half of the art, isn't dimmed by the overlay.
           background:
-            'linear-gradient(180deg, rgba(10,15,24,0.25) 0%, rgba(10,15,24,0.55) 55%, var(--bg-1) 92%)',
+            'linear-gradient(180deg, rgba(10,15,24,0.15) 0%, rgba(10,15,24,0.25) 70%, var(--bg-1) 100%)',
           zIndex: 1,
           pointerEvents: 'none',
         }}

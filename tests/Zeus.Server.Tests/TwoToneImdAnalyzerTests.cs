@@ -81,6 +81,17 @@ public class TwoToneImdAnalyzerTests
     }
 
     [Fact]
+    public void Refuses_When_Products_Are_In_The_Floor()
+    {
+        // Converged PA: products below the display floor. A reading here would
+        // track floor noise, so the analyzer declines.
+        var bins = Spectrum(93.75f, 14_200_000, 14_200_000, 700, 1900, lsb: false, imd3: -89.5, imd5: -89.5);
+        Assert.False(TwoToneImdAnalyzer.TryMeasure(bins, 93.75f, 14_200_000, 14_200_000, 700, 1900, false,
+            out double imd3, out _));
+        Assert.True(double.IsNaN(imd3));
+    }
+
+    [Fact]
     public void Refuses_When_Tones_Are_Not_Above_Floor()
     {
         var bins = Spectrum(93.75f, 14_200_000, 14_200_000, 700, 1900, lsb: false, tone: -80, imd3: -85);

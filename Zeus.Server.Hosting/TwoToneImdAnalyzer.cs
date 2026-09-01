@@ -31,6 +31,9 @@ internal static class TwoToneImdAnalyzer
     // A tone must clear the display's median floor by this much to count as
     // found — below it we're measuring noise, not the PA.
     private const double MinToneAboveFloorDb = 25.0;
+    // A product must clear the floor by this much to be a measurement rather
+    // than floor noise (post-convergence products sink below the display).
+    private const double MinProductAboveFloorDb = 3.0;
     // Tone search half-window around the carrier-derived position. Generous:
     // the carrier estimate on the TX display can be a few hundred Hz off.
     private const double ToneSearchHalfWidthHz = 400.0;
@@ -76,6 +79,10 @@ internal static class TwoToneImdAnalyzer
         int prodHalf = Math.Max(1, spacingPx / 4);
         if (!PeakAt(bins, 2 * pxA - pxB, prodHalf, out double p3a)) return false;
         if (!PeakAt(bins, 2 * pxB - pxA, prodHalf, out double p3b)) return false;
+        // Floor guard: when both products are within a few dB of the display
+        // floor, the true IMD is below what this display can measure — a
+        // number here would just track floor noise. Refuse rather than jitter.
+        if (Math.Max(p3a, p3b) - floorDb < MinProductAboveFloorDb) return false;
         imd3Dbc = Math.Max(p3a, p3b) - toneMean;
 
         // 3) 5th order two spacings outboard. Optional — off-display is fine.

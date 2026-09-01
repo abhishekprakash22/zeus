@@ -3945,6 +3945,7 @@ public class DspPipelineService : BackgroundService,
     // the PS meters frame.
     private double _lastImd3Dbc = double.NaN;
     private double _lastImd5Dbc = double.NaN;
+    private long _imdDiagMs;
     private readonly MedianWindow _imd3Median = new(5);
     private readonly MedianWindow _imd5Median = new(5);
 
@@ -6955,7 +6956,13 @@ public class DspPipelineService : BackgroundService,
             // products are the amplifier's, measured before/during/after
             // the predistorter converges. NaN whenever it can't be measured
             // honestly (see TwoToneImdAnalyzer).
-            if (pan && state.TwoToneEnabled && (panSource == "tx" || panSource == "ps-feedback"))
+            // Source pinning: with PS armed only feedback-sourced frames count —
+            // the exciter's ("tx") products sit far below the PA's, and mixing
+            // the two sources made the median bounce between two honest but
+            // different answers. With PS off, "tx" is all there is.
+            bool imdSourceOk = state.PsEnabled ? panSource == "ps-feedback"
+                                               : panSource == "tx";
+            if (pan && state.TwoToneEnabled && imdSourceOk)
             {
                 var txMode = state.TxReceiverIndex == 1 ? state.Rx2().Mode : state.Mode;
                 bool lsb = txMode is RxMode.LSB or RxMode.CWL or RxMode.DIGL;
@@ -6963,6 +6970,17 @@ public class DspPipelineService : BackgroundService,
                     panBuf, hzPerPixel, centerHz, RadioService.TxFrequencyHz(state),
                     state.TwoToneFreq1, state.TwoToneFreq2, lsb,
                     out double imd3, out double imd5);
+                // 1 Hz diagnostic while two-tone runs: the raw per-frame value
+                // next to the published median, plus the source, so field
+                // instability reports carry the numbers that place the fault.
+                long imdNow = Environment.TickCount64;
+                if (imdNow - _imdDiagMs >= 1000)
+                {
+                    _imdDiagMs = imdNow;
+                    _log.LogInformation(
+                        "imd.diag src={Src} ok={Ok} raw3={Raw3:F1} raw5={Raw5:F1} pub3={Pub3:F1} hzPx={HzPx:F1}",
+                        panSource, ok, imd3, imd5, Volatile.Read(ref _lastImd3Dbc), hzPerPixel);
+                }
                 // Publish a short median (last 5 measured frames) so the
                 // readout reflects the products, not frame-to-frame display
                 // jitter. NaN frames are skipped, not averaged in.

@@ -5636,6 +5636,16 @@ public class DspPipelineService : BackgroundService,
         // effect on the TX IQ path — pure observation.
         _txTurnaround?.OnMoxEdge(on);
         _p2Client?.SetMox(on);
+        // PureSignal's MOX flag is asserted here, after the wire MOX bit, so
+        // calcc's mox-delay timer runs from the hardware keying edge (the
+        // engine's SetMox deliberately leaves it alone on key-down — see the
+        // comment there). Field find: this call had no caller at all. WDSP's
+        // calibrator only accumulates feedback while its own MOX flag is up,
+        // so every paired DDC0 block (1600+/s on the G2) was fed to psccF and
+        // discarded — feedback level 0.00, cal state 0, PS armed and "running"
+        // with nothing to run on. TUN keys the same way (Thetis calibrates on
+        // TUNE too); the flag follows MOX || TUN.
+        SetPsMoxFromKeying();
         // Reset the FreeDV RECEIVER on both MOX edges so it resumes empty and
         // unsynced. WDSP RX is drained every tick regardless of MOX, so without
         // this the modem keeps decoding the operator's own transmission during
@@ -5659,7 +5669,23 @@ public class DspPipelineService : BackgroundService,
 
     private void OnRadioTunActiveChanged(bool on)
     {
+        _tunActiveForPs = on;
         _p2Client?.SetTune(on);
+        SetPsMoxFromKeying();
+    }
+
+    // PS MOX = radio keyed by MOX or TUN. Recomputed on either edge so
+    // releasing one while the other still holds the PA keyed keeps the
+    // calibrator running; un-key of both drops it (engine.SetMox(false)
+    // also clears it as a belt-and-braces on the TXA state flip).
+    // Not de-duplicated on purpose: SetPSMox is idempotent and cheap, and an
+    // engine swapped in while already keyed must still receive the flag on
+    // the next edge rather than be skipped by a stale "already applied".
+    private bool _tunActiveForPs;
+    private void SetPsMoxFromKeying()
+    {
+        bool keyed = _keyed || _tunActiveForPs;
+        lock (_engineLock) { _engine?.SetPsMox(keyed); }
     }
 
     // Mirror operator preamp toggles into a live Protocol2Client. P1 is

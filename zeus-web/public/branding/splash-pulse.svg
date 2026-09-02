@@ -9,7 +9,7 @@
 
   <g>
     <text x="62" y="470" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="21" letter-spacing="10" fill="#4aa3df">OPENHPSDR</text>
-    <text x="56" y="560" font-size="104" font-weight="800" letter-spacing="14"><tspan fill="#ffffff">ANAN</tspan><tspan dx="26" fill="none" stroke="#4aa3df" stroke-width="2.5">CORE</tspan></text>
+    <text x="56" y="560" font-size="104" font-weight="800" letter-spacing="14"><tspan fill="#ffffff">ANAN</tspan><tspan dx="26" fill="#4aa3df" fill-opacity="0.18" stroke="#5db4ef" stroke-width="4.5">CORE</tspan></text>
     <text x="64" y="596" font-size="19" fill="#8a97a3" letter-spacing="1">Protocol-2 SDR for the ANAN</text>
   </g>
 </svg>

@@ -1219,9 +1219,16 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
           // inside the visible band rather than under the fade. The previous
           // cover + 'left 32%' crop was tuned for the old pulse art and
           // showed the empty upper-left of the new one.
+          // The artwork keeps its whole lockup in the bottom quarter of a
+          // mostly-empty 2:1 frame (seen at last with the real file in hand).
+          // Fitting the full height therefore fills the band with empty sky
+          // and drops the lockup under the panel rows. Show the BOTTOM slice
+          // instead: at 220% the band frames the art's lower ~45% — eyebrow,
+          // wordmark and tagline sit mid-band — deterministically, whatever
+          // height this dialog renders at.
           backgroundImage: 'url(/branding/splash-pulse.svg)',
-          backgroundSize: 'auto 100%',
-          backgroundPosition: 'left center',
+          backgroundSize: 'auto 220%',
+          backgroundPosition: 'left bottom',
           backgroundRepeat: 'no-repeat',
           zIndex: 0,
           pointerEvents: 'none',

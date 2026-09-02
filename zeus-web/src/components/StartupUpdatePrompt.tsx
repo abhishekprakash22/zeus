@@ -141,7 +141,7 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
             UPDATE AVAILABLE
           </div>
           <div style={{ fontSize: 13, fontWeight: 700 }}>
-            Zeus {latest} is ready
+            ANAN Core {latest} is ready
           </div>
           <div style={{ fontSize: 11, color: 'var(--fg-3)', lineHeight: 1.4, marginTop: 3 }}>
             Installed {status.installedVersion ?? 'unknown'}

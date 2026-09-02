@@ -81,7 +81,7 @@ export function UpdatePrompt({ onUpdate, show }: UpdatePromptProps) {
             Update Available
           </div>
           <div style={{ fontSize: 12, opacity: 0.95 }}>
-            A new version of Zeus is ready. Click to reload and update.
+            A new version of ANAN Core is ready. Click to reload and update.
           </div>
         </div>
         <button

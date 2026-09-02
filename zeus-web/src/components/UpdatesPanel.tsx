@@ -163,8 +163,8 @@ export function UpdatesPanel() {
     setResult(
       url
         ? status.releaseDownloadUrl
-          ? `Opened ${status.releaseAssetName ?? 'the latest Zeus download'}.`
-          : 'Opened the Zeus downloads page.'
+          ? `Opened ${status.releaseAssetName ?? 'the latest ANAN Core download'}.`
+          : 'Opened the ANAN Core downloads page.'
         : 'No download is available for this platform.',
     );
   };
@@ -224,7 +224,7 @@ export function UpdatesPanel() {
               Running from source{status.branch ? ` — ${status.branch}` : ''}
               {status.currentShortSha ? ` @ ${status.currentShortSha}` : ''}. Update the source
               with <code>scripts/update.ps1</code> (Windows) or <code>scripts/update.sh</code>{' '}
-              (macOS/Linux), then restart Zeus.
+              (macOS/Linux), then restart ANAN Core.
             </div>
           )}
 
@@ -260,8 +260,8 @@ export function UpdatesPanel() {
           {status.forceUpdate && (
             <div style={{ fontSize: 11, color: 'var(--tx)', lineHeight: 1.5 }}>
               {status.forceReason === 'downgrade'
-                ? 'A newer Zeus version was previously installed on this machine.'
-                : 'This Zeus build is below the minimum supported version.'}
+                ? 'A newer ANAN Core version was previously installed on this machine.'
+                : 'This ANAN Core build is below the minimum supported version.'}
             </div>
           )}
 
@@ -281,9 +281,9 @@ export function UpdatesPanel() {
               onClick={() => (action === 'download' ? doInstall() : doUpdate())}
               title={
                 action === 'download'
-                  ? 'Download, verify, and install the update in place, then restart Zeus'
+                  ? 'Download, verify, and install the update in place, then restart ANAN Core'
                   : action === 'openRelease'
-                    ? 'Open the Zeus downloads page'
+                    ? 'Open the ANAN Core downloads page'
                     : 'Already up to date'
               }
             >
@@ -294,7 +294,7 @@ export function UpdatesPanel() {
                 {apply.phase === 'downloading'
                   ? `downloading… ${apply.percent.toFixed(0)}%`
                   : apply.phase === 'restarting'
-                    ? 'restarting Zeus… this page will reload'
+                    ? 'restarting ANAN Core… this page will reload'
                     : `${apply.phase}…`}
               </span>
             )}

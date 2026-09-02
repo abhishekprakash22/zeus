@@ -39,6 +39,7 @@ import { PsToggleButton } from '../components/PsToggleButton';
 import { AudioToggle } from '../components/AudioToggle';
 import { BandButtons } from '../components/BandButtons';
 import { TuningStepWidget } from '../components/TuningStepWidget';
+import { AfGainSlider } from '../components/AfGainSlider';
 import { AgcSlider } from '../components/AgcSlider';
 import { AlertBanner } from '../components/AlertBanner';
 import { AttenuatorSlider } from '../components/AttenuatorSlider';
@@ -1056,6 +1057,10 @@ function RxToolView() {
               <TuningStepWidget />
             </label>
           </div>
+          {/* AF volume (field request): the desktop slider, focused-receiver
+              aware, was never mounted on the phone — audio level was only
+              reachable through the receiver card's CTRL popover. */}
+          <div className="m-slider-row"><AfGainSlider /></div>
           <div className="m-slider-row"><AgcSlider /></div>
         </div>
       </Section>

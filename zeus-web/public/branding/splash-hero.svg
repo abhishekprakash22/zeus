@@ -1,0 +1,18 @@
+<!-- HERO CROP of splash-pulse.svg: same content, viewBox framed on the
+     lockup band (y 420..660). Keep the inner markup in sync with the master
+     splash when the artwork changes. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 420 1520 240" width="1520" height="240" font-family="'Inter',-apple-system,'Segoe UI',sans-serif">
+  <defs>
+    <linearGradient id="bgA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d1017"/><stop offset="0.65" stop-color="#0a0a0c"/><stop offset="1" stop-color="#080809"/>
+    </linearGradient>
+  </defs>
+  <rect width="1520" height="760" fill="url(#bgA)"/>
+  <g stroke="#16202c" stroke-width="1"><line x1="0" y1="95" x2="1520" y2="95"/><line x1="0" y1="190" x2="1520" y2="190"/><line x1="0" y1="285" x2="1520" y2="285"/><line x1="0" y1="380" x2="1520" y2="380"/><line x1="0" y1="475" x2="1520" y2="475"/><line x1="0" y1="570" x2="1520" y2="570"/><line x1="0" y1="665" x2="1520" y2="665"/></g>
+
+  <g>
+    <text x="62" y="470" font-family="'JetBrains Mono',ui-monospace,monospace" font-size="21" letter-spacing="10" fill="#4aa3df">OPENHPSDR</text>
+    <text x="56" y="560" font-size="104" font-weight="800" letter-spacing="14"><tspan fill="#ffffff">ANAN</tspan><tspan dx="26" fill="#4aa3df" fill-opacity="0.18" stroke="#5db4ef" stroke-width="4.5">CORE</tspan></text>
+    <text x="64" y="596" font-size="19" fill="#8a97a3" letter-spacing="1">Protocol-2 SDR for the ANAN</text>
+  </g>
+</svg>

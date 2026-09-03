@@ -794,6 +794,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<P2AppUpdateService>();
         builder.Services.AddSingleton<SaturnTxProbe>();
         builder.Services.AddSingleton<SaturnTxStream>();
+        builder.Services.AddSingleton<PaCalibrationService>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1447,6 +1448,15 @@ public static class ZeusHost
         app.MapGet("/api/xdma/tx", (SaturnTxProbe txp) => Results.Ok(txp.Status()));
         app.MapGet("/api/xdma/tx/feeder", (SaturnTxStream txs) => Results.Ok(txs.Status()));
 
+        // ---- PA calibration (dry-run skeleton; keyed loop = next commit) ----
+        app.MapGet("/api/pa-cal/status", (PaCalibrationService cal) => Results.Ok(cal.Status()));
+        app.MapPost("/api/pa-cal/start", (PaCalStartRequest req, PaCalibrationService cal) =>
+        {
+            var result = cal.Start(req.Confirm, req.Bands, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
+        app.MapPost("/api/pa-cal/abort", (PaCalibrationService cal) => Results.Ok(cal.Abort()));
+
         // ---- THE ARMING CEREMONY (Phase 4c): three deliberate acts ----
         app.MapPost("/api/xdma/tx/arm", (XdmaTxArmRequest req, SaturnControl c, SaturnRxStream rx) =>
         {
@@ -1722,3 +1732,5 @@ public sealed record XdmaRxStartRequest(int? RateKhz, long? Hz, string? Confirm)
 public sealed record XdmaTxProbeRequest(int? Frames, string? Confirm);
 
 public sealed record XdmaTxArmRequest(int? Seconds, string? Confirm);
+
+public sealed record PaCalStartRequest(string? Confirm, string[]? Bands);

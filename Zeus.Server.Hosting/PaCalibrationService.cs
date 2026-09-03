@@ -59,6 +59,13 @@ public sealed class PaCalibrationService : IDisposable
     private volatile float _lastSwr = -1;
     private long _lastMetersTicks;
 
+    // Hot-loop capture window: while _capturing, every meters frame lands in
+    // _capture for median/max analysis. The window is opened after a settle
+    // delay and closed before unkeying, so it sees only steady carrier.
+    private readonly List<(float Fwd, float Swr)> _capture = new();
+    private volatile bool _capturing;
+    private readonly Dictionary<string, double> _beforeByBand = new();
+
     public PaCalibrationService(
         RadioService radio, TxService tx, TxMetersService meters,
         PaSettingsStore store, ILogger<PaCalibrationService> log)
@@ -72,6 +79,10 @@ public sealed class PaCalibrationService : IDisposable
             _lastFwdW = fwd;
             _lastSwr = swr;
             Interlocked.Exchange(ref _lastMetersTicks, DateTime.UtcNow.Ticks);
+            if (_capturing)
+            {
+                lock (_capture) _capture.Add((fwd, swr));
+            }
         };
     }
 
@@ -85,7 +96,7 @@ public sealed class PaCalibrationService : IDisposable
             return new
             {
                 phase = _phase.ToString(),
-                mode = "dry-run only — the keyed measurement loop is the next commit; this build makes no RF",
+                mode = "hot loop armed — /measure calibrates the CURRENT band with short TUN bursts; /start remains the cold dry-run walk",
                 board = _board,
                 targetWatts = _targetWatts,
                 rows = _rows.ToArray(),
@@ -176,6 +187,181 @@ public sealed class PaCalibrationService : IDisposable
         {
             lock (_lock) { _phase = Phase.Failed; _error = ex.Message; }
             _log.LogError(ex, "pa-cal dry run failed");
+        }
+    }
+
+    /// <summary>THE HOT LOOP — calibrates the band the radio is currently
+    /// on, and nothing else. The service changes no band and touches no
+    /// drive slider: it reads the operator's TUN drive and NORMALIZES
+    /// (power scales as drive², so a measurement at d% computes the gain
+    /// that yields rated power at 100% — calibrate a G2-1K at 30% drive
+    /// and the load sees under a tenth of the kilowatt). Bursts are keyed
+    /// ≤0.8 s each, at most three per call with 1 s gaps; SWR above 1.5,
+    /// a non-responding forward-power reading, or a meters gap aborts
+    /// unkeyed. Gain moves at most ±3 dB per pass.</summary>
+    public object Measure(string? confirm, out string? refusal)
+    {
+        refusal = null;
+        if (!string.Equals(confirm, "i-have-a-rated-dummy-load", StringComparison.OrdinalIgnoreCase))
+        { refusal = "measurement requires confirm:'i-have-a-rated-dummy-load'"; return new { ok = false }; }
+        if (!_radio.IsConnected)
+        { refusal = "no radio session"; return new { ok = false }; }
+        if (_tx.MoxOwner is not null)
+        { refusal = "TX is already keyed"; return new { ok = false }; }
+        double metersAge = _lastMetersTicks == 0 ? double.MaxValue
+            : (DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastMetersTicks)) / (double)TimeSpan.TicksPerSecond;
+        if (metersAge > 5)
+        { refusal = "no TX meters flowing — is the session healthy?"; return new { ok = false }; }
+
+        lock (_lock)
+        {
+            if (_phase == Phase.Running)
+            { refusal = "already running"; return new { ok = false }; }
+
+            var kind = _radio.EffectiveBoardKind;
+            var variant = _radio.EffectiveOrionMkIIVariant;
+            var cfg = _store.GetAll(kind, variant);
+            _board = kind.ToString();
+            _targetWatts = cfg.Global.PaMaxPowerWatts;
+            if (_targetWatts <= 0)
+            { refusal = "board profile reports no PaMaxPowerWatts"; return new { ok = false }; }
+
+            var snap = _radio.Snapshot();
+            var band = BandUtils.FreqToBand(RadioService.TxFrequencyHz(snap));
+            if (band is null)
+            { refusal = "TX frequency is outside any amateur band — tune into the band to calibrate"; return new { ok = false }; }
+            int tunePct = snap.TunePct;
+            if (tunePct < 5)
+            { refusal = $"TUN drive is {tunePct}% — raise it to at least 5% (the math normalizes to 100%)"; return new { ok = false }; }
+
+            var bandCfg = cfg.Bands.FirstOrDefault(b => b.Band == band) ?? new PaBandSettingsDto(band);
+            _error = null;
+            _phase = Phase.Running;
+            _cts?.Cancel();
+            _cts = new CancellationTokenSource();
+            var ct = _cts.Token;
+            _log.LogWarning(
+                "pa-cal HOT start: board={Board} band={Band} target={W}W tunDrive={D}% gain={G:F1}dB",
+                _board, band, _targetWatts, tunePct, bandCfg.PaGainDb);
+            _ = Task.Run(() => HotLoop(band, bandCfg.PaGainDb, tunePct, kind, variant, ct), ct);
+            return new { ok = true, band, targetWatts = _targetWatts, tunDrivePct = tunePct, startGainDb = bandCfg.PaGainDb };
+        }
+    }
+
+    private void HotLoop(
+        string band, double gainDb, int tunePct,
+        HpsdrBoardKind kind, OrionMkIIVariant variant, CancellationToken ct)
+    {
+        double beforeGain = gainDb;
+        lock (_lock) { _beforeByBand.TryAdd(band, beforeGain); }
+        double normalize = Math.Pow(100.0 / tunePct, 2);
+        try
+        {
+            for (int pass = 1; pass <= 3; pass++)
+            {
+                if (ct.IsCancellationRequested) { Finish(Phase.Aborted, null); return; }
+
+                if (!_tx.TrySetTun(true, out var err))
+                { Finish(Phase.Failed, $"could not key TUN: {err}"); return; }
+                try
+                {
+                    Thread.Sleep(350);                 // carrier + meters settle
+                    lock (_capture) _capture.Clear();
+                    _capturing = true;
+                    Thread.Sleep(450);                 // capture window
+                    _capturing = false;
+                }
+                finally
+                {
+                    _tx.TrySetTun(false, out _);       // unkey NO MATTER WHAT
+                }
+
+                (float Fwd, float Swr)[] samples;
+                lock (_capture) samples = _capture.ToArray();
+                if (samples.Length < 3)
+                { Finish(Phase.Failed, "meters gap during capture — no verdict, gain untouched this pass"); return; }
+                float maxSwr = samples.Max(x => x.Swr);
+                if (maxSwr > 1.5f)
+                { Finish(Phase.Failed, $"SWR {maxSwr:F2} during burst — check the load; gain untouched this pass"); return; }
+                var fwd = samples.Select(x => (double)x.Fwd).OrderBy(x => x).ToArray();
+                double median = fwd[fwd.Length / 2];
+                double p100 = median * normalize;
+                double expected = _targetWatts * Math.Pow(tunePct / 100.0, 2);
+                if (median < Math.Max(0.05, 0.02 * expected))
+                { Finish(Phase.Failed, $"forward power not responding ({median:F2} W at {tunePct}% drive) — check PA enable / TX path"); return; }
+
+                double errDb = 10.0 * Math.Log10(_targetWatts / p100);
+                _log.LogWarning(
+                    "pa-cal pass {Pass}: band={Band} median={Med:F1}W → P100={P:F1}W err={E:+0.00;-0.00}dB gain={G:F2}dB",
+                    pass, band, median, p100, errDb, gainDb);
+
+                if (Math.Abs(errDb) <= 0.13)           // within ~±3%
+                {
+                    lock (_lock)
+                    {
+                        _rows.RemoveAll(r => r.Band == band);
+                        _rows.Add(new BandRow(band, beforeGain, _targetWatts, Math.Round(p100, 1),
+                            Math.Round(gainDb, 2), $"calibrated in {pass} pass(es) — within ±3%"));
+                    }
+                    Finish(Phase.Review, null);
+                    return;
+                }
+
+                double newGain = Math.Clamp(gainDb + errDb, gainDb - 3, gainDb + 3);
+                newGain = Math.Clamp(newGain, 0, 63);
+                var cfg = _store.GetAll(kind, variant);
+                var newBands = cfg.Bands
+                    .Select(b => b.Band == band ? b with { PaGainDb = newGain } : b)
+                    .ToList();
+                if (!newBands.Any(b => b.Band == band))
+                    newBands.Add(new PaBandSettingsDto(band) with { PaGainDb = newGain });
+                _store.Save(new PaSettingsDto(cfg.Global, newBands));
+                gainDb = newGain;
+
+                Thread.Sleep(1000);                    // inter-burst cool gap
+            }
+            lock (_lock)
+            {
+                _rows.RemoveAll(r => r.Band == band);
+                _rows.Add(new BandRow(band, beforeGain, _targetWatts, null,
+                    Math.Round(gainDb, 2), "did not converge in 3 passes — gain left at last step; re-run or revert"));
+            }
+            Finish(Phase.Review, null);
+        }
+        catch (Exception ex)
+        {
+            _tx.TrySetTun(false, out _);
+            Finish(Phase.Failed, ex.Message);
+            _log.LogError(ex, "pa-cal hot loop failed");
+        }
+    }
+
+    private void Finish(Phase phase, string? error)
+    {
+        _capturing = false;
+        lock (_lock) { _phase = phase; if (error is not null) _error = error; }
+    }
+
+    /// <summary>Restore every gain this session touched to its pre-
+    /// calibration value.</summary>
+    public object Revert()
+    {
+        lock (_lock)
+        {
+            if (_beforeByBand.Count == 0) return new { ok = true, reverted = 0 };
+            var kind = _radio.EffectiveBoardKind;
+            var variant = _radio.EffectiveOrionMkIIVariant;
+            var cfg = _store.GetAll(kind, variant);
+            var newBands = cfg.Bands
+                .Select(b => _beforeByBand.TryGetValue(b.Band, out var g) ? b with { PaGainDb = g } : b)
+                .ToList();
+            _store.Save(new PaSettingsDto(cfg.Global, newBands));
+            int n = _beforeByBand.Count;
+            _beforeByBand.Clear();
+            _rows.Clear();
+            _phase = Phase.Idle;
+            _log.LogWarning("pa-cal REVERT: {N} band(s) restored", n);
+            return new { ok = true, reverted = n };
         }
     }
 

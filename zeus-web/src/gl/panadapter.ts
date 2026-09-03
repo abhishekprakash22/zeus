@@ -43,6 +43,7 @@
 // Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
 // License for details.
 
+import { instrumentGlForStats } from './render-stats';
 import { buildProgram } from './util';
 import {
   PAN_VS,
@@ -128,6 +129,7 @@ export function hexToRgbFloats(hex: string): { r: number; g: number; b: number }
 const FILL_ALPHA_TOP = 0.55;
 
 export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
+  instrumentGlForStats(gl);   // render meter: no-op without ?renderstats=1
   // Mutable trace colour, default amber. setTraceColor swaps these in place;
   // every draw reads the current values into the fill + line uniforms so the
   // operator's choice from the Display tab takes effect on the next frame.

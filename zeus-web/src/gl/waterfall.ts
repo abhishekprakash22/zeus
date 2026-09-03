@@ -61,6 +61,7 @@
 // than a 0 dB yellow band. Hz-per-pixel changes are resampled in-place when
 // the old and new spans overlap, so zooming preserves waterfall history.
 
+import { instrumentGlForStats } from './render-stats';
 import { buildProgram } from './util';
 import { WF_VS, WF_FS, WF_REMAP_FS } from './shaders';
 import { lutFor, type RenderColormapId } from './colormap';
@@ -143,6 +144,7 @@ export type WfRenderer = {
 };
 
 export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
+  instrumentGlForStats(gl);   // render meter: no-op without ?renderstats=1
   // R32F as a color attachment requires EXT_color_buffer_float; LINEAR
   // filtering on floats needs OES_texture_float_linear. Both are requested
   // for effect — we don't consume the extension objects directly.

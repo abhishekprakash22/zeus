@@ -403,6 +403,20 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
     active = (1 - active) as 0 | 1;
   };
 
+  // ---- shift coalescer (Pi 5 GPU series, meter-directed) ----
+  // performShift is a FULL-SURFACE ping-pong pass (~7-8 ms on V3D). It used
+  // to run once per 'shift' DECISION — decisions arrive at the FFT data
+  // rate, so dial-streaming stacked 2-3 full-texture passes inside a single
+  // rendered frame (measured: 20-26 ms gl-span/frame while tuning).
+  // Horizontal rebases compose additively, so decisions now ACCUMULATE and
+  // one pass applies the summed offset at the next flush point. This is not
+  // the throttling the comment below warns about: no displacement is ever
+  // skipped — it is deferred to the moment before pixels can be seen
+  // (top of draw(), or before a rescale remap whose math depends on the
+  // old alignment), so the history can never drift from the panadapter's
+  // anchor. A reseed clears the pending rebase along with the history.
+  let pendingShiftPx = 0;
+
   const performShift = (shiftPx: number) => {
     if (texWidth === 0) return;
     performRemap(-shiftPx / texWidth, 1);
@@ -424,6 +438,7 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
           // on an invalid-wf frame leaves the seed only — the next valid
           // frame pushes the first real row.
           const width = wfDb?.length ?? (texWidth || lastValidWidth);
+          pendingShiftPx = 0;   // a reseed supersedes any pending rebase
           if (width > 0) resetTextures(width);
           if (wfDb) uploadRow(wfDb, options?.terrainRow);
           lastCenterHz = centerHz;
@@ -441,11 +456,11 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
           // that texImage2D never allocated. Skip it; the next valid frame
           // seeds via uploadRow.
           if (texWidth === 0) break;
-          // Shift always runs — throttling it would let the history drift
-          // out of sync with the panadapter's anchor offset. This is a
-          // REBASE of the texture in integer pixels; the fractional
-          // remainder is rendered at draw time from the view-center.
-          performShift(decision.shiftPx);
+          // Shift always LANDS — but coalesced: the summed rebase is applied
+          // at the next flush point (see pendingShiftPx above), which keeps
+          // history and panadapter anchor in lockstep while collapsing
+          // per-data-tick full-surface passes into at most one per frame.
+          pendingShiftPx += decision.shiftPx;
           // Suppress the new-row blit this tick per doc 08 §5 so we don't
           // overlay a post-retune row on top of a just-shifted frame.
           lastCenterHz = decision.residualCenterHz;
@@ -454,6 +469,10 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
           // Remap each historical column to the equivalent absolute-frequency
           // column under the new hz/px. This keeps zoom changes continuous:
           // zoom-in crops around the center; zoom-out exposes seeded edges.
+          // A rescale's remap math assumes the OLD alignment — flush any
+          // pending shift at the old scale first (sequential semantics).
+          if (pendingShiftPx !== 0 && texWidth > 0) performShift(pendingShiftPx);
+          pendingShiftPx = 0;
           performRemap(decision.srcCenterOffsetUv, decision.srcXScale);
           if (Math.abs(decision.srcCenterOffsetUv) + decision.srcXScale * 0.5 > 0.5) {
             capVisibleHistory();
@@ -483,6 +502,13 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
       if (texWidth > 0) resetTextures(texWidth);
     },
     draw(dbMin, dbMax, viewCenterHz = null, viewHzPerPixel = null) {
+      // Coalescer flush: the accumulated rebase lands before this frame's
+      // fractional offset is computed, so what reaches the screen is always
+      // fully rebased — one full-surface pass per frame, maximum.
+      if (pendingShiftPx !== 0 && texWidth > 0) {
+        performShift(pendingShiftPx);
+        pendingShiftPx = 0;
+      }
       gl.viewport(0, 0, canvasW, canvasH);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);

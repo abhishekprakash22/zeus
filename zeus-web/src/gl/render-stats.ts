@@ -34,6 +34,36 @@ let uploadCalls = 0;
 let drawCalls = 0;
 let overlayStarted = false;
 
+// ---- the splitter: where do the milliseconds live? ----
+// GL-span: wall time from the FIRST to the LAST instrumented GL call
+// within one rAF frame — the render functions' whole working section,
+// internal JS included. Epoch = the overlay's own rAF counter; a wrapped
+// call landing in a new epoch flushes the previous frame's span.
+let frameEpoch = 0;
+let spanEpoch = -1;
+let spanStart = 0;
+let spanEnd = 0;
+let glSpanAccumMs = 0;
+let glSpanFrames = 0;
+// Long tasks: every main-thread stall > 50 ms, counted and totalled —
+// the species the worst-frame number belongs to. Standard observer, no
+// hooks needed.
+let longTasks = 0;
+let longTaskMs = 0;
+
+function noteGlCall(): void {
+  const t = performance.now();
+  if (spanEpoch !== frameEpoch) {
+    if (spanEpoch >= 0 && spanEnd > spanStart) {
+      glSpanAccumMs += spanEnd - spanStart;
+      glSpanFrames++;
+    }
+    spanEpoch = frameEpoch;
+    spanStart = t;
+  }
+  spanEnd = performance.now();
+}
+
 function byteLengthOfLastView(args: unknown[]): number {
   // texImage2D / texSubImage2D overloads end with an ArrayBufferView (or a
   // TexImageSource, or null). The view's byteLength is the honest upload
@@ -79,6 +109,7 @@ function startOverlay(): void {
   let worstMs = 0;
   let frames = 0;
   const tick = (now: number) => {
+    frameEpoch++;
     const dt = now - last;
     last = now;
     if (dt > 0 && dt < 1000) {
@@ -90,10 +121,25 @@ function startOverlay(): void {
   };
   requestAnimationFrame(tick);
 
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        longTasks++;
+        longTaskMs += e.duration;
+      }
+    });
+    po.observe({ entryTypes: ['longtask'] });
+  } catch {
+    /* observer unsupported — lines read 0 */
+  }
+
   window.setInterval(() => {
     const mb = uploadBytes / (1024 * 1024);
+    const glPerFrame = glSpanFrames > 0 ? glSpanAccumMs / glSpanFrames : 0;
     el.textContent =
       `render ${frames} fps  ${emaMs.toFixed(1)} ms (worst ${worstMs.toFixed(0)} ms)\n` +
+      `gl-span ${glPerFrame.toFixed(2)} ms/frame (${glSpanFrames} gl-frames/s)\n` +
+      `longtask ${longTasks}/s  ${longTaskMs.toFixed(0)} ms/s\n` +
       `upload ${mb.toFixed(2)} MB/s  ${uploadCalls} calls/s\n` +
       `draws  ${drawCalls}/s`;
     uploadBytes = 0;
@@ -101,6 +147,10 @@ function startOverlay(): void {
     drawCalls = 0;
     worstMs = 0;
     frames = 0;
+    glSpanAccumMs = 0;
+    glSpanFrames = 0;
+    longTasks = 0;
+    longTaskMs = 0;
   }, 1000);
 }
 
@@ -116,18 +166,26 @@ export function instrumentGlForStats(gl: WebGL2RenderingContext): void {
   marker[INSTRUMENTED] = true;
 
   wrap(gl, 'texSubImage2D', (args) => {
+    noteGlCall();
     uploadCalls++;
     uploadBytes += byteLengthOfLastView(args);
+    spanEnd = performance.now();
   });
   wrap(gl, 'texImage2D', (args) => {
+    noteGlCall();
     uploadCalls++;
     uploadBytes += byteLengthOfLastView(args);
+    spanEnd = performance.now();
   });
   wrap(gl, 'drawArrays', () => {
+    noteGlCall();
     drawCalls++;
+    spanEnd = performance.now();
   });
   wrap(gl, 'drawElements', () => {
+    noteGlCall();
     drawCalls++;
+    spanEnd = performance.now();
   });
 
   startOverlay();

@@ -491,3 +491,30 @@ path), or when you press **Abort**. **Revert session** restores every
 gain the session changed to its previous value. The calibration never
 changes bands or moves your drive sliders.
 
+## 17. SWR analyzer
+
+The PA panel's **SWR analyzer** card sweeps a low-power carrier across one
+amateur band and plots SWR against frequency from the radio's own
+directional bridge — resonance dip, minimum SWR, and the 2:1 bandwidth,
+like a standalone antenna analyzer, using the transmitter you already own.
+
+**Setup:** connect the antenna (or load) under test, and set **TUN drive
+for roughly 2–5 watts** of forward power — the bridge suppresses SWR
+readings below about 2 W, and more power buys nothing. SWR protection can
+stay on; it may fold drive back into a bad mismatch, which changes forward
+power but not the SWR reading.
+
+**To sweep:** tick the antenna-connected confirmation, pick a band (or
+leave "Current band"), and press **Run sweep**. The carrier keys once and
+the VFO steps across the band — 15–25 seconds — drawing the curve live.
+The marker shows the minimum SWR and its frequency; dashed verticals and
+the caption show the 2:1 span. When you sweep the same band again, the
+previous curve overlays as a dashed trace — trim the antenna, re-sweep,
+and watch the dip move. **Abort** drops the carrier instantly, and the VFO
+always returns to where you left it.
+
+**Boundaries:** sweeps are in-band only — a licensed transmitter cannot
+sweep between allocations the way a milliwatt hardware analyzer does. The
+reading is scalar SWR from a directional coupler; it does not measure
+complex impedance.
+

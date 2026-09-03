@@ -795,6 +795,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnTxProbe>();
         builder.Services.AddSingleton<SaturnTxStream>();
         builder.Services.AddSingleton<PaCalibrationService>();
+        builder.Services.AddSingleton<SwrSweepService>();
 
         // Digital modes (FT8/FT4) — IN CORE, not a plugin.
         // Upstream moved these decoders into org.openhpsdr.digital, served from a
@@ -1462,6 +1463,15 @@ public static class ZeusHost
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
         app.MapPost("/api/pa-cal/revert", (PaCalibrationService cal) => Results.Ok(cal.Revert()));
+        // ---- SWR analyzer: low-power in-band sweep off the TX bridge ----
+        app.MapGet("/api/swr-sweep/status", (SwrSweepService s) => Results.Ok(s.Status()));
+        app.MapPost("/api/swr-sweep/start", (SwrSweepStartRequest req, SwrSweepService s) =>
+        {
+            var result = s.Start(req.Confirm, req.Band, req.Points, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
+        app.MapPost("/api/swr-sweep/abort", (SwrSweepService s) => Results.Ok(s.Abort()));
+
         app.MapPost("/api/pa-cal/run-all", (PaCalStartRequest req, PaCalibrationService cal) =>
         {
             var result = cal.RunAll(req.Confirm, out var refusal);
@@ -1745,3 +1755,5 @@ public sealed record XdmaTxProbeRequest(int? Frames, string? Confirm);
 public sealed record XdmaTxArmRequest(int? Seconds, string? Confirm);
 
 public sealed record PaCalStartRequest(string? Confirm, string[]? Bands);
+
+public sealed record SwrSweepStartRequest(string? Confirm, string? Band, int? Points);

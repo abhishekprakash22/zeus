@@ -24,6 +24,8 @@ type CalRow = {
 
 type CalStatus = {
   phase: string;
+  currentBand: string | null;
+  activeBand: string | null;
   board: string;
   targetWatts: number;
   rows: CalRow[];
@@ -107,7 +109,22 @@ export function PaCalibrationCard() {
             disabled={!loadConfirmed || running}
             onClick={() => void measure()}
           >
-            Measure this band
+            Measure {status?.currentBand ?? 'this band'}
+          </button>
+          <button
+            type="button"
+            className="btn sm"
+            title="Factory mode: retunes to every band's center (verified before each burst), calibrates all of them, stops on any fault"
+            disabled={!loadConfirmed || running}
+            onClick={() => void post('/api/pa-cal/run-all', { confirm: 'i-have-a-rated-dummy-load' }).then(async (r) => {
+              if (!r.ok) {
+                const body = (await r.json().catch(() => null)) as { error?: string } | null;
+                setActionError(body?.error ?? `run-all failed (${r.status})`);
+              }
+              void refresh();
+            })}
+          >
+            Measure all bands
           </button>
           {running && (
             <button type="button" className="btn sm" onClick={() => void post('/api/pa-cal/abort').then(refresh)}>
@@ -126,7 +143,8 @@ export function PaCalibrationCard() {
           )}
           {running && (
             <span className="opacity-80">
-              fwd {status?.lastFwdWatts?.toFixed(1) ?? '—'} W · SWR{' '}
+              {status?.activeBand ? `${status.activeBand} · ` : ''}fwd{' '}
+              {status?.lastFwdWatts?.toFixed(1) ?? '—'} W · SWR{' '}
               {status?.lastSwr?.toFixed(2) ?? '—'}
             </span>
           )}
@@ -147,7 +165,7 @@ export function PaCalibrationCard() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.band}>
+                <tr key={r.band} className={r.band === status?.activeBand ? 'font-bold' : undefined}>
                   <td>{r.band}</td>
                   <td>{r.beforeGainDb.toFixed(1)}</td>
                   <td>{r.measuredWatts?.toFixed(1) ?? '—'}</td>

@@ -1462,6 +1462,11 @@ public static class ZeusHost
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
         app.MapPost("/api/pa-cal/revert", (PaCalibrationService cal) => Results.Ok(cal.Revert()));
+        app.MapPost("/api/pa-cal/run-all", (PaCalStartRequest req, PaCalibrationService cal) =>
+        {
+            var result = cal.RunAll(req.Confirm, out var refusal);
+            return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
+        });
 
         // ---- THE ARMING CEREMONY (Phase 4c): three deliberate acts ----
         app.MapPost("/api/xdma/tx/arm", (XdmaTxArmRequest req, SaturnControl c, SaturnRxStream rx) =>

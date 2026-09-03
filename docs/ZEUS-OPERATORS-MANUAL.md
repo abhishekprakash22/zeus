@@ -476,6 +476,15 @@ The table shows the band's previous gain, the measured power (normalized
 to 100% drive), the new gain, and the result — typically "calibrated in
 2 passes — within ±3%". Tune to the next band and repeat.
 
+**Factory mode — Measure all bands:** with the load confirmed, this
+button calibrates every band in one run: the radio retunes to each
+band's center in turn (and verifies it landed there before any burst
+keys), measures, applies, and moves on with cool-down gaps between
+bands. Any fault — high SWR, a non-responding band, a failed retune —
+stops the whole run with the table showing exactly where. About two
+minutes for 160m–6m at reduced drive. The single-band button (which
+names the band the radio is currently on) remains for spot checks.
+
 **Safety:** the burst unkeys immediately if SWR exceeds 1.5 (check the
 load), if forward power does not respond (check PA enable and the TX
 path), or when you press **Abort**. **Revert session** restores every

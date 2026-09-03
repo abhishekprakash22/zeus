@@ -20,6 +20,7 @@
 // (https://github.com/dl1bz/deskhpsdr), maintained by Heiko (DL1BZ).
 // Both are GPL-2.0-or-later.
 
+import { PaCalibrationCard } from './PaCalibrationCard';
 import { useEffect, useRef, useState } from 'react';
 import { HF_BANDS, usePaStore } from '../state/pa-store';
 import { useRadioStore } from '../state/radio-store';
@@ -406,6 +407,7 @@ export function PaSettingsPanel() {
 
   return (
     <div className="pa-settings density-compact space-y-6">
+      <PaCalibrationCard />
       <section>
         <div className="mb-2 flex items-center justify-between gap-3">
           <h3 className="pa-section-h">Global</h3>

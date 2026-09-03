@@ -456,3 +456,29 @@ maps, p2app, and gateware come from the OpenHPSDR/Saturn community — see
 ATTRIBUTIONS.md. This manual is maintained in-repo (`docs/`) and is updated
 alongside the features it describes; the version line at the top states how
 far it is current.
+
+## 16. Automated PA gain calibration
+
+The PA panel's **Calibrate — current band** card sets each band's PA gain
+automatically so that 100% drive delivers your radio's rated output (100 W
+on a G2, 1000 W on a G2-1K — the target comes from the selected board
+profile's Rated PA Output).
+
+**Before you start:** connect a dummy load rated for the radio's full
+output, tune into the band you want to calibrate, and set **TUN drive
+low** (20–30%). The calibration measures at your reduced drive and
+normalizes mathematically to 100%, so the load only ever sees a fraction
+of rated power.
+
+**To calibrate:** tick the dummy-load confirmation, press **MEASURE THIS
+BAND**, and listen for up to three short TUN bursts about a second apart.
+The table shows the band's previous gain, the measured power (normalized
+to 100% drive), the new gain, and the result — typically "calibrated in
+2 passes — within ±3%". Tune to the next band and repeat.
+
+**Safety:** the burst unkeys immediately if SWR exceeds 1.5 (check the
+load), if forward power does not respond (check PA enable and the TX
+path), or when you press **Abort**. **Revert session** restores every
+gain the session changed to its previous value. The calibration never
+changes bands or moves your drive sliders.
+

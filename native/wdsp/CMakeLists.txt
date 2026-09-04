@@ -112,6 +112,19 @@ if(MSVC)
     # which MSVC reports as a macro redefinition against the definition below.
     target_compile_options(wdsp PRIVATE /O2 /fp:precise /W3 /wd4244 /wd4267 /wd4005)
     target_compile_definitions(wdsp PRIVATE _CRT_SECURE_NO_WARNINGS)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # clang-cl (the CI toolset — libspecbleach needs its C99 VLAs) turns
+        # several legacy-C diagnostics into hard errors that MSVC only warns
+        # about. Upstream WDSP is written against MSVC, so downgrade them.
+        target_compile_options(wdsp PRIVATE
+            -Wno-macro-redefined
+            -Wno-implicit-int
+            -Wno-implicit-function-declaration
+            -Wno-int-conversion
+            -Wno-incompatible-pointer-types
+            -Wno-deprecated-non-prototype
+        )
+    endif()
 else()
     target_compile_options(wdsp PRIVATE
         -O3
@@ -121,10 +134,15 @@ else()
         -Wno-unused-but-set-variable
         -Wno-unused-variable
         -Wno-unused-function
-        -Wno-deprecated-non-prototype
         -Wno-implicit-function-declaration
         -Wno-incompatible-pointer-types
+        -Wno-implicit-int
+        -Wno-int-conversion
     )
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # GCC does not know this one and prints a note per TU.
+        target_compile_options(wdsp PRIVATE -Wno-deprecated-non-prototype)
+    endif()
     target_compile_definitions(wdsp PRIVATE _GNU_SOURCE)
     target_link_options(wdsp PRIVATE -pthread)
 endif()

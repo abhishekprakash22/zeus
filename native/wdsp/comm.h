@@ -50,6 +50,13 @@ warren@wpratt.com
 #include <assert.h>
 #include "fftw3.h"
 
+// Zeus: upstream 2.x added a debug helper `void dprintf(const char*, ...)`
+// (utilities.c) whose name collides with POSIX dprintf(int fd, ...) declared
+// by glibc / the macOS SDK in <stdio.h>. Renaming every WDSP-side occurrence
+// through one macro (after the system headers, before any WDSP header) keeps
+// the upstream files byte-identical. See ZEUS-PATCHES.md.
+#define dprintf wdsp_dprintf
+
 #include "amd.h"
 #include "ammod.h"
 #include "amsq.h"
@@ -71,6 +78,10 @@ warren@wpratt.com
 #include "doublepole.h"
 #include "eer.h"
 #include "emnr.h"
+// Zeus: NR3 / NR4 block headers must precede RXA.h, whose struct embeds the
+// RNNR / SBNR handle types (same position the 1.29 tree used).
+#include "rnnr.h"			// NR3 (RNNoise) — Thetis lineage, not upstream
+#include "sbnr.h"			// NR4 (libspecbleach) — Thetis lineage, not upstream
 #include "emph.h"
 #include "eq.h"
 #include "fcurve.h"
@@ -118,8 +129,6 @@ warren@wpratt.com
 #include "wcpAGC.h"
 
 // ---- Zeus additions (see ZEUS-PATCHES.md) --------------------------------
-#include "rnnr.h"			// NR3 (RNNoise) — Thetis lineage, not upstream
-#include "sbnr.h"			// NR4 (libspecbleach) — Thetis lineage, not upstream
 #include "zeus_compat.h"	// psccF compatibility export
 
 // manage differences among consoles

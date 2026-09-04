@@ -46,7 +46,7 @@ SNOOP create_snoop(double* inbuff, int size, int rate, int ringtime)
 	return a;
 }
 
-void xsnoop(channel)
+void xsnoop(int channel)	// Zeus: explicit parameter type (clang rejects implicit int)
 {
 	static int created;
 	static SNOOP a;

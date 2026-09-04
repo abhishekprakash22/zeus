@@ -22,7 +22,7 @@ Copy every upstream `*.c` / `*.h` **except**:
 
 | File | Purpose |
 | --- | --- |
-| `CMakeLists.txt` | The build. Source list, NR3/NR4/NNR-Premium gates, FFTW detection, output naming. |
+| `CMakeLists.txt` | The build. Source list, NR3/NR4/NNR-Premium gates, FFTW detection, output naming. Per-compiler warning downgrades: upstream is written against MSVC, so clang / clang-cl / GCC-14 hard errors for implicit int, implicit function declarations, int↔pointer conversions and incompatible pointer types are turned back into warnings (`-Wno-…`). |
 | `wdsp_export.h` | `WDSP_EXPORT` visibility macro that `PORT` resolves to. |
 | `linux_port.{c,h}` | Win32 → POSIX shim (threads, critical sections, semaphores, events, aligned malloc). 2.1.0 additions: `WaitForMultipleObjects`, `CreateSemaphoreW`, `WAIT_OBJECT_0` / `WAIT_TIMEOUT`, `GetCurrentThread`, `OutputDebugStringA`; `WaitForSingleObject(h, 0)` now performs one try and reports `WAIT_TIMEOUT` (calcc.c drains semaphores with that call). |
 | `zeus_compat.{c,h}` | `psccF` — the Thetis float-I/Q wrapper around `pscc` that upstream 2.x dropped. Keeps `Zeus.Dsp` P/Invoke and the PureSignal feedback pump unchanged (PureSignal hard rule in `CLAUDE.md`). |
@@ -38,7 +38,8 @@ Every edit is marked in-source with a `Zeus` comment.
 
 | File | Edit |
 | --- | --- |
-| `comm.h` | (1) Platform include block: Linux/macOS include `linux_port.h`; `<Windows.h>`, `<process.h>`, `<intrin.h>`, `<avrt.h>` guarded by `_WIN32`. (2) Include `rnnr.h`, `sbnr.h`, `zeus_compat.h` after the upstream block headers. (3) `#define PORT WDSP_EXPORT` via `wdsp_export.h` instead of `__declspec(dllexport)`. |
+| `comm.h` | (1) Platform include block: Linux/macOS include `linux_port.h`; `<Windows.h>`, `<process.h>`, `<intrin.h>`, `<avrt.h>` guarded by `_WIN32`. (2) `#define dprintf wdsp_dprintf` right after the system headers: upstream's debug helper `void dprintf(const char*, ...)` collides with POSIX `dprintf(int, ...)` in glibc / macOS `<stdio.h>`; the macro renames every WDSP-side use without touching upstream files. (3) Include `rnnr.h`, `sbnr.h` immediately after `emnr.h` (they must precede `RXA.h`, whose struct embeds the handle types) and `zeus_compat.h` after the upstream block headers. (4) `#define PORT WDSP_EXPORT` via `wdsp_export.h` instead of `__declspec(dllexport)`. |
+| `snoop.c` | `void xsnoop(channel)` → `void xsnoop(int channel)`. Implicit `int` is an error under clang / clang-cl (the Windows CI toolset) and GCC 14. |
 | `main.c` | MMCSS "Pro Audio" calls (`AvSetMmThreadCharacteristics` etc.) guarded by `_WIN32`. |
 | `wisdom.c` | `AllocConsole` / `freopen_s` / `FreeConsole` progress console guarded by `_WIN32`. |
 | `channel.c` | `_MM_SET_FLUSH_ZERO_MODE` guarded out on Linux, macOS and ARM64 (no SSE intrinsics). |

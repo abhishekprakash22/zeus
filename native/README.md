@@ -3,18 +3,23 @@
 This directory vendors the WDSP DSP engine (Warren Pratt, GPLv3) and builds it
 as a shared library that `Zeus.Dsp` loads via P/Invoke.
 
-Source baseline: **upstream WDSP 1.29** (Warren Pratt) plus a
-`linux_port.{c,h}` portability shim and `#ifdef _WIN32` guards to get WDSP off
-MSVC. Thetis's own WDSP tree is MSVC-only and is **not** suitable as an
-upstream.
+Source baseline: **upstream WDSP 2.1.0** (Warren Pratt, 2026-09-04) plus a
+`linux_port.{c,h}` portability shim, `#ifdef _WIN32` guards to get WDSP off
+MSVC, the Thetis-lineage NR3/NR4 blocks, and a `psccF` compatibility export.
+The complete, replayable patch list lives in
+[`wdsp/ZEUS-PATCHES.md`](wdsp/ZEUS-PATCHES.md). Thetis's own WDSP tree is
+MSVC-only and is **not** suitable as an upstream.
 
 Layout:
 
 ```
 native/
-  wdsp/                  # vendored upstream WDSP 1.29 .c/.h
+  wdsp/                  # vendored upstream WDSP 2.1.0 .c/.h
+  wdsp/ZEUS-PATCHES.md   # every Zeus-owned file and every edited upstream file
+  wdsp/zeus_compat.{c,h} # psccF compatibility export (upstream 2.x dropped it)
   wdsp/stubs/nr3/        # no-op rnnr_stub.c + rnnoise.h (used when WDSP_WITH_NR3=OFF)
   wdsp/stubs/nr4/        # no-op sbnr_stub.c + specbleach_adenoiser.h (used when WDSP_WITH_NR4=OFF)
+  wdsp/stubs/nnr/        # empty Premium NNR model (used when WDSP_WITH_NNR_PREMIUM=OFF)
   wdsp/wdsp_export.h     # WDSP_EXPORT visibility macro (replaces PORT)
   wdsp/CMakeLists.txt    # the real build
   libspecbleach/         # vendored libspecbleach for NR4 (Phase 1a of #162)
@@ -33,6 +38,11 @@ native/
 - `WDSP_WITH_NR4` — libspecbleach / SBNR support. **ON by default** since
   libspecbleach is vendored at `native/libspecbleach/`. When OFF,
   `stubs/nr4/sbnr_stub.c` is compiled instead.
+- `WDSP_WITH_NNR_PREMIUM` — upstream WDSP 2.1.0 ships two compiled-in neural
+  noise reduction (NNR) models. The Standard model (`nnr_model_0.c`, 2.1 MB of
+  weights) always builds; this flag (**ON by default**) adds the Premium model
+  (`nnr_model_1.c`, 4.5 MB). When OFF, `stubs/nnr/nnr_model_1_stub.c` makes
+  slot 1 report itself empty, so `SetRXANNRModel(ch, 1)` returns 0.
 
 libspecbleach is built as a `STATIC` sub-target with hidden symbol visibility
 and embedded into `libwdsp.{so,dylib,dll}` — no extra runtime library to ship.
@@ -157,35 +167,30 @@ Release packaging status:
 
 ## Source modifications vs. upstream
 
-Diff against upstream WDSP 1.29 is intentionally tiny:
-
-1. `comm.h` — replaced `#define PORT __declspec(dllexport)` with an include of
-   `wdsp_export.h` and `#define PORT WDSP_EXPORT`. This is the single change
-   needed to get proper symbol export on all three OSes.
-2. `wdsp_export.h` — new file, holds the cross-platform visibility macro.
-3. `stubs/nr3/rnnoise.h` + `stubs/nr4/specbleach_adenoiser.h` — minimal opaque
-   types so `rnnr.h` / `sbnr.h` compile without librnnoise / libspecbleach
-   available. Each lives in its own subdirectory so the CMake gate can include
-   only the stub matching the OFF flag, avoiding header collisions with the
-   real library include path.
-4. `stubs/nr3/rnnr_stub.c` + `stubs/nr4/sbnr_stub.c` — no-op replacements for
-   `rnnr.c` / `sbnr.c`. These provide the entry points RXA.c calls (with
-   `run` stuck at 0, the NR branches never execute) so we can build without
-   pulling in the upstream noise-reduction libraries.
-
-No other files are modified. `linux_port.{c,h}` does all the Win32 → POSIX
-shimming (pthreads, aligned malloc, Sleep, `__declspec`).
+The authoritative list is [`wdsp/ZEUS-PATCHES.md`](wdsp/ZEUS-PATCHES.md).
+In short: `comm.h` (platform include block, Zeus headers, `PORT` →
+`WDSP_EXPORT`), `_WIN32` guards in `main.c` / `wisdom.c` / `channel.c` /
+`utilities.c`, the NR3/NR4 splice in `RXA.{c,h}`, and one line in
+`calcc.c` releasing the `psccF` staging buffers. Every edit carries a `Zeus`
+comment in-source. `linux_port.{c,h}` does all the Win32 → POSIX shimming
+(pthreads, critical sections, semaphores / events including
+`WaitForMultipleObjects`, aligned malloc, Sleep, `__declspec`).
 
 ## Re-vendoring upstream WDSP
 
-Bumping to a newer WDSP snapshot is mechanical:
+Bumping to a newer WDSP snapshot is mechanical but no longer a one-line
+patch. Follow `wdsp/ZEUS-PATCHES.md`:
 
 ```sh
-rm native/wdsp/*.c native/wdsp/*.h
-cp /path/to/new-wdsp-1.29/*.{c,h} native/wdsp/
-# re-apply the comm.h PORT edit (see step 1 above)
-./native/build.sh
+cd native/wdsp
+git rm -q $(ls *.c *.h | grep -vE '^(linux_port\.[ch]|wdsp_export\.h|zeus_compat\.[ch]|rnnr\.[ch]|sbnr\.[ch])$')
+cp /path/to/new-wdsp/*.c /path/to/new-wdsp/*.h .   # then delete fftw3.h
+# re-apply every entry under "Edited upstream files" in ZEUS-PATCHES.md
+# update the source list in CMakeLists.txt if upstream added/removed .c files
+../build.sh
 ```
 
-Don't copy upstream `.o` files, `Makefile`, or `COMPILE.*` notes — we own the
-build system now.
+Don't copy upstream `.o` files, `Makefile`, `.vcxproj`, `fftw3.h`, or the
+`calculus` data file — we own the build system, and the NR2 gain table is
+embedded via `calculus.c`. Verify with the audit commands at the bottom of
+`ZEUS-PATCHES.md` (`GetWDSPVersion()` must report the new version).

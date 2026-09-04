@@ -167,6 +167,23 @@ jobs:
             throw "Expected 4 RNNR exports, got $count. NR3 did not link correctly."
           }
 
+      - name: Verify WDSP 2.1.0 exports (NNR + psccF)
+        run: |
+          # WDSP 2.1.0 port (native/wdsp/ZEUS-PATCHES.md): the upstream neural
+          # noise reduction block must be linked (12 SetRXANNR* setters) and the
+          # Zeus psccF compatibility export must survive — Zeus.Dsp P/Invokes it
+          # for the PureSignal feedback pump.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vsInstall\VC\Tools\MSVC" }
+          $all = & $dumpbin /EXPORTS native/build/Release/wdsp.dll
+          $nnr = ($all | Select-String "SetRXANNR" | Measure-Object).Count
+          Write-Host "Found $nnr SetRXANNR* exports"
+          if ($nnr -ne 12) { throw "Expected 12 SetRXANNR* exports, got $nnr. NNR did not link correctly." }
+          if (-not ($all | Select-String "\bpsccF\b")) { throw "psccF export missing — zeus_compat.c not linked." }
+
       - name: Stage DLL
         run: |
           $rid = "win-${{ matrix.arch }}"
@@ -362,6 +379,26 @@ jobs:
           $nm_tool -D native/build/libwdsp.so | grep "RNNR" || true
           if [ "$count" -ne 4 ]; then
             echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify WDSP 2.1.0 exports (NNR + psccF)
+        run: |
+          # WDSP 2.1.0 port (native/wdsp/ZEUS-PATCHES.md): 12 SetRXANNR* setters
+          # from the upstream neural NR block, plus the Zeus psccF compatibility
+          # export that Zeus.Dsp P/Invokes for the PureSignal feedback pump.
+          nm_tool="nm"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            nm_tool="aarch64-linux-gnu-nm"
+          fi
+          nnr=$($nm_tool -D native/build/libwdsp.so | grep -c "SetRXANNR" || true)
+          echo "Found $nnr SetRXANNR* exports"
+          if [ "$nnr" -ne 12 ]; then
+            echo "ERROR: Expected 12 SetRXANNR* exports, got $nnr. NNR did not link correctly."
+            exit 1
+          fi
+          if ! $nm_tool -D native/build/libwdsp.so | grep -qw "psccF"; then
+            echo "ERROR: psccF export missing — zeus_compat.c not linked."
             exit 1
           fi
 

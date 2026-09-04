@@ -1026,4 +1026,56 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void PSRestoreCorr(int channel, string filename);
+
+    // -- WDSP 2.1.0 surface (declared for the phase-1 port, not yet called;
+    //    see docs/designs/wdsp-2.1.0-upgrade-plan.md). Every symbol below is
+    //    resolved lazily on first call, so a 1.29-era libwdsp still loads.
+
+    // version_number * 100, e.g. 210 for WDSP 2.1.0 (version.c).
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int GetWDSPVersion();
+
+    // PureSignal 3 AmpView data (calcc.c). x/ym/yc/ys hold nsamps_out points
+    // (currently 4096); the *_cor vectors hold cpts_out points (currently 512).
+    // Phase-3 item — requires KB2UKA approval before any caller is added.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void GetPSDisp(int channel,
+                                           double[] x, double[] ym, double[] yc, double[] ys,
+                                           double[] xm_cor, double[] ym_cor, double[] xa_cor, double[] ya_cor,
+                                           out int nsamps_out, out int cpts_out, out double phs_ref_deg_out);
+
+    // Neural Noise Reduction (nnr.c) — post-AGC deep-filtering NR with two
+    // compiled-in models (slot 0 Standard, slot 1 Premium). Phase-2 item.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetRXANNRRun(int channel, int setit);
+
+    // 0 = before AGC, 1 = after AGC (WDSP default 1; guide says post-AGC).
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetRXANNRPosition(int channel, int position);
+
+    // Suggested range -10.0 (most noise passed) .. -50.0 (max suppression); default -25.0.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetRXANNRMaskFloor(int channel, double floor_db);
+
+    // Returns the slot actually in use afterwards — differs from `slot` when
+    // that slot holds no model (e.g. WDSP_WITH_NNR_PREMIUM=OFF builds).
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int SetRXANNRModel(int channel, int slot);
+
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int GetRXANNRModel(int channel);
+
+    // Optional per-slot model-file override. Must be called BEFORE the RXA
+    // channel is opened — models load once, at channel creation. An empty
+    // string leaves the slot on its built-in model.
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetNNRModelPathSlot(int slot, string path);
 }

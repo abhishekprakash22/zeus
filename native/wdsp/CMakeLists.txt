@@ -24,13 +24,19 @@
 
 cmake_minimum_required(VERSION 3.20)
 project(wdsp
-    VERSION 1.29.0
+    VERSION 2.10.0
     DESCRIPTION "WDSP DSP engine, packaged for Zeus"
     LANGUAGES C
 )
 
 option(WDSP_WITH_NR3 "Build with RNNoise (NR3) support — xiph/rnnoise vendored under native/rnnoise/" ON)
 option(WDSP_WITH_NR4 "Build with libspecbleach (NR4 / SBNR) support — vendored under native/libspecbleach/" ON)
+# NNR (upstream deep-neural-network noise reduction, WDSP 2.1.0) always builds
+# the Standard model (nnr_model_0.c, ~2.1 MB of weights). The Premium model
+# (nnr_model_1.c, ~5.9 MB) is optional: when OFF, slot 1 reports itself empty
+# and SetRXANNRModel(ch, 1) returns 0 — the discovery mechanism the WDSP Guide
+# documents for consoles. See docs/designs/wdsp-2.1.0-upgrade-plan.md.
+option(WDSP_WITH_NNR_PREMIUM "Compile the Premium NNR model (nnr_model_1.c) into libwdsp" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
@@ -41,19 +47,30 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # -----------------------------------------------------------------------------
-# Source list (mirrors upstream WDSP 1.29 Makefile SOURCES, minus rnnr.c and
-# sbnr.c which are gated below per-flag).
+# Source list: every upstream WDSP 2.1.0 .c file (see native/wdsp/ZEUS-PATCHES.md
+# for the exact vendoring rules) plus the Zeus-owned linux_port.c and
+# zeus_compat.c. rnnr.c / sbnr.c / nnr_model_1.c are gated below per-flag.
 # -----------------------------------------------------------------------------
 set(WDSP_SOURCES
     amd.c ammod.c amsq.c analyzer.c anf.c anr.c apfshadow.c bandpass.c
     calcc.c calculus.c cblock.c cfcomp.c cfir.c channel.c cmath.c compress.c
-    delay.c dexp.c div.c doublepole.c eer.c emnr.c emph.c eq.c fcurve.c
-    FDnoiseIQ.c fir.c firmin.c fmd.c fmmod.c fmsq.c gain.c gaussian.c gen.c
+    delay.c dexp.c div.c doublepole.c eer.c emnr.c emph.c eq.c extrapolate.c
+    fcurve.c fir.c firmin.c fmd.c fmmod.c fmsq.c gain.c gaussian.c gen.c
     icfir.c iir.c impulse_cache.c iobuffs.c iqc.c linux_port.c lmath.c main.c
-    matchedCW.c meter.c meterlog10.c nbp.c nob.c nobII.c osctrl.c patchpanel.c
-    resample.c rmatch.c RXA.c sender.c shift.c siphon.c slew.c snb.c ssql.c
-    syncbuffs.c TXA.c utilities.c varsamp.c version.c wcpAGC.c wisdom.c zetaHat.c
+    matchedCW.c meter.c meterlog10.c nbp.c nnet.c nnio.c nnr.c nnr_model_0.c
+    nob.c nobII.c nurbs.c nurbs_fit.c nurbs_spline.c osctrl.c patchpanel.c
+    phrot.c resample.c reshb.c rmatch.c RXA.c sender.c shift.c siphon.c slew.c
+    snb.c snoop.c ssql.c syncbuffs.c TXA.c utilities.c varsamp.c version.c
+    wbfm.c wcpAGC.c wisdom.c zetaHat.c zeus_compat.c
 )
+
+# NNR Premium model gate. Without nnr_model_1.c the slot-1 symbols still have
+# to exist (nnet.c references them unconditionally), so provide an empty model.
+if(WDSP_WITH_NNR_PREMIUM)
+    list(APPEND WDSP_SOURCES nnr_model_1.c)
+else()
+    list(APPEND WDSP_SOURCES stubs/nnr/nnr_model_1_stub.c)
+endif()
 
 # NR3 — RNNoise gate.
 if(WDSP_WITH_NR3)
@@ -91,8 +108,23 @@ endif()
 # Compiler flags
 # -----------------------------------------------------------------------------
 if(MSVC)
-    target_compile_options(wdsp PRIVATE /O2 /fp:precise /W3 /wd4244 /wd4267)
+    # /wd4005: upstream 2.x defines _CRT_SECURE_NO_WARNINGS in-source as well,
+    # which MSVC reports as a macro redefinition against the definition below.
+    target_compile_options(wdsp PRIVATE /O2 /fp:precise /W3 /wd4244 /wd4267 /wd4005)
     target_compile_definitions(wdsp PRIVATE _CRT_SECURE_NO_WARNINGS)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # clang-cl (the CI toolset — libspecbleach needs its C99 VLAs) turns
+        # several legacy-C diagnostics into hard errors that MSVC only warns
+        # about. Upstream WDSP is written against MSVC, so downgrade them.
+        target_compile_options(wdsp PRIVATE
+            -Wno-macro-redefined
+            -Wno-implicit-int
+            -Wno-implicit-function-declaration
+            -Wno-int-conversion
+            -Wno-incompatible-pointer-types
+            -Wno-deprecated-non-prototype
+        )
+    endif()
 else()
     target_compile_options(wdsp PRIVATE
         -O3
@@ -102,10 +134,15 @@ else()
         -Wno-unused-but-set-variable
         -Wno-unused-variable
         -Wno-unused-function
-        -Wno-deprecated-non-prototype
         -Wno-implicit-function-declaration
         -Wno-incompatible-pointer-types
+        -Wno-implicit-int
+        -Wno-int-conversion
     )
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # GCC does not know this one and prints a note per TU.
+        target_compile_options(wdsp PRIVATE -Wno-deprecated-non-prototype)
+    endif()
     target_compile_definitions(wdsp PRIVATE _GNU_SOURCE)
     target_link_options(wdsp PRIVATE -pthread)
 endif()

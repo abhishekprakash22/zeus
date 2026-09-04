@@ -78,22 +78,46 @@ void DeleteCriticalSection(pthread_mutex_t *mutex) {
 }
 
 int LinuxWaitForSingleObject(sem_t *sem, int ms) {
-  int result = 0;
-
+  //
+  // Returns Win32-style status: WAIT_OBJECT_0 when the semaphore was
+  // acquired, WAIT_TIMEOUT otherwise. WDSP 2.x (calcc.c) drains its
+  // semaphores with `while (WaitForSingleObject(h, 0) == WAIT_OBJECT_0);`,
+  // so a zero-millisecond wait MUST perform exactly one try and MUST report
+  // timeout when nothing is pending — the previous shim skipped the loop
+  // entirely for ms == 0 and returned 0, which would spin forever there.
+  //
   if (ms == INFINITE) {
-    // wait for the lock
-    result = sem_wait(sem);
-  } else {
-    for (int i = 0; i < ms; i++) {
-      result = sem_trywait(sem);
-
-      if (result == 0) { break; }
-
-      Sleep(1);
-    }
+    // wait for the lock, restarting if a signal interrupts us
+    int result;
+    do { result = sem_wait(sem); } while (result != 0 && errno == EINTR);
+    return result == 0 ? WAIT_OBJECT_0 : (int)WAIT_FAILED;
   }
 
-  return result;
+  for (int i = 0; ; i++) {
+    if (sem_trywait(sem) == 0) { return WAIT_OBJECT_0; }
+    if (i >= ms) { return WAIT_TIMEOUT; }
+    Sleep(1);
+  }
+}
+
+uint32_t LinuxWaitForMultipleObjects(uint32_t count, void **handles, int waitAll, int ms) {
+  //
+  // WDSP 2.x uses this in calcc.c (doPSCorrChange) to wait on five
+  // semaphores for "any of". Poll in index order so, like Win32, the lowest
+  // signalled index is the one returned. The waiting thread is idle almost
+  // all of the time, so a 1 ms poll is an acceptable cost.
+  //
+  (void) waitAll;
+
+  for (int elapsed = 0; ; elapsed++) {
+    for (uint32_t i = 0; i < count; i++) {
+      if (sem_trywait((sem_t *)handles[i]) == 0) { return WAIT_OBJECT_0 + i; }
+    }
+
+    if (ms != INFINITE && elapsed >= ms) { return WAIT_TIMEOUT; }
+
+    Sleep(1);
+  }
 }
 
 sem_t *LinuxCreateSemaphore(int attributes, int initial_count, int maximum_count, char *name) {
@@ -211,7 +235,8 @@ HANDLE _beginthread( void( __cdecl *start_address )( void * ), unsigned stack_si
   // To aid analyzing CPU times, we name each thread with its
   // function.
   //
-  void sendbuf(void *arg); // declared in analyzer.c but not in header file
+  void sendbuf(void *arg);         // declared in analyzer.c but not in header file
+  void doPSCorrChange(void *arg);  // declared in calcc.c but not in header file
   char tname[64];
 
   if (start_address == &wdspmain) {
@@ -222,10 +247,9 @@ HANDLE _beginthread( void( __cdecl *start_address )( void * ), unsigned stack_si
     snprintf(tname, sizeof(tname), "Wflush%d", (int)(uintptr_t)arglist);
   } else if (start_address == &syncb_main) {
     snprintf(tname, sizeof(tname), "WSync");
-  } else  if (start_address == &doPSCalcCorrection
-              || start_address == &doPSTurnoff
-              || start_address == &PSSaveCorrection
-              || start_address == &PSRestoreCorrection) {
+  } else if (start_address == &doPSCorrChange) {
+    // WDSP 2.x folded the PS calc / turn-off / save / restore workers into
+    // one correction-change thread driven by five semaphores.
     snprintf(tname, sizeof(tname), "PURESIGNAL");
   } else {
     // in case there are more worker types

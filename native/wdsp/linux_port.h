@@ -78,12 +78,27 @@ john.d.melton@googlemail.com
   #define Sleep(ms) usleep((ms)*1000)
 
   #define CreateSemaphore(a,b,c,d) LinuxCreateSemaphore(a,b,c,d)
+  #define CreateSemaphoreW(a,b,c,d) LinuxCreateSemaphore(a,b,c,d)
   #define WaitForSingleObject(x, y) LinuxWaitForSingleObject(x, y)
+  #define WaitForMultipleObjects(n,h,all,ms) LinuxWaitForMultipleObjects((n), (void **)(h), (all), (ms))
   #define ReleaseSemaphore(x,y,z) LinuxReleaseSemaphore(x,y,z)
   #define SetEvent(x) LinuxSetEvent(x)
   #define ResetEvent(x) LinuxResetEvent(x)
 
   #define INFINITE -1
+  // Win32 wait-status values. WDSP 2.x (calcc.c) compares the result of the
+  // wait calls against these, so the shim must return them, not raw errno.
+  #define WAIT_OBJECT_0 0
+  #define WAIT_TIMEOUT 258
+  #define WAIT_FAILED 0xFFFFFFFFu
+
+  // main.c only uses this as the argument to SetThreadPriority, which is a
+  // no-op here.
+  #define GetCurrentThread() ((HANDLE)0)
+
+  // utilities.c dprintf() routes to the Visual Studio output window on
+  // Windows; stderr is the equivalent surface everywhere else.
+  #define OutputDebugStringA(s) fputs((s), stderr)
 
   void QueueUserWorkItem(void *function, void *context, int flags);
 
@@ -101,6 +116,11 @@ john.d.melton@googlemail.com
   sem_t *LinuxCreateSemaphore(int attributes, int initial_count, int maximum_count, char *name);
 
   int LinuxWaitForSingleObject(sem_t *sem, int x);
+
+  // Returns WAIT_OBJECT_0 + index of the first signalled semaphore (lowest
+  // index wins, as on Win32), or WAIT_TIMEOUT. waitAll is not supported —
+  // WDSP only ever waits for any-of.
+  uint32_t LinuxWaitForMultipleObjects(uint32_t count, void **handles, int waitAll, int ms);
 
   void LinuxReleaseSemaphore(sem_t *sem, int release_count, int* previous_count);
 

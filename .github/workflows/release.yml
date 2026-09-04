@@ -266,6 +266,19 @@ jobs:
           Write-Host "Found $count RNNR exports"
           if ($count -ne 4) { throw "Expected 4 RNNR exports, got $count. NR3 did not link correctly." }
 
+      - name: Verify WDSP 2.1.0 exports (NNR + psccF)
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsInstall\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vsInstall\VC\Tools\MSVC" }
+          $all = & $dumpbin /EXPORTS native/build/Release/wdsp.dll
+          $nnr = ($all | Select-String "SetRXANNR" | Measure-Object).Count
+          Write-Host "Found $nnr SetRXANNR* exports"
+          if ($nnr -ne 12) { throw "Expected 12 SetRXANNR* exports, got $nnr. NNR did not link correctly." }
+          if (-not ($all | Select-String "\bpsccF\b")) { throw "psccF export missing — zeus_compat.c not linked." }
+
       - name: Stage DLL
         run: |
           $rid = "win-${{ matrix.arch }}"
@@ -360,6 +373,19 @@ jobs:
           echo "Found $count RNNR exports"
           if [ "$count" -ne 4 ]; then
             echo "ERROR: Expected 4 RNNR exports, got $count. NR3 did not link correctly."
+            exit 1
+          fi
+
+      - name: Verify WDSP 2.1.0 exports (NNR + psccF)
+        run: |
+          nnr=$(nm -D native/build/libwdsp.so | grep -c "SetRXANNR" || true)
+          echo "Found $nnr SetRXANNR* exports"
+          if [ "$nnr" -ne 12 ]; then
+            echo "ERROR: Expected 12 SetRXANNR* exports, got $nnr. NNR did not link correctly."
+            exit 1
+          fi
+          if ! nm -D native/build/libwdsp.so | grep -qw "psccF"; then
+            echo "ERROR: psccF export missing — zeus_compat.c not linked."
             exit 1
           fi
 

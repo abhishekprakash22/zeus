@@ -2,7 +2,7 @@
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2013, 2024, 2025 Warren Pratt, NR0V
+Copyright (C) 2013, 2024, 2025, 2026 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -18,17 +18,21 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-The author can be reached by email at
+The author can be reached by email at  
 
 warren@wpratt.com
 
 */
 
+// ---- Zeus portability patch (see ZEUS-PATCHES.md) ------------------------
+// Upstream WDSP is Windows-only. On Linux / macOS the Win32 threading and
+// memory primitives are provided by linux_port.{c,h}.
 #if defined(linux) || defined(__APPLE__)
   #include <stdlib.h>
+  #include <stdio.h>
+  #include <string.h>
   #include <pthread.h>
   #include <semaphore.h>
-  #include <string.h>
   #include "linux_port.h"
 #endif
 
@@ -43,6 +47,7 @@ warren@wpratt.com
 #ifdef _WIN32
   #include <avrt.h>
 #endif
+#include <assert.h>
 #include "fftw3.h"
 
 #include "amd.h"
@@ -66,8 +71,6 @@ warren@wpratt.com
 #include "doublepole.h"
 #include "eer.h"
 #include "emnr.h"
-#include "rnnr.h" // NR3 + NR4 support
-#include "sbnr.h" // NR3 + NR4 support
 #include "emph.h"
 #include "eq.h"
 #include "fcurve.h"
@@ -90,11 +93,15 @@ warren@wpratt.com
 #include "meter.h"
 #include "meterlog10.h"
 #include "nbp.h"
+#include "nnr.h"
 #include "nob.h"
 #include "nobII.h"
+#include "nurbs.h"
 #include "osctrl.h"
 #include "patchpanel.h"
+#include "phrot.h"
 #include "resample.h"
+#include "reshb.h"
 #include "rmatch.h"
 #include "RXA.h"
 #include "sender.h"
@@ -107,45 +114,56 @@ warren@wpratt.com
 #include "TXA.h"
 #include "utilities.h"
 #include "varsamp.h"
+#include "wbfm.h"
 #include "wcpAGC.h"
+
+// ---- Zeus additions (see ZEUS-PATCHES.md) --------------------------------
+#include "rnnr.h"			// NR3 (RNNoise) — Thetis lineage, not upstream
+#include "sbnr.h"			// NR4 (libspecbleach) — Thetis lineage, not upstream
+#include "zeus_compat.h"	// psccF compatibility export
 
 // manage differences among consoles
 #define _Thetis
 
 // channel definitions
-#define MAX_CHANNELS          32          // maximum number of supported channels
-#define DSP_MULT            2         // number of dsp_buffsizes that are held in an iobuff pseudo-ring
-#define INREAL              float       // data type for channel input buffer
-#define OUTREAL             float       // data type for channel output buffer
+#define MAX_CHANNELS					32					// maximum number of supported channels
+#define DSP_MULT						2					// number of dsp_buffsizes that are held in an iobuff pseudo-ring
+#define INREAL							float				// data type for channel input buffer
+#define OUTREAL							float				// data type for channel output buffer
 
 // display definitions
-#define dMAX_DISPLAYS         72          // maximum number of displays = max instances
-#define dMAX_STITCH           4         // maximum number of sub-spans to stitch together
-#define dMAX_NUM_FFT          1         // maximum number of ffts for an elimination
-#define dMAX_PIXELS           16384       // maximum number of pixels that can be requested
-#define dMAX_AVERAGE          60          // maximum number of pixel frames that will be window-averaged
+#define dMAX_DISPLAYS					72					// maximum number of displays = max instances
+#define dMAX_STITCH						4					// maximum number of sub-spans to stitch together
+#define dMAX_NUM_FFT					1					// maximum number of ffts for an elimination
+#define dMAX_PIXELS						16384				// maximum number of pixels that can be requested
+#define dMAX_AVERAGE					60					// maximum number of pixel frames that will be window-averaged
 #ifdef _Thetis
-  #define dINREAL             double
+#define dINREAL							double
 #else
-  #define dINREAL             float
+#define dINREAL							float
 #endif
-#define dOUTREAL            float
-#define dSAMP_BUFF_MULT         2         // ratio of input sample buffer size to fft size (for overlap)
-#define dNUM_PIXEL_BUFFS        3         // number of pixel output buffers
-#define dMAX_M              1         // number of variables to calibrate
-#define dMAX_N              100         // maximum number of frequencies at which to calibrate
-#define dMAX_CAL_SETS         2         // maximum number of calibration data sets
-#define dMAX_PIXOUTS          4         // maximum number of det/avg/outputs per display instance
+#define dOUTREAL						float
+#define dSAMP_BUFF_MULT					2					// ratio of input sample buffer size to fft size (for overlap)
+#define dNUM_PIXEL_BUFFS				3					// number of pixel output buffers
+#define dMAX_M							1					// number of variables to calibrate
+#define dMAX_N							100					// maximum number of frequencies at which to calibrate
+#define dMAX_CAL_SETS					2					// maximum number of calibration data sets
+#define dMAX_PIXOUTS					4					// maximum number of det/avg/outputs per display instance
 
 // wisdom definitions
-#define MAX_WISDOM_SIZE_DISPLAY     262144
-#define MAX_WISDOM_SIZE_FILTER      262144        // was 32769
+#define MAX_WISDOM_SIZE                 262144
 
 // math definitions
-#define PI                3.1415926535897932
-#define TWOPI             6.2831853071795864
+#define PI								3.1415926535897932
+#define TWOPI							6.2831853071795864
 
 // miscellaneous
 typedef double complex[2];
+// Zeus: PORT resolves to the per-platform visibility attribute so the same
+// upstream source exports the same ABI from wdsp.dll / libwdsp.so / .dylib.
 #include "wdsp_export.h"
-#define PORT              WDSP_EXPORT
+#define PORT							WDSP_EXPORT
+#ifndef M_PI
+#  define M_PI 3.14159265358979323846
+#endif
+

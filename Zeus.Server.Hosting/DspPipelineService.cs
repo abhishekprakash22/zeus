@@ -3747,6 +3747,22 @@ public class DspPipelineService : BackgroundService,
         };
     }
 
+    // NR5 (NNR): after every NR apply, mirror what the live engine actually
+    // did (Premium model present in this build? which slot did WDSP keep?) into
+    // StateDto so the UI shows the truth rather than the request. Cheap and
+    // change-detected inside RadioService; never allowed to fault the pipeline.
+    private void ReportNnrRuntime(IDspEngine engine, int channelId)
+    {
+        try
+        {
+            _radio.ReportNnrRuntime(engine.NnrPremiumModelAvailable, engine.GetNnrModelSlotInUse(channelId));
+        }
+        catch (Exception)
+        {
+            // Diagnostic mirror only — a failure here must not disturb DSP apply.
+        }
+    }
+
     private static DspNrRuntimeSnapshot BuildNrRuntime(
         IDspEngine? engine,
         StateDto state)
@@ -3756,6 +3772,7 @@ public class DspPipelineService : BackgroundService,
         bool wdspEmnrPost2Available = WdspDspEngine.EmnrPost2Available;
         bool wdspNr3RnnrAvailable = WdspDspEngine.Nr3RnnrAvailable;
         bool wdspNr4SbnrAvailable = WdspDspEngine.Nr4SbnrAvailable;
+        bool wdspNnrAvailable = WdspDspEngine.NnrAvailable;
         bool nr3ModelActive = !string.IsNullOrWhiteSpace(state.Nr3ModelName);
         var nr = NormalizeNrConfig(state.Nr ?? new NrConfig());
         string requestedNrMode = nr.NrMode.ToString();
@@ -3764,6 +3781,7 @@ public class DspPipelineService : BackgroundService,
             {
                 NrMode.Rnnr when !wdspNr3RnnrAvailable || !nr3ModelActive => NrMode.Off.ToString(),
                 NrMode.Sbnr when !wdspNr4SbnrAvailable => NrMode.Off.ToString(),
+                NrMode.Nnr when !wdspNnrAvailable => NrMode.Off.ToString(),
                 _ => requestedNrMode,
             }
             : NrMode.Off.ToString();
@@ -3785,7 +3803,7 @@ public class DspPipelineService : BackgroundService,
         IsSupportedNrMode(cfg.NrMode) ? cfg : cfg with { NrMode = NrMode.Off };
 
     internal static bool IsSupportedNrMode(NrMode mode) =>
-        mode is NrMode.Off or NrMode.Anr or NrMode.Emnr or NrMode.Rnnr or NrMode.Sbnr;
+        mode is NrMode.Off or NrMode.Anr or NrMode.Emnr or NrMode.Rnnr or NrMode.Sbnr or NrMode.Nnr;
 
     internal static DspRxChainDiagnosticsDto BuildRxDspChainDiagnostics(
         StateDto state,
@@ -4450,6 +4468,7 @@ public class DspPipelineService : BackgroundService,
             engine.SetNoiseReduction(channel, nr);
             if (rx2Channel >= 0) engine.SetNoiseReduction(rx2Channel, nr);
             _appliedNr = nr;
+            ReportNnrRuntime(engine, channel);
         }
         // Diversity combiner — managed complex combine in the P2 ingest (see
         // ApplyDiversityConfig / OnIqFrame). Applied once (not per-channel) when
@@ -4941,6 +4960,7 @@ public class DspPipelineService : BackgroundService,
         _appliedTxMicGainLinear = micLinearInit;
         _appliedTxLevelerMaxGainDb = s.LevelerMaxGainDb;
         _appliedNr = nr;
+        ReportNnrRuntime(engine, channelId);
         _appliedAgc = agc;
         _appliedSquelch = squelch;
         _appliedTxLeveling = txLeveling;

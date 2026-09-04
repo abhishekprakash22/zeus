@@ -99,6 +99,9 @@ public enum NrMode : byte
     Emnr,
     Sbnr = 3,
     Rnnr = 4,
+    // NR5 — WDSP 2.1.0 Neural Noise Reduction (nnr.c): deep-filtering DNN,
+    // post-AGC, two compiled-in models. See docs/designs/wdsp-2.1.0-upgrade-plan.md.
+    Nnr = 5,
 }
 
 public sealed class NrModeJsonConverter : JsonConverter<NrMode>
@@ -106,7 +109,7 @@ public sealed class NrModeJsonConverter : JsonConverter<NrMode>
     public override NrMode Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.Number && reader.TryGetByte(out var numericValue))
-            return numericValue <= (byte)NrMode.Rnnr ? (NrMode)numericValue : NrMode.Off;
+            return numericValue <= (byte)NrMode.Nnr ? (NrMode)numericValue : NrMode.Off;
 
         if (reader.TokenType == JsonTokenType.String)
         {
@@ -115,6 +118,7 @@ public sealed class NrModeJsonConverter : JsonConverter<NrMode>
             if (string.Equals(stringValue, nameof(NrMode.Emnr), StringComparison.OrdinalIgnoreCase)) return NrMode.Emnr;
             if (string.Equals(stringValue, nameof(NrMode.Sbnr), StringComparison.OrdinalIgnoreCase)) return NrMode.Sbnr;
             if (string.Equals(stringValue, nameof(NrMode.Rnnr), StringComparison.OrdinalIgnoreCase)) return NrMode.Rnnr;
+            if (string.Equals(stringValue, nameof(NrMode.Nnr), StringComparison.OrdinalIgnoreCase)) return NrMode.Nnr;
         }
 
         return NrMode.Off;
@@ -128,6 +132,7 @@ public sealed class NrModeJsonConverter : JsonConverter<NrMode>
             NrMode.Emnr => nameof(NrMode.Emnr),
             NrMode.Sbnr => nameof(NrMode.Sbnr),
             NrMode.Rnnr => nameof(NrMode.Rnnr),
+            NrMode.Nnr => nameof(NrMode.Nnr),
             _ => nameof(NrMode.Off),
         });
     }
@@ -188,7 +193,14 @@ public sealed record NrConfig(
     int? EmnrNpeMethod = null,
     bool? EmnrAeRun = null,
     double? EmnrTrainT1 = null,
-    double? EmnrTrainT2 = null);
+    double? EmnrTrainT2 = null,
+    // ---- NR5 (NNR, WDSP 2.1.0 neural noise reduction) tunables ----
+    // Appended so older positional call sites keep compiling. Null means
+    // "WDSP default" (mask floor -25 dB, slot 0 = Standard model).
+    //   NnrMaskFloorDb: -50 (max suppression) .. -10 (most noise passed).
+    //   NnrModelSlot:   0 = Standard, 1 = Premium (~3x CPU, measurably better).
+    double? NnrMaskFloorDb = null,
+    int? NnrModelSlot = null);
 
 // Direct Smart NR diagnostic surface. The Smart NR analyzer still lives in
 // the frontend DSP-scene path; this DTO exposes that live condition together
@@ -1444,7 +1456,21 @@ public sealed record StateDto(
     // RX1's per-receiver split projection. RX2+ carry the same fields directly
     // on ReceiverDto. Session-only: a process always starts in simplex.
     bool SplitEnabled = false,
-    long SplitTxHz = 0);
+    long SplitTxHz = 0,
+
+    // ---- NR5 (NNR, WDSP 2.1.0 neural noise reduction) ----
+    // Appended (positional record) so older call sites keep compiling.
+    // WdspNnrAvailable: the loaded libwdsp exports the NNR setters (2.1.0+);
+    //   false on older binaries — the mode is then hidden from the NR cycle.
+    // NnrPremiumModelAvailable: slot 1 holds a model in this native build
+    //   (WDSP_WITH_NNR_PREMIUM=ON). Reported by the DSP pipeline after the
+    //   first RXA channel opens; false until then.
+    // NnrModelSlotInUse: the slot WDSP actually selected the last time NNR was
+    //   enabled (0 Standard / 1 Premium), null when NNR is not running. Differs
+    //   from NrConfig.NnrModelSlot when the requested slot holds no model.
+    bool WdspNnrAvailable = false,
+    bool NnrPremiumModelAvailable = false,
+    int? NnrModelSlotInUse = null);
 
 /// <summary>Canonical CW constants shared between backend and wire DTOs.
 /// Single source of truth — CwOffset (server-side) and StateDto both
@@ -1889,6 +1915,11 @@ public sealed record Nr4ConfigSetRequest(
     double? PostFilterThreshold = null,
     int? NoiseScalingType = null,
     int? Position = null);
+
+// NR5 (NNR) tunables — same nullable-merge PATCH pattern as Nr4ConfigSetRequest.
+public sealed record NnrConfigSetRequest(
+    double? MaskFloorDb = null,
+    int? ModelSlot = null);
 
 // NR2 (EMNR) core algorithm selectors + trained-method tuning. Mirrors
 // Nr2Post2ConfigSetRequest's nullable-merge pattern: each field absent

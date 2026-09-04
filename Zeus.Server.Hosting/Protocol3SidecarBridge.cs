@@ -1055,7 +1055,7 @@ public sealed class Protocol3SidecarBridge : IDisposable
         nr?.NrMode == NrMode.Rnnr ? 0.55 : 0.85;
 
     private static int EnableRxEmnr(NrConfig? nr) =>
-        nr?.NrMode is NrMode.Emnr or NrMode.Sbnr or NrMode.Rnnr ? 1 : 0;
+        nr?.NrMode is NrMode.Emnr or NrMode.Sbnr or NrMode.Rnnr or NrMode.Nnr ? 1 : 0;
 
     private static double EmnrStrength(NrConfig? nr) =>
         nr?.NrMode == NrMode.Rnnr ? 0.45 :

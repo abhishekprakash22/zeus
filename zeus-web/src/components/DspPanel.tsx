@@ -62,12 +62,15 @@ import { Nr3ModelPanel } from './nr/Nr3ModelPanel';
 
 // Mirrors the front-panel NR cycle. NR3 (RNNR / RNNoise) joins the cycle only
 // when libwdsp exports RNNR and an active model is available (bundled default or
-// operator-installed). Removed NR modes are not exposed.
+// operator-installed). NR5 (NNR, WDSP 2.1.0 neural NR) joins at the end of the
+// cycle only when libwdsp exports the NNR setters. Removed NR modes are not
+// exposed.
 const NR_CYCLE_WITHOUT_NR3: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Sbnr'];
 const NR_CYCLE_WITH_NR3: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Rnnr', 'Sbnr'];
 
-function nrCycleFor(nr3Ready: boolean): readonly NrMode[] {
-  return nr3Ready ? NR_CYCLE_WITH_NR3 : NR_CYCLE_WITHOUT_NR3;
+function nrCycleFor(nr3Ready: boolean, nnrAvailable = false): readonly NrMode[] {
+  const base = nr3Ready ? NR_CYCLE_WITH_NR3 : NR_CYCLE_WITHOUT_NR3;
+  return nnrAvailable ? [...base, 'Nnr'] : base;
 }
 
 const NR_LABEL: Record<NrMode, string> = {
@@ -76,6 +79,7 @@ const NR_LABEL: Record<NrMode, string> = {
   Emnr: 'NR2',
   Sbnr: 'NR4',
   Rnnr: 'NR3',
+  Nnr: 'NR5',
 };
 
 function nrButtonTitle(mode: NrMode): string {
@@ -85,20 +89,21 @@ function nrButtonTitle(mode: NrMode): string {
     case 'Emnr': return 'NR2 (EMNR, spectral) — right-click for tunables';
     case 'Sbnr': return 'NR4 (SBNR, libspecbleach) — right-click for tunables';
     case 'Rnnr': return 'NR3 (RNNoise, neural)';
+    case 'Nnr': return 'NR5 (NNR, WDSP neural, +51 ms) — right-click for tunables';
   }
 }
 
-// NR1 / NR2 / NR4 each have a tunables panel. NR4 panel was suppressed
+// NR1 / NR2 / NR4 / NR5 each have a tunables panel. NR4 panel was suppressed
 // pre-#162 (libwdsp didn't export SetRXASBNR*); now that Phase 1 binaries
 // ship the symbols on linux-x64 + win-x64, the panel is reachable again.
 // Mirrors NrControls.tsx.
 function settingsModeFor(nrMode: NrMode): NrSettingsMode {
-  if (nrMode === 'Anr' || nrMode === 'Emnr' || nrMode === 'Sbnr') return nrMode;
+  if (nrMode === 'Anr' || nrMode === 'Emnr' || nrMode === 'Sbnr' || nrMode === 'Nnr') return nrMode;
   return 'Emnr';
 }
 
 function hasNrSettings(nrMode: NrMode): boolean {
-  return nrMode === 'Anr' || nrMode === 'Emnr' || nrMode === 'Sbnr';
+  return nrMode === 'Anr' || nrMode === 'Emnr' || nrMode === 'Sbnr' || nrMode === 'Nnr';
 }
 
 const NB_CYCLE: readonly NbMode[] = ['Off', 'Nb1', 'Nb2'];
@@ -148,14 +153,15 @@ export function DspPanel() {
   const nr3Available = useConnectionStore((s) => s.wdspNr3RnnrAvailable);
   const nr3ModelName = useConnectionStore((s) => s.nr3ModelName);
   const nr3Ready = nr3Available && !!nr3ModelName;
+  const nnrAvailable = useConnectionStore((s) => s.wdspNnrAvailable);
 
   const cycleNr = useCallback(() => {
     if (!connected) return;
-    const cycle = nrCycleFor(nr3Ready);
+    const cycle = nrCycleFor(nr3Ready, nnrAvailable);
     const idx = cycle.indexOf(nr.nrMode);
     const nextIdx = (idx < 0 ? 0 : idx + 1) % cycle.length;
     send({ ...nr, nrMode: cycle[nextIdx]! });
-  }, [nr, send, connected, nr3Ready]);
+  }, [nr, send, connected, nr3Ready, nnrAvailable]);
 
   const cycleNb = useCallback(() => {
     const idx = NB_CYCLE.indexOf(nr.nbMode);

@@ -87,7 +87,7 @@ public class NoiseReductionTests
 
     public static IEnumerable<object[]> AllCombos()
     {
-        foreach (var nr in new[] { NrMode.Off, NrMode.Anr, NrMode.Emnr, NrMode.Rnnr, NrMode.Sbnr })
+        foreach (var nr in new[] { NrMode.Off, NrMode.Anr, NrMode.Emnr, NrMode.Rnnr, NrMode.Sbnr, NrMode.Nnr })
         foreach (var anf in new[] { false, true })
         foreach (var snb in new[] { false, true })
         foreach (var notches in new[] { false, true })
@@ -364,6 +364,24 @@ public class NoiseReductionTests
         Assert.Null(cfg.Nr4PostFilterThreshold);
         Assert.Null(cfg.Nr4NoiseScalingType);
         Assert.Null(cfg.Nr4Position);
+        Assert.Null(cfg.NnrMaskFloorDb);
+        Assert.Null(cfg.NnrModelSlot);
+    }
+
+    [Fact]
+    public void NrMode_Nnr_JsonRoundTrip_UsesNameAndAcceptsNumeric()
+    {
+        var opts = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        string json = System.Text.Json.JsonSerializer.Serialize(new NrConfig(NrMode.Nnr, NnrMaskFloorDb: -30.0, NnrModelSlot: 1), opts);
+        Assert.Contains("\"Nnr\"", json);
+        var back = System.Text.Json.JsonSerializer.Deserialize<NrConfig>(json, opts)!;
+        Assert.Equal(NrMode.Nnr, back.NrMode);
+        Assert.Equal(-30.0, back.NnrMaskFloorDb);
+        Assert.Equal(1, back.NnrModelSlot);
+        var numeric = System.Text.Json.JsonSerializer.Deserialize<NrConfig>("{\"nrMode\":5}", opts)!;
+        Assert.Equal(NrMode.Nnr, numeric.NrMode);
+        var unknown = System.Text.Json.JsonSerializer.Deserialize<NrConfig>("{\"nrMode\":6}", opts)!;
+        Assert.Equal(NrMode.Off, unknown.NrMode);
     }
 
     // Round-trip the new NR2 post2 + NR4 fields through JSON to lock the wire

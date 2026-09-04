@@ -209,8 +209,14 @@ public class MicGainEndpointTests : IClassFixture<MicGainEndpointTests.Factory>
         public void SetPsEnabled(bool enabled) { }
         public void SetPsControl(bool autoCal, bool singleCal) { }
         public void SetPsHold(bool hold) { }
-        public void SetPsAdvanced(bool ptol, double moxDelaySec, double loopDelaySec,
-                                  double ampDelayNs, double hwPeak, int ints, int spi) { }
+        public void SetPsMox(bool moxOn) { }
+        public void SetPsAdvanced(double moxDelaySec, double loopDelaySec,
+                                  double ampDelayNs, double hwPeak) { }
+        // Pre-existing drift from IDspEngine (build fix); no-ops for this test.
+        public void ResetTxPhaseRotatorAuto(int channelId) { }
+        public TxPhaseRotatorAsymmetry? GetTxPhaseRotatorAsymmetry(int channelId) => null;
+        public void ResetDisplayPixelBuffers() { }
+        public void SetTxDigitalBypass(bool bypass) { }
         public void SetPsHwPeak(double hwPeak) { }
         public void FeedPsFeedbackBlock(ReadOnlySpan<float> txI, ReadOnlySpan<float> txQ,
                                         ReadOnlySpan<float> rxI, ReadOnlySpan<float> rxQ) { }

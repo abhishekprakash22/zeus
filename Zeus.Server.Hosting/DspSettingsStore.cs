@@ -101,7 +101,9 @@ public sealed class DspSettingsStore : IDisposable
             EmnrNpeMethod: e.EmnrNpeMethod,
             EmnrAeRun: e.EmnrAeRun,
             EmnrTrainT1: e.EmnrTrainT1,
-            EmnrTrainT2: e.EmnrTrainT2);
+            EmnrTrainT2: e.EmnrTrainT2,
+            NnrMaskFloorDb: e.NnrMaskFloorDb,
+            NnrModelSlot: e.NnrModelSlot);
     }
 
     // CFC (Continuous Frequency Compressor) — issue #123. Persisted globally
@@ -539,6 +541,8 @@ public sealed class DspSettingsStore : IDisposable
                 Nr4PostFilterThreshold = config.Nr4PostFilterThreshold,
                 Nr4NoiseScalingType = config.Nr4NoiseScalingType,
                 Nr4Position = config.Nr4Position,
+                NnrMaskFloorDb = config.NnrMaskFloorDb,
+                NnrModelSlot = config.NnrModelSlot,
                 UpdatedUtc = DateTime.UtcNow,
             });
         }
@@ -567,6 +571,8 @@ public sealed class DspSettingsStore : IDisposable
             existing.Nr4PostFilterThreshold = config.Nr4PostFilterThreshold;
             existing.Nr4NoiseScalingType = config.Nr4NoiseScalingType;
             existing.Nr4Position = config.Nr4Position;
+            existing.NnrMaskFloorDb = config.NnrMaskFloorDb;
+            existing.NnrModelSlot = config.NnrModelSlot;
             existing.UpdatedUtc = DateTime.UtcNow;
             _entries.Update(existing);
         }
@@ -631,7 +637,7 @@ public sealed class DspSettingsStore : IDisposable
     // must persist every mode RadioService treats as supported, or the live
     // selection (e.g. NR3 / Rnnr) is silently dropped to Off on the next read.
     private static NrMode NormalizeNrMode(NrMode mode) =>
-        mode is NrMode.Off or NrMode.Anr or NrMode.Emnr or NrMode.Sbnr or NrMode.Rnnr
+        mode is NrMode.Off or NrMode.Anr or NrMode.Emnr or NrMode.Sbnr or NrMode.Rnnr or NrMode.Nnr
             ? mode
             : NrMode.Off;
 
@@ -671,6 +677,9 @@ public sealed class DspSettingsEntry
     public double? Nr4PostFilterThreshold { get; set; }
     public int? Nr4NoiseScalingType { get; set; }
     public int? Nr4Position { get; set; }
+    // NR5 (NNR, WDSP 2.1.0) tunables. Null means "engine default" (-25 dB, slot 0).
+    public double? NnrMaskFloorDb { get; set; }
+    public int? NnrModelSlot { get; set; }
     // CFC (Continuous Frequency Compressor) — issue #123. Master flags are
     // nullable so legacy rows (pre-CFC) load with CfcEnabled=null and
     // GetCfc() returns null → operator gets CfcConfig.Default. Per-band

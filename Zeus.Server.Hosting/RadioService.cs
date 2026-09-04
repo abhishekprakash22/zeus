@@ -682,6 +682,10 @@ public sealed class RadioService : IDisposable
             WdspNr3RnnrAvailable: Zeus.Dsp.Wdsp.WdspDspEngine.Nr3RnnrAvailable,
             Nr3ModelName: _nr3ModelStore?.GetActiveModelName(),
             Nr3UsingBundledDefault: _nr3ModelStore?.UsingBundledDefault() ?? false,
+            // NR5 (NNR): static probe of the loaded libwdsp's NNR exports (2.1.0+).
+            // Premium-model presence and slot-in-use arrive later from the DSP
+            // pipeline via ReportNnrRuntime once a live engine has answered.
+            WdspNnrAvailable: Zeus.Dsp.Wdsp.WdspDspEngine.NnrAvailable,
             ZoomLevel: rsSnap?.ZoomLevel ?? 1,
             WorkspaceZoomPct: ClampWorkspaceZoomPct(rsSnap?.WorkspaceZoomPct ?? DefaultWorkspaceZoomPct),
             AutoAttEnabled: _adcProtection.Enabled,
@@ -3883,7 +3887,7 @@ public sealed class RadioService : IDisposable
         IsSupportedNrMode(cfg.NrMode) ? cfg : cfg with { NrMode = NrMode.Off };
 
     private static bool IsSupportedNrMode(NrMode mode) =>
-        mode is NrMode.Off or NrMode.Anr or NrMode.Emnr or NrMode.Sbnr or NrMode.Rnnr;
+        mode is NrMode.Off or NrMode.Anr or NrMode.Emnr or NrMode.Sbnr or NrMode.Rnnr or NrMode.Nnr;
 
     // AGC mode + custom/fixed params. Replace-style like SetNr; the engine apply
     // happens in DspPipelineService via the _appliedAgc latch. The separate AGC
@@ -4084,6 +4088,36 @@ public sealed class RadioService : IDisposable
             Nr4Position = req.Position ?? current.Nr4Position,
         };
         return SetNr(merged);
+    }
+
+    // Right-click popover save for NR5 (NNR) tunables — same merge-and-re-push
+    // pattern as SetNr4. The engine clamps mask floor / slot at apply time.
+    public StateDto SetNnr(NnrConfigSetRequest req)
+    {
+        ArgumentNullException.ThrowIfNull(req);
+        var current = Snapshot().Nr ?? new NrConfig();
+        var merged = current with
+        {
+            NnrMaskFloorDb = req.MaskFloorDb ?? current.NnrMaskFloorDb,
+            NnrModelSlot = req.ModelSlot ?? current.NnrModelSlot,
+        };
+        return SetNr(merged);
+    }
+
+    // NR5 runtime facts reported by the DSP pipeline after it applies the NR
+    // config to the live engine (RadioService has no engine reference of its
+    // own). Slot-in-use is what WDSP actually selected, which differs from the
+    // requested slot on builds without the Premium model.
+    public void ReportNnrRuntime(bool premiumModelAvailable, int? modelSlotInUse)
+    {
+        var cur = Snapshot();
+        if (cur.NnrPremiumModelAvailable == premiumModelAvailable && cur.NnrModelSlotInUse == modelSlotInUse)
+            return;
+        Mutate(s => s with
+        {
+            NnrPremiumModelAvailable = premiumModelAvailable,
+            NnrModelSlotInUse = modelSlotInUse,
+        });
     }
 
     // CFC (Continuous Frequency Compressor) — issue #123. The whole 10-band

@@ -2653,6 +2653,18 @@ public static class ZeusEndpoints
             return Results.Ok(r.SetNr4(req));
         });
 
+        // NR5 (NNR, WDSP 2.1.0 neural noise reduction) tunables — mask floor
+        // (-50..-10 dB) and model slot (0 Standard / 1 Premium). Same nullable
+        // merge as /api/rx/nr4. The engine reports the slot actually in use back
+        // through StateDto.NnrModelSlotInUse.
+        app.MapPost("/api/rx/nnr", (NnrConfigSetRequest req, RadioService r) =>
+        {
+            log.LogInformation("api.rx.nnr maskFloorDb={Floor} modelSlot={Slot}", req.MaskFloorDb, req.ModelSlot);
+            if (req.ModelSlot is int slot && slot is not (0 or 1))
+                return Results.BadRequest(new { error = "modelSlot must be 0 (Standard) or 1 (Premium)" });
+            return Results.Ok(r.SetNnr(req));
+        });
+
         // ---- NR3 (RNNoise) model management (issue #79 follow-up) ----
         // Zeus ships no model; NR3 stays hidden in the UI until the operator
         // installs an RNNoise weights file here — either a multipart upload or a

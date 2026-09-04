@@ -176,6 +176,36 @@ describe('DspPanel SMART control', () => {
     expect(nrButton()!.textContent?.trim()).toBe('NR4');
   });
 
+  it('appends NR5 to the cycle only when libwdsp exports NNR', () => {
+    useConnectionStore.setState({
+      status: 'Connected',
+      nr: { ...NR_CONFIG_DEFAULT, nrMode: 'Sbnr' },
+      wdspNr3RnnrAvailable: false,
+      nr3ModelName: null,
+      wdspNnrAvailable: true,
+    });
+
+    act(() => {
+      root.render(<DspPanel />);
+    });
+
+    const nrButton = () => Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => (b.getAttribute('title') ?? '').match(/Noise reduction off|NR[1-5]/));
+
+    act(() => { nrButton()!.click(); });
+    expect(useConnectionStore.getState().nr.nrMode).toBe('Nnr');
+    expect(nrButton()!.textContent?.trim()).toBe('NR5');
+
+    act(() => { nrButton()!.click(); });
+    expect(useConnectionStore.getState().nr.nrMode).toBe('Off');
+
+    // Without the export the cycle wraps straight from NR4 to Off.
+    useConnectionStore.setState({ nr: { ...NR_CONFIG_DEFAULT, nrMode: 'Sbnr' }, wdspNnrAvailable: false });
+    act(() => { root.render(<DspPanel />); });
+    act(() => { nrButton()!.click(); });
+    expect(useConnectionStore.getState().nr.nrMode).toBe('Off');
+  });
+
   it('pops the RX Audio Suite out into its own window from the DSP panel', () => {
     act(() => {
       root.render(<DspPanel />);

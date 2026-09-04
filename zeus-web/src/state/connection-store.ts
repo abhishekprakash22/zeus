@@ -171,6 +171,11 @@ export type ConnectionState = {
   wdspNr3RnnrAvailable: boolean;
   nr3ModelName: string | null;
   nr3UsingBundledDefault: boolean;
+  // NR5 (NNR, WDSP 2.1.0): export availability gates the NR cycle; the other
+  // two mirror what the live engine reported (Premium model present, slot in use).
+  wdspNnrAvailable: boolean;
+  nnrPremiumModelAvailable: boolean;
+  nnrModelSlotInUse: number | null;
   zoomLevel: ZoomLevel;
   rx2ZoomLevel: ZoomLevel;
   // Workspace UI zoom (whole-percent cell-pitch scale; 100 = authored size).
@@ -310,6 +315,9 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   wdspNr3RnnrAvailable: false,
   nr3ModelName: null,
   nr3UsingBundledDefault: false,
+  wdspNnrAvailable: false,
+  nnrPremiumModelAvailable: false,
+  nnrModelSlotInUse: null,
   zoomLevel: 1,
   rx2ZoomLevel: 1,
   workspaceZoomPct: 100,
@@ -413,6 +421,9 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         wdspNr3RnnrAvailable: s.wdspNr3RnnrAvailable,
         nr3ModelName: s.nr3ModelName,
         nr3UsingBundledDefault: s.nr3UsingBundledDefault,
+        wdspNnrAvailable: s.wdspNnrAvailable,
+        nnrPremiumModelAvailable: s.nnrPremiumModelAvailable,
+        nnrModelSlotInUse: s.nnrModelSlotInUse,
         zoomLevel: s.zoomLevel,
         rx2ZoomLevel: s.rx2ZoomLevel,
         workspaceZoomPct: s.workspaceZoomPct,

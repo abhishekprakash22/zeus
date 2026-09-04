@@ -143,6 +143,17 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         nameof(NativeMethods.RNNRloadModel),
     ];
 
+    // NR5 (NNR) — upstream WDSP 2.1.0 neural noise reduction. Absent on any
+    // libwdsp older than the 2.1.0 port, so the mode is gated like NR3/NR4.
+    private static readonly string[] NnrRequiredExports =
+    [
+        nameof(NativeMethods.SetRXANNRRun),
+        nameof(NativeMethods.SetRXANNRPosition),
+        nameof(NativeMethods.SetRXANNRMaskFloor),
+        nameof(NativeMethods.SetRXANNRModel),
+        nameof(NativeMethods.GetRXANNRModel),
+    ];
+
     private static bool AllNativeExportsAvailable(string[] symbolNames)
     {
         if (!WdspNativeLoader.TryProbe()) return false;
@@ -161,6 +172,16 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     public static bool Nr4SbnrAvailable => AllNativeExportsAvailable(SbnrRequiredExports);
 
     public static bool Nr3RnnrAvailable => AllNativeExportsAvailable(Nr3RnnrRequiredExports);
+
+    public static bool NnrAvailable => AllNativeExportsAvailable(NnrRequiredExports);
+
+    // Premium-model presence is a property of the native build, discovered by
+    // asking WDSP to select slot 1 on a freshly opened (still stopped, NNR
+    // run=0) channel: SetRXANNRModel returns the slot actually in use, so a
+    // build with WDSP_WITH_NNR_PREMIUM=OFF answers 0. Probed once per engine.
+    private volatile bool _nnrPremiumProbed;
+    private volatile bool _nnrPremiumAvailable;
+    public bool NnrPremiumModelAvailable => _nnrPremiumAvailable;
 
     private static double FiniteOrZero(double value) =>
         double.IsFinite(value) ? value : 0.0;
@@ -265,6 +286,8 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         // without a lock (worst case: one extra frame at the old setting on toggle).
         public volatile NbMode CurrentNbMode = NbMode.Off;
         public volatile NrMode CurrentNrMode = NrMode.Off;
+        // NR5: slot WDSP reported in use after the last SetRXANNRModel; -1 = never applied.
+        public volatile int NnrModelSlotInUse = -1;
         // Zoom level (1..32). Changing it re-calls SetAnalyzer with shifted
         // fscLin/fscHin; the worker's Spectrum0 and the pixel drain's GetPixels
         // take this lock so they never interleave with an in-flight reconfig.
@@ -751,6 +774,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             NativeMethods.SetRXABandpassFreqs(id, 150.0, 2850.0);
             NativeMethods.RXANBPSetFreqs(id, 150.0, 2850.0);
             NativeMethods.SetRXASNBAOutputBandwidth(id, 150.0, 2850.0);
+            ProbeNnrPremiumModel(id);
 
             ApplyAgcDefaults(id);
             ApplySquelchDefaults(id);
@@ -1273,6 +1297,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 NativeMethods.SetRXAEMNRRun(channelId, 0);
                 TrySetSbnrRun(channelId, 0);
                 TrySetRnnrRun(channelId, 0);
+                TrySetNnrRun(channelId, 0);
                 NativeMethods.SetRXAANRVals(channelId, NrDefaults.AnrTaps, NrDefaults.AnrDelay, NrDefaults.AnrGain, NrDefaults.AnrLeakage);
                 NativeMethods.SetRXAANRPosition(channelId, NrDefaults.Position);
                 NativeMethods.SetRXAANRRun(channelId, 1);
@@ -1281,6 +1306,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 NativeMethods.SetRXAANRRun(channelId, 0);
                 TrySetSbnrRun(channelId, 0);
                 TrySetRnnrRun(channelId, 0);
+                TrySetNnrRun(channelId, 0);
                 // Core EMNR algorithm selectors (gain method, NPE method, AE
                 // filter) plus the optional Trained-method T1/T2 tuning. All
                 // operator-tunable; null fields fall back to NrDefaults so the
@@ -1304,7 +1330,21 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 TrySetEmnrPost2Run(channelId, 0);
                 NativeMethods.SetRXAEMNRRun(channelId, 0);
                 TrySetRnnrRun(channelId, 0);
+                TrySetNnrRun(channelId, 0);
                 ApplyNr4Sbnr(channelId, cfg);
+                break;
+            case NrMode.Nnr:
+                // NR5 — upstream WDSP 2.1.0 neural noise reduction. Post-AGC by
+                // design (the guide places it right after NR2 and says the two
+                // must not run together), so every other NR path goes off first.
+                // Guarded by TrySetNnr* / ApplyNr5Nnr so a pre-2.1.0 libwdsp
+                // leaves the channel NR-off instead of crashing the worker.
+                NativeMethods.SetRXAANRRun(channelId, 0);
+                TrySetEmnrPost2Run(channelId, 0);
+                NativeMethods.SetRXAEMNRRun(channelId, 0);
+                TrySetSbnrRun(channelId, 0);
+                TrySetRnnrRun(channelId, 0);
+                ApplyNr5Nnr(channelId, cfg, state);
                 break;
             case NrMode.Rnnr:
                 // NR3 — RNNoise. Disable the other post-RXA NR paths, then
@@ -1319,6 +1359,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 TrySetEmnrPost2Run(channelId, 0);
                 NativeMethods.SetRXAEMNRRun(channelId, 0);
                 TrySetSbnrRun(channelId, 0);
+                TrySetNnrRun(channelId, 0);
                 TrySetRnnrPosition(channelId, NrDefaults.Position);
                 TrySetRnnrRun(channelId, 1);
                 break;
@@ -1328,6 +1369,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                 NativeMethods.SetRXAEMNRRun(channelId, 0);
                 TrySetSbnrRun(channelId, 0);
                 TrySetRnnrRun(channelId, 0);
+                TrySetNnrRun(channelId, 0);
                 break;
         }
         state.CurrentNrMode = cfg.NrMode;
@@ -1546,6 +1588,74 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         }
     }
 
+    // NR5 (NNR) parameter push + Run=1. Mask floor is clamped to the range the
+    // WDSP Guide documents (-50..-10 dB); the model slot request goes through
+    // SetRXANNRModel, whose return value is the slot WDSP actually kept — a
+    // build without the Premium model answers 0 for a request of 1, and that
+    // answer (not the request) is what we record and surface.
+    private void ApplyNr5Nnr(int channelId, NrConfig cfg, ChannelState state)
+    {
+        try
+        {
+            double floor = Math.Clamp(
+                cfg.NnrMaskFloorDb ?? NrDefaults.NnrMaskFloorDb,
+                NrDefaults.NnrMaskFloorMinDb, NrDefaults.NnrMaskFloorMaxDb);
+            int requestedSlot = Math.Clamp(cfg.NnrModelSlot ?? NrDefaults.NnrModelSlot, 0, 1);
+            NativeMethods.SetRXANNRPosition(channelId, NrDefaults.Position);
+            NativeMethods.SetRXANNRMaskFloor(channelId, floor);
+            int slot = NativeMethods.SetRXANNRModel(channelId, requestedSlot);
+            state.NnrModelSlotInUse = slot;
+            if (slot != requestedSlot)
+            {
+                _log.LogInformation(
+                    "wdsp.nnr.model channel={Id} requested={Req} inUse={Slot} reason=\"slot holds no model in this libwdsp build\"",
+                    channelId, requestedSlot, slot);
+            }
+            NativeMethods.SetRXANNRRun(channelId, 1);
+        }
+        catch (EntryPointNotFoundException ex)
+        {
+            state.NnrModelSlotInUse = -1;
+            _log.LogWarning(
+                "wdsp.nnr.unavailable channel={Id} reason=\"libwdsp build pre-dates WDSP 2.1.0 (no NNR exports)\" detail={Msg}",
+                channelId, ex.Message);
+        }
+    }
+
+    private void TrySetNnrRun(int channelId, int run)
+    {
+        try { NativeMethods.SetRXANNRRun(channelId, run); }
+        catch (EntryPointNotFoundException) { /* libwdsp pre-2.1.0; NNR is a no-op */ }
+    }
+
+    public int? GetNnrModelSlotInUse(int channelId)
+    {
+        if (!_channels.TryGetValue(channelId, out var state)) return null;
+        if (state.CurrentNrMode != NrMode.Nnr) return null;
+        int slot = state.NnrModelSlotInUse;
+        return slot >= 0 ? slot : null;
+    }
+
+    // See NnrPremiumModelAvailable. Runs once, on the first RXA channel open,
+    // while the channel is still state=0 and NNR is run=0 — selecting a model
+    // there is inaudible and immediately reverted to slot 0.
+    private void ProbeNnrPremiumModel(int channelId)
+    {
+        if (_nnrPremiumProbed) return;
+        _nnrPremiumProbed = true;
+        try
+        {
+            int got = NativeMethods.SetRXANNRModel(channelId, 1);
+            _nnrPremiumAvailable = got == 1;
+            NativeMethods.SetRXANNRModel(channelId, 0);
+            _log.LogInformation("wdsp.nnr.probe premiumModel={Premium}", _nnrPremiumAvailable);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            _nnrPremiumAvailable = false; // pre-2.1.0 libwdsp: no NNR at all
+        }
+    }
+
     private void TrySetSbnrRun(int channelId, int run)
     {
         try { NativeMethods.SetRXASBNRRun(channelId, run); }
@@ -1694,6 +1804,15 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         public const double Nr4PostFilterThreshold = -10.0;
         public const int Nr4NoiseScalingType = 0;
         public const int Nr4Position = 1;
+
+        // NR5 (NNR) defaults — verbatim from the WDSP Guide Rev 2.1.0 §5.3.20:
+        // mask floor default -25 dB, suggested range -50 (max suppression) ..
+        // -10 (most noise passed); slot 0 = Standard model. Position is fixed
+        // post-AGC (create_nnr in RXA.c passes position=1).
+        public const double NnrMaskFloorDb = -25.0;
+        public const double NnrMaskFloorMinDb = -50.0;
+        public const double NnrMaskFloorMaxDb = -10.0;
+        public const int NnrModelSlot = 0;
 
 
         // NB1/NB2 runtime-steady-state params — what Thetis actually runs with

@@ -807,7 +807,7 @@ function RxStatusStrip() {
   const preamp = useConnectionStore((s) => s.preampOn);
   const widthHz = Math.abs(hi - lo);
   const width = widthHz >= 1000 ? `${(widthHz / 1000).toFixed(1)}k` : `${widthHz}`;
-  const nrLabel = nr.nrMode === 'Anr' ? 'NR' : nr.nrMode === 'Emnr' ? 'NR2' : nr.nrMode === 'Rnnr' ? 'NR3' : nr.nrMode === 'Sbnr' ? 'NR4' : 'NR';
+  const nrLabel = nr.nrMode === 'Anr' ? 'NR' : nr.nrMode === 'Emnr' ? 'NR2' : nr.nrMode === 'Rnnr' ? 'NR3' : nr.nrMode === 'Sbnr' ? 'NR4' : nr.nrMode === 'Nnr' ? 'NR5' : 'NR';
   const nbLabel = nr.nbMode === 'Nb1' ? 'NB1' : nr.nbMode === 'Nb2' ? 'NB2' : 'NB';
   const Chip = ({ on, children }: { on: boolean; children: ReactNode }) => (
     <span className={`m-rxchip${on ? ' on' : ''}`}>{children}</span>

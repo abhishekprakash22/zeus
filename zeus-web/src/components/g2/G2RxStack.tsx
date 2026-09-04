@@ -380,7 +380,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
             blanker (NB1/NB2). Read-only; the NB·NR sheet is the editor. */}
         <div style={flagRow}>
           <span style={{ ...dspChip, ...(nrCfg.nrMode !== 'Off' ? dspChipOn : null) }}>
-            {nrCfg.nrMode === 'Anr' ? 'NR' : nrCfg.nrMode === 'Emnr' ? 'NR2' : nrCfg.nrMode === 'Rnnr' ? 'NR3' : nrCfg.nrMode === 'Sbnr' ? 'NR4' : 'NR'}
+            {nrCfg.nrMode === 'Anr' ? 'NR' : nrCfg.nrMode === 'Emnr' ? 'NR2' : nrCfg.nrMode === 'Rnnr' ? 'NR3' : nrCfg.nrMode === 'Sbnr' ? 'NR4' : nrCfg.nrMode === 'Nnr' ? 'NR5' : 'NR'}
           </span>
           <span style={{ ...dspChip, ...(nrCfg.nbMode !== 'Off' ? dspChipOn : null) }}>
             {nrCfg.nbMode === 'Nb1' ? 'NB1' : nrCfg.nbMode === 'Nb2' ? 'NB2' : 'NB'}

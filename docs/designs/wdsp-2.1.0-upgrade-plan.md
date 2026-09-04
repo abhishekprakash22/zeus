@@ -202,6 +202,39 @@ tracking issue still has to be created.
   greyed with the reason instead of letting audio stutter.
 - Tests: extend `NoiseReductionTests` and the persistence tests; add a stage-timing fixture.
 
+#### Phase 2 landing notes (2026-09-04, branch `wdsp-2.1.0`)
+
+Done: `NrMode.Nnr` (wire value 5) with JSON converter support; `NrConfig`
+gains `NnrMaskFloorDb` / `NnrModelSlot` (appended, null = WDSP default);
+`NnrConfigSetRequest` + `POST /api/rx/nnr`; `StateDto` gains
+`WdspNnrAvailable`, `NnrPremiumModelAvailable`, `NnrModelSlotInUse`
+(appended; **wire-format change, flagged for maintainer review**);
+persistence in `DspSettingsStore`; engine case in `SetNoiseReduction` with the
+same export-guard pattern as NR3/NR4, mask floor clamped to −50..−10, model
+slot taken from WDSP's answer rather than the request, and a one-time Premium
+probe on the first RXA open; pipeline mirrors the engine's answer into state
+after every NR apply. Frontend: `Nnr` in the mode union, NR5 appended to the
+NR cycle only when the export is present, `NrSettingsSection` NR5 panel (model
+radio, "in use" caption, mask-floor gauge), Smart NR fallback to NR2 when NR5
+is unavailable, mobile/G2 labels. Tests: DSP combinatorial walk includes Nnr
+(safe against a 1.29 binary), JSON round-trip, `NnrSettingsPersistenceTests`,
+DSP-panel cycle test, client normaliser test. Also fixed five test-project
+engine stubs that had drifted from `IDspEngine` and blocked the whole Server
+test project from compiling (pre-existing; unrelated to NR5).
+
+UX decisions taken that need Brian/Doug sign-off: NR5 sits at the **end** of the
+NR cycle, its button label is **NR5**, and the tooltip carries the +51 ms
+latency note. The NR5 accordion chevron is session-only (the NR-UI prefs DTO
+was not extended).
+
+Deferred within phase 2: the optional `wdsp_nnr_{0,1}.bin` override store and
+`SetNNRModelPathSlot` call (nobody has an alternate model yet); the Raspberry Pi
+capability gate (needs the stage-timing measurement first, which needs the
+refreshed native binaries); MIDI / TCI / G2 front-panel cycle entries for NR5
+(each is a small follow-up once the button placement is approved). Not yet
+listened to on a radio: the checked-in binaries are still 1.29, so NR5 shows
+as unavailable until the native workflow refreshes them.
+
 ### Phase 3. PureSignal 3 follow-ups (KB2UKA approval required before code)
 
 Proposed, in priority order, each as its own approved change:

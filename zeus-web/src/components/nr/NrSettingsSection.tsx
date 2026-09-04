@@ -42,12 +42,18 @@ import {
   NR2_POST2_DEFAULTS,
   NR4_ALGO_LABELS,
   NR4_DEFAULTS,
+  NNR_DEFAULTS,
+  NNR_MASK_FLOOR_MAX_DB,
+  NNR_MASK_FLOOR_MIN_DB,
+  NNR_MODEL_LABELS,
   setNr2Core,
   setNr2Post2,
   setNr4,
+  setNnr,
   type Nr2CorePatchBody,
   type Nr2Post2PatchBody,
   type Nr4PatchBody,
+  type NnrPatchBody,
   type RadioStateDto,
 } from '../../api/client';
 import { useConnectionStore } from '../../state/connection-store';
@@ -57,7 +63,7 @@ import {
   type NrUiPrefsState,
 } from '../../api/nrUiPrefs';
 
-export type NrSettingsMode = 'Anr' | 'Emnr' | 'Sbnr';
+export type NrSettingsMode = 'Anr' | 'Emnr' | 'Sbnr' | 'Nnr';
 
 export type NrSettingsSectionProps = {
   mode: NrSettingsMode;
@@ -83,9 +89,11 @@ type NrSettingsUiState = {
 
 // Maps the wire DTO's three booleans to / from the per-mode keyed shape
 // the component already consumes. NR4 lives under the `Sbnr` key — the
-// reading-mode enum the surrounding panel uses.
-function fromWire(p: NrUiPrefsState): Record<NrSettingsMode, boolean> {
-  return { Anr: p.nr1Expanded, Emnr: p.nr2Expanded, Sbnr: p.nr4Expanded };
+// reading-mode enum the surrounding panel uses. The NR5 (`Nnr`) chevron is
+// session-only: the prefs DTO predates it and is left unchanged (wire format
+// is red-light), so hydration keeps whatever the operator toggled locally.
+function fromWire(p: NrUiPrefsState, nnr: boolean): Record<NrSettingsMode, boolean> {
+  return { Anr: p.nr1Expanded, Emnr: p.nr2Expanded, Sbnr: p.nr4Expanded, Nnr: nnr };
 }
 function toWire(e: Record<NrSettingsMode, boolean>): NrUiPrefsState {
   return { nr1Expanded: e.Anr, nr2Expanded: e.Emnr, nr4Expanded: e.Sbnr };
@@ -107,10 +115,10 @@ function schedulePersist(state: Record<NrSettingsMode, boolean>): void {
 }
 
 const useNrSettingsUi = create<NrSettingsUiState>((set) => ({
-  expanded: { Anr: false, Emnr: false, Sbnr: false },
+  expanded: { Anr: false, Emnr: false, Sbnr: false, Nnr: false },
   hydrated: false,
   hydrate: (next) =>
-    set({ expanded: fromWire(next), hydrated: true }),
+    set((s) => ({ expanded: fromWire(next, s.expanded.Nnr), hydrated: true })),
   toggle: (mode) =>
     set((s) => {
       const expanded = { ...s.expanded, [mode]: !s.expanded[mode] };
@@ -147,7 +155,10 @@ export function NrSettingsSection({ mode }: NrSettingsSectionProps) {
   const toggle = useNrSettingsUi((s) => s.toggle);
 
   const title =
-    mode === 'Anr' ? 'NR1 — ANR' : mode === 'Emnr' ? 'NR2 — EMNR' : 'NR4 — SBNR';
+    mode === 'Anr' ? 'NR1 — ANR'
+      : mode === 'Emnr' ? 'NR2 — EMNR'
+        : mode === 'Nnr' ? 'NR5 — NNR'
+          : 'NR4 — SBNR';
 
   return (
     <div className="nr-settings" role="region" aria-label={`NR ${mode} settings`}>
@@ -175,6 +186,7 @@ export function NrSettingsSection({ mode }: NrSettingsSectionProps) {
           {mode === 'Anr' && <AnrPanel />}
           {mode === 'Emnr' && <Nr2Panel />}
           {mode === 'Sbnr' && <Nr4Panel />}
+          {mode === 'Nnr' && <NnrPanel />}
         </>
       )}
     </div>
@@ -510,6 +522,132 @@ function Nr2Panel() {
         >
           <RotateCcw size={12} strokeWidth={2.5} />
           <span>Defaults</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- NR5 (NNR, WDSP 2.1.0 neural noise reduction) tunables. -------
+//
+// Two controls, per the WDSP Guide §5.3.20: the mask floor (how much genuine
+// received noise is allowed through) and the model slot. The slot buttons show
+// the request; the caption shows what WDSP actually kept, because a build
+// without the Premium model silently stays on Standard.
+
+function NnrPanel() {
+  const nr = useConnectionStore((s) => s.nr);
+  const applyState = useConnectionStore((s) => s.applyState);
+  const premiumAvailable = useConnectionStore((s) => s.nnrPremiumModelAvailable);
+  const slotInUse = useConnectionStore((s) => s.nnrModelSlotInUse);
+
+  const [floor, setFloor] = useState<number>(nr.nnrMaskFloorDb ?? NNR_DEFAULTS.maskFloorDb);
+  const [slot, setSlot] = useState<number>(nr.nnrModelSlot ?? NNR_DEFAULTS.modelSlot);
+
+  const inflight = useRef<AbortController | null>(null);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      inflight.current?.abort();
+      if (debounce.current != null) clearTimeout(debounce.current);
+    },
+    [],
+  );
+
+  const persist = useCallback(
+    (body: NnrPatchBody) => {
+      if (debounce.current != null) clearTimeout(debounce.current);
+      debounce.current = setTimeout(() => {
+        inflight.current?.abort();
+        const ac = new AbortController();
+        inflight.current = ac;
+        setNnr(body, ac.signal)
+          .then((s: RadioStateDto) => {
+            if (!ac.signal.aborted) applyState(s);
+          })
+          .catch(() => {
+            /* state poll will reconcile */
+          });
+      }, PERSIST_DEBOUNCE_MS);
+    },
+    [applyState],
+  );
+
+  const onFloorChange = (v: number) => {
+    setFloor(v);
+    persist({ maskFloorDb: v });
+  };
+  const onSlotChange = (v: number) => {
+    setSlot(v);
+    persist({ modelSlot: v });
+  };
+  const resetDefaults = () => {
+    setFloor(NNR_DEFAULTS.maskFloorDb);
+    setSlot(NNR_DEFAULTS.modelSlot);
+    persist({ maskFloorDb: NNR_DEFAULTS.maskFloorDb, modelSlot: NNR_DEFAULTS.modelSlot });
+  };
+
+  const inUseLabel =
+    slotInUse == null ? 'not running' : (NNR_MODEL_LABELS[slotInUse] ?? `slot ${slotInUse}`);
+
+  return (
+    <div>
+      {/* ---- MODEL ------------------------------------------------------ */}
+      <h4 className="nr-settings__subhdr">Model</h4>
+
+      <div
+        className="nr-settings__row"
+        title="Standard: ~10% of one core. Premium: measurably better, about three times the processor time. Both add 51 ms; switching is immediate."
+      >
+        <span className="nr-settings__label">Model</span>
+        <div className="btn-row" role="radiogroup" aria-label="NNR model">
+          {NNR_MODEL_LABELS.map((lbl, i) => {
+            const disabled = i === 1 && !premiumAvailable;
+            return (
+              <button
+                key={lbl}
+                type="button"
+                role="radio"
+                aria-checked={slot === i}
+                disabled={disabled}
+                title={disabled ? 'This libwdsp build has no Premium model (WDSP_WITH_NNR_PREMIUM=OFF).' : undefined}
+                className={`btn sm ${slot === i ? 'active' : ''}`}
+                onClick={() => onSlotChange(i)}
+              >
+                {lbl}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="nr-settings__row">
+        <span className="nr-settings__label">In use</span>
+        <span className="mono">{inUseLabel}</span>
+      </div>
+
+      {/* ---- TUNABLES --------------------------------------------------- */}
+      <h4 className="nr-settings__subhdr">Tunables</h4>
+
+      <GaugeRow
+        accent="red"
+        icon={<TrendingDown size={14} strokeWidth={2.25} />}
+        label="Mask floor"
+        value={floor}
+        min={NNR_MASK_FLOOR_MIN_DB}
+        max={NNR_MASK_FLOOR_MAX_DB}
+        step={1}
+        decimals={0}
+        onChange={onFloorChange}
+      />
+      <p className="nr-settings__hint">
+        Lower = quieter (max suppression at −50 dB); raise it to let genuine band noise
+        through and to keep very weak signals readable.
+      </p>
+
+      <div className="nr-settings__row">
+        <button type="button" className="btn sm" onClick={resetDefaults}>
+          Reset to defaults
         </button>
       </div>
     </div>

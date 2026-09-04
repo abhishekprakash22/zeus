@@ -184,6 +184,18 @@ public interface IDspEngine : IDisposable
 
     void SetNoiseReduction(int channelId, NrConfig cfg);
 
+    /// <summary>NR5 (WDSP 2.1.0 neural NR): true when the loaded libwdsp
+    /// carries a Premium model in slot 1 (WDSP_WITH_NNR_PREMIUM=ON). Probed
+    /// once per engine at first channel open; false on engines without NNR.</summary>
+    bool NnrPremiumModelAvailable => false;
+
+    /// <summary>NR5: the model slot WDSP actually selected for this channel the
+    /// last time NNR was enabled (0 Standard / 1 Premium), or null when NNR is
+    /// not running on the channel or the engine has no NNR. WDSP silently keeps
+    /// the current slot when asked for one that holds no model, so the UI shows
+    /// this rather than the requested value.</summary>
+    int? GetNnrModelSlotInUse(int channelId) => null;
+
     /// <summary>Load (or, with a null/empty path, clear) the process-global
     /// RNNoise (NR3) model shared by every RNNR channel. The result distinguishes
     /// a model that actually loaded from one that failed to parse/instantiate, so

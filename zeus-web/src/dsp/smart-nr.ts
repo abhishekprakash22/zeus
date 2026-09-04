@@ -54,6 +54,8 @@ export type SmartNrDspCapabilities = Pick<
 > & {
   wdspNr3RnnrAvailable?: boolean;
   nr3ModelName?: string | null;
+  // NR5 (NNR, WDSP 2.1.0). Undefined = unknown (older diagnostics payload).
+  wdspNnrAvailable?: boolean;
 };
 
 export type SmartNrCapabilityAdaptation = {
@@ -88,6 +90,7 @@ export type SmartNrRxContext = {
 
 export function labelSmartNrProfile(nr: NrConfigDto): string {
   if (nr.nbMode !== 'Off' && nr.snbEnabled) return `${nr.nbMode}+SNB`;
+  if (nr.nrMode === 'Nnr') return 'NR5';
   if (nr.nrMode === 'Rnnr') return 'NR3';
   if (nr.nrMode === 'Sbnr') return 'NR4';
   if (nr.nrMode === 'Emnr') return 'NR2';
@@ -196,6 +199,25 @@ export function adaptSmartNrToDspCapabilities(
       emnrPost2Taper: 12,
     };
     notes.push('NR3/RNNoise is not ready; using NR2/EMNR speech fallback.');
+  }
+
+  // Smart NR never proposes NR5 itself yet (CPU cost is platform-dependent);
+  // but an operator-chosen NR5 handed through the adaptation path must not
+  // strand on a pre-2.1.0 libwdsp.
+  if (next.nrMode === 'Nnr' && capabilities.wdspNnrAvailable === false) {
+    next = {
+      ...next,
+      nrMode: 'Emnr',
+      emnrGainMethod: 2,
+      emnrNpeMethod: 0,
+      emnrAeRun: true,
+      emnrPost2Run: capabilities.wdspEmnrPost2Available !== false,
+      emnrPost2Factor: 11,
+      emnrPost2Nlevel: 11,
+      emnrPost2Rate: 5,
+      emnrPost2Taper: 12,
+    };
+    notes.push('NR5/NNR unavailable in the active WDSP build; using NR2/EMNR fallback.');
   }
 
   if (next.nrMode === 'Emnr' && capabilities.wdspEmnrPost2Available === false && next.emnrPost2Run !== false) {

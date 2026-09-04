@@ -128,9 +128,16 @@ public class TxAudioIngestTests
         public void SetPsEnabled(bool enabled) { }
         public void SetPsControl(bool autoCal, bool singleCal) { }
         public void SetPsHold(bool hold) { }
-        public void SetPsAdvanced(bool ptol, double moxDelaySec, double loopDelaySec,
-                                  double ampDelayNs, double hwPeak, int ints, int spi) { }
+        public void SetPsMox(bool moxOn) { }
+        public void SetPsAdvanced(double moxDelaySec, double loopDelaySec,
+                                  double ampDelayNs, double hwPeak) { }
         public void SetPsHwPeak(double hwPeak) { }
+        // Members the stub had fallen behind IDspEngine on (pre-existing build
+        // break in this test project); all no-ops for the TX-ingest tests.
+        public void ResetTxPhaseRotatorAuto(int channelId) { }
+        public TxPhaseRotatorAsymmetry? GetTxPhaseRotatorAsymmetry(int channelId) => null;
+        public void ResetDisplayPixelBuffers() { }
+        public void SetTxDigitalBypass(bool bypass) { }
         public void FeedPsFeedbackBlock(ReadOnlySpan<float> txI, ReadOnlySpan<float> txQ,
                                         ReadOnlySpan<float> rxI, ReadOnlySpan<float> rxQ) { }
         public PsStageMeters GetPsStageMeters() => PsStageMeters.Silent;

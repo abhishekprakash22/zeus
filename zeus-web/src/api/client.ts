@@ -71,7 +71,8 @@ export type RxMode =
 
 export type TxVfo = 'A' | 'B';
 
-export type NrMode = 'Off' | 'Anr' | 'Emnr' | 'Sbnr' | 'Rnnr';
+// 'Nnr' = NR5, WDSP 2.1.0 neural noise reduction (post-AGC deep-filtering DNN).
+export type NrMode = 'Off' | 'Anr' | 'Emnr' | 'Sbnr' | 'Rnnr' | 'Nnr';
 export type NbMode = 'Off' | 'Nb1' | 'Nb2';
 
 // SSB bandpass "rectangularity" (issue #871). 'Soft' = WDSP fir.c
@@ -204,6 +205,11 @@ export type NrConfigDto = {
   nr4PostFilterThreshold?: number | null;
   nr4NoiseScalingType?: number | null;
   nr4Position?: number | null;
+  // NR5 (NNR, WDSP 2.1.0) tunables — null means "use engine default" (-25 dB,
+  // slot 0). maskFloorDb: -50 (max suppression) .. -10 (most noise passed);
+  // modelSlot: 0 Standard, 1 Premium (~3x CPU).
+  nnrMaskFloorDb?: number | null;
+  nnrModelSlot?: number | null;
 };
 
 export const NR_CONFIG_DEFAULT: NrConfigDto = {
@@ -256,6 +262,16 @@ export const NR4_DEFAULTS = {
 } as const;
 
 export const NR4_ALGO_LABELS = ['Algo 1', 'Algo 2', 'Algo 3'] as const;
+
+// NR5 (NNR) defaults + range, verbatim from the WDSP Guide Rev 2.1.0 §5.3.20
+// (mirrors WdspDspEngine.NrDefaults.Nnr*). The engine clamps to the same range.
+export const NNR_DEFAULTS = {
+  maskFloorDb: -25.0,
+  modelSlot: 0,
+} as const;
+export const NNR_MASK_FLOOR_MIN_DB = -50;
+export const NNR_MASK_FLOOR_MAX_DB = -10;
+export const NNR_MODEL_LABELS = ['Standard', 'Premium'] as const;
 
 // Integer 1..32. Matches the backend cap (SyntheticDspEngine.MaxZoomLevel).
 // At 32× the WDSP analyzer's centre-clipped bin count drops below typical
@@ -378,6 +394,13 @@ export type RadioStateDto = {
   // True when the active model is the shipped default (no operator model). The
   // UI labels the source and gates "Remove" (remove reverts to the default).
   nr3UsingBundledDefault: boolean;
+  // NR5 (NNR, WDSP 2.1.0): libwdsp exports the NNR setters (2.1.0+ binaries);
+  // NR5 joins the NR cycle only when true. nnrPremiumModelAvailable: the native
+  // build carries the Premium model in slot 1. nnrModelSlotInUse: the slot WDSP
+  // actually kept the last time NR5 was enabled (null when NR5 is not running).
+  wdspNnrAvailable: boolean;
+  nnrPremiumModelAvailable: boolean;
+  nnrModelSlotInUse: number | null;
   zoomLevel: ZoomLevel;
   rx2ZoomLevel: ZoomLevel;
   // Workspace UI zoom (whole-percent cell-pitch scale; 100 = authored size).
@@ -2157,7 +2180,7 @@ const MODE_ORDER: readonly RxMode[] = [
   'FREEDV',
 ];
 
-const NR_MODE_ORDER: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Sbnr', 'Rnnr'];
+const NR_MODE_ORDER: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Sbnr', 'Rnnr', 'Nnr'];
 const NB_MODE_ORDER: readonly NbMode[] = ['Off', 'Nb1', 'Nb2'];
 
 export function normalizeStatus(v: unknown): ConnectionStatus {
@@ -2380,6 +2403,8 @@ export function normalizeNr(raw: unknown): NrConfigDto {
     nr4PostFilterThreshold: nullableNumber(r.nr4PostFilterThreshold),
     nr4NoiseScalingType: nullableInt(r.nr4NoiseScalingType),
     nr4Position: nullableInt(r.nr4Position),
+    nnrMaskFloorDb: nullableNumber(r.nnrMaskFloorDb),
+    nnrModelSlot: nullableInt(r.nnrModelSlot),
   };
 }
 
@@ -2547,6 +2572,9 @@ export function normalizeState(raw: unknown): RadioStateDto {
     wdspNr3RnnrAvailable: Boolean(r.wdspNr3RnnrAvailable),
     nr3ModelName: typeof r.nr3ModelName === 'string' ? r.nr3ModelName : null,
     nr3UsingBundledDefault: Boolean(r.nr3UsingBundledDefault),
+    wdspNnrAvailable: Boolean(r.wdspNnrAvailable),
+    nnrPremiumModelAvailable: Boolean(r.nnrPremiumModelAvailable),
+    nnrModelSlotInUse: nullableInt(r.nnrModelSlotInUse),
     zoomLevel: normalizeZoomLevel(r.zoomLevel),
     rx2ZoomLevel: normalizeZoomLevel(r.rx2ZoomLevel),
     workspaceZoomPct: normalizeWorkspaceZoomPct(r.workspaceZoomPct),
@@ -6823,6 +6851,29 @@ export function setNr4(
 ): Promise<RadioStateDto> {
   return jsonFetch(
     '/api/rx/nr4',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
+// PATCH-style request for the NR5 (NNR) popover. Same merge semantics as
+// setNr4: an absent / null field leaves the persisted value untouched.
+export type NnrPatchBody = {
+  maskFloorDb?: number | null;
+  modelSlot?: number | null;
+};
+
+export function setNnr(
+  body: NnrPatchBody,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/rx/nnr',
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

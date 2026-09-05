@@ -10,7 +10,7 @@
 // option) any later version. See the LICENSE file at the root of this
 // repository for the full text, or https://www.gnu.org/licenses/.
 
-namespace Zeus.Server.Hosting;
+namespace Zeus.Server;
 
 /// <summary>
 /// Build-time feature gates for shipped-but-shelved features. A gate set to

@@ -119,7 +119,7 @@ if(MSVC)
         target_compile_options(wdsp PRIVATE
             -Wno-macro-redefined
             -Wno-implicit-int
-            -Wno-implicit-function-declaration
+            -Werror=implicit-function-declaration
             -Wno-int-conversion
             -Wno-incompatible-pointer-types
             -Wno-deprecated-non-prototype
@@ -134,7 +134,7 @@ else()
         -Wno-unused-but-set-variable
         -Wno-unused-variable
         -Wno-unused-function
-        -Wno-implicit-function-declaration
+        -Werror=implicit-function-declaration
         -Wno-incompatible-pointer-types
         -Wno-implicit-int
         -Wno-int-conversion
@@ -274,7 +274,7 @@ if(WDSP_WITH_NR4)
         # the build log; we don't own this source so we don't fix them.
         target_compile_options(specbleach PRIVATE
             -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable
-            -Wno-incompatible-pointer-types -Wno-implicit-function-declaration
+            -Wno-incompatible-pointer-types -Werror=implicit-function-declaration
         )
     endif()
 

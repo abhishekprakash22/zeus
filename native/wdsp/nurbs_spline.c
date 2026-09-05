@@ -46,6 +46,19 @@ warren@pratt.one
 #include <math.h>
 #include <float.h>
 #include <stdlib.h>
+
+/* Zeus: prototypes for the MSVC CRT aligned-allocation pair. Off Windows the
+   definitions live in linux_port.c; WITHOUT these declarations C's
+   implicit-int rule makes the compiler truncate the returned pointer to its
+   low 32 bits (aarch64: `sxtw x3, w0` after the call) and the first TXA open
+   segfaults in this file once the heap sits above 4 GB. On Windows the UCRT's
+   <stdlib.h> pulls <corecrt_malloc.h>, which declares them — hence upstream
+   never sees this. */
+#ifndef _WIN32
+#include <stddef.h>
+extern void* _aligned_malloc(size_t size, size_t alignment);
+extern void  _aligned_free(void* memblock);
+#endif
 #include <string.h>
 #include <stdio.h>
 

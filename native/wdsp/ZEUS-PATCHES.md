@@ -22,7 +22,7 @@ Copy every upstream `*.c` / `*.h` **except**:
 
 | File | Purpose |
 | --- | --- |
-| `CMakeLists.txt` | The build. Source list, NR3/NR4/NNR-Premium gates, FFTW detection, output naming. Per-compiler warning downgrades: upstream is written against MSVC, so clang / clang-cl / GCC-14 hard errors for implicit int, implicit function declarations, int↔pointer conversions and incompatible pointer types are turned back into warnings (`-Wno-…`). Linux links with `-Wl,--no-undefined` + explicit `-lm` so undefined symbols fail in CI instead of deferring to load time (macOS is already strict by default). |
+| `CMakeLists.txt` | The build. Source list, NR3/NR4/NNR-Premium gates, FFTW detection, output naming. Per-compiler warning downgrades: upstream is written against MSVC, so clang / clang-cl / GCC-14 hard errors for implicit int, int↔pointer conversions and incompatible pointer types are turned back into warnings (`-Wno-…`). Implicit function declarations are the exception: hard ERRORS (`-Werror=implicit-function-declaration`) — the old downgrade hid a 32-bit pointer truncation on `_aligned_malloc` that segfaulted the first TXA open off Windows. Linux links with `-Wl,--no-undefined` + explicit `-lm` so undefined symbols fail in CI instead of deferring to load time (macOS is already strict by default). |
 | `wdsp_export.h` | `WDSP_EXPORT` visibility macro that `PORT` resolves to. |
 | `linux_port.{c,h}` | Win32 → POSIX shim (threads, critical sections, semaphores, events, aligned malloc). 2.1.0 additions: `WaitForMultipleObjects`, `CreateSemaphoreW`, `WAIT_OBJECT_0` / `WAIT_TIMEOUT`, `GetCurrentThread`, `OutputDebugStringA`; `WaitForSingleObject(h, 0)` now performs one try and reports `WAIT_TIMEOUT` (calcc.c drains semaphores with that call).; real `_aligned_malloc` / `_aligned_free` symbols (posix_memalign / free) for the WDSP 2.x standalone files (extrapolate.c, nurbs_fit.c, nurbs_spline.c) that call them without including comm.h — off Windows nothing else provides them. |
 | `zeus_compat.{c,h}` | `psccF` — the Thetis float-I/Q wrapper around `pscc` that upstream 2.x dropped. Keeps `Zeus.Dsp` P/Invoke and the PureSignal feedback pump unchanged (PureSignal hard rule in `CLAUDE.md`). |
@@ -47,6 +47,7 @@ Every edit is marked in-source with a `Zeus` comment.
 | `RXA.h` | `rnnr` and `sbnr` block members added to the RXA struct after `nnr`; `RXAbp1CheckEx` prototype. |
 | `RXA.c` | NR3/NR4 create / destroy / x (pre- and post-AGC) / setSamplerate / setSize / setBuffers hooks next to the upstream `nnr` hooks; `RXAbp1CheckEx` (adds `rnnr_run`, `sbnr_run`) with `RXAbp1Check` kept as the upstream-signature wrapper; `RXAbp1Set` considers the NR3/NR4 run flags. |
 | `calcc.c` | `destroy_calcc` releases the `psccF` staging buffers (`zeus_compat_release_pscc_buffers`). |
+| `extrapolate.c`, `nurbs_fit.c`, `nurbs_spline.c` | Prototypes for `_aligned_malloc` / `_aligned_free` added (non-Windows). These standalone 2.x files never include `comm.h`; without a declaration C's implicit-int rule truncates the returned pointer to its low 32 bits (aarch64 `sxtw x3, w0`) and the first TXA open segfaults in `build_extrap1` (create_calcc). The UCRT's `<stdlib.h>` pulls `<corecrt_malloc.h>` on Windows, which is why upstream never sees it. Definitions live in `linux_port.c`. |
 
 ## Things that look like patches but are not
 

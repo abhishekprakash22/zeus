@@ -93,7 +93,7 @@ Connect, then operate from the workspace:
 - **Modes:** LSB / USB / CW / AM / FM / DIGI, with per-mode filter presets
   and adjustable edges.
 - **AGC** (with AGC-T gain), **squelch**, **attenuation** (S-ATT can also run
-  predictively), **NR** (classic, RNNoise NR3, spectral NR4), **NB**, notch.
+  predictively), **NR** (classic, RNNoise NR3, spectral NR4, neural NR5), **NB**, notch.
 - **Multi-RX:** additional receivers share the panadapter; each has its own
   audio and settings.
 - **Diversity:** two-antenna phasing pad for null steering (hardware

@@ -1015,12 +1015,16 @@ public sealed class G2PanelActionRouter
         var snapshot = _radio.Snapshot();
         var nr = snapshot.Nr ?? new NrConfig();
         var nr3Ready = snapshot.WdspNr3RnnrAvailable && !string.IsNullOrWhiteSpace(snapshot.Nr3ModelName);
+        // NR5 joins the panel cycle only when the loaded libwdsp exports NNR
+        // (2.1.0+) — same gate the web NR button uses, so both cycles agree.
+        var nnrReady = snapshot.WdspNnrAvailable;
         NrMode next = nr.NrMode switch
         {
             NrMode.Off => NrMode.Anr,
             NrMode.Anr => NrMode.Emnr,
             NrMode.Emnr => nr3Ready ? NrMode.Rnnr : NrMode.Sbnr,
             NrMode.Rnnr => NrMode.Sbnr,
+            NrMode.Sbnr => nnrReady ? NrMode.Nnr : NrMode.Off,
             _ => NrMode.Off,
         };
         _radio.SetNr(nr with { NrMode = next });

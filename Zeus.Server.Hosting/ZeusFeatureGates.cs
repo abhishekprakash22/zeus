@@ -19,6 +19,11 @@ namespace Zeus.Server;
 /// feature whole. The frontend mirror lives in zeus-web/src/features.ts;
 /// keep the two in sync.
 ///
+/// The fields are static readonly, NOT const, deliberately: with a const
+/// false the compiler proves the gated endpoint blocks unreachable and
+/// CS0162 fails the warnings-as-errors build. readonly keeps the same
+/// behaviour without the compile-time constant folding.
+///
 /// What a false gate does NOT touch: stored PA gain profiles keep applying
 /// to TX exactly as calibrated (that is the radio's data, not the wizard),
 /// the live SWR meter keeps reading, and SWR protection stays armed.
@@ -28,10 +33,10 @@ public static class ZeusFeatureGates
     /// <summary>Automated PA gain calibration + the factory run
     /// (/api/pa-cal/*, PA-tab calibration card). Shelved 2026-09; flip to
     /// true to restore.</summary>
-    public const bool PaCalibration = false;
+    public static readonly bool PaCalibration = false;
 
     /// <summary>SWR analyzer — the low-power in-band sweep tool
     /// (/api/swr-sweep/*, PA-tab analyzer card). Shelved 2026-09; flip to
     /// true to restore.</summary>
-    public const bool SwrAnalyzer = false;
+    public static readonly bool SwrAnalyzer = false;
 }

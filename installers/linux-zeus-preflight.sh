@@ -274,17 +274,28 @@ zeus_run_service_with_browser() {
             # everywhere we ship; fall back to backend-only wait if absent.
             wait -n "${backend_pid}" "${browser_pid}" 2>/dev/null \
                 || wait "${backend_pid}"
-            # If the BROWSER went first (operator closed the window), give the
-            # page's beforeunload layout beacon a moment to land before we
-            # take the backend down — killing it instantly loses whatever the
-            # operator arranged in the final save-debounce window.
-            if kill -0 "${backend_pid}" 2>/dev/null; then
+            # Who went first decides the verdict. BACKEND first: collect its
+            # real exit status (bash keeps it for a reaped child) and return
+            # it — a segfaulting backend must NOT leave here as success, or
+            # systemd's Restart=on-failure never fires and the radio strands
+            # on a blank screen (field incident, v1.21 first boot). BROWSER
+            # first (operator closed the window): give the page's
+            # beforeunload layout beacon a moment to land before we take the
+            # backend down — killing it instantly loses whatever the operator
+            # arranged in the final save-debounce window — and return 0; a
+            # deliberate close is a clean exit however the backend dies to
+            # our TERM.
+            local backend_status=0
+            if ! kill -0 "${backend_pid}" 2>/dev/null; then
+                wait "${backend_pid}"
+                backend_status=$?
+            else
                 sleep 1.5
             fi
             zeus_kiosk_cleanup
             trap - EXIT INT TERM
             wait 2>/dev/null || true
-            return
+            return "${backend_status}"
         fi
     done
     local opener

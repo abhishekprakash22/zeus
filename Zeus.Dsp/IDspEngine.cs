@@ -439,6 +439,14 @@ public interface IDspEngine : IDisposable
     /// the engine has no TXA. Safe to poll concurrently.</summary>
     PsStageMeters GetPsStageMeters();
 
+    /// <summary>
+    /// PureSignal 3 AmpView snapshot (amplifier transfer scatter + correction
+    /// curves) from WDSP <c>GetPSDisp</c>. Null when the engine has no TXA
+    /// channel or does not support it; arrays are empty before the first
+    /// completed fit. Read-only — no PS control path is touched.
+    /// </summary>
+    PsAmpView? GetPsAmpView() => null;
+
     /// <summary>Reset PS state — calls <c>SetPSControl(1,0,0,0)</c>. Useful
     /// after an aborted calibration or when changing radios.</summary>
     void ResetPs();

@@ -6893,6 +6893,40 @@ export function setNnr(
 // RNNR symbols; `modelName` is the installed file name (null = none).
 export type Nr3ModelStatus = { available: boolean; modelName: string | null };
 
+export type PsAmpViewDto = {
+  x: number[];
+  gainY: number[];
+  phaseDegY: number[];
+  magCorX: number[];
+  magCorY: number[];
+  phaseCorX: number[];
+  phaseCorY: number[];
+  phaseRefDeg: number;
+};
+
+function numArray(v: unknown): number[] {
+  return Array.isArray(v) ? v.filter((n): n is number => typeof n === 'number' && Number.isFinite(n)) : [];
+}
+
+/** PS3 AmpView snapshot (GET /api/ps/ampview). Null on 204 (no engine/TXA)
+ *  and on any error — the card treats null as "nothing to draw". Plain fetch
+ *  (not jsonFetch): a 204 has no body, so res.json() would throw. */
+export async function getPsAmpView(signal?: AbortSignal): Promise<PsAmpViewDto | null> {
+  const res = await fetch('/api/ps/ampview', { signal });
+  if (res.status === 204 || !res.ok) return null;
+  const r = (await res.json()) as Record<string, unknown>;
+  return {
+    x: numArray(r.x),
+    gainY: numArray(r.gainY),
+    phaseDegY: numArray(r.phaseDegY),
+    magCorX: numArray(r.magCorX),
+    magCorY: numArray(r.magCorY),
+    phaseCorX: numArray(r.phaseCorX),
+    phaseCorY: numArray(r.phaseCorY),
+    phaseRefDeg: typeof r.phaseRefDeg === 'number' ? r.phaseRefDeg : 0,
+  };
+}
+
 export function getNr3ModelStatus(signal?: AbortSignal): Promise<Nr3ModelStatus> {
   return jsonFetch(
     '/api/rx/nr3/model',

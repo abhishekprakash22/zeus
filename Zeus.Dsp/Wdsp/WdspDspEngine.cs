@@ -3774,6 +3774,58 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             OverDriveRefusal: overDrive);
     }
 
+    public PsAmpView? GetPsAmpView()
+    {
+        if (_disposed != 0) return null;
+        int? txa;
+        lock (_txaLock) txa = _txaChannelId;
+        if (txa is not int id) return null;
+
+        // GetPSDisp memcpy's the display buffers under calcc's own display
+        // critical section; it is safe to call at any time (disp.nsamps is 0
+        // before the first completed fit and the cor arrays are zeroed).
+        // Buffers sized to calcc's fixed geometry: 16 buckets x 256 = 4096
+        // scatter samples, DISP_PTS = 512 correction points.
+        const int MaxSamps = 4096;
+        const int CorPts = 512;
+        var x = new double[MaxSamps];
+        var ym = new double[MaxSamps];
+        var yc = new double[MaxSamps];
+        var ys = new double[MaxSamps];
+        var xmCor = new double[CorPts];
+        var ymCor = new double[CorPts];
+        var xaCor = new double[CorPts];
+        var yaCor = new double[CorPts];
+        int nsamps, cpts;
+        double phsRef;
+        lock (_psLock)
+        {
+            NativeMethods.GetPSDisp(id, x, ym, yc, ys, xmCor, ymCor, xaCor, yaCor,
+                out nsamps, out cpts, out phsRef);
+        }
+        nsamps = Math.Clamp(nsamps, 0, MaxSamps);
+        cpts = Math.Clamp(cpts, 0, CorPts);
+
+        // Downsample the 4096-point scatter to <=512 for the wire; the card
+        // draws at ~400 px so nothing is lost. Correction curves ship whole.
+        int stride = Math.Max(1, nsamps / 512);
+        int outN = nsamps == 0 ? 0 : (nsamps + stride - 1) / stride;
+        var ox = new double[outN];
+        var og = new double[outN];
+        var op = new double[outN];
+        for (int i = 0, k = 0; k < outN; i += stride, k++)
+        {
+            ox[k] = x[i];
+            og[k] = ym[i];
+            op[k] = Math.Atan2(ys[i], yc[i]) * (180.0 / Math.PI);
+        }
+        return new PsAmpView(
+            X: ox, GainY: og, PhaseDegY: op,
+            MagCorX: xmCor[..cpts], MagCorY: ymCor[..cpts],
+            PhaseCorX: xaCor[..cpts], PhaseCorY: yaCor[..cpts],
+            PhaseRefDeg: phsRef);
+    }
+
     public void ResetPs()
     {
         if (_disposed != 0) return;

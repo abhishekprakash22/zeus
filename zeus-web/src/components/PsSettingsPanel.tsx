@@ -33,6 +33,7 @@ import {
 } from '../api/client';
 import { useRadioStore } from '../state/radio-store';
 import { useTxStore } from '../state/tx-store';
+import { PsAmpViewCard } from './PsAmpViewCard';
 
 // HermesLite2 has no PS-Monitor display source path (no internal feedback
 // loopback) but DOES have an internal coupler — so the Internal/External
@@ -871,6 +872,8 @@ export function PsSettingsPanel() {
           />
         </FieldRow>
       </div>
+
+      <PsAmpViewCard />
     </div>
   );
 }

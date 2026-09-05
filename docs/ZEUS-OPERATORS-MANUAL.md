@@ -233,6 +233,10 @@ receiver panes, on-glass filter displays) arrives in the next releases.
   a meaningless fit, not a fault. Lower drive (or raise Feedback atten) until
   fits complete. Two-tone IMD reading a few dB shy of the old PS2 close-in,
   with equal-or-better real-speech splatter, is documented PS3 behaviour.
+  The **Amp view** card at the bottom of the PURESIGNAL tab draws the
+  amplifier as the calibrator measured it — gain and phase against input
+  amplitude — with the correction curves it is applying; a flat gain trace is
+  a linear amp, sag at the right edge is the compression PS is straightening.
 - **Mic sources:** the G2's **front-panel mic** is first-class — no PC audio
   involved. A browser mic (headset on a remote PC) also works. The "mic"
   status chip reports whichever source is actually in use.

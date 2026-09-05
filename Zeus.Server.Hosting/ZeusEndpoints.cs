@@ -2566,6 +2566,16 @@ public static class ZeusEndpoints
             return Results.Ok(r.SetPsMonitor(req));
         });
 
+        // PureSignal 3 AmpView — read-only snapshot of the measured amplifier
+        // transfer scatter + the correction curves calcc is applying (WDSP
+        // GetPSDisp). 204 when no engine/TXA; empty arrays before the first
+        // completed fit. Polled by the AMP VIEW card in the PURESIGNAL tab.
+        app.MapGet("/api/ps/ampview", (DspPipelineService pipe) =>
+        {
+            var view = pipe.CurrentEngine?.GetPsAmpView();
+            return view is null ? Results.NoContent() : Results.Ok(view);
+        });
+
         app.MapPost("/api/tx/ps/reset", (DspPipelineService pipe) =>
         {
             log.LogInformation("api.tx.ps.reset");

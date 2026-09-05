@@ -1899,3 +1899,28 @@
   color: var(--fg-3);
   line-height: 1.35;
 }
+
+/* ---- AMP VIEW card (PS3 GetPSDisp telemetry) ---- */
+.ps-ampview-plot {
+  position: relative;
+  margin: 8px 0 4px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+.ps-ampview-plot svg {
+  display: block;
+  width: 100%;
+  height: 140px;
+}
+.ps-ampview-cap {
+  padding: 2px 8px 5px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+.ps-ampview-empty {
+  padding: 14px 8px;
+  font-size: 12px;
+  opacity: 0.6;
+}

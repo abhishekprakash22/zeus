@@ -28,7 +28,7 @@ State at the time of writing:
 
 Expected: all five green, each with the three verify steps passing
 (*Verify SBNR exports* = 8, *Verify RNNR exports* = 4, *Verify WDSP 2.1.0
-exports* = 12 `SetRXANNR*` + `psccF`).
+exports* = 11 `SetRXANNR*` + `psccF`).
 
 Known noise: the three *Build VST3 Bridge* jobs fail at *Init vst3sdk
 submodule* on this fork. That is unrelated to WDSP (the workflow had never

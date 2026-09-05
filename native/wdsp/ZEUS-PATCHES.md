@@ -38,7 +38,7 @@ Every edit is marked in-source with a `Zeus` comment.
 
 | File | Edit |
 | --- | --- |
-| `comm.h` | (1) Platform include block: Linux/macOS include `linux_port.h`; `<Windows.h>`, `<process.h>`, `<intrin.h>`, `<avrt.h>` guarded by `_WIN32`. (2) `#define dprintf wdsp_dprintf` right after the system headers: upstream's debug helper `void dprintf(const char*, ...)` collides with POSIX `dprintf(int, ...)` in glibc / macOS `<stdio.h>`; the macro renames every WDSP-side use without touching upstream files. (3) Include `rnnr.h`, `sbnr.h` immediately after `emnr.h` (they must precede `RXA.h`, whose struct embeds the handle types) and `zeus_compat.h` after the upstream block headers. (4) `#define PORT WDSP_EXPORT` via `wdsp_export.h` instead of `__declspec(dllexport)`. |
+| `comm.h` | (1) Platform include block: Linux/macOS include `linux_port.h`; `<Windows.h>`, `<process.h>`, `<intrin.h>`, `<avrt.h>` guarded by `_WIN32`. (2) `#define dprintf wdsp_dprintf` right after the system headers: upstream's debug helper `void dprintf(const char*, ...)` collides with POSIX `dprintf(int, ...)` in glibc / macOS `<stdio.h>`; the macro renames every WDSP-side use without touching upstream files. (3) Include `rnnr.h`, `sbnr.h` immediately after `emnr.h` (they must precede `RXA.h`, whose struct embeds the handle types) and `zeus_compat.h` after the upstream block headers. (4) `#define PORT WDSP_EXPORT` via `wdsp_export.h` instead of `__declspec(dllexport)`. (5) `#include <limits.h>` after `<stdint.h>`: `wbfm.c` uses `INT_MAX`; MSVC pulls the header in transitively via `<Windows.h>`, glibc and macOS clang do not. |
 | `snoop.c` | `void xsnoop(channel)` → `void xsnoop(int channel)`. Implicit `int` is an error under clang / clang-cl (the Windows CI toolset) and GCC 14. |
 | `main.c` | MMCSS "Pro Audio" calls (`AvSetMmThreadCharacteristics` etc.) guarded by `_WIN32`. |
 | `wisdom.c` | `AllocConsole` / `freopen_s` / `FreeConsole` progress console guarded by `_WIN32`. |
@@ -68,6 +68,6 @@ nm -gU <libwdsp> | grep GetWDSPVersion     # then call it: expect 210
 # 3. Thetis-lineage exports survived the splice
 nm -gU <libwdsp> | grep -cE 'SetRXASBNR'   # 8
 nm -gU <libwdsp> | grep -cE 'RNNR'         # 4
-nm -gU <libwdsp> | grep -cE 'NNR'          # includes SetRXANNR* (12) + SetNNRModelPath*
+nm -gU <libwdsp> | grep -cE 'NNR'          # includes SetRXANNR* (11) + SetNNRModelPath*
 nm -gU <libwdsp> | grep psccF              # 1
 ```

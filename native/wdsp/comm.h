@@ -43,6 +43,7 @@ warren@wpratt.com
 #endif
 #include <math.h>
 #include <stdint.h>
+#include <limits.h>   // Zeus: INT_MAX (wbfm.c) — MSVC gets it transitively, glibc/clang do not
 #include <time.h>
 #ifdef _WIN32
   #include <avrt.h>

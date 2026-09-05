@@ -170,7 +170,8 @@ jobs:
       - name: Verify WDSP 2.1.0 exports (NNR + psccF)
         run: |
           # WDSP 2.1.0 port (native/wdsp/ZEUS-PATCHES.md): the upstream neural
-          # noise reduction block must be linked (12 SetRXANNR* setters) and the
+          # noise reduction block must be linked (11 SetRXANNR* setters — that is
+          # every SetRXANNR* in upstream nnr.c / the auto-generated wdsp.h) and the
           # Zeus psccF compatibility export must survive — Zeus.Dsp P/Invokes it
           # for the PureSignal feedback pump.
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -181,7 +182,10 @@ jobs:
           $all = & $dumpbin /EXPORTS native/build/Release/wdsp.dll
           $nnr = ($all | Select-String "SetRXANNR" | Measure-Object).Count
           Write-Host "Found $nnr SetRXANNR* exports"
-          if ($nnr -ne 12) { throw "Expected 12 SetRXANNR* exports, got $nnr. NNR did not link correctly." }
+          if ($nnr -ne 11) { throw "Expected 11 SetRXANNR* exports, got $nnr. NNR did not link correctly." }
+          foreach ($sym in @("GetRXANNRModel", "SetNNRModelPath", "SetNNRModelPathSlot")) {
+            if (-not ($all | Select-String "\b$sym\b")) { throw "$sym export missing — NNR did not link correctly." }
+          }
           if (-not ($all | Select-String "\bpsccF\b")) { throw "psccF export missing — zeus_compat.c not linked." }
 
       - name: Stage DLL
@@ -384,7 +388,7 @@ jobs:
 
       - name: Verify WDSP 2.1.0 exports (NNR + psccF)
         run: |
-          # WDSP 2.1.0 port (native/wdsp/ZEUS-PATCHES.md): 12 SetRXANNR* setters
+          # WDSP 2.1.0 port (native/wdsp/ZEUS-PATCHES.md): 11 SetRXANNR* setters
           # from the upstream neural NR block, plus the Zeus psccF compatibility
           # export that Zeus.Dsp P/Invokes for the PureSignal feedback pump.
           nm_tool="nm"
@@ -393,10 +397,16 @@ jobs:
           fi
           nnr=$($nm_tool -D native/build/libwdsp.so | grep -c "SetRXANNR" || true)
           echo "Found $nnr SetRXANNR* exports"
-          if [ "$nnr" -ne 12 ]; then
-            echo "ERROR: Expected 12 SetRXANNR* exports, got $nnr. NNR did not link correctly."
+          if [ "$nnr" -ne 11 ]; then
+            echo "ERROR: Expected 11 SetRXANNR* exports, got $nnr. NNR did not link correctly."
             exit 1
           fi
+          for sym in GetRXANNRModel SetNNRModelPath SetNNRModelPathSlot; do
+            if ! $nm_tool -D native/build/libwdsp.so | grep -qw "$sym"; then
+              echo "ERROR: $sym export missing — NNR did not link correctly."
+              exit 1
+            fi
+          done
           if ! $nm_tool -D native/build/libwdsp.so | grep -qw "psccF"; then
             echo "ERROR: psccF export missing — zeus_compat.c not linked."
             exit 1

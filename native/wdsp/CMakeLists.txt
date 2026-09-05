@@ -145,6 +145,18 @@ else()
     endif()
     target_compile_definitions(wdsp PRIVATE _GNU_SOURCE)
     target_link_options(wdsp PRIVATE -pthread)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # macOS's linker refuses undefined symbols in a dylib by default;
+        # GNU ld silently defers them to load time, which turned the missing
+        # _aligned_malloc/_aligned_free (WDSP 2.x standalone files) into a
+        # green Linux link hiding a runtime crash. Make Linux as strict as
+        # macOS so the next such miss fails in CI, not on a keyed radio.
+        # libm must then be linked explicitly — it was always resolved at
+        # load time through the host process before (macOS folds it into
+        # libSystem, so only Linux needs the -lm).
+        target_link_libraries(wdsp PRIVATE m)
+        target_link_options(wdsp PRIVATE -Wl,--no-undefined)
+    endif()
 endif()
 
 # -----------------------------------------------------------------------------

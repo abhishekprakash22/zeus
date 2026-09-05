@@ -486,3 +486,40 @@ void my_free(void *ptr) {
 }
 
 #endif
+
+/* Zeus: real _aligned_malloc / _aligned_free symbols (off-Windows only —
+ * on Windows this file compiles empty and the MSVC CRT provides them).
+ *
+ * WDSP 2.x introduced standalone files (extrapolate.c, nurbs_fit.c,
+ * nurbs_spline.c) that call _aligned_malloc/_aligned_free directly and do
+ * not include comm.h, so the linux_port.h macro mapping never reaches
+ * them. On MSVC the CRT provides the symbols; off Windows nothing did —
+ * the Linux .so linked with them undefined (a deferred crash at the first
+ * NURBS fit, i.e. mid-PureSignal-calibration) and the macOS link failed
+ * outright. These definitions give every such translation unit a real
+ * symbol. posix_memalign memory is free()-compatible, so pointers may
+ * cross between macro-mapped (malloc/free) and real-symbol call sites in
+ * either direction without harm. Alignment callers pass 16; anything
+ * below sizeof(void*) is raised to satisfy posix_memalign.
+ */
+#if defined(linux) || defined(__APPLE__)
+
+#include <stdlib.h>
+
+#undef _aligned_malloc
+#undef _aligned_free
+
+void* _aligned_malloc(size_t size, size_t alignment)
+{
+  void* p = NULL;
+  if (alignment < sizeof(void*)) alignment = sizeof(void*);
+  if (posix_memalign(&p, alignment, size) != 0) return NULL;
+  return p;
+}
+
+void _aligned_free(void* p)
+{
+  free(p);
+}
+
+#endif /* linux || __APPLE__ */

@@ -21,6 +21,7 @@
 // Both are GPL-2.0-or-later.
 
 import { PaCalibrationCard } from './PaCalibrationCard';
+import { FEATURES } from '../features';
 import { SwrAnalyzerCard } from './SwrAnalyzerCard';
 import { useEffect, useRef, useState } from 'react';
 import { HF_BANDS, usePaStore } from '../state/pa-store';
@@ -408,8 +409,8 @@ export function PaSettingsPanel() {
 
   return (
     <div className="pa-settings density-compact space-y-6">
-      <PaCalibrationCard />
-      <SwrAnalyzerCard />
+      {FEATURES.paCalibration ? <PaCalibrationCard /> : null}
+      {FEATURES.swrAnalyzer ? <SwrAnalyzerCard /> : null}
       <section>
         <div className="mb-2 flex items-center justify-between gap-3">
           <h3 className="pa-section-h">Global</h3>

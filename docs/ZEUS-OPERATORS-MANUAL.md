@@ -477,6 +477,11 @@ far it is current.
 
 ## 16. Automated PA gain calibration
 
+> **Temporarily unavailable in this build.** The calibration wizard and
+> factory run are shelved for now and will return in a future release. Any
+> calibration already stored on your radio continues to apply to TX exactly
+> as before.
+
 The PA panel's **Calibrate — current band** card sets each band's PA gain
 automatically so that 100% drive delivers your radio's rated output (100 W
 on a G2, 1000 W on a G2-1K — the target comes from the selected board
@@ -510,6 +515,10 @@ gain the session changed to its previous value. The calibration never
 changes bands or moves your drive sliders.
 
 ## 17. SWR analyzer
+
+> **Temporarily unavailable in this build.** The sweep tool is shelved for
+> now and will return in a future release. The live SWR reading on the TX
+> meter and SWR protection are unaffected.
 
 The PA panel's **SWR analyzer** card sweeps a low-power carrier across one
 amateur band and plots SWR against frequency from the radio's own

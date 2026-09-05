@@ -1450,6 +1450,11 @@ public static class ZeusHost
         app.MapGet("/api/xdma/tx/feeder", (SaturnTxStream txs) => Results.Ok(txs.Status()));
 
         // ---- PA calibration (dry-run skeleton; keyed loop = next commit) ----
+        // SHELVED (ZeusFeatureGates.PaCalibration = false): endpoints unmapped
+        // -> 404; the service, storage and stored gain profiles stay — the
+        // profiles keep applying to TX. Flip the gate to restore the wizard.
+        if (ZeusFeatureGates.PaCalibration)
+        {
         app.MapGet("/api/pa-cal/status", (PaCalibrationService cal) => Results.Ok(cal.Status()));
         app.MapPost("/api/pa-cal/start", (PaCalStartRequest req, PaCalibrationService cal) =>
         {
@@ -1463,7 +1468,13 @@ public static class ZeusHost
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
         app.MapPost("/api/pa-cal/revert", (PaCalibrationService cal) => Results.Ok(cal.Revert()));
+        }
         // ---- SWR analyzer: low-power in-band sweep off the TX bridge ----
+        // SHELVED (ZeusFeatureGates.SwrAnalyzer = false): sweep endpoints
+        // unmapped -> 404. The live SWR meter and SWR protection are separate
+        // paths and stay untouched. Flip the gate to restore the analyzer.
+        if (ZeusFeatureGates.SwrAnalyzer)
+        {
         app.MapGet("/api/swr-sweep/status", (SwrSweepService s) => Results.Ok(s.Status()));
         app.MapPost("/api/swr-sweep/start", (SwrSweepStartRequest req, SwrSweepService s) =>
         {
@@ -1471,12 +1482,16 @@ public static class ZeusHost
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
         app.MapPost("/api/swr-sweep/abort", (SwrSweepService s) => Results.Ok(s.Abort()));
+        }
 
+        if (ZeusFeatureGates.PaCalibration)
+        {
         app.MapPost("/api/pa-cal/run-all", (PaCalStartRequest req, PaCalibrationService cal) =>
         {
             var result = cal.RunAll(req.Confirm, out var refusal);
             return refusal is null ? Results.Ok(result) : Results.BadRequest(new { error = refusal });
         });
+        }
 
         // ---- THE ARMING CEREMONY (Phase 4c): three deliberate acts ----
         app.MapPost("/api/xdma/tx/arm", (XdmaTxArmRequest req, SaturnControl c, SaturnRxStream rx) =>

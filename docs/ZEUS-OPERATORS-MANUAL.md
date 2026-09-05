@@ -237,6 +237,13 @@ receiver panes, on-glass filter displays) arrives in the next releases.
   amplifier as the calibrator measured it — gain and phase against input
   amplitude — with the correction curves it is applying; a flat gain trace is
   a linear amp, sag at the right edge is the compression PS is straightening.
+- **Phase rotator auto-cal (WDSP 2.1):** in the TX fidelity panel, the
+  rotator's **Auto** box lets WDSP find the corner itself — it measures the
+  voice waveform's positive/negative asymmetry after the rotator and walks
+  the corner until it is minimized. A status line shows SEARCHING (with the
+  current step) or CONVERGED, the live corner, and IN → OUT asymmetry;
+  **Restart search** re-arms it after a mic or processing change. With Auto
+  on, the Corner box is read-only and tracks the search.
 - **Mic sources:** the G2's **front-panel mic** is first-class — no PC audio
   involved. A browser mic (headset on a remote PC) also works. The "mic"
   status chip reports whichever source is actually in use.

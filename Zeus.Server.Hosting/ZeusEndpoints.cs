@@ -2179,6 +2179,26 @@ public static class ZeusEndpoints
             return Results.Ok(r.SetTxLeveling(cfg));
         });
 
+        // Phase-rotator auto-cal telemetry (WDSP 2.1 GetTXAPHROTAsymmetry):
+        // measured IN/OUT waveform asymmetry, the corner the auto search is
+        // currently at, and the search state (autoStep: -1 converged, >0
+        // searching at that step in Hz, 0 auto off). Read-only; 204 when no
+        // engine. The engine's TXA is a singleton, so channelId 0 is fine.
+        app.MapGet("/api/tx/phase-rotator/asymmetry", (DspPipelineService pipe) =>
+        {
+            var a = pipe.CurrentEngine?.GetTxPhaseRotatorAsymmetry(0);
+            return a is null ? Results.NoContent() : Results.Ok(a);
+        });
+
+        // Restart the auto corner search from its widest step — useful after
+        // a mic or processing-chain change invalidates the converged corner.
+        app.MapPost("/api/tx/phase-rotator/auto-reset", (DspPipelineService pipe) =>
+        {
+            log.LogInformation("api.tx.phaseRotator.autoReset");
+            pipe.CurrentEngine?.ResetTxPhaseRotatorAuto(0);
+            return Results.Ok(new { reset = true });
+        });
+
         app.MapPost("/api/tx/phase-rotator", (TxPhaseRotatorSetRequest req, RadioService r) =>
         {
             if (req.TxPhaseRotator is not { } cfg)

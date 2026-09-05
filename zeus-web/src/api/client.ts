@@ -159,6 +159,9 @@ export type TxPhaseRotatorConfigDto = {
   cornerHz: number;
   stages: number;
   reverse: boolean;
+  /** WDSP 2.1 auto corner search (SetTXAPHROTAutoMode). Optional so older
+   *  persisted candidate lists keep type-checking; absent reads as off. */
+  autoMode?: boolean;
 };
 
 export const TX_PHASE_ROTATOR_CONFIG_DEFAULT: TxPhaseRotatorConfigDto = {
@@ -166,6 +169,7 @@ export const TX_PHASE_ROTATOR_CONFIG_DEFAULT: TxPhaseRotatorConfigDto = {
   cornerHz: 338,
   stages: 8,
   reverse: false,
+  autoMode: false,
 };
 
 export const TX_PHASE_ROTATOR_VOICE_DEFAULT: TxPhaseRotatorConfigDto = {
@@ -173,6 +177,7 @@ export const TX_PHASE_ROTATOR_VOICE_DEFAULT: TxPhaseRotatorConfigDto = {
   cornerHz: 338,
   stages: 8,
   reverse: false,
+  autoMode: false,
 };
 
 export type NrConfigDto = {
@@ -2357,6 +2362,7 @@ export function normalizeTxPhaseRotator(raw: unknown): TxPhaseRotatorConfigDto {
     cornerHz: int(r.cornerHz, TX_PHASE_ROTATOR_CONFIG_DEFAULT.cornerHz, 20, 2000),
     stages: int(r.stages, TX_PHASE_ROTATOR_CONFIG_DEFAULT.stages, 1, 16),
     reverse: typeof r.reverse === 'boolean' ? r.reverse : TX_PHASE_ROTATOR_CONFIG_DEFAULT.reverse,
+    autoMode: typeof r.autoMode === 'boolean' ? r.autoMode : false,
   };
 }
 
@@ -6925,6 +6931,45 @@ export async function getPsAmpView(signal?: AbortSignal): Promise<PsAmpViewDto |
     phaseCorY: numArray(r.phaseCorY),
     phaseRefDeg: typeof r.phaseRefDeg === 'number' ? r.phaseRefDeg : 0,
   };
+}
+
+export type TxPhrotAsymmetryDto = {
+  inPosDb: number;
+  inNegDb: number;
+  inAsymmetryPct: number;
+  outPosDb: number;
+  outNegDb: number;
+  outAsymmetryPct: number;
+  currentCornerHz: number;
+  /** −1 = auto search CONVERGED; >0 = searching, value is the current step
+   *  in Hz; 0 = auto mode off (WDSP phrot.c GetTXAPHROTAsymmetry). */
+  autoStep: number;
+};
+
+/** Live phase-rotator asymmetry + auto-search state. Null on 204 (no engine). */
+export async function getTxPhrotAsymmetry(signal?: AbortSignal): Promise<TxPhrotAsymmetryDto | null> {
+  const res = await fetch('/api/tx/phase-rotator/asymmetry', { signal });
+  if (res.status === 204 || !res.ok) return null;
+  const r = (await res.json()) as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    inPosDb: num(r.inPosDb),
+    inNegDb: num(r.inNegDb),
+    inAsymmetryPct: num(r.inAsymmetryPct),
+    outPosDb: num(r.outPosDb),
+    outNegDb: num(r.outNegDb),
+    outAsymmetryPct: num(r.outAsymmetryPct),
+    currentCornerHz: num(r.currentCornerHz),
+    autoStep: num(r.autoStep),
+  };
+}
+
+/** Restart the phase-rotator auto corner search from its widest step. */
+export function postTxPhrotAutoReset(signal?: AbortSignal): Promise<{ reset: boolean }> {
+  return jsonFetch('/api/tx/phase-rotator/auto-reset', { method: 'POST', signal }, (raw) => {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    return { reset: Boolean(r.reset) };
+  });
 }
 
 export function getNr3ModelStatus(signal?: AbortSignal): Promise<Nr3ModelStatus> {

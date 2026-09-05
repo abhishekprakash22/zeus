@@ -1366,12 +1366,16 @@ describe('POST helpers', () => {
     expect(diag.dsp.txMonitorRequested).toBe(true);
     expect(diag.dsp.wdspNativeLoadable).toBe(true);
     expect(diag.dsp.wdspEmnrPost2Available).toBe(true);
-    expect(diag.dsp.wdspNr4SbnrAvailable).toBe(false);    expect(diag.dsp.nr4Readiness).toBe('missing-sbnr-exports');    expect(diag.dsp.requestedNrMode).toBe('Sbnr');
-    expect(diag.dsp.effectiveNrMode).toBe('Off');    expect(diag.dsp.rxDsp.status).toBe('nr-capability-limited');
+    expect(diag.dsp.wdspNr4SbnrAvailable).toBe(false);
+    expect(diag.dsp.nr4Readiness).toBe('missing-sbnr-exports');
+    expect(diag.dsp.requestedNrMode).toBe('Sbnr');
+    expect(diag.dsp.effectiveNrMode).toBe('Off');
+    expect(diag.dsp.rxDsp.status).toBe('nr-capability-limited');
     expect(diag.dsp.rxDsp.agcMode).toBe('Fast');
     expect(diag.dsp.rxDsp.effectiveAgcTopDb).toBe(62);
     expect(diag.dsp.rxDsp.effectiveNbpNotchesRun).toBe(true);
-    expect(diag.dsp.rxDsp.activeManualNotchCount).toBe(1);    expect(diag.dsp.rxDsp.activeFeatures).toContain('manual-notches');
+    expect(diag.dsp.rxDsp.activeManualNotchCount).toBe(1);
+    expect(diag.dsp.rxDsp.activeFeatures).toContain('manual-notches');
     expect(diag.dsp.rxDsp.qualityReasons).toContain('nr-capability-limited');
     expect(diag.dsp.rxDsp.diagnosticRecommendation).toContain('NR2/EMNR');
     expect(diag.dsp.rxMeters.status).toBe('adc-hot');
@@ -1889,8 +1893,11 @@ describe('POST helpers', () => {
     expect(condition.rxChainScore).toBe(62);
     expect(condition.maxSnrDb).toBe(7.1);
     expect(condition.coherentSubthresholdSignal).toBe(true);
-    expect(condition.wdspNr4SbnrAvailable).toBe(false);    expect(condition.nr4Readiness).toBe('missing-sbnr-exports');    expect(condition.requestedNrMode).toBe('Sbnr');
-    expect(condition.effectiveNrMode).toBe('Off');    expect(condition.expectedNrMode).toBe('Emnr');
+    expect(condition.wdspNr4SbnrAvailable).toBe(false);
+    expect(condition.nr4Readiness).toBe('missing-sbnr-exports');
+    expect(condition.requestedNrMode).toBe('Sbnr');
+    expect(condition.effectiveNrMode).toBe('Off');
+    expect(condition.expectedNrMode).toBe('Emnr');
     expect(condition.runtimeAligned).toBe(false);
     expect(condition.runtimeAlignmentStatus).toBe('mismatched');
     expect(condition.runtimeAlignmentRecommendation).toContain('maps to WDSP Emnr');
@@ -1994,7 +2001,8 @@ describe('POST helpers', () => {
     expect(diag.rxChainFilterLowHz).toBe(300);
     expect(diag.rxChainFilterHighHz).toBe(2600);
     expect(diag.rxChainFilterWidthHz).toBe(2300);
-    expect(diag.rxChainFilterPresetName).toBe('WEAK-RX');    expect(diag.benchmarkPlanEndpoint).toBe('/api/dsp/benchmark-plan');
+    expect(diag.rxChainFilterPresetName).toBe('WEAK-RX');
+    expect(diag.benchmarkPlanEndpoint).toBe('/api/dsp/benchmark-plan');
     expect(diag.benchmarkScenarioCount).toBe(12);
     expect(diag.nextBenchmarkScenarios).toEqual(['weak-cw-carrier', 'agc-level-step']);
     expect(diag.benchmarkAcceptanceGates[0]).toContain('pumping');
@@ -3228,6 +3236,7 @@ describe('normalizeTxPhaseRotator', () => {
       cornerHz: 472,
       stages: 10,
       reverse: true,
+      autoMode: true,
     };
     const s = normalizeState({ txPhaseRotator: cfg });
     expect(s.txPhaseRotator).toEqual(cfg);

@@ -17,6 +17,9 @@ import {
   setTxFilter,
   setTxLeveling,
   setTxPhaseRotator,
+  getTxPhrotAsymmetry,
+  postTxPhrotAutoReset,
+  type TxPhrotAsymmetryDto,
   type RadioStateDto,
   type RxMode,
   type TxDiagnosticsDto,
@@ -1214,6 +1217,20 @@ function TxLiveShapingControls() {
             style={{ width: 16, height: 16 }}
           />
         </label>
+        <label
+          style={{ ...controlLabelStyle(), minWidth: 0 }}
+          title="Auto corner search (WDSP 2.1): the rotator measures its own output asymmetry and walks the corner until it is minimized. While on, the Corner box is read-only and tracks the search."
+        >
+          Auto
+          <input
+            aria-label="TX phase rotator auto corner search"
+            type="checkbox"
+            checked={txPhaseRotator.autoMode ?? false}
+            disabled={disabled || !txPhaseRotator.enabled}
+            onChange={(e) => commitPhaseRotator({ autoMode: e.currentTarget.checked })}
+            style={{ width: 16, height: 16 }}
+          />
+        </label>
         <NumberBox
           label="Corner"
           ariaLabel="TX phase rotator corner"
@@ -1222,7 +1239,7 @@ function TxLiveShapingControls() {
           max={2000}
           step={5}
           parse="int"
-          disabled={disabled || !txPhaseRotator.enabled}
+          disabled={disabled || !txPhaseRotator.enabled || (txPhaseRotator.autoMode ?? false)}
           onCommit={(v) => commitPhaseRotator({ cornerHz: v })}
         />
         <NumberBox
@@ -1237,6 +1254,7 @@ function TxLiveShapingControls() {
           onCommit={(v) => commitPhaseRotator({ stages: v })}
         />
       </div>
+      <PhrotAutoStatus enabled={txPhaseRotator.enabled && (txPhaseRotator.autoMode ?? false)} />
       {error && (
         <div
           className="mono"
@@ -1251,6 +1269,67 @@ function TxLiveShapingControls() {
   );
 }
 
+
+/**
+ * Live phase-rotator auto-cal status (WDSP 2.1). Polls the asymmetry
+ * endpoint at 1 Hz while mounted and the rotator is enabled; renders the
+ * measured IN/OUT asymmetry, the corner the auto search sits at, and a
+ * SEARCHING/CONVERGED chip. autoStep: -1 = converged, >0 = searching at
+ * that step (Hz), 0 = auto mode off (nothing to show). The Restart button
+ * re-arms the search from its widest step after a mic/chain change.
+ */
+function PhrotAutoStatus({ enabled }: { enabled: boolean }) {
+  const [asym, setAsym] = useState<TxPhrotAsymmetryDto | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setAsym(null);
+      return;
+    }
+    const ctl = new AbortController();
+    let alive = true;
+    const tick = async () => {
+      try {
+        const a = await getTxPhrotAsymmetry(ctl.signal);
+        if (alive) setAsym(a);
+      } catch {
+        /* transient */
+      }
+    };
+    void tick();
+    const t = setInterval(() => void tick(), 1000);
+    return () => {
+      alive = false;
+      ctl.abort();
+      clearInterval(t);
+    };
+  }, [enabled]);
+
+  if (!enabled || asym === null || asym.autoStep === 0) return null;
+  const converged = asym.autoStep < 0;
+  return (
+    <div
+      className="mono"
+      style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 10, opacity: 0.85, minWidth: 0, flexWrap: 'wrap' }}
+      title="Phase-rotator auto corner search. IN/OUT = waveform asymmetry before/after the rotator (positive vs negative peak, dB); the search walks the corner until OUT asymmetry is minimized."
+    >
+      <span style={{ color: converged ? '#7fd18a' : '#e0b34a' }}>
+        {converged ? 'AUTO · CONVERGED' : `AUTO · SEARCHING ±${asym.autoStep.toFixed(0)} Hz`}
+      </span>
+      <span>corner {asym.currentCornerHz.toFixed(0)} Hz</span>
+      <span>
+        asym IN {asym.inAsymmetryPct.toFixed(0)}% → OUT {asym.outAsymmetryPct.toFixed(0)}%
+      </span>
+      <button
+        type="button"
+        onClick={() => void postTxPhrotAutoReset().catch(() => undefined)}
+        style={{ fontSize: 10, padding: '1px 6px' }}
+        title="Restart the auto search from its widest step (after changing mic or processing)."
+      >
+        Restart search
+      </button>
+    </div>
+  );
+}
 
 export function TxFidelityPanel() {
   const policyTouchedRef = useRef(false);

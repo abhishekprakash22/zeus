@@ -4256,6 +4256,12 @@ public sealed class RadioService : IDisposable
     // Surface calcc-stall state to the frontend. PsAutoAttenuateService raises
     // this when info5 stays at 0 for >5s while keyed; the frontend renders a
     // banner pointing operator at HW peak. No-ops if the flag isn't changing.
+    public void SetPsOverDriveDetected(bool detected)
+    {
+        if (Snapshot().PsOverDriveDetected == detected) return;
+        Mutate(s => s with { PsOverDriveDetected = detected });
+    }
+
     public void SetPsCalibrationStalled(bool stalled)
     {
         if (Snapshot().PsCalibrationStalled == stalled) return;

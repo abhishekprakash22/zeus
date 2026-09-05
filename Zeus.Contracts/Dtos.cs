@@ -1470,7 +1470,12 @@ public sealed record StateDto(
     //   from NrConfig.NnrModelSlot when the requested slot holds no model.
     bool WdspNnrAvailable = false,
     bool NnrPremiumModelAvailable = false,
-    int? NnrModelSlotInUse = null);
+    int? NnrModelSlotInUse = null,
+    // PsOverDriveDetected: PS3 refused to calibrate because the top amplitude
+    // bucket carried under 6% usable data — the guide's "probable severe
+    // over-drive". Latched by PsAutoAttenuateService while keyed; clears when
+    // a fit completes or PS/keying drops. Appended (wire-format change).
+    bool PsOverDriveDetected = false);
 
 /// <summary>Canonical CW constants shared between backend and wire DTOs.
 /// Single source of truth — CwOffset (server-side) and StateDto both

@@ -95,6 +95,9 @@ export function PsSettingsPanel() {
   const psImd5Dbc = useTxStore((s) => s.psImd5Dbc);
   const psMaxTxEnvelope = useTxStore((s) => s.psMaxTxEnvelope);
   const psCalibrationStalled = useTxStore((s) => s.psCalibrationStalled);
+  const psOverDriveDetected = useTxStore((s) => s.psOverDriveDetected);
+  const psCalFits = useTxStore((s) => s.psCalFits);
+  const psCalAttempts = useTxStore((s) => s.psCalAttempts);
   // Used to gate the "correcting" indicator — WDSP's info[14] stays high
   // across MOX-down once calcc has a curve loaded, so without this gate the
   // panel claims "correcting" with no RF being emitted. moxOn+tunOn+twoToneOn
@@ -629,7 +632,16 @@ export function PsSettingsPanel() {
             <span className="ps-card-hint">advanced — most users won't change</span>
           </h4>
 
-          {psCalibrationStalled ? (
+          {psOverDriveDetected ? (
+            <div
+              className="ps-stall-banner"
+              role="status"
+              aria-live="polite"
+              title="PureSignal 3 refused to calibrate: the highest-amplitude bucket carries under 6% usable data, which almost always means the PA chain is driven into severe compression — the fit would be meaningless, so calcc resets instead (guide: probable severe over-drive). Lower drive, or raise Feedback atten, until fits start completing."
+            >
+              ⚠ PS refuses to calibrate — probable severe over-drive. Lower drive or raise Feedback atten. ({psCalFits} fits / {psCalAttempts} attempts)
+            </div>
+          ) : psCalibrationStalled ? (
             feedbackRound > 181 ? (
               <div
                 className="ps-stall-banner"

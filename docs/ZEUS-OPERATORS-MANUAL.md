@@ -226,6 +226,13 @@ receiver panes, on-glass filter displays) arrives in the next releases.
   nothing.
 - **PureSignal (PS)** linearizes the PA; calibrate into a dummy load first.
   Zeus remembers whether you had PS engaged and restores it next session.
+  The calibrator (PureSignal 3, WDSP 2.1) reports its own verdicts: the PS
+  popover shows accepted vs attempted fits, and if the chain is driven into
+  severe compression PS **refuses to calibrate** and the PURESIGNAL settings
+  tab shows an over-drive banner — that is the calibrator protecting you from
+  a meaningless fit, not a fault. Lower drive (or raise Feedback atten) until
+  fits complete. Two-tone IMD reading a few dB shy of the old PS2 close-in,
+  with equal-or-better real-speech splatter, is documented PS3 behaviour.
 - **Mic sources:** the G2's **front-panel mic** is first-class — no PC audio
   involved. A browser mic (headset on a remote PC) also works. The "mic"
   status chip reports whichever source is actually in use.

@@ -434,6 +434,7 @@ export type RadioStateDto = {
   // higher than the actual TX envelope peak. Drives the HW-peak warning
   // banner in the PURESIGNAL panel.
   psCalibrationStalled?: boolean;
+  psOverDriveDetected?: boolean;
   psIntsSpiPreset: string;
   psFeedbackSource: 'internal' | 'external';
   txMonitorEnabled: boolean;
@@ -2599,6 +2600,8 @@ export function normalizeState(raw: unknown): RadioStateDto {
       typeof r.psTxFeedbackAttenuationDbMin === 'number' ? r.psTxFeedbackAttenuationDbMin : 0,
     psCalibrationStalled:
       typeof r.psCalibrationStalled === 'boolean' ? r.psCalibrationStalled : false,
+    psOverDriveDetected:
+      typeof r.psOverDriveDetected === 'boolean' ? r.psOverDriveDetected : false,
     psIntsSpiPreset: typeof r.psIntsSpiPreset === 'string' ? r.psIntsSpiPreset : '16/256',
     psFeedbackSource:
       r.psFeedbackSource === 'External' || r.psFeedbackSource === 'external' ? 'external' : 'internal',

@@ -25,12 +25,13 @@ using System.Buffers.Binary;
 
 namespace Zeus.Contracts;
 
-// PureSignal stage meters. 23 bytes total:
+// PureSignal stage meters. 31 bytes total:
 //
 //   [0x18] [feedbackLevel:f32] [correctionDb:f32]
 //          [calState:u8] [correcting:u8]
 //          [maxTxEnvelope:f32]
 //          [imd3Dbc:f32] [imd5Dbc:f32]
+//          [calFits:i32] [calAttempts:i32]
 //
 // Imd3Dbc / Imd5Dbc — two-tone intermodulation measured LIVE from the TX
 //                     panadapter bins (the post-PA feedback spectrum when
@@ -61,11 +62,21 @@ public readonly record struct PsMetersFrame(
     bool Correcting,
     float MaxTxEnvelope,
     float Imd3Dbc = float.NaN,
-    float Imd5Dbc = float.NaN)
+    float Imd5Dbc = float.NaN,
+    int CalFits = 0,
+    int CalAttempts = 0)
 {
-    public const int ByteLength = 1 + 4 + 4 + 1 + 1 + 4 + 4 + 4;
+    // CalFits — GetPSInfo info[5]: ACCEPTED calibration fits (scheck passed;
+    //           the count Thetis gates auto-attenuate on).
+    // CalAttempts — info[7] (new in PS3): fits STARTED. attempts − fits =
+    //           rejections; a widening gap with fits frozen means calcc keeps
+    //           refusing this chain. Appended fields — readers of the older
+    //           23-byte frame see zeros.
+    public const int ByteLength = 1 + 4 + 4 + 1 + 1 + 4 + 4 + 4 + 4 + 4;
     /// <summary>Pre-IMD layout; still accepted on read.</summary>
     public const int LegacyByteLength = 1 + 4 + 4 + 1 + 1 + 4;
+    /// <summary>IMD layout without the fit counters; still accepted on read.</summary>
+    public const int PreCountersByteLength = 1 + 4 + 4 + 1 + 1 + 4 + 4 + 4;
 
     public void Serialize(IBufferWriter<byte> writer)
     {
@@ -78,6 +89,8 @@ public readonly record struct PsMetersFrame(
         BinaryPrimitives.WriteSingleLittleEndian(span.Slice(11, 4), MaxTxEnvelope);
         BinaryPrimitives.WriteSingleLittleEndian(span.Slice(15, 4), Imd3Dbc);
         BinaryPrimitives.WriteSingleLittleEndian(span.Slice(19, 4), Imd5Dbc);
+        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(23, 4), CalFits);
+        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(27, 4), CalAttempts);
         writer.Advance(ByteLength);
     }
 
@@ -93,7 +106,9 @@ public readonly record struct PsMetersFrame(
             CalState: bytes[9],
             Correcting: bytes[10] != 0,
             MaxTxEnvelope: BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(11, 4)),
-            Imd3Dbc: bytes.Length >= ByteLength ? BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(15, 4)) : float.NaN,
-            Imd5Dbc: bytes.Length >= ByteLength ? BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(19, 4)) : float.NaN);
+            Imd3Dbc: bytes.Length >= PreCountersByteLength ? BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(15, 4)) : float.NaN,
+            Imd5Dbc: bytes.Length >= PreCountersByteLength ? BinaryPrimitives.ReadSingleLittleEndian(bytes.Slice(19, 4)) : float.NaN,
+            CalFits: bytes.Length >= ByteLength ? BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(23, 4)) : 0,
+            CalAttempts: bytes.Length >= ByteLength ? BinaryPrimitives.ReadInt32LittleEndian(bytes.Slice(27, 4)) : 0);
     }
 }

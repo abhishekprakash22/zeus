@@ -38,13 +38,15 @@ public class PsMetersFrameTests
             Correcting: true,
             MaxTxEnvelope: 0.7321f,
             Imd3Dbc: -31.5f,
-            Imd5Dbc: -44.25f);
+            Imd5Dbc: -44.25f,
+            CalFits: 12,
+            CalAttempts: 19);
 
         var writer = new ArrayBufferWriter<byte>();
         frame.Serialize(writer);
 
         Assert.Equal(PsMetersFrame.ByteLength, writer.WrittenCount);
-        Assert.Equal(23, writer.WrittenCount);
+        Assert.Equal(31, writer.WrittenCount);
 
         var decoded = PsMetersFrame.Deserialize(writer.WrittenSpan);
         Assert.Equal(frame.FeedbackLevel, decoded.FeedbackLevel);
@@ -54,6 +56,8 @@ public class PsMetersFrameTests
         Assert.Equal(frame.MaxTxEnvelope, decoded.MaxTxEnvelope);
         Assert.Equal(frame.Imd3Dbc, decoded.Imd3Dbc);
         Assert.Equal(frame.Imd5Dbc, decoded.Imd5Dbc);
+        Assert.Equal(frame.CalFits, decoded.CalFits);
+        Assert.Equal(frame.CalAttempts, decoded.CalAttempts);
     }
 
     [Fact]
@@ -111,5 +115,19 @@ public class PsMetersFrameTests
 
         Assert.True(PsMetersFrame.Deserialize(w1.WrittenSpan).Correcting);
         Assert.False(PsMetersFrame.Deserialize(w2.WrittenSpan).Correcting);
+    }
+
+    [Fact]
+    public void Deserialize_PreCountersFrame_CountersReadZero()
+    {
+        // A 23-byte frame from a pre-counters server: IMD fields decode,
+        // the appended counters read 0.
+        var frame = new PsMetersFrame(150f, -40f, 6, true, 0.61f, -33f, -47f, CalFits: 99, CalAttempts: 99);
+        var writer = new ArrayBufferWriter<byte>();
+        frame.Serialize(writer);
+        var decoded = PsMetersFrame.Deserialize(writer.WrittenSpan[..PsMetersFrame.PreCountersByteLength]);
+        Assert.Equal(-33f, decoded.Imd3Dbc);
+        Assert.Equal(0, decoded.CalFits);
+        Assert.Equal(0, decoded.CalAttempts);
     }
 }

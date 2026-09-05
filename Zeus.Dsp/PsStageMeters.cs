@@ -46,13 +46,25 @@ namespace Zeus.Dsp;
 /// calcc has finished a fit, otherwise the loop changes the envelope mid-
 /// calc and can trigger the WDSP 2.00 <c>info[6]</c> scheck mask, forcing
 /// rejected fits and repeated reset cycles.</param>
+/// <param name="AttemptedFits">info[7] — cumulative count of calibration
+/// fits STARTED (PS3 increments it at the top of every calc pass, before
+/// scheck). AttemptedFits − CalibrationAttempts = rejected fits; a gap that
+/// keeps widening while CalibrationAttempts stands still is the signature of
+/// a chain calcc keeps refusing.</param>
+/// <param name="OverDriveRefusal">info[6] bit 1 — PS3's deadlock escape: the
+/// top amplitude bucket holds less than DEADLOCK_MIN_FRAC (6%) usable data,
+/// calcc forced itself back to LRESET and refused to calibrate. The guide
+/// calls this "probable severe over-drive". The bit self-clears on the next
+/// completed calc pass, so callers that surface it should latch.</param>
 public readonly record struct PsStageMeters(
     float FeedbackLevel,
     byte CalState,
     bool Correcting,
     float CorrectionDb,
     float MaxTxEnvelope,
-    int CalibrationAttempts)
+    int CalibrationAttempts,
+    int AttemptedFits = 0,
+    bool OverDriveRefusal = false)
 {
     public static readonly PsStageMeters Silent = new(
         FeedbackLevel: 0f,
@@ -60,5 +72,7 @@ public readonly record struct PsStageMeters(
         Correcting: false,
         CorrectionDb: 0f,
         MaxTxEnvelope: 0f,
-        CalibrationAttempts: 0);
+        CalibrationAttempts: 0,
+        AttemptedFits: 0,
+        OverDriveRefusal: false);
 }

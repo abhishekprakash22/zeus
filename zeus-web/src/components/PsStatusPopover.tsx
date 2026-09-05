@@ -47,6 +47,8 @@ export function PsStatusPopover() {
   const psCorrecting = useTxStore((s) => s.psCorrecting);
   const psImd3Dbc = useTxStore((s) => s.psImd3Dbc);
   const psImd5Dbc = useTxStore((s) => s.psImd5Dbc);
+  const psCalFits = useTxStore((s) => s.psCalFits);
+  const psCalAttempts = useTxStore((s) => s.psCalAttempts);
   const psMaxTxEnvelope = useTxStore((s) => s.psMaxTxEnvelope);
   const psHwPeak = useTxStore((s) => s.psHwPeak);
   const psAuto = useTxStore((s) => s.psAuto);
@@ -153,6 +155,10 @@ export function PsStatusPopover() {
             <dd className="mono">
               {Number.isFinite(psImd5Dbc) ? `${psImd5Dbc.toFixed(1)} dBc` : '—'}
             </dd>
+          </div>
+          <div className="ps-popover-row" title="PS3 calibration fits: accepted (scheck passed) / attempted. A widening gap with accepted frozen means calcc keeps rejecting the chain — see the over-drive banner in Settings → PURESIGNAL.">
+            <dt>Fits</dt>
+            <dd className="mono">{psCalFits} / {psCalAttempts}</dd>
           </div>
         </dl>
       </div>

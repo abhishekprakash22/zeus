@@ -3686,6 +3686,8 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         bool correcting;
         double maxTx;
         int calibrationAttempts;
+        int attemptedFits;
+        bool overDrive;
         lock (_psLock)
         {
             unsafe
@@ -3699,6 +3701,8 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             correcting = _psInfoBuf[14] != 0;
             calState = (byte)Math.Clamp(_psInfoBuf[15], 0, 255);
             calibrationAttempts = _psInfoBuf[5];
+            attemptedFits = _psInfoBuf[7];
+            overDrive = (_psInfoBuf[6] & 0b10) != 0;
             NativeMethods.GetPSMaxTX(id, out maxTx);
             _psMaxTxEnvelope = maxTx;
         }
@@ -3765,7 +3769,9 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             Correcting: correcting,
             CorrectionDb: depthDb,
             MaxTxEnvelope: (float)maxTx,
-            CalibrationAttempts: calibrationAttempts);
+            CalibrationAttempts: calibrationAttempts,
+            AttemptedFits: attemptedFits,
+            OverDriveRefusal: overDrive);
     }
 
     public void ResetPs()

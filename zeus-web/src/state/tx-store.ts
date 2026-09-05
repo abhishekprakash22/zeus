@@ -313,6 +313,12 @@ export type TxState = {
   // two-tone generator is off or the measurement isn't trustworthy.
   psImd3Dbc: number;
   psImd5Dbc: number;
+  // PS3 fit counters from the 0x18 frame: accepted (info[5]) / attempted
+  // (info[7]). attempts − fits = rejections.
+  psCalFits: number;
+  psCalAttempts: number;
+  // Server-latched PS3 over-drive refusal (StateDto.psOverDriveDetected).
+  psOverDriveDetected: boolean;
   // Hydrated from server state — true when calcc has been alive (PS armed +
   // keyed) for >5 s without producing a fit. Drives the HW-peak warning
   // banner in the PURESIGNAL panel. Server-side detection in
@@ -326,6 +332,8 @@ export type TxState = {
     maxTxEnvelope: number;
     imd3Dbc?: number;
     imd5Dbc?: number;
+    calFits?: number;
+    calAttempts?: number;
   }) => void;
 
   // ---- Two-tone test generator (TXA PostGen mode=1; protocol-agnostic).
@@ -490,6 +498,9 @@ export const useTxStore = create<TxState>()(
       psMaxTxEnvelope: 0,
       psImd3Dbc: NaN,
       psImd5Dbc: NaN,
+      psCalFits: 0,
+      psCalAttempts: 0,
+      psOverDriveDetected: false,
       psCalibrationStalled: false,
       setPsMeters: (m) => set({
         psFeedbackLevel: nonNegativeFinite(m.feedbackLevel),
@@ -499,6 +510,8 @@ export const useTxStore = create<TxState>()(
         psMaxTxEnvelope: nonNegativeFinite(m.maxTxEnvelope),
         psImd3Dbc: Number.isFinite(m.imd3Dbc) ? (m.imd3Dbc as number) : NaN,
         psImd5Dbc: Number.isFinite(m.imd5Dbc) ? (m.imd5Dbc as number) : NaN,
+        psCalFits: Number.isFinite(m.calFits ?? NaN) ? Math.max(0, (m.calFits as number) | 0) : 0,
+        psCalAttempts: Number.isFinite(m.calAttempts ?? NaN) ? Math.max(0, (m.calAttempts as number) | 0) : 0,
       }),
 
       // Two-tone — defaults match pihpsdr.
@@ -550,6 +563,7 @@ export const useTxStore = create<TxState>()(
           psTxFeedbackAttenuationDb: s.psTxFeedbackAttenuationDb,
           psTxFeedbackAttenuationDbMin: s.psTxFeedbackAttenuationDbMin,
           psCalibrationStalled: s.psCalibrationStalled ?? false,
+          psOverDriveDetected: s.psOverDriveDetected ?? false,
           txMonitorEnabled: s.txMonitorEnabled,
           twoToneFreq1: s.twoToneFreq1,
           twoToneFreq2: s.twoToneFreq2,

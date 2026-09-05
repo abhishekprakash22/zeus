@@ -177,6 +177,8 @@ public sealed class PsAutoAttenuateService : BackgroundService
     // suppresses repeat log lines once we've already warned for this stall.
     private long _stallStartTickMs;
     private bool _stallWarned;
+    private bool _overDriveLatched;
+    private int _overDriveFitBaseline;
     private static readonly TimeSpan StallThreshold = TimeSpan.FromSeconds(5);
 
     // Wedge watchdog — distinct from the cal==0 stall above. Here calcc fit
@@ -318,6 +320,11 @@ public sealed class PsAutoAttenuateService : BackgroundService
             _stallWarned = false;
             _radio.SetPsCalibrationStalled(false);
         }
+        if (_overDriveLatched)
+        {
+            _overDriveLatched = false;
+            _radio.SetPsOverDriveDetected(false);
+        }
     }
 
     // Diagnostic — emits one line whenever the gate outcome CHANGES. Without
@@ -455,6 +462,30 @@ public sealed class PsAutoAttenuateService : BackgroundService
         // operator that hw_peak is almost certainly miscalibrated. Surface
         // a flag on RadioService so the frontend can show a banner.
         var stallPsm = engine.GetPsStageMeters();
+
+        // PS3 over-drive refusal (info[6] bit 1) — the calibrator forced
+        // itself to LRESET because the top amplitude bucket held under 6%
+        // usable data. The raw bit self-clears on the next completed calc
+        // pass, so latch it here for the operator: set on sight, clear when a
+        // fit actually completes (CalibrationAttempts advances — the drive is
+        // usable again) or via ClearStallFlag on unkey/disarm. Distinct from
+        // the stall banner: this is calcc actively saying WHY.
+        if (stallPsm.OverDriveRefusal && !_overDriveLatched)
+        {
+            _overDriveLatched = true;
+            _overDriveFitBaseline = stallPsm.CalibrationAttempts;
+            _radio.SetPsOverDriveDetected(true);
+            _log.LogWarning(
+                "psAutoAttn.overDrive info6 bit1 set — PS3 refuses to calibrate: probable severe over-drive (top bucket <6% usable). Lower drive or raise feedback attenuation. fits={Fits} attempts={Att}",
+                stallPsm.CalibrationAttempts, stallPsm.AttemptedFits);
+        }
+        else if (_overDriveLatched && stallPsm.CalibrationAttempts > _overDriveFitBaseline)
+        {
+            _overDriveLatched = false;
+            _radio.SetPsOverDriveDetected(false);
+            _log.LogInformation("psAutoAttn.overDrive.cleared fits={Fits}", stallPsm.CalibrationAttempts);
+        }
+
         if (stallPsm.CalibrationAttempts == 0)
         {
             long now = Environment.TickCount64;

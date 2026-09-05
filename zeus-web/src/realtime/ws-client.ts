@@ -665,6 +665,9 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
       // 23-byte frames carry the live two-tone IMD readout; a 15-byte
       // (pre-IMD) server leaves both NaN and the UI shows '—'.
       const hasImd = ev.data.byteLength >= PS_METERS_BYTES + 8;
+      // 31-byte frames append the PS3 fit counters (accepted / attempted);
+      // an older server leaves both 0 and the UI shows nothing new.
+      const hasCounters = ev.data.byteLength >= PS_METERS_BYTES + 16;
       useTxStore.getState().setPsMeters({
         feedbackLevel: dv.getFloat32(1, true),
         correctionDb: dv.getFloat32(5, true),
@@ -673,6 +676,8 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
         maxTxEnvelope: dv.getFloat32(11, true),
         imd3Dbc: hasImd ? dv.getFloat32(15, true) : NaN,
         imd5Dbc: hasImd ? dv.getFloat32(19, true) : NaN,
+        calFits: hasCounters ? dv.getInt32(23, true) : 0,
+        calAttempts: hasCounters ? dv.getInt32(27, true) : 0,
       });
       return;
     }

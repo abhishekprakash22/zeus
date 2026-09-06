@@ -205,7 +205,7 @@ export function UpdatesPanel() {
             {status.releaseUrl && (
               <Row label="Release">
                 <a href={status.releaseUrl} target="_blank" rel="noreferrer" style={linkStyle}>
-                  {status.releaseName ?? 'openhpsdrzeus.com'}
+                  {status.releaseName ?? 'ANAN Core downloads'}
                 </a>
               </Row>
             )}
@@ -306,7 +306,7 @@ export function UpdatesPanel() {
 
           <div style={hintStyle}>
             Update now opens the latest installer or package for this platform. Run the downloaded
-            update and restart Zeus to apply it.
+            update and restart ANAN Core to apply it.
           </div>
         </div>
       )}

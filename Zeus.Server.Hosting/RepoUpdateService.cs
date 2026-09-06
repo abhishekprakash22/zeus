@@ -213,7 +213,7 @@ public sealed partial class RepoUpdateService
                 ForceUpdate = forceUpdate,
                 ForceReason = forceReason,
                 ReleaseTag = NullIfEmpty(manifest.Source?.Commit ?? string.Empty),
-                ReleaseName = $"Zeus {latestVersion}",
+                ReleaseName = $"ANAN Core {latestVersion}",
                 ReleaseUrl = DownloadsPageUrl,
                 ReleasePublishedUtc = manifest.PublishedAt,
                 ReleaseAssetName = asset?.Filename,

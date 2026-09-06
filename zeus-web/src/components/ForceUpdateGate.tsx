@@ -20,9 +20,9 @@ function updateUrl(status: RepoUpdateStatus): string | null {
 
 function reasonText(status: RepoUpdateStatus): string {
   if (status.forceReason === 'downgrade') {
-    return 'A newer Zeus version was previously installed on this machine. Install the current release before continuing.';
+    return 'A newer ANAN Core version was previously installed on this machine. Install the current release before continuing.';
   }
-  return 'This Zeus build is below the minimum supported version for the current release channel.';
+  return 'This ANAN Core build is below the minimum supported version for the current release channel.';
 }
 
 export function ForceUpdateGate({ status }: { status: RepoUpdateStatus }) {
@@ -71,7 +71,7 @@ export function ForceUpdateGate({ status }: { status: RepoUpdateStatus }) {
             id="force-update-title"
             style={{ margin: 0, fontSize: 24, lineHeight: 1.1, color: 'var(--fg-0)' }}
           >
-            Install Zeus {required}
+            Install ANAN Core {required}
           </h1>
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--fg-2)' }}>
             {reasonText(status)}

@@ -436,7 +436,10 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
               <span style={popLabel}>MODE</span>
               <select
                 value={String(receiverMode ?? '').toUpperCase()}
-                style={{ flex: 1, minWidth: 0 }}
+                // The OS-native dropdown popup ignores the app theme unless
+                // the select AND its options carry explicit colors — without
+                // them, Linux Chromium renders white-on-white (field photo).
+                style={{ flex: 1, minWidth: 0, background: '#0d1526', color: '#cfe6ff' }}
                 onChange={(e) => {
                   const mode = e.currentTarget.value as import('../../api/client').RxMode; // options below are the RxMode union verbatim
                   void setReceiver(rxIndex, { mode }).then(applyState).catch((err) =>
@@ -444,7 +447,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 }}
               >
                 {['LSB', 'USB', 'CWL', 'CWU', 'AM', 'SAM', 'FM', 'DIGL', 'DIGU'].map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m} style={{ background: '#0d1526', color: '#cfe6ff' }}>{m}</option>
                 ))}
               </select>
             </label>

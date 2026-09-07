@@ -21,7 +21,7 @@
 //
 // The split is a persisted-in-session drag divider (default 55/45).
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Panadapter } from '../Panadapter';
@@ -212,6 +212,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const applyState = useConnectionStore((s) => s.applyState);
   const muted = useConnectionStore((s) => s.receivers[rxIndex]?.muted ?? false);
   const afGainDb = useConnectionStore((s) => s.receivers[rxIndex]?.afGainDb ?? 0);
+  const receiverMode = useConnectionStore((s) => s.receivers[rxIndex]?.mode ?? s.mode);
   // Per-receiver AGC-T: this pane's own baseline / Auto state (RX1 reads the
   // flat fields, RX2 its Receivers entry) — no longer the shared slider.
   const agcTopDb = useConnectionStore((s) => getReceiverAgcTopDb(s, receiver));
@@ -227,6 +228,28 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
   const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // Dead-zone dismiss (field request): while the popover is open, a click
+  // anywhere that is NOT an interactive control — the VFO box's dead space,
+  // the popover's own padding, the rest of the screen — closes it. Clicks
+  // that land on buttons/sliders/inputs (including the CTRL toggle and the
+  // popover's own controls) behave normally. Escape closes too.
+  useEffect(() => {
+    if (!popoverOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest('button, input, select, textarea, a, label, [role="button"]')) return;
+      setPopoverOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPopoverOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [popoverOpen]);
   const cycleStep = () => {
     const steps = [10, 100, 500, 1000, 5000, 10000];
     const i = steps.indexOf(stepHz);
@@ -410,6 +433,22 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
         {popoverOpen ? (
           <div style={popover}>
             <label style={popRow}>
+              <span style={popLabel}>MODE</span>
+              <select
+                value={String(receiverMode ?? '').toUpperCase()}
+                style={{ flex: 1, minWidth: 0 }}
+                onChange={(e) => {
+                  const mode = e.currentTarget.value as import('../../api/client').RxMode; // options below are the RxMode union verbatim
+                  void setReceiver(rxIndex, { mode }).then(applyState).catch((err) =>
+                    console.warn('mode set failed', err));
+                }}
+              >
+                {['LSB', 'USB', 'CWL', 'CWU', 'AM', 'SAM', 'FM', 'DIGL', 'DIGU'].map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+            <label style={popRow}>
               <span style={popLabel}>AF</span>
               <input
                 type="range"
@@ -446,7 +485,15 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
               type="button"
               style={{ ...popBtn, background: autoAgcEnabled ? 'var(--accent, #4aa3df)' : undefined }}
               onClick={() =>
-                void setReceiver(rxIndex, { autoAgcEnabled: !autoAgcEnabled }).then(applyState).catch(() => {})
+                void setReceiver(rxIndex, { autoAgcEnabled: !autoAgcEnabled })
+                  .then((snap) => {
+                    // Field debugging aid: the server's answer, in the console —
+                    // if this logs true and the button stays dark, the revert is
+                    // client-side; if the POST fails, the warn below names it.
+                    console.info('auto-agc ->', (snap as { autoAgcEnabled?: boolean })?.autoAgcEnabled);
+                    applyState(snap);
+                  })
+                  .catch((err) => console.warn('auto-agc toggle FAILED', err))
               }
             >
               {autoAgcEnabled ? 'AUTO AGC ON' : 'AUTO AGC'}

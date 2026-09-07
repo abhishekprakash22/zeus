@@ -6235,6 +6235,13 @@ export function setReceiver(
         filterHighHz: req.filterHighHz,
         afGainDb: req.afGainDb,
         filterPresetName: req.filterPresetName,
+        // These two were declared in the type above and documented as
+        // routing — but never made it into this pick list, so every AGC
+        // write through setReceiver silently sent nothing: the popover's
+        // AUTO AGC button and AGC-T slider (and RX2 AGC-T) were dead on
+        // the wire while a direct curl worked. They ride now.
+        agcTopDb: req.agcTopDb,
+        autoAgcEnabled: req.autoAgcEnabled,
       }),
       signal,
     },

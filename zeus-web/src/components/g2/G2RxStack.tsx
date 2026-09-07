@@ -21,6 +21,8 @@
 //
 // The split is a persisted-in-session drag divider (default 55/45).
 
+import { useTxStore } from '../../state/tx-store';
+import { setDrive, setMicGain } from '../../api/client';
 import { useCallback, useRef, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
@@ -218,6 +220,8 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const agcTopDb = useConnectionStore((s) => getReceiverAgcTopDb(s, receiver));
   const agcOffsetDb = useConnectionStore((s) => getReceiverAgcOffsetDb(s, receiver));
   const autoAgcEnabled = useConnectionStore((s) => getReceiverAutoAgcEnabled(s, receiver));
+  const micGainDb = useTxStore((s) => s.micGainDb);
+  const drivePercent = useTxStore((s) => s.drivePercent);
   const splitEnabled = useConnectionStore((s) => s.splitEnabled);
   // Shared DSP status for the flag chips. The engine fans ONE NrConfig to
   // BOTH RX channels (DspPipelineService applies it to channel and
@@ -484,23 +488,40 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
               />
               <span style={popVal}>{Math.round(agcTopDb + agcOffsetDb)}</span>
             </label>
-            <button
-              type="button"
-              style={{ ...popBtn, background: autoAgcEnabled ? 'var(--accent, #4aa3df)' : undefined }}
-              onClick={() =>
-                void setReceiver(rxIndex, { autoAgcEnabled: !autoAgcEnabled })
-                  .then((snap) => {
-                    // Field debugging aid: the server's answer, in the console —
-                    // if this logs true and the button stays dark, the revert is
-                    // client-side; if the POST fails, the warn below names it.
-                    console.info('auto-agc ->', (snap as { autoAgcEnabled?: boolean })?.autoAgcEnabled);
-                    applyState(snap);
-                  })
-                  .catch((err) => console.warn('auto-agc toggle FAILED', err))
-              }
-            >
-              {autoAgcEnabled ? 'AUTO AGC ON' : 'AUTO AGC'}
-            </button>
+            <label style={popRow}>
+              <span style={popLabel}>MIC</span>
+              <input
+                type="range"
+                min={-40}
+                max={10}
+                step={1}
+                value={micGainDb}
+                style={{ flex: 1, minWidth: 0, width: '100%' }}
+                onChange={(e) => {
+                  const db = Number(e.target.value);
+                  useTxStore.getState().setMicGainDb(db);
+                  void setMicGain(db).catch((err) => console.warn('mic gain set failed', err));
+                }}
+              />
+              <span style={popVal}>{micGainDb} dB</span>
+            </label>
+            <label style={popRow}>
+              <span style={popLabel}>DRV</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={drivePercent}
+                style={{ flex: 1, minWidth: 0, width: '100%' }}
+                onChange={(e) => {
+                  const p = Number(e.target.value);
+                  useTxStore.getState().setDrivePercent(p);
+                  void setDrive(p).catch((err) => console.warn('drive set failed', err));
+                }}
+              />
+              <span style={popVal}>{drivePercent}%</span>
+            </label>
             <button
               type="button"
               style={{ ...popBtn, background: muted ? 'var(--accent, #4aa3df)' : undefined }}

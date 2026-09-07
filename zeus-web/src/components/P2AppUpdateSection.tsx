@@ -78,7 +78,14 @@ export function P2AppUpdateSection() {
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
         <span style={{ ...labelStyle, minWidth: 92 }}>STATUS</span>
         <span style={valueStyle}>
-          {sup.mode}
+          {({
+            Supervised: 'Running — started and kept alive by ANAN Core',
+            Adopted: 'Running — found already running; ANAN Core is watching it',
+            Backoff: 'Stopped unexpectedly — restarting shortly',
+            Paused: 'Paused (update or native session in progress)',
+            Probing: 'Checking…',
+            NoBinary: 'No p2app binary found',
+          } as Record<string, string>)[sup.mode] ?? sup.mode}
           {sup.pid != null ? ` · pid ${sup.pid}` : ''}
         </span>
       </div>
@@ -105,7 +112,9 @@ export function P2AppUpdateSection() {
           {active ? `${upd?.phase.toUpperCase()}...` : 'UPDATE P2APP'}
         </button>
         {upd?.phase === 'done' && !active && (
-          <span style={{ fontSize: 11, color: 'var(--ok, #6c6)' }}>updated ✓</span>
+          <span style={{ fontSize: 11, color: 'var(--ok, #6c6)' }} title={upd?.head ?? undefined}>
+            {upd?.log?.some((l) => l.startsWith('already up to date')) ? 'already up to date ✓' : 'updated ✓'}
+          </span>
         )}
         {(error || upd?.error) && (
           <span style={{ fontSize: 11, color: 'var(--tx)' }}>{error ?? upd?.error}</span>

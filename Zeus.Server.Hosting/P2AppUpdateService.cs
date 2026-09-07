@@ -68,6 +68,34 @@ public sealed class P2AppUpdateService
     {
         try
         {
+            // FRESHNESS GATE (field report: two presses in a minute, no
+            // upstream commits, and the radio's data plane still bounced —
+            // pid churned for an identical binary). git fetch is read-only,
+            // so the check runs with p2app UNTOUCHED; only actual new
+            // commits (or a missing repo/binary) pay the pause+rebuild.
+            var repoPre = ResolveRepoDir();
+            var binPre = Path.Combine(repoPre, "sw_projects", "P2_app", "p2app");
+            if (Directory.Exists(Path.Combine(repoPre, ".git")) && File.Exists(binPre))
+            {
+                SetPhase("checking");
+                Append("checking for updates (p2app keeps running)");
+                if (await RunStepAsync("git", "fetch --quiet", repoPre, 120))
+                {
+                    var local = (await CaptureAsync("git", "rev-parse HEAD", repoPre))?.Trim();
+                    var remote = (await CaptureAsync("git", "rev-parse @{u}", repoPre))?.Trim();
+                    if (!string.IsNullOrEmpty(local) && local == remote)
+                    {
+                        var head0 = await CaptureAsync("git", "log -1 --format=%h %cd --date=short", repoPre);
+                        lock (_lock) _headline = head0?.Trim();
+                        SetPhase("done");
+                        Append($"already up to date — {head0?.Trim() ?? local[..7]} · p2app untouched");
+                        return;
+                    }
+                    Append("new commits upstream — updating");
+                }
+                // fetch failed: fall through; the pull below surfaces the error
+            }
+
             // Same measured interlock as a native session: stop OUR child,
             // refuse if someone else owns the port.
             var (ok, error) = await _sup.PauseForNativeSessionAsync();

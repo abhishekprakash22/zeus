@@ -388,6 +388,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           <span style={flagMode}>{mode ?? ''}</span>
           <span style={flagChip}>{formatWidth(widthHz)}</span>
           <span
+            role="button"
             style={{ ...flagChip, cursor: 'pointer', borderColor: 'var(--accent, #4aa3df)', color: 'var(--accent, #4aa3df)' }}
             onClick={() => setPopoverOpen((o) => !o)}
             title="AF · AGC-T · mute for this receiver"
@@ -479,14 +480,17 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 max={90}
                 step={1}
                 value={agcTopDb}
-                disabled={autoAgcEnabled}
+                // Never disabled: a manual drag IS the disarm (#733 — the server
+                // clears auto on any manual AGC-T set). Locking the slider
+                // while auto was armed left no way out once the AUTO button
+                // was removed (field report: 'stuck in auto').
                 style={{ flex: 1, minWidth: 0, width: '100%' }}
                 onChange={(e) => {
                   const db = Number(e.target.value);
                   void setReceiver(rxIndex, { agcTopDb: db }).then(applyState).catch(() => {});
                 }}
               />
-              <span style={popVal}>{Math.round(agcTopDb + agcOffsetDb)}</span>
+              <span style={popVal}>{Math.round(agcTopDb + agcOffsetDb)}{autoAgcEnabled ? ' · auto' : ''}</span>
             </label>
             <label style={popRow}>
               <span style={popLabel}>MIC</span>

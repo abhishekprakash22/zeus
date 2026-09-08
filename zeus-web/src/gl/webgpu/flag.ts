@@ -83,15 +83,19 @@ export function setWebGpuWaterfallEnabled(enabled: boolean): void {
   writeStored(enabled);
 }
 
-/** Whether the WebGPU 3D panadapter is the active pan surface. Default ON, with
- *  `?webgpuPanadapter=0` as the sticky emergency fallback to the WebGL2 trace. */
+/** Whether the WebGPU 3D panadapter is the active pan surface. Default OFF —
+ *  opt-in via the G2 pane's 3D pill or `?webgpuPanadapter=1`. Field lesson
+ *  (CM5 kiosk): default-ON gambled every boot on WebGPU actually working, and
+ *  when the flags made Chromium OFFER WebGPU that V3D couldn't finish, the
+ *  panes went blank — and the sticky '0' escape died with the kiosk's
+ *  throwaway profile. Displays must never gamble at boot. */
 export function isWebGpuPanadapterEnabled(): boolean {
   const override = readUrlOverride(PAN_URL_PARAM);
   if (override !== null) {
     writeStored(override, PAN_STORAGE_KEY);
     return override;
   }
-  return readStored(PAN_STORAGE_KEY) !== '0';
+  return readStored(PAN_STORAGE_KEY) === '1';
 }
 
 export function setWebGpuPanadapterEnabled(enabled: boolean): void {

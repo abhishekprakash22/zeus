@@ -282,7 +282,17 @@ export function Panadapter3D({
       onUnavailableRef.current?.();
     };
 
+    // Watchdog (field: CM5 kiosk went blank): if WebGPU is offered but the
+    // probe/device path wedges — adapter granted, device never delivers —
+    // nothing below ever runs and no fallback fires. Four seconds without a
+    // verdict is a verdict.
+    const watchdog = setTimeout(() => {
+      if (!disposed) fail('WebGPU init timed out (4 s) — falling back to 2D');
+    }, 4000);
+    const clearWatchdog = () => clearTimeout(watchdog);
+
     void probeWebGpu().then((probe) => {
+      clearWatchdog();
       if (disposed) return;
       if (!probe.supported || !probe.device) {
         fail(probe.reason);

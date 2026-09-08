@@ -12,8 +12,12 @@ import { Panadapter3D } from './Panadapter3D';
 type PanadapterProps = NonNullable<ComponentProps<typeof Panadapter>>;
 
 export function PanadapterSurface(props: PanadapterProps) {
-  const [pan3dUnavailable, setPan3dUnavailable] = useState(false);
+  const [pan3dUnavailable, setPan3dUnavailableLocal] = useState(false);
   const panadapter3dEnabled = usePanadapterRenderStore((s) => s.panadapter3dEnabled);
+  const setPan3dUnavailable = (v: boolean) => {
+    setPan3dUnavailableLocal(v);
+    usePanadapterRenderStore.getState().setPan3dUnavailable(v);
+  };
   const usePan3d = panadapter3dEnabled && !pan3dUnavailable;
 
   useEffect(() => {

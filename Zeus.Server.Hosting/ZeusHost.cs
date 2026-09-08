@@ -1441,14 +1441,16 @@ public static class ZeusHost
         // port — an adopted p2app is never killed); Start resumes supervision.
         app.MapPost("/api/p2app/stop", async (P2AppSupervisor sup) =>
         {
+            sup.SetDevHold();   // survives the native-session auto-resume hook
             var (ok, error) = await sup.PauseForNativeSessionAsync();
+            if (!ok) sup.ResumeFromOperator();   // failed stop: release the hold
             return ok
                 ? Results.Ok(new { stopped = true })
                 : Results.BadRequest(new { error = error ?? "p2app could not be stopped" });
         });
         app.MapPost("/api/p2app/start", (P2AppSupervisor sup) =>
         {
-            sup.Resume();
+            sup.ResumeFromOperator();
             return Results.Ok(new { started = true });
         });
         app.MapPost("/api/p2app/update", (P2AppUpdateService upd) =>

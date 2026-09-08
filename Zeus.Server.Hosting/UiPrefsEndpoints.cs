@@ -33,6 +33,12 @@ public static class UiPrefsEndpoints
         return Path.Combine(dir, PsPreferredMarker);
     }
 
+    private static string KeyDecksPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-key-decks.json");
+    }
+
     private static string SpecFracPath()
     {
         var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
@@ -46,6 +52,30 @@ public static class UiPrefsEndpoints
         // deliberately throwaway — see linux-zeus-preflight.sh). Same
         // durable-directory pattern as the marker files above; the payload
         // is a tiny {"0":0.44,"1":0.5} map, clamped on write.
+        // G8NJJ follow-up: user-defined drawer key sets. Payload is
+        // {"deck1":["Tun","Mon","Ps","Ctun"],"deck2":[...]} — names validated
+        // client-side against its registry; the server just keeps the choice
+        // durable across the kiosk's throwaway browser profile.
+        app.MapGet("/api/ui/key-decks", () =>
+        {
+            try
+            {
+                var path = KeyDecksPath();
+                if (!File.Exists(path)) return Results.Ok(new Dictionary<string, string[]>());
+                var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string[]>>(
+                    File.ReadAllText(path));
+                return Results.Ok(map ?? new Dictionary<string, string[]>());
+            }
+            catch { return Results.Ok(new Dictionary<string, string[]>()); }
+        });
+        app.MapPost("/api/ui/key-decks", (Dictionary<string, string[]> req) =>
+        {
+            var path = KeyDecksPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(req));
+            return Results.Ok(req);
+        });
+
         app.MapGet("/api/ui/spec-frac", () =>
         {
             try

@@ -222,6 +222,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const agcOffsetDb = useConnectionStore((s) => getReceiverAgcOffsetDb(s, receiver));
   const autoAgcEnabled = useConnectionStore((s) => getReceiverAutoAgcEnabled(s, receiver));
   const pan3d = usePanadapterRenderStore((s) => s.panadapter3dEnabled);
+  const pan3dUnavailable = usePanadapterRenderStore((s) => s.pan3dUnavailable);
   const micGainDb = useTxStore((s) => s.micGainDb);
   const drivePercent = useTxStore((s) => s.drivePercent);
   const splitEnabled = useConnectionStore((s) => s.splitEnabled);
@@ -393,9 +394,11 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           style={{ ...speedPill, ...(pan3d ? { borderColor: 'var(--accent, #4aa3df)', color: 'var(--accent, #4aa3df)' } : null) }}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => usePanadapterRenderStore.getState().setPanadapter3dEnabled(!pan3d)}
-          title="3D panadapter (WebGPU) — falls back to 2D where unsupported"
+          title={pan3dUnavailable
+            ? 'WebGPU is unavailable in this browser — the kiosk launcher passes the Vulkan/WebGPU flags from this release on; a preflight update + reboot enables it'
+            : '3D panadapter (WebGPU) — falls back to 2D where unsupported'}
         >
-          3D
+          {pan3d && pan3dUnavailable ? '3D✕' : '3D'}
         </button>
       </div>
       <div

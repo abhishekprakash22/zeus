@@ -34,6 +34,12 @@ public sealed class P2AppSupervisor : BackgroundService
 
     private Process? _child;
     private volatile bool _paused;
+    // Operator's explicit STOP (the developer control). Distinct from the
+    // native-session pause: the XDMA OnSessionClosed hook auto-resumes after
+    // native sessions (field bug: it resurrected a dev-stopped p2app within
+    // moments, so STOP appeared to do nothing). Resume() honors the hold;
+    // only ResumeFromOperator() clears it.
+    private volatile bool _devHold;
     private Mode _mode = Mode.Probing;
     private string? _binaryPath;
     private int _restarts;
@@ -153,8 +159,17 @@ public sealed class P2AppSupervisor : BackgroundService
     public string? ResolveBinaryPath() => FindBinary();
 
     /// <summary>Native session closed (cleanly or by failure) — respawn soon.</summary>
+    public void SetDevHold() => _devHold = true;
+
+    public void ResumeFromOperator()
+    {
+        _devHold = false;
+        Resume();
+    }
+
     public void Resume()
     {
+        if (_devHold) return;   // an operator STOP outranks auto-resume hooks
         _paused = false;
         lock (_lock) { _nextSpawnAtMs = 0; if (_mode == Mode.Paused) _mode = Mode.Probing; }
     }

@@ -167,6 +167,46 @@ export function G2Drawer() {
   const theme = useG2ThemeStore((s) => s.theme);
   const setTheme = useG2ThemeStore((s) => s.setTheme);
   const [keyDeck, setKeyDeck] = useState(0);
+  const [editKeys, setEditKeys] = useState(false);
+  // User-defined key sets (G8NJJ follow-up). MOX is fixed in slot 0 of both
+  // decks; the four remaining slots per deck are the operator's. Stored on
+  // the radio (/api/ui/key-decks) — the kiosk's browser profile is throwaway.
+  const [decks, setDecks] = useState<{ deck1: string[]; deck2: string[] }>({
+    deck1: ['tun', 'mon', 'ps', 'ctun'],
+    deck2: ['split', 'rit', 'div', 'rec'],
+  });
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/ui/key-decks')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((map: Record<string, string[]> | null) => {
+        if (cancelled || !map) return;
+        setDecks((d) => ({
+          deck1: Array.isArray(map.deck1) && map.deck1.length === 4 ? (map.deck1 as string[]) : d.deck1,
+          deck2: Array.isArray(map.deck2) && map.deck2.length === 4 ? (map.deck2 as string[]) : d.deck2,
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const deckKey = keyDeck === 0 ? 'deck1' : 'deck2';
+  const deckNames = keyDeck === 0 ? decks.deck1 : decks.deck2;
+  const setDeckSlot = (slot: number, name: string) => {
+    setDecks((d) => {
+      const next = {
+        ...d,
+        [deckKey]: (deckKey === 'deck1' ? d.deck1 : d.deck2).map((n, i) => (i === slot ? name : n)),
+      };
+      void fetch('/api/ui/key-decks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(next),
+      }).catch(() => {});
+      return next;
+    });
+  };
   const [sheet, setSheet] = useState<SheetId>(null);
   // Sheets dismiss themselves after a selection (touch economy) unless pinned.
   const [pinned, setPinned] = useState(false);
@@ -526,48 +566,38 @@ export function G2Drawer() {
           type="button"
           style={nextKeyStyle}
           onClick={() => setKeyDeck((d) => (d + 1) % 2)}
-          title="Next key set (G8NJJ review: Thetis-style button sets; user-configurable sets are the follow-up)"
+          title="Next key set (G8NJJ: Thetis-style sets; tap ✎ to choose the keys)"
         >
           NEXT
           <span style={{ display: 'block', fontSize: 8, opacity: 0.7 }}>{keyDeck === 0 ? '1/2' : '2/2'}</span>
         </button>
-        {keyDeck === 0 ? (
-          <>
+        <button
+          type="button"
+          style={{ ...nextKeyStyle, flex: '0 0 30px', minWidth: 30, ...(editKeys ? { borderColor: 'var(--accent, #4aa3df)', color: 'var(--accent, #4aa3df)' } : null) }}
+          onClick={() => setEditKeys((e) => !e)}
+          title="Edit this key set — pick which keys live in each slot (MOX is fixed)"
+        >
+          ✎
+        </button>
         <div className="g2-key" style={key}>
           <MoxButton />
         </div>
-        <div className="g2-key" style={key}>
-          <TunButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <TxMonitorButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <PsToggleButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <CtunButton />
-        </div>
-          </>
-        ) : (
-          <>
-        <div className="g2-key" style={key}>
-          <MoxButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <SplitButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <RitButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <DiversityToggleButton />
-        </div>
-        <div className="g2-key" style={key}>
-          <CtunButton />
-        </div>
-          </>
-        )}
+        {deckNames.map((name, i) => (
+          <div className="g2-key" style={{ ...key, position: 'relative' }} key={`${keyDeck}-${i}`}>
+            {KEY_REGISTRY[name] ?? <span />}
+            {editKeys ? (
+              <select
+                value={name}
+                style={keyEditSelect}
+                onChange={(e) => setDeckSlot(i, e.currentTarget.value)}
+              >
+                {Object.keys(KEY_REGISTRY).map((k) => (
+                  <option key={k} value={k} style={{ background: '#0d1526', color: '#cfe6ff' }}>{k.toUpperCase()}</option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+        ))}
         <span style={rowDivider} aria-hidden />
         <div className="g2-key" style={key}>
           <RecorderButton />
@@ -711,6 +741,31 @@ const rowDivider: CSSProperties = {
   margin: '6px 2px',
   background: '#2a3341',
   flex: '0 0 1px',
+};
+
+// Every key the operator can place in a slot. All existing components —
+// adding one here is the whole job of making it assignable.
+const KEY_REGISTRY: Record<string, ReactNode> = {
+  tun: <TunButton />,
+  mon: <TxMonitorButton />,
+  ps: <PsToggleButton />,
+  ctun: <CtunButton />,
+  rec: <RecorderButton />,
+  split: <SplitButton />,
+  rit: <RitButton />,
+  div: <DiversityToggleButton />,
+};
+
+const keyEditSelect: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  opacity: 0.92,
+  background: '#0d1526',
+  color: '#cfe6ff',
+  border: '1px solid var(--accent, #4aa3df)',
+  borderRadius: 8,
+  fontSize: 11,
+  textAlign: 'center',
 };
 
 const nextKeyStyle: CSSProperties = {

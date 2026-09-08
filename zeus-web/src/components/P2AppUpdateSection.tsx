@@ -26,6 +26,7 @@ export function P2AppUpdateSection() {
   const [sup, setSup] = useState<P2AppStatusDto | null>(null);
   const [upd, setUpd] = useState<P2AppUpdateStatusDto | null>(null);
   const [starting, setStarting] = useState(false);
+  const [ctrlError, setCtrlError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
@@ -94,11 +95,14 @@ export function P2AppUpdateSection() {
             title="Developer control: stop the supervised p2app (an adopted external p2app is never killed) or resume supervision."
             onClick={() => {
               const stopping = sup.mode !== 'Paused';
+              setCtrlError(null);
               void fetch(stopping ? '/api/p2app/stop' : '/api/p2app/start', { method: 'POST' })
                 .then((r) => (r.ok ? null : r.json().then((b: { error?: string }) => {
-                  console.warn('p2app control:', b?.error ?? r.status);
+                  // Field lesson: a swallowed refusal reads as a dead button.
+                  // The reason goes on screen, not in a console nobody has open.
+                  setCtrlError(b?.error ?? `p2app control failed (${r.status})`);
                 })))
-                .catch((e) => console.warn('p2app control failed', e))
+                .catch((e) => setCtrlError(String(e)))
                 .finally(() => {
                   // Field bug: the section only polls while an UPDATE run is
                   // active, so the button changed the server and then showed
@@ -112,6 +116,11 @@ export function P2AppUpdateSection() {
           >
             {sup.mode !== 'Paused' ? 'STOP' : 'START'}
           </button>
+          {ctrlError ? (
+            <div style={{ fontSize: 10, color: 'var(--warn, #e0a050)', marginTop: 3 }}>
+              {ctrlError}
+            </div>
+          ) : null}
         </span>
       </div>
       {sup.binaryPath && (

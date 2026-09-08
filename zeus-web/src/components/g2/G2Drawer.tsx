@@ -166,6 +166,7 @@ export function G2Drawer() {
   // desktop/iPad shell at all).
   const theme = useG2ThemeStore((s) => s.theme);
   const setTheme = useG2ThemeStore((s) => s.setTheme);
+  const [keyDeck, setKeyDeck] = useState(0);
   const [sheet, setSheet] = useState<SheetId>(null);
   // Sheets dismiss themselves after a selection (touch economy) unless pinned.
   const [pinned, setPinned] = useState(false);
@@ -521,6 +522,17 @@ export function G2Drawer() {
           <SheetTab label="TX" active={sheet === 'tx'} onTap={() => toggleSheet('tx')} />
         </div>
         <div style={lowerRow}>
+        <button
+          type="button"
+          style={nextKeyStyle}
+          onClick={() => setKeyDeck((d) => (d + 1) % 2)}
+          title="Next key set (G8NJJ review: Thetis-style button sets; user-configurable sets are the follow-up)"
+        >
+          NEXT
+          <span style={{ display: 'block', fontSize: 8, opacity: 0.7 }}>{keyDeck === 0 ? '1/2' : '2/2'}</span>
+        </button>
+        {keyDeck === 0 ? (
+          <>
         <div className="g2-key" style={key}>
           <MoxButton />
         </div>
@@ -536,6 +548,26 @@ export function G2Drawer() {
         <div className="g2-key" style={key}>
           <CtunButton />
         </div>
+          </>
+        ) : (
+          <>
+        <div className="g2-key" style={key}>
+          <MoxButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <SplitButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <RitButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <DiversityToggleButton />
+        </div>
+        <div className="g2-key" style={key}>
+          <CtunButton />
+        </div>
+          </>
+        )}
         <span style={rowDivider} aria-hidden />
         <div className="g2-key" style={key}>
           <RecorderButton />
@@ -679,6 +711,19 @@ const rowDivider: CSSProperties = {
   margin: '6px 2px',
   background: '#2a3341',
   flex: '0 0 1px',
+};
+
+const nextKeyStyle: CSSProperties = {
+  flex: '0 0 52px',
+  minWidth: 52,
+  border: '1px solid #2a3a52',
+  borderRadius: 8,
+  background: 'rgba(13,21,38,0.85)',
+  color: '#9fc3e8',
+  fontSize: 10,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  cursor: 'pointer',
 };
 
 const key: CSSProperties = {

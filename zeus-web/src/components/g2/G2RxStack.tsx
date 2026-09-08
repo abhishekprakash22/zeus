@@ -21,12 +21,13 @@
 //
 // The split is a persisted-in-session drag divider (default 55/45).
 
+import { usePanadapterRenderStore } from '../../state/panadapter-render-store';
 import { useTxStore } from '../../state/tx-store';
 import { setDrive, setMicGain } from '../../api/client';
 import { useCallback, useRef, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { Panadapter } from '../Panadapter';
+import { PanadapterSurface } from '../PanadapterSurface';
 import { Waterfall } from '../Waterfall';
 import { VfoDisplay } from '../VfoDisplay';
 import { G2ValueHud } from './G2ValueHud';
@@ -220,6 +221,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const agcTopDb = useConnectionStore((s) => getReceiverAgcTopDb(s, receiver));
   const agcOffsetDb = useConnectionStore((s) => getReceiverAgcOffsetDb(s, receiver));
   const autoAgcEnabled = useConnectionStore((s) => getReceiverAutoAgcEnabled(s, receiver));
+  const pan3d = usePanadapterRenderStore((s) => s.panadapter3dEnabled);
   const micGainDb = useTxStore((s) => s.micGainDb);
   const drivePercent = useTxStore((s) => s.drivePercent);
   const splitEnabled = useConnectionStore((s) => s.splitEnabled);
@@ -369,7 +371,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       onPointerDownCapture={onCapturePointerDown}
     >
       <div style={{ ...paneSpectrum, flex: `0 0 calc(${(specFrac * 100).toFixed(1)}% - ${RATIO_H / 2}px)` }}>
-        <Panadapter receiver={receiver} multiRx={false} />
+        <PanadapterSurface receiver={receiver} multiRx={false} />
       </div>
       {/* Encoder HUD: only the ACTIVE pane answers the knobs. */}
       <G2ValueHud rxIndex={rxIndex} sharedControls={active} />
@@ -385,6 +387,15 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           title="waterfall speed for this receiver (tap to cycle)"
         >
           SPD ×{speedFactor === 0.5 ? '½' : speedFactor}
+        </button>
+        <button
+          type="button"
+          style={{ ...speedPill, ...(pan3d ? { borderColor: 'var(--accent, #4aa3df)', color: 'var(--accent, #4aa3df)' } : null) }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => usePanadapterRenderStore.getState().setPanadapter3dEnabled(!pan3d)}
+          title="3D panadapter (WebGPU) — falls back to 2D where unsupported"
+        >
+          3D
         </button>
       </div>
       <div

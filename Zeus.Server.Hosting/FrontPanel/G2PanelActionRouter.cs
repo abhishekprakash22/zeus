@@ -221,6 +221,8 @@ public sealed class G2PanelActionRouter
             ("Diversity Gain",  EncoderAction.DivGain),
             ("Diversity Phase", EncoderAction.DivPhase),
         };
+        _radio.SetMultiEncoderFunction(_multi[_multiIndex].Name);
+
     }
 
     /// <summary>Rebuild the override caches from the mapping store. Called at
@@ -833,6 +835,7 @@ public sealed class G2PanelActionRouter
     {
         _multiIndex = (_multiIndex + 1) % _multi.Length;
         _log.LogInformation("g2panel.multi.select {Name}", _multi[_multiIndex].Name);
+        _radio.SetMultiEncoderFunction(_multi[_multiIndex].Name);
     }
 
     private void ApplyMulti(int ticks) => QueueEncoder(_multi[_multiIndex].Target, ticks);

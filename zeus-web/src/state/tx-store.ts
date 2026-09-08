@@ -319,6 +319,8 @@ export type TxState = {
   psCalAttempts: number;
   // Server-latched PS3 over-drive refusal (StateDto.psOverDriveDetected).
   psOverDriveDetected: boolean;
+  // Front panel MULTI-encoder assignment (StateDto.multiEncoderFunction).
+  multiEncoderFunction: string | null;
   // Hydrated from server state — true when calcc has been alive (PS armed +
   // keyed) for >5 s without producing a fit. Drives the HW-peak warning
   // banner in the PURESIGNAL panel. Server-side detection in
@@ -501,6 +503,7 @@ export const useTxStore = create<TxState>()(
       psCalFits: 0,
       psCalAttempts: 0,
       psOverDriveDetected: false,
+      multiEncoderFunction: null,
       psCalibrationStalled: false,
       setPsMeters: (m) => set({
         psFeedbackLevel: nonNegativeFinite(m.feedbackLevel),
@@ -564,6 +567,7 @@ export const useTxStore = create<TxState>()(
           psTxFeedbackAttenuationDbMin: s.psTxFeedbackAttenuationDbMin,
           psCalibrationStalled: s.psCalibrationStalled ?? false,
           psOverDriveDetected: s.psOverDriveDetected ?? false,
+          multiEncoderFunction: s.multiEncoderFunction ?? null,
           txMonitorEnabled: s.txMonitorEnabled,
           twoToneFreq1: s.twoToneFreq1,
           twoToneFreq2: s.twoToneFreq2,

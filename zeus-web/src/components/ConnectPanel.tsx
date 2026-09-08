@@ -609,6 +609,27 @@ function parseRawBoardId(raw: string | undefined): number | null {
   return n;
 }
 
+
+// Laurence review item 1: the P2 discovery reply's board ID names the real
+// hardware (0x0A = Saturn per the Protocol 2 standard), while r.boardId is
+// the internal register-compatibility family (OrionMkII). Show the truth.
+const RAW_BOARD_DISPLAY: Record<number, string> = {
+  0x00: 'Metis (Atlas)',
+  0x01: 'Hermes',
+  0x02: 'Hermes II',
+  0x03: 'Angelia (ANAN-100D)',
+  0x04: 'Orion (ANAN-200D)',
+  0x05: 'Orion MkII (ANAN-7000/8000DLE)',
+  0x06: 'Hermes-Lite 2',
+  0x0a: 'Saturn (ANAN G2)',
+  0x14: 'Hermes C10 (ANAN G2E)',
+};
+function displayBoardName(r: { boardId?: string | null; details?: { rawBoardId?: string } | null }): string {
+  const raw = parseRawBoardId(r.details?.rawBoardId);
+  if (raw !== null && RAW_BOARD_DISPLAY[raw]) return RAW_BOARD_DISPLAY[raw];
+  return r.boardId || 'radio';
+}
+
 // Post-connect side-effects shared by discover-click and manual-connect.
 //
 // Drive / TUN drive, mic gain, and Leveler max-gain are all authoritative on
@@ -1429,7 +1450,7 @@ export function ConnectPanel({ compact = false }: ConnectPanelProps = {}) {
                     >
                       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                         <span style={{ color: 'var(--fg-0)', fontSize: 12, fontWeight: 600 }}>
-                          {r.boardId || 'radio'}{' '}
+                          {displayBoardName(r)}{' '}
                           <span className="label-xs" style={{ color: 'var(--fg-3)' }}>
                             fw {r.firmwareVersion || '?'}
                           </span>

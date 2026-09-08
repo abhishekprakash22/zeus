@@ -440,6 +440,7 @@ export type RadioStateDto = {
   // banner in the PURESIGNAL panel.
   psCalibrationStalled?: boolean;
   psOverDriveDetected?: boolean;
+  multiEncoderFunction?: string | null;
   psIntsSpiPreset: string;
   psFeedbackSource: 'internal' | 'external';
   txMonitorEnabled: boolean;
@@ -2608,6 +2609,8 @@ export function normalizeState(raw: unknown): RadioStateDto {
       typeof r.psCalibrationStalled === 'boolean' ? r.psCalibrationStalled : false,
     psOverDriveDetected:
       typeof r.psOverDriveDetected === 'boolean' ? r.psOverDriveDetected : false,
+    multiEncoderFunction:
+      typeof r.multiEncoderFunction === 'string' ? r.multiEncoderFunction : null,
     psIntsSpiPreset: typeof r.psIntsSpiPreset === 'string' ? r.psIntsSpiPreset : '16/256',
     psFeedbackSource:
       r.psFeedbackSource === 'External' || r.psFeedbackSource === 'external' ? 'external' : 'internal',

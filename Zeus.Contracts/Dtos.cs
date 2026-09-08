@@ -1475,7 +1475,10 @@ public sealed record StateDto(
     // bucket carried under 6% usable data — the guide's "probable severe
     // over-drive". Latched by PsAutoAttenuateService while keyed; clears when
     // a fit completes or PS/keying drops. Appended (wire-format change).
-    bool PsOverDriveDetected = false);
+    bool PsOverDriveDetected = false,
+    // Laurence review item 2: the front panel's MULTI-encoder assignment,
+    // finally visible to the UI. Set by G2PanelActionRouter on cycle.
+    string? MultiEncoderFunction = null);
 
 /// <summary>Canonical CW constants shared between backend and wire DTOs.
 /// Single source of truth — CwOffset (server-side) and StateDto both

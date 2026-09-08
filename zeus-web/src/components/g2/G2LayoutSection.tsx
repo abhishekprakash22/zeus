@@ -11,8 +11,51 @@
 // flag so the radio remembers the choice across browsers and restarts.
 // Display chrome only — turning it on/off never touches DSP or the wire.
 
+import { useTxStore } from '../../state/tx-store';
+import { useState, useRef, useEffect } from 'react';
 import type { CSSProperties } from 'react';
 import { useDisplaySettingsStore } from '../../state/display-settings-store';
+
+
+function G2MultiBadge() {
+  // Laurence review item 2: the MULTI encoder's current assignment, visible.
+  // Flashes briefly whenever the panel cycles it.
+  const name = useTxStore((s) => s.multiEncoderFunction);
+  const [flash, setFlash] = useState(false);
+  const prev = useRef<string | null>(null);
+  useEffect(() => {
+    if (name && prev.current !== null && prev.current !== name) {
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 1200);
+      prev.current = name;
+      return () => clearTimeout(t);
+    }
+    prev.current = name ?? null;
+    return undefined;
+  }, [name]);
+  if (!name) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 6,
+        right: 10,
+        zIndex: 55,
+        padding: '3px 10px',
+        borderRadius: 6,
+        fontSize: 11,
+        letterSpacing: 0.6,
+        border: '1px solid ' + (flash ? 'var(--accent, #4aa3df)' : '#2a3a52'),
+        background: flash ? 'var(--accent, #4aa3df)' : 'rgba(13,21,38,0.85)',
+        color: flash ? '#08111f' : '#9fc3e8',
+        transition: 'background 200ms, color 200ms, border-color 200ms',
+        pointerEvents: 'none',
+      }}
+    >
+      MULTI · {name.toUpperCase()}
+    </div>
+  );
+}
 
 export function G2LayoutSection() {
   const g2LayoutEnabled = useDisplaySettingsStore((s) => s.g2LayoutEnabled);
@@ -20,6 +63,7 @@ export function G2LayoutSection() {
 
   return (
     <section>
+      <G2MultiBadge />
       <div style={sectionHead}>
         <h3 style={sectionH3}>G2 Display Layout</h3>
         <p style={sectionP}>Touch chrome for the radio&apos;s 8-inch front panel.</p>

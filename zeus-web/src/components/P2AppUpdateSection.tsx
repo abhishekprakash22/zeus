@@ -87,6 +87,22 @@ export function P2AppUpdateSection() {
             NoBinary: 'No p2app binary found',
           } as Record<string, string>)[sup.mode] ?? sup.mode}
           {sup.pid != null ? ` · pid ${sup.pid}` : ''}
+          {' '}
+          <button
+            type="button"
+            style={{ marginLeft: 10, fontSize: 10, padding: '1px 8px' }}
+            title="Developer control: stop the supervised p2app (an adopted external p2app is never killed) or resume supervision."
+            onClick={() => {
+              const stopping = sup.mode !== 'Paused';
+              void fetch(stopping ? '/api/p2app/stop' : '/api/p2app/start', { method: 'POST' })
+                .then((r) => (r.ok ? null : r.json().then((b: { error?: string }) => {
+                  console.warn('p2app control:', b?.error ?? r.status);
+                })))
+                .catch((e) => console.warn('p2app control failed', e));
+            }}
+          >
+            {sup.mode !== 'Paused' ? 'STOP' : 'START'}
+          </button>
         </span>
       </div>
       {sup.binaryPath && (

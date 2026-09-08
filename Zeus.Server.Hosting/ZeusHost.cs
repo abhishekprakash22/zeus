@@ -1435,6 +1435,22 @@ public static class ZeusHost
         app.Services.GetRequiredService<SaturnRxStream>().OnSessionClosed =
             () => app.Services.GetRequiredService<P2AppSupervisor>().Resume();
         app.MapGet("/api/p2app", (P2AppSupervisor sup) => Results.Ok(sup.Status()));
+        // Laurence review item 6: an explicit developer stop/start so the
+        // terminal isn't required. Stop = the same measured pause the update
+        // path uses (stops OUR child, refuses if a foreign process owns the
+        // port — an adopted p2app is never killed); Start resumes supervision.
+        app.MapPost("/api/p2app/stop", async (P2AppSupervisor sup) =>
+        {
+            var (ok, error) = await sup.PauseForNativeSessionAsync();
+            return ok
+                ? Results.Ok(new { stopped = true })
+                : Results.BadRequest(new { error = error ?? "p2app could not be stopped" });
+        });
+        app.MapPost("/api/p2app/start", (P2AppSupervisor sup) =>
+        {
+            sup.Resume();
+            return Results.Ok(new { started = true });
+        });
         app.MapPost("/api/p2app/update", (P2AppUpdateService upd) =>
         {
             var (ok, error) = upd.Start();

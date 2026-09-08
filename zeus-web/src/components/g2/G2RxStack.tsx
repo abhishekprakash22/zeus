@@ -278,7 +278,18 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   }
   const peakDbm = Number.isFinite(peakRef.current.dbm) ? peakRef.current.dbm : null;
   // Spectrum share of the pane (the requested per-receiver drag): 0.2-0.7.
-  const [specFrac, setSpecFrac] = useState(0.44);
+  // Persisted per receiver (field request: the divider position should
+  // survive a reload). Clamp on read mirrors the drag handler's 0.2..0.7
+  // so a stale or hand-edited value can't wedge the layout.
+  const [specFrac, setSpecFrac] = useState(() => {
+    try {
+      const raw = localStorage.getItem(`zeus.g2.specFrac.rx${rxIndex}`);
+      const v = raw === null ? NaN : Number.parseFloat(raw);
+      return Number.isFinite(v) ? Math.min(0.7, Math.max(0.2, v)) : 0.44;
+    } catch {
+      return 0.44;
+    }
+  });
   // Per-pane waterfall speed multiplier (field request): ×½ ×1 ×2 ×4 cycle.
   const [speedFactor, setSpeedFactor] = useState(1);
   const cycleSpeed = () =>
@@ -296,8 +307,18 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
     setSpecFrac(Math.min(0.7, Math.max(0.2, (e.clientY - r.top) / Math.max(1, r.height))));
   }, []);
   const onRatioUp = useCallback(() => {
+    if (!ratioDrag.current) return;
     ratioDrag.current = false;
-  }, []);
+    // Persist at drag end only — one write per adjustment, not per move.
+    setSpecFrac((v) => {
+      try {
+        localStorage.setItem(`zeus.g2.specFrac.rx${rxIndex}`, String(v));
+      } catch {
+        // private mode / quota — the in-session value still holds.
+      }
+      return v;
+    });
+  }, [rxIndex]);
 
   // First tap on an inactive pane activates its receiver and is swallowed
   // (capture phase) so the panadapter never sees it as a tune. The active

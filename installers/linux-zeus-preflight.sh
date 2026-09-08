@@ -266,7 +266,6 @@ zeus_run_service_with_browser() {
                     ;;
             esac
             "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
-                --enable-features=Vulkan --enable-unsafe-webgpu --test-type \
                 ${fsflag} --start-maximized --window-size="${kiosk_w},${kiosk_h}" \
                 --no-first-run --no-default-browser-check >/dev/null 2>&1 &
             browser_pid=$!

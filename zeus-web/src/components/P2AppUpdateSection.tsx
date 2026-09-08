@@ -98,7 +98,16 @@ export function P2AppUpdateSection() {
                 .then((r) => (r.ok ? null : r.json().then((b: { error?: string }) => {
                   console.warn('p2app control:', b?.error ?? r.status);
                 })))
-                .catch((e) => console.warn('p2app control failed', e));
+                .catch((e) => console.warn('p2app control failed', e))
+                .finally(() => {
+                  // Field bug: the section only polls while an UPDATE run is
+                  // active, so the button changed the server and then showed
+                  // stale mode forever — STOP never flipped to START. Refresh
+                  // now, and once more after the supervisor loop settles
+                  // (START walks Resume → Probing → Supervised).
+                  void refresh();
+                  setTimeout(() => void refresh(), 1500);
+                });
             }}
           >
             {sup.mode !== 'Paused' ? 'STOP' : 'START'}

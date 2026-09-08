@@ -310,14 +310,42 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
     if (!ratioDrag.current) return;
     ratioDrag.current = false;
     // Persist at drag end only — one write per adjustment, not per move.
+    // Two vaults: localStorage for instant restore where the browser
+    // profile is durable (remote desktops, phones), and the radio's own
+    // /api/ui/spec-frac marker for the kiosk, whose Chromium profile is
+    // deliberately throwaway (preflight comment: 'the throwaway profile
+    // means Chromium cannot remember … between launches').
     setSpecFrac((v) => {
       try {
         localStorage.setItem(`zeus.g2.specFrac.rx${rxIndex}`, String(v));
       } catch {
-        // private mode / quota — the in-session value still holds.
+        // private mode / quota — the server copy below still lands.
       }
+      void fetch('/api/ui/spec-frac', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rx: rxIndex, frac: v }),
+      }).catch(() => {});
       return v;
     });
+  }, [rxIndex]);
+  // Server seed: the kiosk's localStorage is empty every launch, so the
+  // radio's copy wins when present (it only exists if the operator set it).
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/ui/spec-frac')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((map: Record<string, number> | null) => {
+        if (cancelled || !map) return;
+        const v = map[String(rxIndex)];
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          setSpecFrac(Math.min(0.7, Math.max(0.2, v)));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [rxIndex]);
 
   // First tap on an inactive pane activates its receiver and is swallowed

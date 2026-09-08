@@ -33,8 +33,50 @@ public static class UiPrefsEndpoints
         return Path.Combine(dir, PsPreferredMarker);
     }
 
+    private static string SpecFracPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-spec-frac.json");
+    }
+
     public static IEndpointRouteBuilder MapUiPrefsEndpoints(this IEndpointRouteBuilder app)
     {
+        // Pan/waterfall split per receiver (field request ×2: localStorage
+        // alone could not survive the kiosk, whose browser profile is
+        // deliberately throwaway — see linux-zeus-preflight.sh). Same
+        // durable-directory pattern as the marker files above; the payload
+        // is a tiny {"0":0.44,"1":0.5} map, clamped on write.
+        app.MapGet("/api/ui/spec-frac", () =>
+        {
+            try
+            {
+                var path = SpecFracPath();
+                if (!File.Exists(path)) return Results.Ok(new Dictionary<string, double>());
+                var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(
+                    File.ReadAllText(path));
+                return Results.Ok(map ?? new Dictionary<string, double>());
+            }
+            catch { return Results.Ok(new Dictionary<string, double>()); }
+        });
+        app.MapPost("/api/ui/spec-frac", (SpecFracRequest req) =>
+        {
+            var frac = Math.Clamp(req.Frac, 0.2, 0.7);
+            var path = SpecFracPath();
+            Dictionary<string, double> map;
+            try
+            {
+                map = File.Exists(path)
+                    ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(
+                          File.ReadAllText(path)) ?? new()
+                    : new();
+            }
+            catch { map = new(); }
+            map[req.Rx.ToString()] = frac;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(map));
+            return Results.Ok(new { rx = req.Rx, frac });
+        });
+
         // PureSignal persistence (field request: the PS button forgot its
         // state across sessions). Same marker-file pattern as
         // kiosk-fullscreen; the frontend re-arms PS through the normal
@@ -88,4 +130,6 @@ public static class UiPrefsEndpoints
     }
 
     public sealed record KioskFullscreenRequest(bool On);
+
+public sealed record SpecFracRequest(int Rx, double Frac);
 }

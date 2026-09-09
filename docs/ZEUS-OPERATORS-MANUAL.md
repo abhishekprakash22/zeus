@@ -136,11 +136,22 @@ tabs — **BAND**, **MODE**, **FILTER**, **NB·NR**, **RADIO**, **DISPLAY**,
 (the DISPLAY performance sheet also carries the spectrum-resolution knob
 described below),
 **TX** — each opening its bottom sheet for the focused receiver (the active
-tab wears an accent underline). The full-height row below holds the
-transmitter's own controls: **MOX**, **TUN**, **MON**, **PS**, **CTUN**,
-and — past a divider — **REC** (the same transport buttons, with all their
-safeguards, at finger size). A compact FWD / SWR / ALC readout (label,
-bar, value) sits inline in the transport row.
+tab wears an accent underline). The full-height row below is the key row:
+**MOX** is fixed on the left and **REC** fixed past the divider on the
+right; between them sit four operator-chosen keys. **NEXT** cycles three
+sets of four, and the **✎** key opens a picker on each slot. One key lives
+in exactly one slot across all three sets — picking a key that already
+lives somewhere else swaps the two (the picker marks such keys with
+`⇄ set-number`), so duplicates cannot be created and no slot is ever
+blank. The stock arrangement covers every assignable key: set 1 **TUN /
+MON / PS / CTUN**, set 2 **SPLIT / RIT / DIV / MUTE** (mute follows the
+focused receiver), set 3 **LOCK** (VFO lock), **2TON** (two-tone test
+generator — this keys the transmitter, and its key lights TX red), **CW⌁**
+(the CW decoder), and **FULL SCR**. PRE joins the pool only on the one
+board where the preamp bit does anything. All keys carry the same
+safeguards as their desktop originals, at finger size. A compact
+FWD / SWR / ALC readout (label, bar, value) sits inline in the transport
+row.
 
 **Spectrum resolution (FFT).** Settings → DISPLAY (performance) selects the
 RX display analyzer FFT size: 8k, 16k (default), 32k, or 64k points. Finer

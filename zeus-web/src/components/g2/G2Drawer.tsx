@@ -52,8 +52,10 @@ import { MeterReadingId } from '../meters/meterCatalog';
 import { useConnectionStore } from '../../state/connection-store';
 import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
 import { disconnectAll } from '../../util/disconnect-all';
-import { setReceiverMuted } from '../../api/client';
+import { setReceiverMuted, setTwoTone } from '../../api/client';
 import { useRadioStore } from '../../state/radio-store';
+import { useTxStore } from '../../state/tx-store';
+import { useVfoLockStore } from '../../state/vfo-lock-store';
 import { G2_THEMES, useG2ThemeStore } from '../../state/g2-theme-store';
 import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
 
@@ -84,6 +86,63 @@ const DRAWER_H = TABS_H + LOWER_H; // sheets + layout padding anchor on this
 // hard-won machinery — pref + kiosk marker writes, first-gesture restore,
 // stale-geometry watchdog — keeps running there; this button is a dumb
 // toggle whose label tracks fullscreenchange. No logic duplicated.
+// Purpose-built key faces for verbs that had no standalone button. Each is
+// a plain <button> — the drawer's scoped `.g2-key button` CSS dresses it to
+// match the hosted transport keys. Engaged = accent fill (same language as
+// the CTRL popover's MUTE); 2TON engages in TX red because it keys the rig.
+function MuteKeyButton() {
+  const focused = useConnectionStore((s) => s.focusedRxIndex);
+  const muted = useConnectionStore((s) => s.receivers[focused]?.muted ?? false);
+  const applyState = useConnectionStore((s) => s.applyState);
+  return (
+    <button
+      type="button"
+      style={muted ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
+      onClick={() => void setReceiverMuted(focused, !muted).then(applyState).catch(() => {})}
+      title="Mute the focused receiver's audio"
+    >
+      MUTE
+    </button>
+  );
+}
+
+function VfoLockKeyButton() {
+  const locked = useVfoLockStore((s) => s.locked);
+  const toggle = useVfoLockStore((s) => s.toggle);
+  return (
+    <button
+      type="button"
+      style={locked ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
+      onClick={toggle}
+      title="Lock the VFO — touch tuning, scrolls, and band picks stop moving the dial"
+    >
+      LOCK
+    </button>
+  );
+}
+
+function TwoToneKeyButton() {
+  const on = useTxStore((s) => s.twoToneOn);
+  const setOn = useTxStore((s) => s.setTwoToneOn);
+  const f1 = useTxStore((s) => s.twoToneFreq1);
+  const f2 = useTxStore((s) => s.twoToneFreq2);
+  const mag = useTxStore((s) => s.twoToneMag);
+  return (
+    <button
+      type="button"
+      style={on ? { background: 'var(--tx, #e05252)', color: '#fff' } : undefined}
+      onClick={() => {
+        const next = !on;
+        setOn(next);
+        void setTwoTone({ enabled: next, freq1: f1, freq2: f2, mag }).catch(() => setOn(!next));
+      }}
+      title="Two-tone test generator — KEYS THE TRANSMITTER at the PURESIGNAL tab's tone settings"
+    >
+      2TON
+    </button>
+  );
+}
+
 function FullscreenSideButton() {
   const [full, setFull] = useState<boolean>(!!document.fullscreenElement);
   useEffect(() => {
@@ -169,39 +228,44 @@ export function G2Drawer() {
   const setTheme = useG2ThemeStore((s) => s.setTheme);
   const [keyDeck, setKeyDeck] = useState(0);
   const [editKeys, setEditKeys] = useState(false);
-  // User-defined key sets (G8NJJ follow-up). MOX is fixed in slot 0 of both
-  // decks; the four remaining slots per deck are the operator's. Stored on
+  // User-defined key sets (G8NJJ follow-up). MOX is fixed in slot 0 of every
+  // deck; the four remaining slots per deck are the operator's. Stored on
   // the radio (/api/ui/key-decks) — the kiosk's browser profile is throwaway.
-  const [decks, setDecks] = useState<{ deck1: string[]; deck2: string[]; deck3: string[] }>({
-    deck1: ['tun', 'mon', 'ps', 'ctun'],
-    deck2: ['split', 'rit', 'div', 'rec'],
-    deck3: ['pre', 'mon', 'rec', 'ctun'],
-  });
+  // One key, one slot — across all three sets (field report: the old
+  // defaults duplicated MON/CTUN/REC on the glass, and PRE rendered a blank
+  // slot on Saturn boards where PreampButton is null). Saved decks are
+  // sanitized on load; the ✎ selects swap instead of duplicating.
+  const boardId = useConnectionStore((s) => s.boardId);
+  const [decks, setDecks] = useState(() => sanitizeDecks(null, undefined));
   useEffect(() => {
     let cancelled = false;
     void fetch('/api/ui/key-decks')
       .then((r) => (r.ok ? r.json() : null))
       .then((map: Record<string, string[]> | null) => {
-        if (cancelled || !map) return;
-        setDecks((d) => ({
-          deck1: Array.isArray(map.deck1) && map.deck1.length === 4 ? (map.deck1 as string[]) : d.deck1,
-          deck2: Array.isArray(map.deck2) && map.deck2.length === 4 ? (map.deck2 as string[]) : d.deck2,
-          deck3: Array.isArray(map.deck3) && map.deck3.length === 4 ? (map.deck3 as string[]) : d.deck3,
-        }));
+        if (cancelled) return;
+        setDecks(sanitizeDecks(map, boardId));
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
-  const deckKey = keyDeck === 0 ? 'deck1' : keyDeck === 1 ? 'deck2' : 'deck3';
-  const deckNames = keyDeck === 0 ? decks.deck1 : keyDeck === 1 ? decks.deck2 : decks.deck3;
+  }, [boardId]);
+  const deckKey: 'deck1' | 'deck2' | 'deck3' =
+    keyDeck === 0 ? 'deck1' : keyDeck === 1 ? 'deck2' : 'deck3';
+  const deckNames = decks[deckKey];
   const setDeckSlot = (slot: number, name: string) => {
     setDecks((d) => {
-      const next = {
-        ...d,
-        [deckKey]: (deckKey === 'deck1' ? d.deck1 : deckKey === 'deck2' ? d.deck2 : d.deck3).map((n, i) => (i === slot ? name : n)),
-      };
+      const next = { deck1: [...d.deck1], deck2: [...d.deck2], deck3: [...d.deck3] };
+      const cur = next[deckKey][slot];
+      if (cur === undefined || name === cur) return d;
+      // The invariant lives here: if the picked key already occupies another
+      // slot (any deck), that slot inherits this one's key — a swap, so a
+      // pick can never mint a duplicate and no key is ever lost.
+      for (const k of ['deck1', 'deck2', 'deck3'] as const) {
+        const j = next[k].indexOf(name);
+        if (j !== -1 && !(k === deckKey && j === slot)) next[k][j] = cur;
+      }
+      next[deckKey][slot] = name;
       void fetch('/api/ui/key-decks', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -578,7 +642,7 @@ export function G2Drawer() {
           type="button"
           style={{ ...nextKeyStyle, flex: '0 0 30px', minWidth: 30, ...(editKeys ? { borderColor: 'var(--accent, #4aa3df)', color: 'var(--accent, #4aa3df)' } : null) }}
           onClick={() => setEditKeys((e) => !e)}
-          title="Edit this key set — pick which keys live in each slot (MOX is fixed)"
+          title="Edit this key set — pick which keys live in each slot (MOX is fixed; picking a key that lives elsewhere swaps the two)"
         >
           ✎
         </button>
@@ -587,16 +651,37 @@ export function G2Drawer() {
         </div>
         {deckNames.map((name, i) => (
           <div className="g2-key" style={{ ...key, position: 'relative' }} key={`${keyDeck}-${i}`}>
-            {KEY_REGISTRY[name] ?? <span />}
+            {KEY_REGISTRY[name]?.node ?? (
+              // Unknown name (stale save, mid-update skew): a labeled dead
+              // key, never a blank — the ✎ select can still replace it.
+              <button type="button" disabled>
+                {String(name).toUpperCase()}
+              </button>
+            )}
             {editKeys ? (
               <select
                 value={name}
                 style={keyEditSelect}
                 onChange={(e) => setDeckSlot(i, e.currentTarget.value)}
               >
-                {Object.keys(KEY_REGISTRY).map((k) => (
-                  <option key={k} value={k} style={{ background: '#0d1526', color: '#cfe6ff' }}>{k.toUpperCase()}</option>
-                ))}
+                {availableKeys(boardId).map((k) => {
+                  const home =
+                    k === name
+                      ? null
+                      : decks.deck1.includes(k)
+                        ? 1
+                        : decks.deck2.includes(k)
+                          ? 2
+                          : decks.deck3.includes(k)
+                            ? 3
+                            : null;
+                  return (
+                    <option key={k} value={k} style={{ background: '#0d1526', color: '#cfe6ff' }}>
+                      {k.toUpperCase()}
+                      {home ? ` ⇄ ${home}` : ''}
+                    </option>
+                  );
+                })}
               </select>
             ) : null}
           </div>
@@ -746,19 +831,73 @@ const rowDivider: CSSProperties = {
   flex: '0 0 1px',
 };
 
-// Every key the operator can place in a slot. All existing components —
-// adding one here is the whole job of making it assignable.
-const KEY_REGISTRY: Record<string, ReactNode> = {
-  tun: <TunButton />,
-  mon: <TxMonitorButton />,
-  ps: <PsToggleButton />,
-  ctun: <CtunButton />,
-  rec: <RecorderButton />,
-  split: <SplitButton />,
-  rit: <RitButton />,
-  div: <DiversityToggleButton />,
-  pre: <PreampButton />,
+// Every key the operator can place in a slot. Adding an entry here is the
+// whole job of making it assignable. `boardOnly` hides a key on hardware
+// where its component renders null (field bug: PRE on a Saturn drew a blank
+// slot — an invisible key the ✎ list still happily offered).
+// REC is deliberately absent: the fixed REC key past the divider is always
+// on the glass, so a slotted copy was a guaranteed duplicate; the sanitizer
+// migrates old saves that carry it.
+type KeyDef = { node: ReactNode; boardOnly?: string };
+const KEY_REGISTRY: Record<string, KeyDef> = {
+  tun: { node: <TunButton /> },
+  mon: { node: <TxMonitorButton /> },
+  ps: { node: <PsToggleButton /> },
+  ctun: { node: <CtunButton /> },
+  split: { node: <SplitButton /> },
+  rit: { node: <RitButton /> },
+  div: { node: <DiversityToggleButton /> },
+  mute: { node: <MuteKeyButton /> },
+  lock: { node: <VfoLockKeyButton /> },
+  '2ton': { node: <TwoToneKeyButton /> },
+  cwd: { node: <CwDecodeToggleButton /> },
+  fs: { node: <FullscreenSideButton /> },
+  pre: { node: <PreampButton />, boardOnly: 'Metis' },
 };
+
+// Twelve always-available keys, twelve slots: every key on the glass, no
+// duplicates, no blanks, on every board. PRE joins the pool on Metis only.
+const DEFAULT_DECKS: { deck1: string[]; deck2: string[]; deck3: string[] } = {
+  deck1: ['tun', 'mon', 'ps', 'ctun'],
+  deck2: ['split', 'rit', 'div', 'mute'],
+  deck3: ['lock', '2ton', 'cwd', 'fs'],
+};
+
+const availableKeys = (boardId: string | null | undefined): string[] =>
+  Object.keys(KEY_REGISTRY).filter((k) => {
+    const only = KEY_REGISTRY[k]?.boardOnly;
+    return !only || only === boardId;
+  });
+
+// One key, one slot — across all three sets. Saved decks (and the old
+// defaults) could carry duplicates, REC, or board-invisible keys; every
+// offender maps to its default-deck key, else the first unused available
+// key, so all 12 slots always show a live, distinct button.
+function sanitizeDecks(
+  map: Record<string, unknown> | null,
+  boardId: string | null | undefined,
+): { deck1: string[]; deck2: string[]; deck3: string[] } {
+  const avail = availableKeys(boardId);
+  const seen = new Set<string>();
+  const fix = (names: unknown, fallback: string[]): string[] => {
+    const src = Array.isArray(names) && names.length === 4 ? (names as string[]) : fallback;
+    return src.map((n, i) => {
+      const fb = fallback[i];
+      const pick =
+        (avail.includes(n) && !seen.has(n) && n) ||
+        (fb !== undefined && avail.includes(fb) && !seen.has(fb) && fb) ||
+        avail.find((k) => !seen.has(k)) ||
+        n;
+      seen.add(pick);
+      return pick;
+    });
+  };
+  return {
+    deck1: fix(map?.deck1, DEFAULT_DECKS.deck1),
+    deck2: fix(map?.deck2, DEFAULT_DECKS.deck2),
+    deck3: fix(map?.deck3, DEFAULT_DECKS.deck3),
+  };
+}
 
 const keyEditSelect: CSSProperties = {
   position: 'absolute',

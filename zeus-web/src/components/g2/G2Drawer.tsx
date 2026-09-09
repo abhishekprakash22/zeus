@@ -97,6 +97,7 @@ function MuteKeyButton() {
   return (
     <button
       type="button"
+      className="btn ghost"
       style={muted ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
       onClick={() => void setReceiverMuted(focused, !muted).then(applyState).catch(() => {})}
       title="Mute the focused receiver's audio"
@@ -112,6 +113,7 @@ function VfoLockKeyButton() {
   return (
     <button
       type="button"
+      className="btn ghost"
       style={locked ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
       onClick={toggle}
       title="Lock the VFO — touch tuning, scrolls, and band picks stop moving the dial"
@@ -130,6 +132,7 @@ function TwoToneKeyButton() {
   return (
     <button
       type="button"
+      className="btn ghost"
       style={on ? { background: 'var(--tx, #e05252)', color: '#fff' } : undefined}
       onClick={() => {
         const next = !on;
@@ -159,6 +162,7 @@ function FullscreenKeyButton() {
   return (
     <button
       type="button"
+      className="btn ghost"
       onClick={() => {
         if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
         else void document.documentElement.requestFullscreen().catch(() => {});
@@ -689,7 +693,7 @@ export function G2Drawer() {
             {KEY_REGISTRY[name]?.node ?? (
               // Unknown name (stale save, mid-update skew): a labeled dead
               // key, never a blank — the ✎ select can still replace it.
-              <button type="button" disabled>
+              <button type="button" className="btn ghost" disabled>
                 {String(name).toUpperCase()}
               </button>
             )}

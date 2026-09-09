@@ -143,6 +143,33 @@ function TwoToneKeyButton() {
   );
 }
 
+// FULL SCR (key-row face) — the rail's FullscreenSideButton carries
+// .g2-controls-btn, which is position:fixed at rail coordinates; hosted in a
+// key slot it escapes the row, and the slot's 100% sizing then resolves
+// against the viewport — a screen-covering button (field photo: set 3
+// "blanked" the glass). The row gets its own plain face; the rail button
+// keeps all the hard-won fullscreen machinery untouched.
+function FullscreenKeyButton() {
+  const [full, setFull] = useState<boolean>(!!document.fullscreenElement);
+  useEffect(() => {
+    const onChange = () => setFull(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+        else void document.documentElement.requestFullscreen().catch(() => {});
+      }}
+      title={full ? 'Exit full screen (Esc also works)' : 'Full screen — hide the browser chrome'}
+    >
+      {full ? 'EXIT FS' : 'FULL SCR'}
+    </button>
+  );
+}
+
 function FullscreenSideButton() {
   const [full, setFull] = useState<boolean>(!!document.fullscreenElement);
   useEffect(() => {
@@ -540,6 +567,14 @@ export function G2Drawer() {
         .g2-drawer .g2-key button {
           height: 100%;
           min-height: 48px;
+          /* .g2-key > * forces display:flex on direct children; a plain
+             <button> then parks its bare label at cross-start — top of the
+             box (field photo: MUTE rode high while SPLIT/RIT/DIV centered).
+             Center every face here so purpose-built keys, hosted transport
+             keys, and the dead-key placeholder all share one baseline. */
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.05em;
@@ -851,7 +886,7 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   lock: { node: <VfoLockKeyButton /> },
   '2ton': { node: <TwoToneKeyButton /> },
   cwd: { node: <CwDecodeToggleButton /> },
-  fs: { node: <FullscreenSideButton /> },
+  fs: { node: <FullscreenKeyButton /> },
   pre: { node: <PreampButton />, boardOnly: 'Metis' },
 };
 

@@ -38,6 +38,7 @@ import { RecorderButton } from '../RecorderButton';
 import { DisplayPanel } from '../DisplayPanel';
 import { SplitButton, RitButton } from '../RitSplitButtons';
 import { DiversityToggleButton } from '../DiversityWindow';
+import { PreampButton } from '../PreampButton';
 import { CwDecodeToggleButton } from '../CwDecodeWindow';
 import { TxPanel } from '../../layout/panels/TxPanel';
 import { TxFidelityPanel } from '../../layout/panels/TxFidelityPanel';
@@ -171,9 +172,10 @@ export function G2Drawer() {
   // User-defined key sets (G8NJJ follow-up). MOX is fixed in slot 0 of both
   // decks; the four remaining slots per deck are the operator's. Stored on
   // the radio (/api/ui/key-decks) — the kiosk's browser profile is throwaway.
-  const [decks, setDecks] = useState<{ deck1: string[]; deck2: string[] }>({
+  const [decks, setDecks] = useState<{ deck1: string[]; deck2: string[]; deck3: string[] }>({
     deck1: ['tun', 'mon', 'ps', 'ctun'],
     deck2: ['split', 'rit', 'div', 'rec'],
+    deck3: ['pre', 'mon', 'rec', 'ctun'],
   });
   useEffect(() => {
     let cancelled = false;
@@ -184,6 +186,7 @@ export function G2Drawer() {
         setDecks((d) => ({
           deck1: Array.isArray(map.deck1) && map.deck1.length === 4 ? (map.deck1 as string[]) : d.deck1,
           deck2: Array.isArray(map.deck2) && map.deck2.length === 4 ? (map.deck2 as string[]) : d.deck2,
+          deck3: Array.isArray(map.deck3) && map.deck3.length === 4 ? (map.deck3 as string[]) : d.deck3,
         }));
       })
       .catch(() => {});
@@ -191,13 +194,13 @@ export function G2Drawer() {
       cancelled = true;
     };
   }, []);
-  const deckKey = keyDeck === 0 ? 'deck1' : 'deck2';
-  const deckNames = keyDeck === 0 ? decks.deck1 : decks.deck2;
+  const deckKey = keyDeck === 0 ? 'deck1' : keyDeck === 1 ? 'deck2' : 'deck3';
+  const deckNames = keyDeck === 0 ? decks.deck1 : keyDeck === 1 ? decks.deck2 : decks.deck3;
   const setDeckSlot = (slot: number, name: string) => {
     setDecks((d) => {
       const next = {
         ...d,
-        [deckKey]: (deckKey === 'deck1' ? d.deck1 : d.deck2).map((n, i) => (i === slot ? name : n)),
+        [deckKey]: (deckKey === 'deck1' ? d.deck1 : deckKey === 'deck2' ? d.deck2 : d.deck3).map((n, i) => (i === slot ? name : n)),
       };
       void fetch('/api/ui/key-decks', {
         method: 'POST',
@@ -565,11 +568,11 @@ export function G2Drawer() {
         <button
           type="button"
           style={nextKeyStyle}
-          onClick={() => setKeyDeck((d) => (d + 1) % 2)}
+          onClick={() => setKeyDeck((d) => (d + 1) % 3)}
           title="Next key set (G8NJJ: Thetis-style sets; tap ✎ to choose the keys)"
         >
           NEXT
-          <span style={{ display: 'block', fontSize: 8, opacity: 0.7 }}>{keyDeck === 0 ? '1/2' : '2/2'}</span>
+          <span style={{ display: 'block', fontSize: 8, opacity: 0.7 }}>{`${keyDeck + 1}/3`}</span>
         </button>
         <button
           type="button"
@@ -754,6 +757,7 @@ const KEY_REGISTRY: Record<string, ReactNode> = {
   split: <SplitButton />,
   rit: <RitButton />,
   div: <DiversityToggleButton />,
+  pre: <PreampButton />,
 };
 
 const keyEditSelect: CSSProperties = {

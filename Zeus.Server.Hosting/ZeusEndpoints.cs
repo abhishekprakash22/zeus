@@ -85,6 +85,16 @@ public static class ZeusEndpoints
         // the PDF, so this 404s locally — the link simply does nothing then.
         app.MapGet("/manual", () =>
         {
+            // Since the manual became a static wwwroot asset (served by
+            // UseStaticFiles radio-side and by Pages remotely, with a
+            // _redirects rule mirroring this one), this endpoint exists for
+            // old bookmarks and pre-1.44 About links: redirect to the static
+            // path when the asset is present. The BaseDirectory fallback
+            // keeps v1.43-era AppImages — PDF staged next to the binary,
+            // not in wwwroot — serving their manual.
+            var wwwrootPdf = System.IO.Path.Combine(AppContext.BaseDirectory, "wwwroot", "Zeus-Operator-Manual.pdf");
+            if (System.IO.File.Exists(wwwrootPdf))
+                return Results.Redirect("/Zeus-Operator-Manual.pdf");
             var path = System.IO.Path.Combine(AppContext.BaseDirectory, "Zeus-Operator-Manual.pdf");
             return System.IO.File.Exists(path)
                 ? Results.File(path, "application/pdf", enableRangeProcessing: true)

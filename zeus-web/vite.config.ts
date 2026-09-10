@@ -132,7 +132,7 @@ export default defineConfig({
         // denylist entry the SW answers the navigation with index.html and
         // the About link opens a second copy of the app (field-hit, v1.42
         // kiosk). Any future non-SPA GET route needs a line here too.
-        navigateFallbackDenylist: [/^\/api/, /^\/ws/, /^\/manual/],
+        navigateFallbackDenylist: [/^\/api/, /^\/ws/, /^\/manual/, /^\/Zeus-Operator-Manual\.pdf/],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\//,
@@ -167,6 +167,9 @@ export default defineConfig({
   },
   build: {
     outDir: '../Zeus.Server.Hosting/wwwroot',
+    // outDir sits outside the project root, so vite only empties it because
+    // this is set explicitly — without it, wwwroot accumulates every file
+    // ever built there and each wrangler deploy ships the residue to Pages.
     emptyOutDir: true,
     chunkSizeWarningLimit: 1100,
     rollupOptions: {

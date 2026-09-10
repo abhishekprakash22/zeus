@@ -348,11 +348,11 @@ export function LeftLayoutBar() {
           type="button"
           className="lb-tab lb-tab-manual"
           onClick={() => {
-            let absolute = '/manual';
+            let absolute = '/Zeus-Operator-Manual.pdf';
             if (typeof window !== 'undefined') {
               const base = getServerBaseUrl() || window.location.origin;
               try {
-                absolute = new URL('/manual', base).href;
+                absolute = new URL('/Zeus-Operator-Manual.pdf', base).href;
               } catch {
                 absolute = '/manual';
               }

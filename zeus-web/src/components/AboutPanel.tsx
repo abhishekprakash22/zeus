@@ -169,8 +169,8 @@ export function AboutPanel() {
               plain target="_blank" navigation. A no-op in dev builds that don't
               bundle the PDF (the backend 404s). */}
           <a
-            href="/manual"
-            onClick={openExternalLink('/manual')}
+            href="/Zeus-Operator-Manual.pdf"
+            onClick={openExternalLink('/Zeus-Operator-Manual.pdf')}
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 600 }}

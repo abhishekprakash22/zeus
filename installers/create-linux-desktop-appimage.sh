@@ -123,7 +123,8 @@ echo "Staging publish output into AppDir..."
 cp -r "${PUBLISH_DIR}"/* "${APPDIR}/usr/bin/"
 chmod +x "${APPDIR}/usr/bin/OpenhpsdrZeus"
 
-# Operator manual: the /manual endpoint serves Zeus-Operator-Manual.pdf from
+# Operator manual: staged into wwwroot so UseStaticFiles serves it at
+# /Zeus-Operator-Manual.pdf (the /manual endpoint redirects there); was
 # AppContext.BaseDirectory (= usr/bin here). CI builds it into
 # docs/manual/build/ first (release-appimage.yml); stage it when present.
 # Local dev builds without it keep the endpoint's designed 404 line.

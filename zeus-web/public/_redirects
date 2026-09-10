@@ -5,3 +5,8 @@
 # The client also parses /go/<CALL> from the path itself (remote-client.ts),
 # so this rewrite is the canonical form, not a single point of failure.
 /go/:call   /?remote=:call   302
+# The operator manual is a static wwwroot asset (CI and the Pages flow both
+# drop the built PDF in at deploy time), so the hosted client serves it
+# directly. /manual stays alive for old bookmarks and pre-1.44 About links;
+# radio-side, the /manual endpoint issues the same redirect.
+/manual     /Zeus-Operator-Manual.pdf    302

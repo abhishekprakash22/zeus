@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 930 210" role="img" aria-label="ANAN Core">
+  <!-- Print-on-white adaptation of the brand lockup in
+       zeus-web/public/branding/splash-pulse.svg: same eyebrow / wordmark /
+       stroked-CORE treatment, ink flipped for paper — ANAN goes solid dark,
+       CORE keeps the outlined counter-fill look in the manual's accent blue.
+       System font stacks only: this prints through headless Chrome from a
+       file:// page with no webfonts. -->
+  <text x="6" y="38" font-family="'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace"
+        font-size="22" letter-spacing="10" fill="#1f6feb">OPENHPSDR</text>
+  <text x="0" y="158" font-family="'Inter',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif"
+        font-size="112" font-weight="800" letter-spacing="2">
+    <tspan fill="#14202e">ANAN</tspan>
+    <tspan dx="26" fill="#1f6feb" fill-opacity="0.14" stroke="#1f6feb" stroke-width="4.5">CORE</tspan>
+  </text>
+</svg>

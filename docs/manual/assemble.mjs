@@ -11,8 +11,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, 'chapters');
 const BUILD = join(HERE, 'build');
 const OUT = join(BUILD, 'Zeus-Operator-Manual.html');
-const EDITION = process.env.MANUAL_EDITION || 'v1.42 — September 2026';
-const COVERS = process.env.MANUAL_COVERS || 'Covers the ANAN Core 1.42 release · ANAN G2 / G2 Ultra / G2-1K / G2E and desktop';
+const EDITION = process.env.MANUAL_EDITION || 'v1.43 — September 2026';
+const COVERS = process.env.MANUAL_COVERS || 'Covers the ANAN Core 1.43 release · ANAN G2 / G2 Ultra / G2-1K / G2E and desktop';
 
 marked.setOptions({ gfm: true, breaks: false });
 mkdirSync(BUILD, { recursive: true });
@@ -63,7 +63,7 @@ const css = `
   a{ color:var(--accent); text-decoration:none; }
   tr{ break-inside:avoid; page-break-inside:avoid; }
   .cover{ page-break-after:always; height:247mm; display:flex; flex-direction:column; justify-content:center; align-items:center; background:#ffffff; color:#111111; text-align:center; margin:-20mm -18mm 0 -18mm; padding:0 22mm; }
-  .cover .logo{ width:104mm; max-width:72%; height:auto; margin-bottom:12mm; }
+  .cover .logo{ width:132mm; max-width:82%; height:auto; margin-bottom:10mm; }
   .cover h1{ font-size:46pt; margin:0; letter-spacing:1px; font-weight:800; }
   .cover .king{ font-size:15pt; color:#111111; letter-spacing:5px; text-transform:uppercase; margin-top:3mm; }
   .cover .sub{ font-size:18pt; color:#111111; margin-top:14mm; font-weight:400; }
@@ -84,10 +84,13 @@ const css = `
   h2,h3,h4{ break-after:avoid; } table,blockquote,pre{ break-inside:avoid; }
 `;
 
-// ANAN Core cover: text-set (no Zeus emblem — this is Apache Labs' renamed
-// distribution per the upstream nomenclature conditions; Zeus lineage is
-// credited in the Provenance chapter and ATTRIBUTIONS.md).
-const cover = `<div class="cover"><h1>ANAN&nbsp;Core</h1><div class="king">Protocol-2 SDR for the ANAN</div><div class="sub">Operator's Manual</div><div class="ed">${EDITION}</div><div class="covers">${COVERS}</div></div>`;
+// ANAN Core cover: the brand lockup (assets/anan-core-logo.svg — the splash
+// art's eyebrow/wordmark/stroked-CORE treatment adapted for print-on-white),
+// inlined as a data URI so headless Chrome never depends on a relative path.
+const LOGO_DATA_URI =
+  'data:image/svg+xml;base64,' +
+  readFileSync(join(HERE, 'assets', 'anan-core-logo.svg')).toString('base64');
+const cover = `<div class="cover"><img class="logo" src="${LOGO_DATA_URI}" alt="ANAN Core" /><div class="king">Protocol-2 SDR for the ANAN</div><div class="sub">Operator's Manual</div><div class="ed">${EDITION}</div><div class="covers">${COVERS}</div></div>`;
 const doc = `<!doctype html><html><head><meta charset="utf-8"><title>ANAN Core Operator's Manual</title><style>${css}</style></head><body>${cover}<div class="toc"><h2>Table of Contents</h2>${tocHtml}</div>${chapterHtml.join('\n')}</body></html>`;
 
 writeFileSync(OUT, doc, 'utf8');

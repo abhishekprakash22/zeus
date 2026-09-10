@@ -66,6 +66,18 @@ jobs:
           TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
+      # Build the operator's manual PDF so the installer script stages it into
+      # the AppImage (About -> Open the User Manual). Chromium is the headless
+      # print engine; the arm runner image does not ship a browser.
+      - name: Build operator's manual PDF
+        env:
+          MANUAL_CHROME_EXTRA_FLAGS: "--no-sandbox --disable-dev-shm-usage"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq chromium-browser || sudo apt-get install -y -qq chromium
+          chmod +x docs/manual/build.sh
+          docs/manual/build.sh
+
       - name: Build AppImages (linux-arm64)
         env:
           # appimagetool is itself an AppImage; runners have no FUSE.

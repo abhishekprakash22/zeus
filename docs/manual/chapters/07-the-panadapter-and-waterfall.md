@@ -1,0 +1,13 @@
+## The panadapter and waterfall
+
+- **Reading the display:** spectrum above, waterfall below, with dB scales on the spectrum and the waterfall — each draggable to set reference level and range independently (and independently per receiver). The split between spectrum and waterfall is a drag bar; in the G2 layout that split is stored **on the radio**, so every client and every restart shares it.
+- **Tuning:** click to tune, drag the spectrum to slide the passband, drag the waterfall to scrub, scroll to step. Tuning feel is smoothed and detent-coalesced so a fast front-panel spin lands where you stop, without overshoot.
+- **CTUN (click-tune):** locks the spectrum in place and moves the passband within it — the classic "spectrum stays, you move" mode. Available on the transport bar and as a G2 drawer key.
+- **Zoom and pan:** ZOOM controls dock bottom-right (per receiver in the G2 layout); pinch works on touch. A waterfall **SPEED** multiplier sits alongside.
+- **Spectrum resolution (FFT):** Settings → DISPLAY (performance sheet) selects the RX analyzer FFT size — 8k, **16k (default)**, 32k, 64k. At Saturn's 1.536 MHz display rate 16k ≈ 94 Hz/bin, 64k ≈ 23 Hz/bin — finer bins resolve individual carriers in a CW pileup or FT8 sub-band; the trade is a slower-filling display (keying smears wider on the waterfall). One instrument: the setting is shared by both receivers and all clients, persists on the radio, applies live.
+- **Signal Pop:** weak-signal enhancement that lifts marginal traces out of the noise floor visually (DSP tab → Signal Intelligence: Pop / Snap / Markers). **Snap-to-signal** pulls a click onto the nearest carrier; **peak markers** flag the strongest signals.
+- **Notch:** manual notch filters are placed and dragged directly on the display; the auto-notch (ANF) lives with the DSP controls.
+- **Band overlay:** a licence-class band overlay shades where you may transmit, and an audible band-edge alert warns as you tune out. The **BAND PLAN** settings tab is the editor, and the transmit **band guard** refuses TX outside your plan.
+- **3D panadapter:** each G2 pane carries a **3D** pill (beside SPD) toggling the WebGPU heightfield renderer. On machines whose browser can't complete WebGPU init (including the Pi's own screen today), the pill shows **3D✕** with an explanatory tooltip and the proven 2D display keeps running — displays never gamble at boot.
+- **Wideband display:** the wideband (full-ADC) spectrum panel with its own viewport controls is available on Protocol-2 boards (DISPLAY tab hosts its settings).
+- **Backgrounds:** plain, **Beam Map** (world map with QRZ contacts and rotator heading behind the trace), or your own image (Fit/Fill/Stretch) — DISPLAY tab, §21.

@@ -128,7 +128,11 @@ export default defineConfig({
         // claimed mid-session — the exact bug in the lesson doc.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api/, /^\/ws/],
+        // /manual is a server-rendered PDF, not a SPA route. Without the
+        // denylist entry the SW answers the navigation with index.html and
+        // the About link opens a second copy of the app (field-hit, v1.42
+        // kiosk). Any future non-SPA GET route needs a line here too.
+        navigateFallbackDenylist: [/^\/api/, /^\/ws/, /^\/manual/],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\//,

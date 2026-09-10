@@ -123,6 +123,18 @@ echo "Staging publish output into AppDir..."
 cp -r "${PUBLISH_DIR}"/* "${APPDIR}/usr/bin/"
 chmod +x "${APPDIR}/usr/bin/OpenhpsdrZeus"
 
+# Operator manual: the /manual endpoint serves Zeus-Operator-Manual.pdf from
+# AppContext.BaseDirectory (= usr/bin here). CI builds it into
+# docs/manual/build/ first (release-appimage.yml); stage it when present.
+# Local dev builds without it keep the endpoint's designed 404 line.
+MANUAL_PDF="${REPO_ROOT}/docs/manual/build/Zeus-Operator-Manual.pdf"
+if [[ -f "${MANUAL_PDF}" ]]; then
+  cp "${MANUAL_PDF}" "${APPDIR}/usr/bin/Zeus-Operator-Manual.pdf"
+  echo "Staged operator manual PDF into AppDir."
+else
+  echo "WARNING: ${MANUAL_PDF} not found - AppImage will ship without the operator manual."
+fi
+
 # Runtime dependency-check helper, sourced by AppRun to verify WebKitGTK
 # (Photino's webview backend) before opening the native window. Lands next to
 # the binary so AppRun can source it after cd'ing into usr/bin. The server-mode

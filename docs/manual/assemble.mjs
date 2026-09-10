@@ -11,16 +11,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, 'chapters');
 const BUILD = join(HERE, 'build');
 const OUT = join(BUILD, 'Zeus-Operator-Manual.html');
-const EDITION = process.env.MANUAL_EDITION || 'v0.10.9 — July 2026';
-const COVERS = process.env.MANUAL_COVERS || 'Covers the Zeus 0.10.9 release';
-
-// Cover logo, inlined as a data URI so the print engine never depends on a
-// relative file path (headless Chrome prints from build/, the asset lives in
-// assets/). assets/zeus_manual_logo.png is the brand emblem on a transparent
-// background, so it floats on the cover gradient with no box.
-const LOGO_DATA_URI =
-  'data:image/png;base64,' +
-  readFileSync(join(HERE, 'assets', 'zeus_manual_logo.png')).toString('base64');
+const EDITION = process.env.MANUAL_EDITION || 'v1.42 — September 2026';
+const COVERS = process.env.MANUAL_COVERS || 'Covers the ANAN Core 1.42 release · ANAN G2 / G2 Ultra / G2-1K / G2E and desktop';
 
 marked.setOptions({ gfm: true, breaks: false });
 mkdirSync(BUILD, { recursive: true });
@@ -69,6 +61,7 @@ const css = `
   body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; color:var(--ink); font-size:11pt; line-height:1.55; }
   @page{ size:Letter; margin:20mm 18mm 18mm 18mm; }
   a{ color:var(--accent); text-decoration:none; }
+  tr{ break-inside:avoid; page-break-inside:avoid; }
   .cover{ page-break-after:always; height:247mm; display:flex; flex-direction:column; justify-content:center; align-items:center; background:#ffffff; color:#111111; text-align:center; margin:-20mm -18mm 0 -18mm; padding:0 22mm; }
   .cover .logo{ width:104mm; max-width:72%; height:auto; margin-bottom:12mm; }
   .cover h1{ font-size:46pt; margin:0; letter-spacing:1px; font-weight:800; }
@@ -91,8 +84,11 @@ const css = `
   h2,h3,h4{ break-after:avoid; } table,blockquote,pre{ break-inside:avoid; }
 `;
 
-const cover = `<div class="cover"><img class="logo" src="${LOGO_DATA_URI}" alt="Zeus — Software Defined Radio" /><div class="king">The King of SDRs</div><div class="sub">Operator's Manual</div><div class="ed">${EDITION}</div><div class="covers">${COVERS}</div></div>`;
-const doc = `<!doctype html><html><head><meta charset="utf-8"><title>Zeus Operator's Manual</title><style>${css}</style></head><body>${cover}<div class="toc"><h2>Table of Contents</h2>${tocHtml}</div>${chapterHtml.join('\n')}</body></html>`;
+// ANAN Core cover: text-set (no Zeus emblem — this is Apache Labs' renamed
+// distribution per the upstream nomenclature conditions; Zeus lineage is
+// credited in the Provenance chapter and ATTRIBUTIONS.md).
+const cover = `<div class="cover"><h1>ANAN&nbsp;Core</h1><div class="king">Protocol-2 SDR for the ANAN</div><div class="sub">Operator's Manual</div><div class="ed">${EDITION}</div><div class="covers">${COVERS}</div></div>`;
+const doc = `<!doctype html><html><head><meta charset="utf-8"><title>ANAN Core Operator's Manual</title><style>${css}</style></head><body>${cover}<div class="toc"><h2>Table of Contents</h2>${tocHtml}</div>${chapterHtml.join('\n')}</body></html>`;
 
 writeFileSync(OUT, doc, 'utf8');
 console.log(`OK chapters=${toc.length} -> ${OUT}`);

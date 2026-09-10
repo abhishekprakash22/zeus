@@ -1,0 +1,10 @@
+## Receiver controls
+
+- **AF gain:** per receiver (the G2 CTRL popover and the desktop AF slider both drive the radio-side gain; the mobile TOOLS page carries its own AF slider).
+- **AGC:** modes Off/Long/Slow/Medium/Fast/Custom. **AGC-T** (maximum gain) is the working gain control on a quiet band — and it is **per receiver**: RX1 and RX2 each own their AGC-T baseline. **Auto-AGC-T** tracks the receiver's *own* band noise floor and rides the ceiling for you, per receiver (RX2's Auto keys off RX2's panadapter). Grabbing a receiver's AGC-T slider takes manual control of *that* receiver — its Auto disengages (the readout drops its "· auto" tag); the other receiver is unaffected. The top-bar AGC slider follows the focused receiver; the G2 front panel's RX2 AGC encoder drives RX2 only. The AGC **Knee** shapes threshold behaviour signal-relatively (DSP tab).
+- **Attenuation and preamp:** the FRONT-END group holds the step attenuator and preamp. **Auto-ATT** (ADC overload protection, DSP tab) steps attenuation in on P2 overload / max-magnitude events and reports what it did. PRE appears only on boards where the preamp bit actually does something.
+- **Noise reduction:** classic NR/NR2, **NR3** (RNNoise), **NR4** (spectral), and **NR5/NNR** (neural, WDSP 2.1) — cycle from the NR chips or the G2 NB·NR sheet. **NB/NB2** noise blankers, **ANF** auto-notch, **SNB** spectral noise blanker. The DSP status row on each G2 flag lights what's engaged.
+- **Squelch:** mode-aware (SSB/AM/FM behaviours), slider on the top bar / CONTROLS panel, options in the DSP tab.
+- **Smart NR automation:** a panadapter-driven policy that engages NR for you based on band conditions (DSP tab; opt-in).
+- **Multi-RX:** up to 8 receivers (RECEIVERS tab sets the exposed count and ADC assignment per receiver). Each has its own audio, mode, filter, and levels; RX1/RX2 get the full two-pane treatment in the G2 layout.
+- **Diversity:** two-antenna phase/gain pad for null steering on boards with two coherent ADCs — the DIV key/panel opens the phasing control.

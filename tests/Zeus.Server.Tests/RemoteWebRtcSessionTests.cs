@@ -781,4 +781,29 @@ public sealed class RemoteWebRtcSessionTests
             return ValueTask.CompletedTask;
         }
     }
+
+    /// <summary>
+    /// The census is the answer's own reachability verdict: the 2026-09-10 field
+    /// capture was three host candidates and nothing else — the shape that makes
+    /// every off-LAN client fail — and it must be counted as LAN-only.
+    /// </summary>
+    [Fact]
+    public void CandidateCensus_CountsTypes_AndNamesLanOnly()
+    {
+        const string lanOnly =
+            "v=0\r\no=- 21445 0 IN IP4 127.0.0.1\r\ns=sipsorcery\r\n"
+            + "a=candidate:274681921 1 udp 2113940223 2605:a601:a7a2:1f00::1 44398 typ host generation 0\r\n"
+            + "a=candidate:1724563544 1 udp 2113940223 2605:a601:a7a2:1f00::4 44398 typ host generation 0\r\n"
+            + "a=candidate:720635902 1 udp 2113937663 192.168.1.221 44398 typ host generation 0\r\n";
+
+        var census = RemoteWebRtcSession.CandidateCensus(lanOnly);
+        Assert.Equal((3, 0, 0), census);
+
+        const string reachable = "v=0\r\n"
+            + "a=candidate:1 1 udp 2113937663 192.168.1.221 44398 typ host generation 0\r\n"
+            + "a=candidate:2 1 udp 1685790463 203.0.113.9 44398 typ srflx raddr 0.0.0.0 rport 0 generation 0\r\n"
+            + "a=candidate:3 1 udp 41885695 104.30.136.10 61000 typ relay raddr 0.0.0.0 rport 0 generation 0\r\n";
+
+        Assert.Equal((1, 1, 1), RemoteWebRtcSession.CandidateCensus(reachable));
+    }
 }

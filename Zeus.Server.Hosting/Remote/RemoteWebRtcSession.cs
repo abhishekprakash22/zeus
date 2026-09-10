@@ -257,8 +257,52 @@ public sealed class RemoteWebRtcSession
 
         var answer = _pc.createAnswer(null);
         await _pc.setLocalDescription(answer);
-        await WaitForIceGatheringAsync(_pc, TimeSpan.FromMilliseconds(750), ct);
-        return _pc.localDescription.sdp.ToString();
+
+        // Vanilla ICE: this answer is the ONLY chance to tell the client our
+        // candidates — the signal channel has no trickle leg, so anything
+        // gathered after this method returns is lost forever. 750 ms was not
+        // enough for STUN (a round trip) let alone TURN (allocate is several
+        // round trips behind an auth challenge): field capture 2026-09-10
+        // showed answers shipping host-only, which also poisons the client's
+        // relay path — its TURN permissions are keyed to the addresses in this
+        // SDP, so our checks arriving from the public NAT address are dropped
+        // at the relay. Wait for gathering to actually finish; the helper
+        // returns immediately once it does, so LAN answers stay fast.
+        await WaitForIceGatheringAsync(_pc, TimeSpan.FromSeconds(4), ct);
+
+        var sdp = _pc.localDescription.sdp.ToString();
+        var (host, srflx, relay) = CandidateCensus(sdp);
+        if (srflx + relay == 0)
+            _log.LogWarning(
+                "rtc.remote answer is LAN-only ({Host} host, 0 srflx, 0 relay) — "
+                + "STUN/TURN gathering produced no public candidate; off-network "
+                + "clients cannot reach this answer",
+                host);
+        else
+            _log.LogInformation(
+                "rtc.remote answer candidates: {Host} host, {Srflx} srflx, {Relay} relay",
+                host, srflx, relay);
+        return sdp;
+    }
+
+    /// <summary>
+    /// Count the candidate types in an SDP — the answer's own truth about
+    /// reachability. srflx+relay == 0 means no off-LAN client can connect.
+    /// </summary>
+    internal static (int Host, int Srflx, int Relay) CandidateCensus(string sdp)
+    {
+        static int Count(string s, string needle)
+        {
+            int n = 0, i = 0;
+            while ((i = s.IndexOf(needle, i, StringComparison.Ordinal)) >= 0)
+            {
+                n++;
+                i += needle.Length;
+            }
+            return n;
+        }
+
+        return (Count(sdp, " typ host"), Count(sdp, " typ srflx"), Count(sdp, " typ relay"));
     }
 
     /// <summary>

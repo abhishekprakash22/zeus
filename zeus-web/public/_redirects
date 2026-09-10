@@ -4,7 +4,13 @@
 # sent /go/<CALL> to the SPA fallback with no query (upstream QRZ wall).
 # The client also parses /go/<CALL> from the path itself (remote-client.ts),
 # so this rewrite is the canonical form, not a single point of failure.
-/go/:call   /?remote=:call   302
+# NOTE: /go/<CALL> is a 200 REWRITE, not a redirect. The old rule
+# ('/go/:call /?remote=:call 302') reached the field with the placeholder
+# UNSUBSTITUTED — the password dialog read 'REMOTE · :CALL' — and because the
+# redirect discarded the path, the client's own /go/ parser had nothing left
+# to rescue. A rewrite has no substitution to get wrong, keeps the printed
+# address in the bar, and the bundle reads the callsign from the path.
+/go/*       /                200
 # The operator manual is a static wwwroot asset (CI and the Pages flow both
 # drop the built PDF in at deploy time), so the hosted client serves it
 # directly. /manual stays alive for old bookmarks and pre-1.44 About links;

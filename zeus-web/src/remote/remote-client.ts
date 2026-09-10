@@ -49,7 +49,10 @@ import {
 export function getRemoteCallsign(): string | null {
   try {
     const cs = new URLSearchParams(window.location.search).get('remote');
-    const trimmed = cs?.trim();
+    let trimmed = cs?.trim();
+    // Placeholder residue from a broken redirect rule ('?remote=:call') is
+    // not a callsign — ignore it and let the /go/<path> parse below win.
+    if (trimmed && trimmed.startsWith(':')) trimmed = '';
     if (trimmed) return trimmed.toUpperCase();
     const m = /^\/go\/([^/?#]+)\/?$/i.exec(window.location.pathname);
     const fromPath = m?.[1] ? decodeURIComponent(m[1]).trim() : '';

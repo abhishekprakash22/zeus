@@ -130,8 +130,9 @@ chmod +x "${APPDIR}/usr/bin/OpenhpsdrZeus"
 # Local dev builds without it keep the endpoint's designed 404 line.
 MANUAL_PDF="${REPO_ROOT}/docs/manual/build/Zeus-Operator-Manual.pdf"
 if [[ -f "${MANUAL_PDF}" ]]; then
-  cp "${MANUAL_PDF}" "${APPDIR}/usr/bin/Zeus-Operator-Manual.pdf"
-  echo "Staged operator manual PDF into AppDir."
+  mkdir -p "${APPDIR}/usr/bin/wwwroot"
+  cp "${MANUAL_PDF}" "${APPDIR}/usr/bin/wwwroot/Zeus-Operator-Manual.pdf"
+  echo "Staged operator manual PDF into AppDir wwwroot."
 else
   echo "WARNING: ${MANUAL_PDF} not found - AppImage will ship without the operator manual."
 fi

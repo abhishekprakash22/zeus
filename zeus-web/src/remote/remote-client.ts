@@ -64,12 +64,49 @@ export function isRemoteMode(): boolean {
   return getRemoteCallsign() !== null;
 }
 
+/**
+ * True when this bundle is being served by the hosted remote client
+ * (Cloudflare Pages) rather than by a radio. The hosted context has no
+ * same-origin backend and exists solely to reach radios via the broker —
+ * upstream's QRZ/subscription entitlement wall must never render here
+ * (ADR-0008: the SPAKE2+ session password is the sole authenticator).
+ * Hostname-based on purpose: the hosted domain set is small and stable,
+ * and radio-direct origins (localhost, LAN IPs, mDNS names) can never
+ * match it.
+ */
+export function isHostedClient(): boolean {
+  try {
+    const h = window.location.hostname.toLowerCase();
+    return h.endsWith('.pages.dev') || h === 'ananremote.com' || h.endsWith('.ananremote.com');
+  } catch {
+    return false;
+  }
+}
+
+const LAST_REMOTE_CALL_KEY = 'zeus.lastRemoteCallsign';
+
+/** Last callsign this browser entered a remote session with, for the hosted landing's resume chip. */
+export function getLastRemoteCallsign(): string | null {
+  try {
+    const v = window.localStorage.getItem(LAST_REMOTE_CALL_KEY)?.trim();
+    return v ? v.toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 // Install the read-write /api/* fetch shim at module load — BEFORE the app's
 // mount effects fire their `/api/state` etc. requests. In remote mode there is
 // no same-origin backend, so those requests must tunnel; the shim queues them
 // until the session unlocks and setApiChannel() flushes the queue. No-op outside
 // remote mode (the local /ws client uses the real same-origin backend).
 if (isRemoteMode()) {
+  try {
+    const cs = getRemoteCallsign();
+    if (cs) window.localStorage.setItem(LAST_REMOTE_CALL_KEY, cs);
+  } catch {
+    /* storage unavailable (private mode) — resume chip just won't appear */
+  }
   installApiTunnel();
 }
 

@@ -88,6 +88,7 @@ import { G2Drawer } from './components/g2/G2Drawer';
 import { G2RxStack } from './components/g2/G2RxStack';
 import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
+import { HostedLanding } from './components/HostedLanding';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
 import { DiversityWindow, DiversityToggleButton } from './components/DiversityWindow';
 import { SplitButton, RitButton } from './components/RitSplitButtons';
@@ -115,7 +116,7 @@ import { useFilterRibbonOpenSync } from './components/filter/filterRibbonShared'
 import { bandOf } from './components/design/data';
 import { bearingDeg, distanceKm } from './components/design/geo';
 import { startRealtime } from './realtime/ws-client';
-import { isRemoteMode } from './remote/remote-client';
+import { isHostedClient, isRemoteMode } from './remote/remote-client';
 import { RemoteGate } from './remote/RemoteGate';
 import { getServerBaseUrl, isCapacitorRuntime } from './serverUrl';
 import { getAudioClient } from './audio/audio-client';
@@ -199,8 +200,13 @@ export default function App() {
   // this hosted context on QRZ + subscription entitlements ('APP ACCESS
   // blocked' — the exact wall the standalone build removes); the radio's
   // own UI never enters remoteMode and is unaffected.
+  // The hosted client (Pages) joins remoteMode in bypassing the upstream
+  // entitlement wall: there is no radio behind that origin to grant a session,
+  // and ADR-0008 makes the SPAKE2+ password the sole authenticator. Bare-root
+  // visits there render HostedLanding below instead.
+  const hostedClient = useMemo(() => isHostedClient(), []);
   const appAccessAllowed =
-    useUserAccessStore((s) => s.session?.accessAllowed === true) || remoteMode;
+    useUserAccessStore((s) => s.session?.accessAllowed === true) || remoteMode || hostedClient;
   // Startup-race guards for the access gate (local builds allow the
   // un-authenticated session, so the gate should only ever appear for a REAL
   // denial from user management — not because the first session fetch hasn't
@@ -1255,6 +1261,17 @@ export default function App() {
       <>
         <ThemeApplier />
         <AdminPage />
+      </>
+    );
+  }
+
+  if (hostedClient && !remoteMode && !adminRoute) {
+    // Hosted client opened with no callsign (bare root, or a refresh that
+    // lost the query): ask which radio, never the upstream QRZ wall.
+    return (
+      <>
+        <ThemeApplier />
+        <HostedLanding />
       </>
     );
   }

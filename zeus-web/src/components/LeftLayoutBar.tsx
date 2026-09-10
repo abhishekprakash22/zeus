@@ -42,6 +42,8 @@ import {
 import { EMPTY_WORKSPACE_LAYOUT } from '../layout/workspace';
 import { ConfirmDialog } from '../layout/ConfirmDialog';
 import { openSettingsWindow, openWorkspaceWindow } from '../layout/workspace-windows';
+import { openExternalUrl } from './report-problem/openExternalUrl';
+import { getServerBaseUrl } from '../serverUrl';
 
 type ModalState =
   | { kind: 'closed' }
@@ -334,6 +336,34 @@ export function LeftLayoutBar() {
       </div>
 
       <div className="lb-divider" aria-hidden />
+
+      {/* Operator's manual — sits just above the Settings gear so the two
+          bottom-pinned actions read as a pair: the book about the console,
+          then the console's settings. Routed through openExternalUrl for the
+          same reason as the About-panel link: inside the Photino shell the
+          webview swallows target="_blank", and the host bridge only accepts
+          absolute URLs, so /manual is resolved against the server base. */}
+      <div className="lb-manual-slot">
+        <button
+          type="button"
+          className="lb-tab lb-tab-manual"
+          onClick={() => {
+            let absolute = '/manual';
+            if (typeof window !== 'undefined') {
+              const base = getServerBaseUrl() || window.location.origin;
+              try {
+                absolute = new URL('/manual', base).href;
+              } catch {
+                absolute = '/manual';
+              }
+            }
+            openExternalUrl(absolute);
+          }}
+          title="Open the User Manual (PDF)"
+        >
+          <span className="lb-tab-icon" aria-hidden>📖</span>
+        </button>
+      </div>
 
       <div className={`lb-settings-slot ${settingsDragging ? 'dragging' : ''}`}>
         <button

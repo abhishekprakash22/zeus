@@ -364,6 +364,16 @@
   flex: 0 0 auto;
   display: flex;
 }
+/* Manual slot — same anatomy as the settings slot; the 📖 sits directly
+   above the gear as its bottom-pinned sibling. */
+.left-layout-bar .lb-manual-slot {
+  flex: 0 0 auto;
+  display: flex;
+  margin-bottom: 4px;
+}
+.left-layout-bar .lb-tab-manual {
+  flex: 1;
+}
 .left-layout-bar .lb-tab-settings {
   flex: 1;
 }

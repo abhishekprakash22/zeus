@@ -73,8 +73,12 @@ jobs:
         env:
           MANUAL_CHROME_EXTRA_FLAGS: "--no-sandbox --disable-dev-shm-usage"
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq chromium-browser || sudo apt-get install -y -qq chromium
+          # NOT apt: on Ubuntu 24.04, chromium-browser is a snap-transitional
+          # stub — apt reports success, build.sh's `command -v` finds the
+          # binary, and it dies at print time with "requires the chromium
+          # snap". The || fallback never fires because the first install
+          # "succeeded". Install the real snap directly.
+          sudo snap install chromium
           chmod +x docs/manual/build.sh
           docs/manual/build.sh
 

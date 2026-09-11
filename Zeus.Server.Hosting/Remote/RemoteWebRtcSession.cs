@@ -220,6 +220,33 @@ public sealed class RemoteWebRtcSession
         {
             iceServers = iceServers?.ToList() ?? new List<RTCIceServer>(),
         });
+
+        // ---- ICE diagnostics (2026-09-10 field round 2) --------------------
+        // Gathering went nondeterministic in the field: the same broker server
+        // list produced srflx+relay on one attempt and nothing a minute later,
+        // and a fully-loaded answer still failed connectivity checks. The
+        // library was a black box throughout. The three lines below are always
+        // on (a handful per session); SIPSorcery's own internal log is a
+        // firehose, so it only flows when ZEUS_RTC_DIAG=1 is set on the
+        // service — flip it for a diagnosis session, not for daily use.
+        if (Environment.GetEnvironmentVariable("ZEUS_RTC_DIAG") == "1"
+            && Interlocked.Exchange(ref s_sipsorceryLogWired, 1) == 0)
+        {
+            SIPSorcery.LogFactory.Set(new SipsorceryLogBridge(log));
+            log.LogInformation("rtc.remote SIPSorcery internal logging wired (ZEUS_RTC_DIAG=1)");
+        }
+
+        _pc.onicecandidate += c =>
+        {
+            if (c is not null)
+                _log.LogInformation(
+                    "rtc.remote gathered {Type} {Addr}:{Port}", c.type, c.address, c.port);
+        };
+        _pc.onicegatheringstatechange += s =>
+            _log.LogInformation("rtc.remote gathering → {State}", s);
+        _pc.oniceconnectionstatechange += s =>
+            _log.LogInformation("rtc.remote ice → {State}", s);
+
         _pc.ondatachannel += OnDataChannel;
         _pc.onconnectionstatechange += state =>
         {
@@ -249,6 +276,14 @@ public sealed class RemoteWebRtcSession
         // Gated on the offer actually containing audio so an RX-only client
         // (whose offer has no m=audio) is answered exactly as before.
         MaybeWireRemoteVoice(offerSdp);
+
+        // The offer's own census: what the client brought to the table. When a
+        // session fails, this line beside the answer's census shows which side
+        // of the pairing was starved.
+        var (oHost, oSrflx, oRelay) = CandidateCensus(offerSdp);
+        _log.LogInformation(
+            "rtc.remote offer candidates: {Host} host, {Srflx} srflx, {Relay} relay",
+            oHost, oSrflx, oRelay);
 
         var setResult = _pc.setRemoteDescription(
             new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = offerSdp });
@@ -303,6 +338,35 @@ public sealed class RemoteWebRtcSession
         }
 
         return (Count(sdp, " typ host"), Count(sdp, " typ srflx"), Count(sdp, " typ relay"));
+    }
+
+    // ---- SIPSorcery internal-log bridge (ZEUS_RTC_DIAG=1) ------------------
+    private static int s_sipsorceryLogWired;
+
+    /// <summary>
+    /// Adapts the session's ILogger into the ILoggerFactory SIPSorcery wants,
+    /// forwarding everything at Information so it clears the INFO+ file sink.
+    /// Diagnosis-session volume — never leave the env var set in daily use.
+    /// </summary>
+    private sealed class SipsorceryLogBridge(ILogger sink) : ILoggerFactory
+    {
+        public ILogger CreateLogger(string categoryName) => new Redirect(sink, categoryName);
+        public void AddProvider(ILoggerProvider provider) { /* single fixed sink */ }
+        public void Dispose() { /* nothing owned */ }
+
+        private sealed class Redirect(ILogger sink, string category) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Debug;
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (!IsEnabled(logLevel)) return;
+                sink.LogInformation(exception,
+                    "sipsorcery {Category}: {Message}", category, formatter(state, exception));
+            }
+        }
     }
 
     /// <summary>

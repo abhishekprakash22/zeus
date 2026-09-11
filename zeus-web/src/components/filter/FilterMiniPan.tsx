@@ -7,10 +7,10 @@
 //
 // Filter visualization PRD §3.2.1 — mini-panadapter inside the advanced
 // filter ribbon. Originally a fixed 12 kHz peak-hold trace with draggable
-// passband walls (mockup docs/pics/filterpanel_mockup.png). This revamp keeps
-// that core but layers the shared snap/pop signal estimator on top so the
-// filter panel sees the same flattened baseline and detected carriers the main
-// panadapter does, and adds finer, more granular edge control:
+// passband walls (mockup docs/pics/filterpanel_mockup.png); the walls have
+// since been retired (see below). The panel layers the shared snap/pop signal
+// estimator on top so it sees the same flattened baseline and detected
+// carriers the main panadapter does:
 //
 //   • POP'd trace + floor line — when global Pop is engaged, the trace plots
 //     SNR above the per-bin noise floor (weak in-band signals lift off a flat
@@ -20,12 +20,17 @@
 //     the visible window get amber ticks (sanctioned signal-strength colour,
 //     SNR-scaled alpha); carriers inside the passband read brighter/taller than
 //     those outside it, so you see exactly what the filter is letting through.
-//   • Magnetic edge snap — dragging a LOW/HIGH wall gently snaps onto a nearby
-//     detected carrier (within SNAP_PULL_HZ); hold Alt to place freely. Only
-//     active while Snap is engaged.
-//   • Granular fine-tune — scroll-wheel nudges the hovered edge by the per-mode
-//     step (Shift ×10); Ctrl/⌘+wheel zooms the visible span. A live width pill
-//     is click-to-edit (center-preserving Hz entry).
+//   • Wheel zooms the visible span (Ctrl/⌘ optional); the width pill is a
+//     read-only readout.
+//
+// READ-ONLY BY DESIGN (2026-09-11, maintainer decision): this panel is a pure
+// subscriber — it VISUALISES the passband and never writes it. Edge dragging,
+// magnetic snap, click-to-fit, wheel edge-nudge and the editable width pill
+// were all removed after field reports of accidental bandwidth changes on the
+// G2's touchscreen (a tune-drag that started over a wall grabbed the filter
+// instead). Bandwidth is set deliberately elsewhere: preset chips, the ribbon's
+// CUSTOM low/high inputs, and the arrow-key nudge the ribbon owns. Do not
+// reintroduce pointer-driven filter writes here.
 //
 // All estimator features reuse the SAME singleton floor the panadapter/
 // waterfall already maintain (signal-estimator.ts). That estimator only runs
@@ -55,7 +60,6 @@ import {
   registerEstimatorConsumer,
   signalExtentHz,
   useSignalEnhanceStore,
-  type DetectedPeak,
 } from '../../dsp/signal-estimator';
 import {
   displayFilterEdgesHz,
@@ -64,12 +68,9 @@ import {
   getReceiverFilterPresetName,
   getReceiverMode,
   getReceiverVfoHz,
-  optimisticSetReceiverFilter,
-  optimisticSetReceiverPreset,
-  postReceiverFilter,
   rxIndexOf,
 } from '../../state/receiver-state';
-import { formatCutOffset, formatFilterWidth, nudgeStepHz } from './filterPresets';
+import { formatCutOffset, formatFilterWidth } from './filterPresets';
 import { receiverColorByIndex } from '../spectrumReceiverColor';
 import { MeterGlass } from '../meters/render/MeterGlass';
 import type { RxMode } from '../../api/client';
@@ -77,7 +78,6 @@ import {
   DB_FLOOR,
   MINI_NOISE_GATE_DB,
   MINI_TRACE_RANGE_DB,
-  fitPassbandForMode,
   formatEqActualDb,
   frameBinRangeForHz,
   miniPanSignalLevel,
@@ -85,15 +85,12 @@ import {
 } from './miniPanMath';
 
 const DEFAULT_SPAN_HZ = 12_000;       // initial visible window around VFO
-const MIN_SPAN_HZ = 3_000;            // Ctrl+wheel zoom-in floor
-const MAX_SPAN_HZ = 48_000;           // Ctrl+wheel zoom-out ceiling
+const MIN_SPAN_HZ = 3_000;            // wheel zoom-in floor
+const MAX_SPAN_HZ = 48_000;           // wheel zoom-out ceiling
 const FILTER_VIEW_MARGIN_HZ = 800;    // keep tight zoom from clipping SSB passbands off-screen
 const TICK_STEP_HZ = 2_000;           // base axis-label spacing (scaled by span)
 const DB_CEIL = -30;
 const POP_RANGE_DB = 55;              // SNR (dB above floor) that reaches full height in Pop mode
-const DRAG_MIN_INTERVAL_MS = 50;
-const EDGE_HIT_PX = 6;
-const SNAP_PULL_HZ = 150;             // magnetic pull radius for edge→carrier snap
 const EDGE_ANCHOR_HZ = 400;           // radius to lock signal-extent onto a carrier crest
 const BRACKET_MAX = 6;                // most signal-edge markers drawn at once
 const BRACKET_MIN_SNR_DB = 6;         // only mark carriers this far above the floor
@@ -115,8 +112,6 @@ const EQ_METER_AVG_MS = 5000;          // each EQ band shows a 5-second level av
 const EQ_LEVEL_REF_MIN_DB = 6;         // min SNR before a block participates in EQ balance
 const EQ_ACTUAL_RANGE_DB = 40;         // actual dB scale for the EQ block fill
 const PEAKHOLD_DECAY_PX = 0.45;       // peak-hold envelope fall rate (px/frame ≈ 13 px/s)
-const FIT_HIT_PX = 26;                // click-to-fit grab radius around a carrier
-const FIT_MARGIN_HZ = 120;            // breathing room added each side when fitting
 const AVG_ALPHA = 0.02;               // PSD time-average EMA (~2 s) for instrument-like width
 const OBW_FRACTION = 0.99;            // ITU occupied-bandwidth power fraction (99%)
 
@@ -127,8 +122,6 @@ const OBW_FRACTION = 0.99;            // ITU occupied-bandwidth power fraction (
 // drive them.
 const COL_VFO_CENTER = 'rgba(200, 205, 215, 0.14)'; // subtle neutral VFO line
 const COL_CUT_TICK = 'rgba(220, 225, 232, 0.35)';   // hairline callout connecting label to wall
-
-type DragMode = 'lo' | 'hi' | 'inside';
 
 type BracketTrack = {
   crestHz: number;
@@ -145,14 +138,6 @@ type BracketTrack = {
   lastLabelAt: number;
   lastSeenAt: number;
 };
-
-function presetIsFixed(name: string | null): boolean {
-  return !!name && /^F([1-9]|10)$/.test(name);
-}
-
-function isSymmetricMode(mode: RxMode): boolean {
-  return mode === 'AM' || mode === 'SAM' || mode === 'DSB' || mode === 'FM';
-}
 
 // Format VFO-relative Hz offset as absolute-MHz with 3 decimals (e.g. 14.249).
 // Used for x-axis tick labels.
@@ -322,12 +307,8 @@ function filterMiniPanReceivers(
   return keys;
 }
 
-// All per-receiver reads/writes go through the canonical receivers[] selectors
+// All per-receiver reads go through the canonical receivers[] selectors
 // (RX2 = index 1), so the mini-pan no longer touches the flat *B fields.
-function miniPanVfoHzForReceiver(c: ConnSnapshot, receiver: SpectrumReceiver): number {
-  return getReceiverVfoHz(c, receiver);
-}
-
 function miniPanFilterForReceiver(
   c: ConnSnapshot,
   receiver: SpectrumReceiver,
@@ -337,9 +318,8 @@ function miniPanFilterForReceiver(
   // FreeDV stores its passband USB-positive; re-sign to the band-convention
   // sideband (LSB < 10 MHz) so the mini-pan window, walls, EQ bands and cut
   // callouts all land on the side the demod actually is — matching the main
-  // panadapter passband/crosshair. Posting these signed edges on drag/wheel is
-  // safe: the backend takes abs() and re-signs from (mode, vfo) at the WDSP
-  // seam. No-op for every non-FreeDV mode. See displayFilterEdgesHz.
+  // panadapter passband/crosshair. Display-only: the mini-pan never posts
+  // edges. No-op for every non-FreeDV mode. See displayFilterEdgesHz.
   const { lowHz, highHz } = displayFilterEdgesHz(
     mode,
     vfoHz,
@@ -356,37 +336,10 @@ function miniPanFilterForReceiver(
   };
 }
 
-function setSelectedFilterState(
-  receiver: SpectrumReceiver,
-  lowHz: number,
-  highHz: number,
-  presetName: string,
-): void {
-  // Dual-writes the canonical receivers[] entry and (for RX2) the flat mirror.
-  optimisticSetReceiverFilter(receiver, lowHz, highHz);
-  optimisticSetReceiverPreset(receiver, presetName);
-}
-
 function sharedNoiseFloorForReceiver(receiver: SpectrumReceiver): Float32Array | null {
   // Per-receiver estimator bank: each receiver's own floor, trained from its
   // own display frames (display-store banks maybeUpdateEstimator by rxId).
   return getNoiseFloor(rxIndexOf(receiver));
-}
-
-// Snap a dragged edge onto the nearest detected carrier when it falls inside
-// SNAP_PULL_HZ — the "magnetic assist". Returns the (possibly) pulled absolute
-// frequency. peaks are captured once at drag start (carriers move slowly).
-function magnetEdge(absHz: number, peaks: DetectedPeak[]): number {
-  let best = absHz;
-  let bestDist = SNAP_PULL_HZ;
-  for (const p of peaks) {
-    const d = Math.abs(p.hz - absHz);
-    if (d < bestDist) {
-      bestDist = d;
-      best = p.hz;
-    }
-  }
-  return best;
 }
 
 // ITU-style occupied bandwidth: within [loBin, hiBin] of an averaged POWER
@@ -548,35 +501,12 @@ function FilterMiniPanSurface({
   const spanHzRef = useRef<number>(DEFAULT_SPAN_HZ);
   const [, setSpanTick] = useState(0);
   const redrawRef = useRef<(() => void) | null>(null);
-  const hoverEdgeRef = useRef<DragMode | null>(null);
   const eqHoverRef = useRef<number | null>(null);
 
-  // Live filter edges + mode for the editable width pill. These re-render the
+  // Live filter edges for the read-only width pill. These re-render the
   // component (cheap) but the per-frame canvas path stays imperative.
   const filterLowHz = useConnectionStore((s) => miniPanFilterForReceiver(s, receiver).filterLowHz);
   const filterHighHz = useConnectionStore((s) => miniPanFilterForReceiver(s, receiver).filterHighHz);
-  const mode = useConnectionStore((s) => miniPanFilterForReceiver(s, receiver).mode);
-
-  const [editingWidth, setEditingWidth] = useState(false);
-  const [widthDraft, setWidthDraft] = useState('');
-
-  const dragRef = useRef<{
-    receiver: SpectrumReceiver;
-    mode: DragMode;
-    rect: DOMRect;
-    spanHz: number;
-    activeSlot: string;
-    startLoHz: number;
-    startHiHz: number;
-    windowLoOffsetHz: number;
-    startX: number;
-    pendingLo: number;
-    pendingHi: number;
-    lastWriteAt: number;
-    flushTimer: number | null;
-    pointerId: number;
-    peaks: DetectedPeak[];
-  } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1442,45 +1372,8 @@ function FilterMiniPanSurface({
         }
         ctx.restore();
 
-        // 5) Grab handles — rounded pills centred on each wall with two grip
-        //    lines, so the drag affordance is obvious. The hovered edge brightens.
-        const hoverEdge = hoverEdgeRef.current;
-        const handleW = Math.round(7 * dpr);
-        const handleH = Math.round(20 * dpr);
-        const handleY = pbTop + (pbBottom - pbTop) / 2 - handleH / 2;
-        const drawHandle = (wx: number, hot: boolean) => {
-          const x = Math.round(wx) - handleW / 2;
-          ctx.save();
-          ctx.shadowColor = hot ? accent(0.72) : 'rgba(0, 0, 0, 0.55)';
-          ctx.shadowBlur = hot ? Math.round(9 * dpr) : Math.round(4 * dpr);
-          const handleGrad = ctx.createLinearGradient(0, handleY, 0, handleY + handleH);
-          handleGrad.addColorStop(0, hot ? accent(1.0) : accent(0.88));
-          handleGrad.addColorStop(0.48, hot ? accent(0.84) : accent(0.66));
-          handleGrad.addColorStop(1, hot ? accent(0.72) : accent(0.52));
-          ctx.fillStyle = handleGrad;
-          const r = Math.round(2 * dpr);
-          ctx.beginPath();
-          ctx.roundRect(x, handleY, handleW, handleH, r);
-          ctx.fill();
-          ctx.strokeStyle = ink0(hot ? 0.70 : 0.42);
-          ctx.lineWidth = 1 * dpr;
-          ctx.stroke();
-          ctx.restore();
-          // Grip lines.
-          ctx.strokeStyle = ink0(0.86);
-          ctx.lineWidth = 1 * dpr;
-          const gx = Math.round(wx);
-          const g1 = handleY + handleH * 0.34;
-          const g2 = handleY + handleH * 0.66;
-          ctx.beginPath();
-          ctx.moveTo(gx - Math.round(1.5 * dpr) + 0.5, g1);
-          ctx.lineTo(gx - Math.round(1.5 * dpr) + 0.5, g2);
-          ctx.moveTo(gx + Math.round(1.5 * dpr) + 0.5, g1);
-          ctx.lineTo(gx + Math.round(1.5 * dpr) + 0.5, g2);
-          ctx.stroke();
-        };
-        drawHandle(Lx, hoverEdge === 'lo');
-        drawHandle(Rx, hoverEdge === 'hi');
+        // (5 removed) Grab handles are gone — the mini-pan is a read-only
+        // display; the walls above mark the cuts without inviting a drag.
 
         // LOW CUT / HIGH CUT callouts. Key (letter-spaced, muted) stacked
         // above value (bold, brighter) in the reserved top band. A hairline
@@ -1635,48 +1528,26 @@ function FilterMiniPanSurface({
       }
     });
 
-    // Scroll wheel — granular fine-tune. Registered natively (not via React's
+    // Scroll wheel — VIEW zoom only. Registered natively (not via React's
     // onWheel, which is passive on the root and silently drops preventDefault),
-    // so the gesture adjusts the filter without scrolling the page. Ctrl/⌘+wheel
-    // zooms the visible span; otherwise nudge the hovered edge (or the whole
-    // passband when not over an edge) by the per-mode step, ×10 with Shift.
+    // so the gesture zooms without scrolling the page. The wheel never touches
+    // the filter itself — this panel is a read-only display; the old
+    // edge-nudge gesture is gone with the rest of the write paths. Ctrl/⌘ is
+    // accepted but no longer required (it used to distinguish zoom from
+    // nudge).
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const dir = e.deltaY > 0 ? 1 : -1;
       const c = useConnectionStore.getState();
       const active = miniPanFilterForReceiver(c, receiver);
-
-      if (e.ctrlKey || e.metaKey) {
-        const factor = dir > 0 ? 1.18 : 1 / 1.18;
-        const minSpanHz = minSpanForFilter(active.filterLowHz, active.filterHighHz);
-        const next = Math.round(Math.max(minSpanHz, Math.min(MAX_SPAN_HZ, spanHzRef.current * factor)));
-        if (next !== spanHzRef.current) {
-          spanHzRef.current = next;
-          setSpanTick((t) => t + 1);
-          requestRedraw();
-        }
-        return;
+      const factor = dir > 0 ? 1.18 : 1 / 1.18;
+      const minSpanHz = minSpanForFilter(active.filterLowHz, active.filterHighHz);
+      const next = Math.round(Math.max(minSpanHz, Math.min(MAX_SPAN_HZ, spanHzRef.current * factor)));
+      if (next !== spanHzRef.current) {
+        spanHzRef.current = next;
+        setSpanTick((t) => t + 1);
+        requestRedraw();
       }
-
-      const step = nudgeStepHz(active.mode) * (e.shiftKey ? 10 : 1) * dir;
-      const edge = hoverEdgeRef.current;
-      let lo = active.filterLowHz;
-      let hi = active.filterHighHz;
-      if (edge === 'lo') {
-        lo = Math.min(active.filterHighHz - 50, active.filterLowHz + step);
-      } else if (edge === 'hi') {
-        hi = Math.max(active.filterLowHz + 50, active.filterHighHz + step);
-      } else {
-        // Inside / no edge → symmetric width change about the passband centre.
-        const center = (active.filterLowHz + active.filterHighHz) / 2;
-        const halfW = Math.max(25, Math.abs(active.filterHighHz - active.filterLowHz) / 2 + step);
-        lo = Math.round(center - halfW);
-        hi = Math.round(center + halfW);
-      }
-      if (hi <= lo + 50) return;
-      const slot = presetIsFixed(active.filterPresetName) || !active.filterPresetName ? 'VAR1' : active.filterPresetName;
-      setSelectedFilterState(active.receiver, lo, hi, slot);
-      postReceiverFilter(active.receiver, lo, hi, slot).then(c.applyState).catch(() => {});
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
@@ -1699,193 +1570,10 @@ function FilterMiniPanSurface({
     };
   }, [receiver]);
 
-  const flushPending = () => {
-    const d = dragRef.current;
-    if (!d) return;
-    d.flushTimer = null;
-    d.lastWriteAt = performance.now();
-    postReceiverFilter(d.receiver, d.pendingLo, d.pendingHi, d.activeSlot).catch(() => {});
-  };
-
-  const schedule = () => {
-    const d = dragRef.current;
-    if (!d) return;
-    const now = performance.now();
-    const elapsed = now - d.lastWriteAt;
-    if (elapsed >= DRAG_MIN_INTERVAL_MS) {
-      flushPending();
-    } else if (d.flushTimer == null) {
-      d.flushTimer = window.setTimeout(flushPending, DRAG_MIN_INTERVAL_MS - elapsed);
-    }
-  };
-
-  // Fit-to-signal: a click on bare spectrum that lands on a detected carrier
-  // snaps the passband to that carrier's measured energy extent (signalExtentHz,
-  // the same edge walk snap uses) plus a little margin. Returns true if it
-  // fitted, so the caller skips starting a drag.
-  const tryFitToSignal = (relX: number, rectW: number, spanHz: number): boolean => {
-    const c = useConnectionStore.getState();
-    const active = miniPanFilterForReceiver(c, receiver);
-    const floor = sharedNoiseFloorForReceiver(active.receiver);
-    const d = selectDisplaySlice(useDisplayStore.getState(), active.receiver);
-    if (!d.panDb || d.hzPerPixel <= 0 || floor === null) return false;
-    const vfo = active.vfoHz;
-    const fitCwOff = active.mode === 'CWU' ? -c.cwPitchHz : active.mode === 'CWL' ? c.cwPitchHz : 0;
-    const lo = vfo + fitCwOff;
-    const winLoHz = lo + filterWindowLoOffsetHz(active.filterLowHz, active.filterHighHz, spanHz);
-    const dCenter = Number(d.centerHz);
-    const peaks = detectPeaks(d.panDb, dCenter, d.hzPerPixel, rxIndexOf(active.receiver)).filter((p) => p.snrDb >= BRACKET_MIN_SNR_DB);
-    let best: DetectedPeak | null = null;
-    let bestDist = FIT_HIT_PX;
-    for (const p of peaks) {
-      const x = ((p.hz - winLoHz) / spanHz) * rectW;
-      const dist = Math.abs(x - relX);
-      if (dist < bestDist) { bestDist = dist; best = p; }
-    }
-    if (!best) return false;
-    const ext = signalExtentHz(d.panDb, dCenter, d.hzPerPixel, best.hz, EDGE_ANCHOR_HZ, rxIndexOf(active.receiver));
-    if (!ext) return false;
-    // Keep the fit on the active mode's sideband — a signal on the wrong side of
-    // the carrier is unreachable here without retuning, so bail rather than flip
-    // the passband to the opposite sideband.
-    const fitted = fitPassbandForMode(active.mode, ext.loHz - lo, ext.hiHz - lo, FIT_MARGIN_HZ);
-    if (!fitted) return false;
-    const { low, high } = fitted;
-    const slot = presetIsFixed(active.filterPresetName) || !active.filterPresetName ? 'VAR1' : active.filterPresetName;
-    setSelectedFilterState(active.receiver, low, high, slot);
-    postReceiverFilter(active.receiver, low, high, slot).then(c.applyState).catch(() => {});
-    return true;
-  };
-
-  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.button !== 0) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0) return;
-
-    const c = useConnectionStore.getState();
-    const active = miniPanFilterForReceiver(c, receiver);
-    const minSpanHz = minSpanForFilter(active.filterLowHz, active.filterHighHz);
-    if (spanHzRef.current < minSpanHz) spanHzRef.current = minSpanHz;
-    const spanHz = spanHzRef.current;
-    const windowLoOffsetHz = filterWindowLoOffsetHz(active.filterLowHz, active.filterHighHz, spanHz);
-    const offsetToCssX = (offHz: number) => ((offHz - windowLoOffsetHz) / spanHz) * rect.width;
-    const passLeftPx = offsetToCssX(active.filterLowHz);
-    const passRightPx = offsetToCssX(active.filterHighHz);
-    const relX = e.clientX - rect.left;
-
-    let mode: DragMode;
-    if (Math.abs(relX - passLeftPx) <= EDGE_HIT_PX) mode = 'lo';
-    else if (Math.abs(relX - passRightPx) <= EDGE_HIT_PX) mode = 'hi';
-    else if (relX > passLeftPx && relX < passRightPx) mode = 'inside';
-    else {
-      // Outside the passband: a click on a detected carrier fits the filter to
-      // it; otherwise do nothing (no drag started).
-      if (tryFitToSignal(relX, rect.width, spanHz)) e.preventDefault();
-      return;
-    }
-
-    e.preventDefault();
-    try { canvas.setPointerCapture(e.pointerId); } catch { /* ok */ }
-
-    const activeSlot = presetIsFixed(active.filterPresetName) || !active.filterPresetName ? 'VAR1' : active.filterPresetName;
-
-    // Snapshot detected carriers once so the magnetic edge-snap has stable
-    // targets through the drag. The panel keeps the floor live, so detection is
-    // available here without the operator toggling global Snap.
-    let peaks: DetectedPeak[] = [];
-    {
-      const d = selectDisplaySlice(useDisplayStore.getState(), active.receiver);
-      if (d.panDb && d.hzPerPixel > 0 && sharedNoiseFloorForReceiver(active.receiver) !== null) {
-        peaks = detectPeaks(d.panDb, Number(d.centerHz), d.hzPerPixel, rxIndexOf(active.receiver));
-      }
-    }
-
-    dragRef.current = {
-      receiver: active.receiver,
-      mode,
-      rect,
-      spanHz,
-      activeSlot,
-      startLoHz: active.filterLowHz,
-      startHiHz: active.filterHighHz,
-      windowLoOffsetHz,
-      startX: e.clientX,
-      pendingLo: active.filterLowHz,
-      pendingHi: active.filterHighHz,
-      lastWriteAt: 0,
-      flushTimer: null,
-      pointerId: e.pointerId,
-      peaks,
-    };
-
-    if (activeSlot !== active.filterPresetName) {
-      setSelectedFilterState(active.receiver, active.filterLowHz, active.filterHighHz, activeSlot);
-    }
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const d = dragRef.current;
-    if (!d || e.pointerId !== d.pointerId) return;
-    e.stopPropagation();
-
-    const snapC = useConnectionStore.getState();
-    const vfo = miniPanVfoHzForReceiver(snapC, d.receiver);
-    const snapMode = getReceiverMode(snapC, d.receiver);
-    const snapCwOff = snapMode === 'CWU' ? -snapC.cwPitchHz : snapMode === 'CWL' ? snapC.cwPitchHz : 0;
-    const lo = vfo + snapCwOff;
-    const hzPerPx = d.spanHz / d.rect.width;
-    // Magnetic snap is active for edge drags unless Alt is held (free placement)
-    // and unless there are no detected carriers.
-    const snap = d.peaks.length > 0 && !e.altKey;
-    let loHz = d.startLoHz;
-    let hiHz = d.startHiHz;
-    if (d.mode === 'lo') {
-      const relX = e.clientX - d.rect.left;
-      loHz = Math.round(relX * hzPerPx + d.windowLoOffsetHz);
-      if (snap) loHz = Math.round(magnetEdge(lo + loHz, d.peaks) - lo);
-      if (loHz > d.startHiHz - 50) loHz = d.startHiHz - 50;
-    } else if (d.mode === 'hi') {
-      const relX = e.clientX - d.rect.left;
-      hiHz = Math.round(relX * hzPerPx + d.windowLoOffsetHz);
-      if (snap) hiHz = Math.round(magnetEdge(lo + hiHz, d.peaks) - lo);
-      if (hiHz < d.startLoHz + 50) hiHz = d.startLoHz + 50;
-    } else {
-      const dxHz = Math.round((e.clientX - d.startX) * hzPerPx);
-      loHz = d.startLoHz + dxHz;
-      hiHz = d.startHiHz + dxHz;
-    }
-
-    d.pendingLo = loHz;
-    d.pendingHi = hiHz;
-    setSelectedFilterState(d.receiver, loHz, hiHz, d.activeSlot);
-    schedule();
-  };
-
-  const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const d = dragRef.current;
-    if (!d || e.pointerId !== d.pointerId) return;
-    e.stopPropagation();
-    const canvas = canvasRef.current;
-    if (canvas && canvas.hasPointerCapture(e.pointerId)) {
-      try { canvas.releasePointerCapture(e.pointerId); } catch { /* ok */ }
-    }
-    if (d.flushTimer != null) {
-      clearTimeout(d.flushTimer);
-      d.flushTimer = null;
-    }
-    const lo = d.pendingLo;
-    const hi = d.pendingHi;
-    const slot = d.activeSlot;
-    const receiver = d.receiver;
-    dragRef.current = null;
-    const applyState = useConnectionStore.getState().applyState;
-    postReceiverFilter(receiver, lo, hi, slot).then(applyState).catch(() => {});
-  };
-
+  // Hover only feeds the EQ-band readout (per-band actual dB drawn on the
+  // canvas). It never changes the cursor and there is nothing to grab — the
+  // panel is a read-only display.
   const onPointerMoveHover = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (dragRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -1901,7 +1589,6 @@ function FilterMiniPanSurface({
     const passRightPx = offsetToCssX(active.filterHighHz);
     const relX = e.clientX - rect.left;
     const relY = e.clientY - rect.top;
-    const prevEdge = hoverEdgeRef.current;
     const prevEq = eqHoverRef.current;
     const meterLeft = Math.max(0, Math.min(rect.width, passLeftPx));
     const meterRight = Math.max(0, Math.min(rect.width, passRightPx));
@@ -1923,75 +1610,23 @@ function FilterMiniPanSurface({
       nextEq = Math.max(0, Math.min(meterBands - 1, Math.floor(((relX - meterLeft) / meterW) * meterBands)));
     }
     eqHoverRef.current = nextEq;
-    if (Math.abs(relX - passLeftPx) <= EDGE_HIT_PX) {
-      hoverEdgeRef.current = 'lo';
-      canvas.style.cursor = 'ew-resize';
-    } else if (Math.abs(relX - passRightPx) <= EDGE_HIT_PX) {
-      hoverEdgeRef.current = 'hi';
-      canvas.style.cursor = 'ew-resize';
-    } else if (nextEq !== null) {
-      hoverEdgeRef.current = null;
-      canvas.style.cursor = 'default';
-    } else if (relX > passLeftPx && relX < passRightPx) {
-      hoverEdgeRef.current = 'inside';
-      canvas.style.cursor = 'move';
-    } else {
-      hoverEdgeRef.current = null;
-      canvas.style.cursor = 'default';
-    }
-    if (hoverEdgeRef.current !== prevEdge || eqHoverRef.current !== prevEq) {
+    if (eqHoverRef.current !== prevEq) {
       redrawRef.current?.();
     }
   };
 
   const onPointerLeave = () => {
-    const canvas = canvasRef.current;
-    const hadHover = hoverEdgeRef.current !== null || eqHoverRef.current !== null;
-    hoverEdgeRef.current = null;
+    const hadHover = eqHoverRef.current !== null;
     eqHoverRef.current = null;
-    if (canvas) canvas.style.cursor = 'default';
     if (hadHover) redrawRef.current?.();
   };
 
-  // ── Editable width pill ─────────────────────────────────────────────────
-  const widthHz = Math.abs(filterHighHz - filterLowHz);
+  // ── Read-only width pill ────────────────────────────────────────────────
   // Centre the pill horizontally over the passband (clamped to stay on-panel).
   const pbCenterHz = (filterLowHz + filterHighHz) / 2;
   const span = Math.max(spanHzRef.current, minSpanForFilter(filterLowHz, filterHighHz));
   const pillWindowLoHz = filterWindowLoOffsetHz(filterLowHz, filterHighHz, span);
   const pillLeftPct = Math.max(10, Math.min(90, ((pbCenterHz - pillWindowLoHz) / span) * 100));
-
-  const beginEditWidth = () => {
-    setWidthDraft(String(Math.round(widthHz)));
-    setEditingWidth(true);
-  };
-
-  const commitWidth = () => {
-    setEditingWidth(false);
-    const next = Number.parseInt(widthDraft, 10);
-    if (!Number.isFinite(next) || next < 50) return;
-    const c = useConnectionStore.getState();
-    const active = miniPanFilterForReceiver(c, receiver);
-    let lo: number;
-    let hi: number;
-    if (isSymmetricMode(active.mode)) {
-      lo = -Math.round(next / 2);
-      hi = Math.round(next / 2);
-    } else {
-      // Preserve the passband centre (audio centre) and set the new width.
-      const center = (active.filterLowHz + active.filterHighHz) / 2;
-      lo = Math.round(center - next / 2);
-      hi = Math.round(center + next / 2);
-    }
-    const slot = presetIsFixed(active.filterPresetName) || !active.filterPresetName ? 'VAR1' : active.filterPresetName;
-    setSelectedFilterState(active.receiver, lo, hi, slot);
-    postReceiverFilter(active.receiver, lo, hi, slot).then(c.applyState).catch(() => {});
-  };
-
-  const onWidthKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') e.currentTarget.blur();
-    else if (e.key === 'Escape') { setEditingWidth(false); }
-  };
 
   return (
     <div className={`filter-minipan-wrap ${split ? 'filter-minipan-wrap--split' : ''}`}>
@@ -2003,43 +1638,19 @@ function FilterMiniPanSurface({
       <canvas
         ref={canvasRef}
         className="filter-minipan-canvas"
-        onPointerDown={onPointerDown}
-        onPointerMove={(e) => {
-          if (dragRef.current) onPointerMove(e);
-          else onPointerMoveHover(e);
-        }}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerMove={onPointerMoveHover}
         onPointerLeave={onPointerLeave}
       />
       {/* Liquid-metal glass over the bandwidth pan — static specular,
-          pointer-events:none so dragging the filter still works through it. */}
+          pointer-events:none. */}
       <MeterGlass />
-      {editingWidth ? (
-        <input
-          autoFocus
-          type="number"
-          min={50}
-          step={nudgeStepHz(mode)}
-          value={widthDraft}
-          onChange={(e) => setWidthDraft(e.currentTarget.value)}
-          onBlur={commitWidth}
-          onKeyDown={onWidthKeyDown}
-          aria-label="Filter passband width in Hz"
-          className="filter-minipan-width-input mono"
-          style={{ left: `${pillLeftPct}%` }}
-        />
-      ) : (
-        <button
-          type="button"
-          className="filter-minipan-width-pill mono"
-          title="Passband width — click to set exactly (Hz)"
-          onClick={beginEditWidth}
-          style={{ left: `${pillLeftPct}%` }}
-        >
-          {formatFilterWidth(filterLowHz, filterHighHz)}
-        </button>
-      )}
+      <span
+        className="filter-minipan-width-pill filter-minipan-width-pill--readonly mono"
+        title="Passband width — set via presets or the CUSTOM Hz inputs"
+        style={{ left: `${pillLeftPct}%` }}
+      >
+        {formatFilterWidth(filterLowHz, filterHighHz)}
+      </span>
     </div>
   );
 }

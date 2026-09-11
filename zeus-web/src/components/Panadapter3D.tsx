@@ -504,7 +504,7 @@ export function Panadapter3D({
           {status === 'ready' ? ' · 3D' : ''}
         </div>
       )}
-      {!widebandDisplay && <PassbandOverlay resizable containerRef={containerRef} receiver={receiver} />}
+      {!widebandDisplay && <PassbandOverlay receiver={receiver} />}
       <FilterCursorOverlay containerRef={containerRef} receiver={receiver} />
       {rxIndex === 0 && !widebandDisplay && (!stitched || foreground) && (
         <>

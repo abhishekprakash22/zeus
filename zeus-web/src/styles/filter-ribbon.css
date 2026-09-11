@@ -219,9 +219,11 @@
   color: var(--signal, #25d366);
 }
 
-/* Live passband-width readout, click-to-edit. Sits in the mini-pan's reserved
-   top callout band, horizontally centred over the passband (left set inline),
-   so it aligns with LOW CUT / HIGH CUT without covering the spectrum trace. */
+/* Live passband-width readout. Sits in the mini-pan's reserved top callout
+   band, horizontally centred over the passband (left set inline), so it aligns
+   with LOW CUT / HIGH CUT without covering the spectrum trace. The pill is a
+   pure readout — the mini-pan never writes the filter; the --readonly modifier
+   below strips the leftover edit affordances. */
 .filter-minipan-width-pill,
 .filter-minipan-width-input {
   position: absolute;
@@ -267,6 +269,21 @@
     0 0 22px color-mix(in srgb, var(--accent-bright, #4ea6ff) 48%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.20);
   transform: translateX(-50%) scale(1.02);
+}
+.filter-minipan-width-pill--readonly,
+.filter-minipan-width-pill--readonly:hover {
+  cursor: default;
+  border-color: color-mix(in srgb, var(--accent, #4a9eff) 42%, rgba(255, 255, 255, 0.22));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.02) 48%, rgba(0, 0, 0, 0.18) 100%),
+    rgba(7, 9, 13, 0.78);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.52),
+    0 0 16px color-mix(in srgb, var(--accent, #4a9eff) 34%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transform: translateX(-50%);
+  pointer-events: none;
+  user-select: none;
 }
 .filter-minipan-width-input {
   width: 64px;

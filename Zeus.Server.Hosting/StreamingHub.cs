@@ -726,7 +726,10 @@ public sealed class StreamingHub
         frame.Serialize(writer);
         foreach (var client in _clients.Values)
         {
-            if (!client.TryEnqueue(payload)) System.Threading.Interlocked.Increment(ref _dropsOther);
+            // Priority lane, latest-wins — never counted as a drop: a replaced
+            // unsent state frame was superseded, not lost (see ClientSession's
+            // priority-lane comment for the dial-starvation field history).
+            client.EnqueuePriorityState(payload);
         }
     }
 
@@ -739,7 +742,8 @@ public sealed class StreamingHub
         frame.Serialize(writer);
         foreach (var client in _clients.Values)
         {
-            if (!client.TryEnqueue(payload)) System.Threading.Interlocked.Increment(ref _dropsOther);
+            // Priority lane, latest-wins — see Broadcast(StatePushFrame).
+            client.EnqueuePriorityVfo(payload);
         }
     }
 
@@ -957,6 +961,61 @@ public sealed class StreamingHub
         // the hub-level counters for the #299 Step 1 probe.
         public bool TryEnqueue(byte[] payload) => _queue.Writer.TryWrite(payload);
 
+        // ---- Priority lane (dial-frame starvation, Laurence round 4) -----
+        // The shared bounded queue (MaxBacklogPerClient=4, DropOldest) is the
+        // right shape for bulk frames — display, audio, meters — where a
+        // dropped frame costs nothing visible. It is the WRONG shape for the
+        // tiny 0x3B dial frames and 0x3C state pushes: a fast VFO spin is
+        // peak display traffic AND peak server CPU (60 Hz SetVfo/WDSP work
+        // on the same CM5 the kiosk browser runs on), the send loop backs up
+        // on the socket, and DropOldest evicts exactly the frames whose loss
+        // the operator SEES. Field signature: numerals dead while the knob
+        // turns, then a catch-up rush after it stops (the trailing send
+        // finally surviving once display traffic slackens) — while the RX
+        // pitch tracks in real time because the DDC write is upstream of the
+        // hub entirely.
+        //
+        // These slots are latest-value by construction: the broadcaster swaps
+        // in the newest payload, the send loop swaps it out and sends it
+        // BEFORE the bulk queue — and between bulk frames too — so a dial
+        // frame can never wait behind a display burst. Replacing a stale
+        // unsent dial frame is the design, not a drop: the newer frame
+        // carries the newer truth.
+        private byte[]? _priorityVfo;
+        private byte[]? _priorityState;
+        // Capacity-1 wake-up: a priority write must rouse a send loop parked
+        // on the bulk queue's WaitToReadAsync. Tokens carry no data, so a
+        // full channel is fine — a wake-up is already pending.
+        private readonly Channel<byte> _priorityKick = Channel.CreateBounded<byte>(
+            new BoundedChannelOptions(1)
+            {
+                FullMode = BoundedChannelFullMode.DropWrite,
+                SingleReader = true,
+                SingleWriter = false,
+            });
+
+        public void EnqueuePriorityVfo(byte[] payload)
+        {
+            Interlocked.Exchange(ref _priorityVfo, payload);
+            _priorityKick.Writer.TryWrite(0);
+        }
+
+        public void EnqueuePriorityState(byte[] payload)
+        {
+            Interlocked.Exchange(ref _priorityState, payload);
+            _priorityKick.Writer.TryWrite(0);
+        }
+
+        private async Task SendPriorityAsync(CancellationToken ct)
+        {
+            var vfo = Interlocked.Exchange(ref _priorityVfo, null);
+            if (vfo is not null && _ws.State == WebSocketState.Open)
+                await _ws.SendAsync(vfo, WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+            var state = Interlocked.Exchange(ref _priorityState, null);
+            if (state is not null && _ws.State == WebSocketState.Open)
+                await _ws.SendAsync(state, WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+        }
+
         // Whether this client has asked for the RX audio stream (0x21).
         // Mutated only on the receive loop and on disconnect cleanup, which
         // never run concurrently for one session (the finally runs after both
@@ -1016,6 +1075,7 @@ public sealed class StreamingHub
             var recvTask = ReceiveLoopAsync(ct);
             await Task.WhenAny(sendTask, recvTask);
             _queue.Writer.TryComplete();
+            _priorityKick.Writer.TryComplete();
             try { await Task.WhenAll(sendTask, recvTask); } catch { /* drained */ }
         }
 
@@ -1032,14 +1092,47 @@ public sealed class StreamingHub
             // back-pressure is unchanged; ChannelClosedException is replaced
             // by WaitToReadAsync returning false after Writer.TryComplete().
             var reader = _queue.Reader;
+            var kick = _priorityKick.Reader;
             try
             {
-                while (await reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                // The loop parks on BOTH the bulk queue and the priority kick;
+                // priority payloads (0x3B dial / 0x3C state) flush ahead of
+                // the bulk drain and between bulk frames — see the
+                // priority-lane comment above for the field history.
+                Task<bool> bulkWait = reader.WaitToReadAsync(ct).AsTask();
+                Task<bool> kickWait = kick.WaitToReadAsync(ct).AsTask();
+                while (true)
                 {
+                    await Task.WhenAny(bulkWait, kickWait).ConfigureAwait(false);
+                    while (kick.TryRead(out _)) { }
+                    await SendPriorityAsync(ct).ConfigureAwait(false);
                     while (reader.TryRead(out var frame))
                     {
                         if (_ws.State != WebSocketState.Open) return;
                         await _ws.SendAsync(frame, WebSocketMessageType.Binary, true, ct).ConfigureAwait(false);
+                        // A dial frame that landed during the bulk drain goes
+                        // out between bulk frames, not after the burst.
+                        await SendPriorityAsync(ct).ConfigureAwait(false);
+                    }
+                    if (bulkWait.IsCompleted)
+                    {
+                        if (!await bulkWait.ConfigureAwait(false))
+                        {
+                            // Bulk channel completed (session teardown): flush
+                            // any final dial frame and leave.
+                            await SendPriorityAsync(ct).ConfigureAwait(false);
+                            return;
+                        }
+                        bulkWait = reader.WaitToReadAsync(ct).AsTask();
+                    }
+                    if (kickWait.IsCompleted)
+                    {
+                        // A completed-false kick channel must not busy-spin the
+                        // WhenAny: park it on a never-completing task and let
+                        // the bulk side drive shutdown.
+                        kickWait = await kickWait.ConfigureAwait(false)
+                            ? kick.WaitToReadAsync(ct).AsTask()
+                            : new TaskCompletionSource<bool>().Task;
                     }
                 }
             }

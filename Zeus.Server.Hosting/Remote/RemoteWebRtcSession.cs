@@ -1,5 +1,7 @@
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.NetworkInformation;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -285,8 +287,29 @@ public sealed class RemoteWebRtcSession
             "rtc.remote offer candidates: {Host} host, {Srflx} srflx, {Relay} relay",
             oHost, oSrflx, oRelay);
 
+        // ---- The offer diet (field root cause, 2026-09-10 late) --------------
+        // SIPSorcery 10.0.14 sorts its ICE checklist by pair priority (host >
+        // srflx > relay) and then TRUNCATES IT TO 25 ENTRIES. A phone offered
+        // 26–39 candidates against our 5 → 130–195 pairs, so the cut kept only
+        // host↔host and host↔srflx pairs (private LAN addresses and carrier-
+        // CGNAT hole punches, none viable) and discarded every relay pair —
+        // the only pairs that complete over cellular. The one 5G success of
+        // the day was an offer small enough for a relay pair to survive.
+        //
+        // Cure without touching the library: trim the REMOTE candidate list to
+        // ≤4 chosen for our reachability — 1 relay, 1 srflx, up to 2 host
+        // (same subnet as us first, then global IPv6, then mDNS). 4 remote ×
+        // ≤6 local = ≤24 pairs: nothing is pruned, relay pairs always survive.
+        // The browser still checks all of ITS candidates against ours, so LAN
+        // sessions keep their direct host↔host path.
+        var dietedOffer = DietOffer(offerSdp, LocalAddresses());
+        var (dHost, dSrflx, dRelay) = CandidateCensus(dietedOffer);
+        _log.LogInformation(
+            "rtc.remote offer diet: {OH}/{OS}/{OR} → {DH}/{DS}/{DR} host/srflx/relay (library checklist cap 25 pairs)",
+            oHost, oSrflx, oRelay, dHost, dSrflx, dRelay);
+
         var setResult = _pc.setRemoteDescription(
-            new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = offerSdp });
+            new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = dietedOffer });
         if (setResult != SetDescriptionResultEnum.OK)
             throw new InvalidOperationException($"setRemoteDescription failed: {setResult}");
 
@@ -297,23 +320,19 @@ public sealed class RemoteWebRtcSession
         // candidates — the signal channel has no trickle leg, so anything
         // gathered after this method returns is lost forever.
         //
-        // We must NOT trust iceGatheringState here. Field capture 2026-09-10
-        // (SIPSorcery 10.0.14) showed the state reaching 'complete' the moment
-        // the host candidates were enumerated — ~30 ms in — and only THEN, a
-        // further ~1 s later, did the STUN srflx and TURN relay candidates
-        // arrive and re-open gathering. A wait that latches the first
-        // 'complete' therefore shipped a host-only answer while the public
-        // candidates were still in flight; the one attempt that worked was the
-        // one where srflx happened to beat the answer. That is the whole bug.
-        //
-        // So wait on the ANSWER'S CONTENT, not on a state enum: poll the local
-        // SDP until it actually carries a srflx or relay line, capped at 6 s.
-        // On the LAN (no public candidate is coming) the cap is spent in full
-        // once, then the honest LAN-only answer ships — acceptable, since a LAN
-        // client pairs on host candidates anyway.
-        await WaitForPublicCandidateAsync(_pc, TimeSpan.FromSeconds(6), ct);
+        // Two library facts (verified in SIPSorcery 10.0.14 source) shape this:
+        //  (1) iceGatheringState reaches 'complete' the moment host candidates
+        //      are enumerated, ~1 s BEFORE srflx/relay arrive — so the state
+        //      enum is not a safe signal.
+        //  (2) localDescription is a static snapshot taken at
+        //      setLocalDescription; candidates gathered afterwards never enter
+        //      it. createAnswer, by contrast, re-serializes the live candidate
+        //      list and is side-effect-free on repeat.
+        // So poll a freshly generated answer until it actually carries a srflx
+        // or relay line (6 s cap), and ship THAT. On the LAN the cap is spent
+        // once and the honest LAN-only answer ships — fine, host pairs win there.
+        var sdp = await WaitForPublicCandidateAsync(_pc, TimeSpan.FromSeconds(6), ct);
 
-        var sdp = _pc.localDescription.sdp.ToString();
         var (host, srflx, relay) = CandidateCensus(sdp);
         if (srflx + relay == 0)
             _log.LogWarning(
@@ -329,26 +348,137 @@ public sealed class RemoteWebRtcSession
     }
 
     /// <summary>
-    /// Wait until the peer connection's local description actually contains a
-    /// server-reflexive or relay candidate, or the timeout elapses. This is
-    /// deliberately content-based rather than state-based: SIPSorcery's
-    /// iceGatheringState can report 'complete' before the STUN/TURN candidates
-    /// arrive, so the state is not a safe signal that the answer is ready.
+    /// Poll a freshly generated answer until it actually contains a
+    /// server-reflexive or relay candidate, or the timeout elapses; return the
+    /// last SDP generated. Content-based on purpose: neither iceGatheringState
+    /// nor the localDescription snapshot is a safe signal in SIPSorcery 10.0.14.
     /// </summary>
-    private static async Task WaitForPublicCandidateAsync(
+    private static async Task<string> WaitForPublicCandidateAsync(
         RTCPeerConnection pc, TimeSpan timeout, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
+        string sdp = pc.createAnswer(null).sdp.ToString();
+        while (true)
         {
-            var sdp = pc.localDescription?.sdp?.ToString();
-            if (sdp is not null
-                && (sdp.Contains(" typ srflx", StringComparison.Ordinal)
-                    || sdp.Contains(" typ relay", StringComparison.Ordinal)))
-                return;
+            if (sdp.Contains(" typ srflx", StringComparison.Ordinal)
+                || sdp.Contains(" typ relay", StringComparison.Ordinal)
+                || DateTime.UtcNow >= deadline)
+                return sdp;
 
             try { await Task.Delay(100, ct); }
-            catch (OperationCanceledException) { return; }
+            catch (OperationCanceledException) { return sdp; }
+
+            sdp = pc.createAnswer(null).sdp.ToString();
+        }
+    }
+
+    // ---- The offer diet ------------------------------------------------------
+    // SIPSorcery caps its ICE checklist at 25 pairs after sorting by priority,
+    // which silently discards relay pairs whenever the browser offers a large
+    // candidate set. We keep only the few remote candidates that can actually
+    // reach us, so every surviving pair is a real one.
+    internal const int MaxRemoteHost = 2;
+    internal const int MaxRemoteSrflx = 1;
+    internal const int MaxRemoteRelay = 1;
+
+    /// <summary>
+    /// Return the offer with its <c>a=candidate</c> lines trimmed to at most
+    /// <see cref="MaxRemoteRelay"/> relay, <see cref="MaxRemoteSrflx"/> srflx and
+    /// <see cref="MaxRemoteHost"/> host candidates. Host candidates are ranked by
+    /// reachability from here: same subnet as one of our addresses, then global
+    /// IPv6, then mDNS names, then everything else. Every other line is untouched.
+    /// </summary>
+    internal static string DietOffer(string offerSdp, IReadOnlyList<IPAddress> localAddresses)
+    {
+        var lines = offerSdp.Split("\r\n");
+        var relays = new List<string>();
+        var srflxs = new List<(int Rank, string Line)>();
+        var hosts = new List<(int Rank, string Line)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var line in lines)
+        {
+            if (!line.StartsWith("a=candidate:", StringComparison.Ordinal)) continue;
+            if (!seen.Add(line)) continue; // BUNDLE repeats candidates per m-section
+
+            // a=candidate:<foundation> <component> <transport> <priority> <address> <port> typ <type> ...
+            var p = line.Split(' ');
+            if (p.Length < 8 || p[6] != "typ") continue;
+            string addr = p[4], type = p[7];
+
+            switch (type)
+            {
+                case "relay": relays.Add(line); break;
+                case "srflx": srflxs.Add((addr.Contains(':') ? 1 : 0, line)); break; // IPv4 first
+                case "host": hosts.Add((HostRank(addr, localAddresses), line)); break;
+                default: break; // prflx etc. — not useful in an offer
+            }
+        }
+
+        var keep = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var l in relays.Take(MaxRemoteRelay)) keep.Add(l);
+        foreach (var e in srflxs.OrderBy(e => e.Rank).Take(MaxRemoteSrflx)) keep.Add(e.Line);
+        foreach (var e in hosts.OrderBy(e => e.Rank).Take(MaxRemoteHost)) keep.Add(e.Line);
+
+        var sb = new StringBuilder(offerSdp.Length);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (line.StartsWith("a=candidate:", StringComparison.Ordinal) && !keep.Contains(line))
+                continue;
+            sb.Append(line);
+            if (i < lines.Length - 1) sb.Append("\r\n");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Lower is better: 0 = on our own subnet, 1 = global IPv6, 2 = mDNS, 3 = other, 4 = link-local.</summary>
+    internal static int HostRank(string address, IReadOnlyList<IPAddress> localAddresses)
+    {
+        if (!IPAddress.TryParse(address, out var ip))
+            return address.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ? 2 : 3;
+
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            foreach (var l in localAddresses)
+            {
+                if (l.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                var lb = l.GetAddressBytes();
+                if (lb[0] == b[0] && lb[1] == b[1] && lb[2] == b[2]) return 0; // same /24
+            }
+            return 3;
+        }
+
+        if (ip.IsIPv6LinkLocal) return 4;
+        var v6 = ip.GetAddressBytes();
+        foreach (var l in localAddresses)
+        {
+            if (l.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6) continue;
+            var lb = l.GetAddressBytes();
+            bool same64 = true;
+            for (int i = 0; i < 8 && same64; i++) same64 = lb[i] == v6[i];
+            if (same64) return 0;
+        }
+        bool ula = (v6[0] & 0xFE) == 0xFC;
+        return ula ? 3 : 1;
+    }
+
+    /// <summary>Our unicast addresses on up interfaces (loopback excluded); empty on any failure.</summary>
+    private static IReadOnlyList<IPAddress> LocalAddresses()
+    {
+        try
+        {
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .Where(n => n.OperationalStatus == OperationalStatus.Up)
+                .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+                .Select(u => u.Address)
+                .Where(a => !IPAddress.IsLoopback(a))
+                .ToList();
+        }
+        catch
+        {
+            return [];
         }
     }
 

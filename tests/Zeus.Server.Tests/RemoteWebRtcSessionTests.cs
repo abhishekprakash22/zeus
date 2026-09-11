@@ -825,4 +825,61 @@ public sealed class RemoteWebRtcSessionTests
         Assert.Equal(0, s + r);
         Assert.Equal(2, h);
     }
+
+    /// <summary>
+    /// SIPSorcery truncates its checklist to 25 pairs by priority, which drops
+    /// every relay pair against a large browser offer. The diet must keep the
+    /// caps, prefer the IPv4 srflx, prefer the host on our subnet, and leave
+    /// every non-candidate line exactly where it was.
+    /// </summary>
+    [Fact]
+    public void DietOffer_KeepsCaps_PrefersReachable_LeavesRestUntouched()
+    {
+        const string offer =
+            "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\n"
+            + "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:abcd\r\n"
+            + "a=candidate:1 1 udp 2122260223 10.9.8.7 5000 typ host generation 0\r\n"
+            + "a=candidate:2 1 udp 2122194687 3f2a1c9e-1111-2222-3333-444455556666.local 5001 typ host generation 0\r\n"
+            + "a=candidate:3 1 udp 2122129151 192.168.1.50 5002 typ host generation 0\r\n"
+            + "a=candidate:4 1 udp 1686052607 2001:db8::1 5003 typ srflx raddr :: rport 0 generation 0\r\n"
+            + "a=candidate:5 1 udp 1685987071 203.0.113.9 5004 typ srflx raddr 0.0.0.0 rport 0 generation 0\r\n"
+            + "a=candidate:6 1 udp 41885695 104.30.136.10 5005 typ relay raddr 0.0.0.0 rport 0 generation 0\r\n"
+            + "a=candidate:7 1 udp 41820159 104.30.136.11 5006 typ relay raddr 0.0.0.0 rport 0 generation 0\r\n"
+            + "a=candidate:8 1 udp 24846335 104.30.136.12 5007 typ relay raddr 0.0.0.0 rport 0 generation 0\r\n"
+            + "a=end-of-candidates\r\na=mid:0\r\n"
+            + "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\n";
+
+        var local = new List<System.Net.IPAddress> { System.Net.IPAddress.Parse("192.168.1.221") };
+        var dieted = RemoteWebRtcSession.DietOffer(offer, local);
+
+        Assert.Equal((2, 1, 1), RemoteWebRtcSession.CandidateCensus(dieted));
+        Assert.Contains("192.168.1.50 5002 typ host", dieted);          // same-subnet host kept
+        Assert.Contains(".local 5001 typ host", dieted);                // mDNS ranks above the foreign 10.x
+        Assert.DoesNotContain("10.9.8.7 5000 typ host", dieted);
+        Assert.Contains("203.0.113.9 5004 typ srflx", dieted);          // IPv4 srflx preferred
+        Assert.DoesNotContain("2001:db8::1 5003 typ srflx", dieted);
+        Assert.Contains("104.30.136.10 5005 typ relay", dieted);        // first relay kept
+        Assert.DoesNotContain("104.30.136.11 5006 typ relay", dieted);
+
+        // Everything that isn't a candidate line survives verbatim, in order.
+        foreach (var line in new[] { "a=group:BUNDLE 0 1", "a=ice-ufrag:abcd", "a=end-of-candidates", "a=mid:0", "a=mid:1", "m=application 9 UDP/DTLS/SCTP webrtc-datachannel" })
+            Assert.Contains(line + "\r\n", dieted);
+        Assert.True(dieted.IndexOf("a=mid:0", StringComparison.Ordinal) < dieted.IndexOf("m=application", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HostRank_OrdersByReachability()
+    {
+        var local = new List<System.Net.IPAddress>
+        {
+            System.Net.IPAddress.Parse("192.168.1.221"),
+            System.Net.IPAddress.Parse("2605:a601:a7a2:1f00::4"),
+        };
+        Assert.Equal(0, RemoteWebRtcSession.HostRank("192.168.1.50", local));
+        Assert.Equal(0, RemoteWebRtcSession.HostRank("2605:a601:a7a2:1f00:1:2:3:4", local));
+        Assert.Equal(1, RemoteWebRtcSession.HostRank("2001:db8::9", local));
+        Assert.Equal(2, RemoteWebRtcSession.HostRank("abc.local", local));
+        Assert.Equal(3, RemoteWebRtcSession.HostRank("10.0.0.5", local));
+        Assert.Equal(4, RemoteWebRtcSession.HostRank("fe80::1", local));
+    }
 }

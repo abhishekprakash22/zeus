@@ -192,7 +192,71 @@ zeus_wait_for_backend() {
 # keeps per-display view state — panadapter dB window, zoom, layout — in the
 # browser's localStorage, and a fresh profile per launch wiped it, forcing
 # the operator to re-adjust scaling every session.
+
+# ---- Twin guard (field incident 2026-09-10) ---------------------------------
+# Exactly one Zeus may own :6060. A stale radio left behind by an update
+# handoff (or a second launch) would otherwise (a) keep serving old code and
+# (b) hold the kiosk browser profile — so OUR --app launch below hands off to
+# ITS window and exits at once, which the lifetime coupling reads as "operator
+# closed the window" and kills the brand-new backend two seconds into its
+# life, exit 0, unit inactive, orphan untouched. That exact sequence was
+# watched happen. So: before the backend starts, find who owns :6060; if it
+# is a Zeus, terminate its children (p2app), the backend, its launcher shell
+# (whose EXIT trap closes that instance's kiosk window) and its AppImage
+# runtime; clear any kiosk window still holding our profile; wait for the
+# port. A non-Zeus owner is logged and left alone. Needs iproute2's ss —
+# skipped silently without it (the backend's own InstanceGuard still runs).
+zeus_reclaim_twin() {
+    command -v ss >/dev/null 2>&1 || return 0
+    local port=6060 pids pid cmd ppid pcmd killed="" i
+    pids=$(ss -ltnpH "sport = :${port}" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
+    for pid in ${pids}; do
+        [ "${pid}" = "$$" ] && continue
+        cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)
+        case "${cmd}" in
+            *OpenhpsdrZeus*) ;;
+            *)  echo "twin guard: :${port} owned by non-Zeus pid ${pid} (${cmd}) — leaving it alone" >&2
+                continue ;;
+        esac
+        echo "twin guard: stale Zeus pid ${pid} owns :${port} — terminating it, its children and its launcher" >&2
+        pkill -TERM -P "${pid}" 2>/dev/null || true
+        ppid=$(sed 's/^[^)]*) //' "/proc/${pid}/stat" 2>/dev/null | awk '{print $2}')
+        kill -TERM "${pid}" 2>/dev/null || true
+        while [ -n "${ppid}" ] && [ "${ppid}" -gt 1 ] 2>/dev/null; do
+            pcmd=$(tr '\0' ' ' < "/proc/${ppid}/cmdline" 2>/dev/null)
+            case "${pcmd}" in
+                *AppRun*|*OpenhpsdrZeus*|*zeus-preflight*)
+                    kill -TERM "${ppid}" 2>/dev/null || true
+                    ppid=$(sed 's/^[^)]*) //' "/proc/${ppid}/stat" 2>/dev/null | awk '{print $2}') ;;
+                *) break ;;
+            esac
+        done
+        killed="yes"
+    done
+    # A kiosk window still holding OUR profile belongs to a dead or dying
+    # instance; clear it so our --app launch runs as a process we own.
+    if pkill -TERM -f -- "--user-data-dir=${XDG_DATA_HOME:-$HOME/.local/share}/Zeus/kiosk-profile" 2>/dev/null; then
+        killed="yes"
+    fi
+    if [ -n "${killed}" ]; then
+        for i in $(seq 1 50); do
+            if ! (exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null; then
+                echo "twin guard: :${port} reclaimed" >&2
+                return 0
+            fi
+            exec 3>&- 3<&- 2>/dev/null
+            sleep 0.1
+        done
+        echo "twin guard: :${port} still busy after 5 s — escalating to SIGKILL" >&2
+        for pid in $(ss -ltnpH "sport = :${port}" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
+            kill -KILL "${pid}" 2>/dev/null || true
+        done
+    fi
+    return 0
+}
+
 zeus_run_service_with_browser() {
+    zeus_reclaim_twin
     echo "Starting OpenHPSDR Zeus in browser (service) mode on http://localhost:6060" >&2
     ./OpenhpsdrZeus "$@" &
     local backend_pid=$!
@@ -265,15 +329,37 @@ zeus_run_service_with_browser() {
                     kiosk_h=${kiosk_tmp}
                     ;;
             esac
-            "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
-                ${fsflag} --start-maximized --window-size="${kiosk_w},${kiosk_h}" \
-                --no-first-run --no-default-browser-check >/dev/null 2>&1 &
-            browser_pid=$!
-            # First one out (backend Exit button, or operator closing the
-            # window) takes the other with it. wait -n is bash >= 4.3 --
-            # everywhere we ship; fall back to backend-only wait if absent.
-            wait -n "${backend_pid}" "${browser_pid}" 2>/dev/null \
-                || wait "${backend_pid}"
+            # A browser that exits within seconds of launch while the backend
+            # is healthy did not get closed by anyone — Chromium found another
+            # window already holding our profile and handed off to it. Treat
+            # that as the stale-window case: clear the squatter and relaunch
+            # once. Only a browser that lived past that window counts as a
+            # deliberate close below. (Field incident 2026-09-10: this handoff
+            # killed a freshly started backend two seconds into its life.)
+            local browser_attempt=0 browser_started
+            while :; do
+                browser_started=${SECONDS}
+                "${app}" --app="${url}" --user-data-dir="${profile_dir}" \
+                    ${fsflag} --start-maximized --window-size="${kiosk_w},${kiosk_h}" \
+                    --no-first-run --no-default-browser-check >/dev/null 2>&1 &
+                browser_pid=$!
+                # First one out (backend Exit button, or operator closing the
+                # window) takes the other with it. wait -n is bash >= 4.3 --
+                # everywhere we ship; fall back to backend-only wait if absent.
+                wait -n "${backend_pid}" "${browser_pid}" 2>/dev/null \
+                    || wait "${backend_pid}"
+                if [ "${browser_attempt}" -eq 0 ] \
+                   && kill -0 "${backend_pid}" 2>/dev/null \
+                   && ! kill -0 "${browser_pid}" 2>/dev/null \
+                   && [ $((SECONDS - browser_started)) -lt 3 ]; then
+                    browser_attempt=1
+                    echo "kiosk: browser exited within 3 s of launch — handed off to a stale window; clearing it and relaunching once" >&2
+                    pkill -TERM -f -- "--user-data-dir=${profile_dir}" 2>/dev/null || true
+                    sleep 1
+                    continue
+                fi
+                break
+            done
             # Who went first decides the verdict. BACKEND first: collect its
             # real exit status (bash keeps it for a reaped child) and return
             # it — a segfaulting backend must NOT leave here as success, or

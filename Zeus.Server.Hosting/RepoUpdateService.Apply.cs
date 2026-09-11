@@ -414,53 +414,104 @@ public sealed partial class RepoUpdateService
                 else
                     _log.LogInformation("self-update: not under a systemd unit — cgroup: {Cgroup}", ReadCgroupRaw());
             }
+            // Handoff transcript: the user journal is not persisted on the
+            // kiosk Pi, so a detached shell's stderr vanishes and a silent
+            // systemctl failure is undiagnosable after the fact (field
+            // incident 2026-09-11). Every step — each systemctl invocation
+            // with its exit code and output, the sentinel verdict, any
+            // fallback — is appended to a plain file beside the sentinel,
+            // one handoff per file (truncated at start).
+            string handoffLog = Path.Combine(Path.GetDirectoryName(sentinel)!, "handoff.log");
+            _log.LogInformation("self-update: handoff transcript → {Path}", handoffLog);
+
             string supervise;
             var argList = new List<string>();
             if (unit is not null)
             {
                 string ctl = userUnit ? "systemctl --user" : "systemctl";
                 _log.LogInformation("self-update: running as systemd unit {Unit} ({Scope}) — restarting through systemd", unit, userUnit ? "user" : "system");
-                // $0=image (unused here, kept for arity) $1=sentinel $2=bak $3=unit
+                // $0=image $1=sentinel $2=bak $3=unit $4=log
+                //
+                // Env bridge (field incident 2026-09-11): this shell is
+                // detached, and when the updating process is itself an orphan
+                // (prior old-style handoff) its environment lacks
+                // XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS. Then
+                // `systemctl --user` cannot reach the user manager, its
+                // `start` does nothing, the unit stays inactive(dead) while a
+                // fallback relaunch churns the radio — broker sessions flap
+                // and the remote room reads offline. Derive both from
+                // `id -u` when unset so the user bus is always reachable; the
+                // start is then VERIFIED via is-active, and only a start that
+                // provably failed falls back to a direct (orphan) launch —
+                // loudly, in the transcript — because a headless kiosk with
+                // no radio is worse than one awaiting re-supervision.
                 supervise =
+                    "LOG=\"$4\"\n" +
+                    ": > \"$LOG\"\n" +
+                    "log() { echo \"$(date '+%F %T') $*\" >> \"$LOG\"; }\n" +
+                    "[ -n \"$XDG_RUNTIME_DIR\" ] || XDG_RUNTIME_DIR=\"/run/user/$(id -u)\"\n" +
+                    "export XDG_RUNTIME_DIR\n" +
+                    "[ -n \"$DBUS_SESSION_BUS_ADDRESS\" ] || DBUS_SESSION_BUS_ADDRESS=\"unix:path=$XDG_RUNTIME_DIR/bus\"\n" +
+                    "export DBUS_SESSION_BUS_ADDRESS\n" +
+                    "log \"handoff: unit=$3 image=$0 XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR\"\n" +
                     "i=0\n" +
                     "while " + ctl + " is-active --quiet \"$3\" && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done\n" +
-                    ctl + " start \"$3\"\n" +
+                    "log \"old unit inactive after ${i}s\"\n" +
+                    "out=$(" + ctl + " start \"$3\" 2>&1); rc=$?\n" +
+                    "log \"start rc=$rc $out\"\n" +
+                    "j=0\n" +
+                    "while [ $j -lt 10 ] && ! " + ctl + " is-active --quiet \"$3\"; do sleep 1; j=$((j+1)); done\n" +
+                    "if " + ctl + " is-active --quiet \"$3\"; then\n" +
+                    "  log \"unit active after ${j}s — supervised start confirmed\"\n" +
+                    "else\n" +
+                    "  log \"unit NOT active — ORPHAN FALLBACK direct launch; re-supervise later with: pkill -f OpenhpsdrZeus; systemctl restart\"\n" +
+                    "  \"$0\" &\n" +
+                    "fi\n" +
                     "i=0\n" +
                     "while [ $i -lt 120 ]; do\n" +
-                    "  [ ! -e \"$1\" ] && exit 0\n" +
+                    "  if [ ! -e \"$1\" ]; then log \"sentinel cleared after ${i}s — update confirmed\"; exit 0; fi\n" +
                     "  sleep 1\n" +
                     "  i=$((i+1))\n" +
                     "done\n" +
-                    ctl + " stop \"$3\"\n" +
+                    "log \"sentinel still present after 120s — ROLLBACK\"\n" +
+                    "out=$(" + ctl + " stop \"$3\" 2>&1); log \"rollback stop rc=$? $out\"\n" +
                     "sleep 2\n" +
-                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\"\n" +
+                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\" && log \"bak restored\"\n" +
                     "rm -f \"$1\"\n" +
-                    ctl + " start \"$3\"\n";
-                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, unit });
+                    "out=$(" + ctl + " start \"$3\" 2>&1); log \"rollback start rc=$? $out\"\n";
+                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, unit, handoffLog });
             }
             else
             {
-                // Supervising handoff ($0=image, $1=sentinel, $2=bak): wait for
-                // this process to free the port, start the new image, then watch
-                // the sentinel. Removed within the timeout -> new build confirmed,
-                // supervisor exits. Still present -> the new build never came up:
-                // kill it, restore the .bak, relaunch the previous version.
+                // Supervising handoff ($0=image, $1=sentinel, $2=bak, $3=log):
+                // wait for this process to free the port, start the new image,
+                // then watch the sentinel. Removed within the timeout -> new
+                // build confirmed, supervisor exits. Still present -> the new
+                // build never came up: kill it, restore the .bak, relaunch the
+                // previous version. Same transcript as the systemd branch.
                 supervise =
+                    "LOG=\"$3\"\n" +
+                    ": > \"$LOG\"\n" +
+                    "log() { echo \"$(date '+%F %T') $*\" >> \"$LOG\"; }\n" +
+                    "log \"handoff (no systemd unit): image=$0\"\n" +
                     "sleep 2\n" +
                     "\"$0\" &\n" +
                     "NEW=$!\n" +
+                    "log \"launched pid $NEW\"\n" +
                     "i=0\n" +
                     "while [ $i -lt 120 ]; do\n" +
-                    "  [ ! -e \"$1\" ] && exit 0\n" +
+                    "  if [ ! -e \"$1\" ]; then log \"sentinel cleared after ${i}s — update confirmed\"; exit 0; fi\n" +
                     "  sleep 1\n" +
                     "  i=$((i+1))\n" +
                     "done\n" +
+                    "log \"sentinel still present after 120s — ROLLBACK\"\n" +
                     "kill $NEW 2>/dev/null\n" +
                     "sleep 2\n" +
-                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\"\n" +
+                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\" && log \"bak restored\"\n" +
                     "rm -f \"$1\"\n" +
+                    "log \"relaunching previous version\"\n" +
                     "exec \"$0\"\n";
-                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath });
+                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, handoffLog });
             }
             var psi = new ProcessStartInfo
             {

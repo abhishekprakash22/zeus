@@ -390,33 +390,73 @@ public sealed partial class RepoUpdateService
             // listen port, then execs the new image with the same working dir.
             SetApply("restarting", 100, version);
             _log.LogInformation("self-update: swapped {Path} to v{Version}; restarting", appImagePath, version);
-            // Supervising handoff ($0=image, $1=sentinel, $2=bak): wait for
-            // this process to free the port, start the new image, then watch
-            // the sentinel. Removed within the timeout -> new build confirmed,
-            // supervisor exits. Still present -> the new build never came up:
-            // kill it, restore the .bak, relaunch the previous version.
-            const string supervise =
-                "sleep 2\n" +
-                "\"$0\" &\n" +
-                "NEW=$!\n" +
-                "i=0\n" +
-                "while [ $i -lt 120 ]; do\n" +
-                "  [ ! -e \"$1\" ] && exit 0\n" +
-                "  sleep 1\n" +
-                "  i=$((i+1))\n" +
-                "done\n" +
-                "kill $NEW 2>/dev/null\n" +
-                "sleep 2\n" +
-                "[ -e \"$2\" ] && mv -f \"$2\" \"$0\"\n" +
-                "rm -f \"$1\"\n" +
-                "exec \"$0\"\n";
+
+            // ---- Twin prevention (field incident 2026-09-10) -----------------
+            // When we are a systemd unit, the new build MUST come up as the
+            // unit's main process. The plain shell below launched it as a shell
+            // child instead: this process exited 0, systemd marked the unit
+            // inactive, the real radio lived on as an orphan — and the next
+            // `systemctl restart` started a SECOND radio beside it. Two hosts,
+            // one broker room, one log. So under systemd the handoff waits for
+            // the unit to go inactive, then `systemctl start`s it; rollback
+            // stops/starts the unit the same way. (InstanceGuard is the belt to
+            // this brace: it kills any twin that still slips through.)
+            var (unit, userUnit) = DetectSystemdUnit();
+            string supervise;
+            var argList = new List<string>();
+            if (unit is not null)
+            {
+                string ctl = userUnit ? "systemctl --user" : "systemctl";
+                _log.LogInformation("self-update: running as systemd unit {Unit} ({Scope}) — restarting through systemd", unit, userUnit ? "user" : "system");
+                // $0=image (unused here, kept for arity) $1=sentinel $2=bak $3=unit
+                supervise =
+                    "i=0\n" +
+                    "while " + ctl + " is-active --quiet \"$3\" && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done\n" +
+                    ctl + " start \"$3\"\n" +
+                    "i=0\n" +
+                    "while [ $i -lt 120 ]; do\n" +
+                    "  [ ! -e \"$1\" ] && exit 0\n" +
+                    "  sleep 1\n" +
+                    "  i=$((i+1))\n" +
+                    "done\n" +
+                    ctl + " stop \"$3\"\n" +
+                    "sleep 2\n" +
+                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\"\n" +
+                    "rm -f \"$1\"\n" +
+                    ctl + " start \"$3\"\n";
+                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, unit });
+            }
+            else
+            {
+                // Supervising handoff ($0=image, $1=sentinel, $2=bak): wait for
+                // this process to free the port, start the new image, then watch
+                // the sentinel. Removed within the timeout -> new build confirmed,
+                // supervisor exits. Still present -> the new build never came up:
+                // kill it, restore the .bak, relaunch the previous version.
+                supervise =
+                    "sleep 2\n" +
+                    "\"$0\" &\n" +
+                    "NEW=$!\n" +
+                    "i=0\n" +
+                    "while [ $i -lt 120 ]; do\n" +
+                    "  [ ! -e \"$1\" ] && exit 0\n" +
+                    "  sleep 1\n" +
+                    "  i=$((i+1))\n" +
+                    "done\n" +
+                    "kill $NEW 2>/dev/null\n" +
+                    "sleep 2\n" +
+                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\"\n" +
+                    "rm -f \"$1\"\n" +
+                    "exec \"$0\"\n";
+                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath });
+            }
             var psi = new ProcessStartInfo
             {
                 FileName = "/bin/sh",
-                ArgumentList = { "-c", supervise, appImagePath, sentinel, bakPath },
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(appImagePath) ?? "/",
             };
+            foreach (var a in argList) psi.ArgumentList.Add(a);
             Process.Start(psi);
             await Task.Delay(600).ConfigureAwait(false);
             Environment.Exit(0);
@@ -426,5 +466,41 @@ public sealed partial class RepoUpdateService
             _log.LogWarning(ex, "self-update apply failed");
             SetApply("failed", 0, error: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// The systemd unit this process runs under, read from /proc/self/cgroup
+    /// (e.g. ".../user@1000.service/app.slice/zeus.service" → ("zeus.service",
+    /// user: true)). (null, false) when not under systemd or not on Linux.
+    /// </summary>
+    internal static (string? Unit, bool UserScope) DetectSystemdUnit()
+    {
+        if (!OperatingSystem.IsLinux()) return (null, false);
+        try
+        {
+            foreach (var line in File.ReadLines("/proc/self/cgroup"))
+            {
+                // cgroup v2: "0::/user.slice/user-1000.slice/user@1000.service/app.slice/zeus.service"
+                int colon = line.LastIndexOf(':');
+                if (colon < 0) continue;
+                var path = line.AsSpan(colon + 1).ToString();
+                return ParseCgroupPath(path);
+            }
+        }
+        catch { /* not readable → not systemd for our purposes */ }
+        return (null, false);
+    }
+
+    internal static (string? Unit, bool UserScope) ParseCgroupPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        bool user = segments.Any(s => s.StartsWith("user@", StringComparison.Ordinal));
+        for (int i = segments.Length - 1; i >= 0; i--)
+        {
+            var s = segments[i];
+            if (s.EndsWith(".service", StringComparison.Ordinal) && !s.StartsWith("user@", StringComparison.Ordinal))
+                return (s, user);
+        }
+        return (null, false);
     }
 }

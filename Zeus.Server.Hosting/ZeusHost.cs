@@ -31,6 +31,12 @@ public static class ZeusHost
         CancellationToken cancellationToken = default)
     {
         var app = Build(args, options);
+        // Exactly one Zeus may own the HTTP port. A stale twin (see
+        // InstanceGuard) is terminated here, BEFORE InitializeAsync, so it can
+        // never be mistaken for a foreign p2app owner or a broker room-mate.
+        InstanceGuard.EnsureSoleOwner(
+            options.HttpPort,
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("InstanceGuard"));
         await InitializeAsync(app, cancellationToken);
         try
         {

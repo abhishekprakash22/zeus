@@ -4326,6 +4326,16 @@ public sealed class RadioService : IDisposable
         Mutate(s => s with { MultiEncoderFunction = name });
     }
 
+    /// <summary>MULTI-encoder select mode (Laurence round 4): true while the
+    /// front-panel MULTI press has the knob choosing the function rather than
+    /// operating it. Set by G2PanelActionRouter on the press toggle and the
+    /// idle auto-exit; Mutate fires StateChanged so the badge tracks live.</summary>
+    public void SetMultiEncoderSelecting(bool selecting)
+    {
+        if (Snapshot().MultiEncoderSelecting == selecting) return;
+        Mutate(s => s with { MultiEncoderSelecting = selecting });
+    }
+
     public void SetPsOverDriveDetected(bool detected)
     {
         if (Snapshot().PsOverDriveDetected == detected) return;

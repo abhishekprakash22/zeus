@@ -1478,7 +1478,12 @@ public sealed record StateDto(
     bool PsOverDriveDetected = false,
     // Laurence review item 2: the front panel's MULTI-encoder assignment,
     // finally visible to the UI. Set by G2PanelActionRouter on cycle.
-    string? MultiEncoderFunction = null);
+    string? MultiEncoderFunction = null,
+    // Laurence round 4: true while the MULTI press has re-purposed the knob
+    // to CHOOSE the function (Thetis/piHPSDR select mode) rather than
+    // operate it. Appended (positional record, wire-format append pattern);
+    // the badge renders the choose state prominently.
+    bool MultiEncoderSelecting = false);
 
 /// <summary>Canonical CW constants shared between backend and wire DTOs.
 /// Single source of truth — CwOffset (server-side) and StateDto both

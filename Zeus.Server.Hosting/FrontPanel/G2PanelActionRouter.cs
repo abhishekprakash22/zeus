@@ -130,6 +130,18 @@ public sealed class G2PanelActionRouter
     // cycles which parameter the MULTI encoder adjusts.
     private int _multiIndex;
 
+    // Multifunction SELECT MODE (Laurence round 4 — the Thetis/piHPSDR
+    // interaction model). Press = the knob now CHOOSES the function, one step
+    // per detent; press again = back to operating the chosen function. Idle
+    // in select mode auto-exits after MultiSelectIdleExitMs so a forgotten
+    // press can't leave the knob permanently re-purposed.
+    // _pendingMultiSelectTicks rides the same serial-thread-accumulates /
+    // flush-timer-applies shape as every other encoder counter.
+    private volatile bool _multiSelecting;
+    private long _pendingMultiSelectTicks;
+    private long _multiSelectLastActivityMs;
+    private const int MultiSelectIdleExitMs = 5_000;
+
     // Net VFO-knob movement accumulated since the last service flush. These are
     // accelerated encoder ticks from the panel, not final Hz-step detents. The
     // serial read path only adds to this counter; RadioService retunes happen
@@ -336,7 +348,8 @@ public sealed class G2PanelActionRouter
     {
         bool vfoApplied = FlushPendingVfo();
         bool encodersApplied = FlushPendingEncoders();
-        return vfoApplied || encodersApplied;
+        bool multiSelectApplied = FlushMultiSelect();
+        return vfoApplied || encodersApplied || multiSelectApplied;
     }
 
     private static int ClampToInt(long ticks) =>
@@ -675,7 +688,17 @@ public sealed class G2PanelActionRouter
 
         if (action == EncoderAction.Multi)
         {
-            ApplyMulti(ticks);
+            if (_multiSelecting)
+            {
+                // Select mode: rotation chooses the function. Accumulate on
+                // the serial thread; FlushMultiSelect applies on the panel
+                // timer like every other encoder.
+                Interlocked.Add(ref _pendingMultiSelectTicks, ticks);
+            }
+            else
+            {
+                ApplyMulti(ticks);
+            }
         }
         else
         {
@@ -833,12 +856,58 @@ public sealed class G2PanelActionRouter
 
     private void CycleMulti()
     {
-        _multiIndex = (_multiIndex + 1) % _multi.Length;
-        _log.LogInformation("g2panel.multi.select {Name}", _multi[_multiIndex].Name);
-        _radio.SetMultiEncoderFunction(_multi[_multiIndex].Name);
+        // The MULTI press is a MODE TOGGLE now (Thetis/piHPSDR model), not a
+        // per-press function step: press → the knob selects the function,
+        // press again → the knob operates it. Kept under the historical
+        // ButtonAction.CycleMulti id so stored panel mappings survive.
+        bool entering = !_multiSelecting;
+        _multiSelecting = entering;
+        _multiSelectLastActivityMs = Environment.TickCount64;
+        if (!entering)
+        {
+            // Leaving select mode: unapplied selection ticks die with it.
+            Interlocked.Exchange(ref _pendingMultiSelectTicks, 0);
+        }
+        _log.LogInformation("g2panel.multi.selectmode {Mode} fn={Name}",
+            entering ? "enter" : "operate", _multi[_multiIndex].Name);
+        _radio.SetMultiEncoderSelecting(entering);
     }
 
     private void ApplyMulti(int ticks) => QueueEncoder(_multi[_multiIndex].Target, ticks);
+
+    /// <summary>Drain select-mode rotation on the panel flush timer: one
+    /// function step per accumulated detent, wrapping both directions. Also
+    /// hosts the idle auto-exit so a forgotten press can't leave the knob
+    /// re-purposed forever.</summary>
+    private bool FlushMultiSelect()
+    {
+        if (!_multiSelecting) return false;
+        long ticks = Interlocked.Exchange(ref _pendingMultiSelectTicks, 0);
+        if (ticks != 0)
+        {
+            _multiIndex = NextMultiIndex(_multiIndex, ClampToInt(ticks), _multi.Length);
+            _multiSelectLastActivityMs = Environment.TickCount64;
+            _log.LogInformation("g2panel.multi.select {Name}", _multi[_multiIndex].Name);
+            _radio.SetMultiEncoderFunction(_multi[_multiIndex].Name);
+            return true;
+        }
+        if (Environment.TickCount64 - _multiSelectLastActivityMs > MultiSelectIdleExitMs)
+        {
+            _multiSelecting = false;
+            _log.LogInformation("g2panel.multi.selectmode idle-exit fn={Name}", _multi[_multiIndex].Name);
+            _radio.SetMultiEncoderSelecting(false);
+        }
+        return false;
+    }
+
+    /// <summary>Select-mode step: wraps in both directions (a counter-clockwise
+    /// detent from index 0 lands on the last entry). Internal for tests.</summary>
+    internal static int NextMultiIndex(int current, int delta, int count)
+    {
+        long next = ((long)current + delta) % count;
+        if (next < 0) next += count;
+        return (int)next;
+    }
 
     // ---- Button action helpers ---------------------------------------------
 

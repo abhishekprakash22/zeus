@@ -245,4 +245,20 @@ public sealed class G2PanelProtocolTests
         Assert.Equal("ZZZI011;", AndromedaParser.LedCommand(1, true));
         Assert.Equal("ZZZI120;", AndromedaParser.LedCommand(12, false));
     }
+
+    // MULTI select mode (Laurence round 4): rotation steps the function with
+    // wrap in BOTH directions — a counter-clockwise detent from the first
+    // entry lands on the last, and multi-detent bursts land where the sum
+    // says, never out of range.
+    [Theory]
+    [InlineData(0, 1, 11, 1)]     // one detent forward
+    [InlineData(10, 1, 11, 0)]    // wrap forward off the last entry
+    [InlineData(0, -1, 11, 10)]   // wrap backward off the first entry
+    [InlineData(0, -23, 11, 10)]  // large negative burst still lands in range
+    [InlineData(5, 22, 11, 5)]    // full laps are a no-op
+    [InlineData(3, 0, 11, 3)]     // zero delta holds position
+    public void Multi_select_index_wraps_both_directions(int current, int delta, int count, int expected)
+    {
+        Assert.Equal(expected, G2PanelActionRouter.NextMultiIndex(current, delta, count));
+    }
 }

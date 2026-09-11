@@ -43,7 +43,7 @@
 // Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
 // License for details.
 
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { useEffect, useRef } from 'react';
 import { selectDisplaySlice, useDisplayStore } from '../state/display-store';
 import { useConnectionStore } from '../state/connection-store';
 import { cancelDrawBusFrame, requestDrawBusFrame } from '../realtime/draw-bus';
@@ -51,12 +51,8 @@ import {
   displayFilterEdgesHz,
   getReceiverFilterHighHz,
   getReceiverFilterLowHz,
-  getReceiverFilterPresetName,
   getReceiverMode,
   getReceiverVfoHz,
-  optimisticSetReceiverFilter,
-  optimisticSetReceiverPreset,
-  postReceiverFilter,
   type ReceiverKey,
 } from '../state/receiver-state';
 import * as viewCenter from '../state/view-center';
@@ -64,47 +60,27 @@ import { settledDialOffsetHz } from '../util/settled-dial-offset';
 import * as viewZoom from '../state/view-zoom';
 import { resolveSpectrumViewport } from '../util/wideband-view';
 
-// Edge-resize tuning constants — shared with the advanced filter mini-pan.
-const DRAG_MIN_INTERVAL_MS = 50; // throttle for live setFilter writes during a drag
-const MIN_PASSBAND_HZ = 50; // keep low/high from crossing
-
-// Fixed presets (F1..F10) are read-only widths; resizing one diverts to the
-// VAR1 variable slot, exactly like FilterMiniPan, so the operator's drag isn't
-// silently discarded.
-function presetIsFixed(name: string | null): boolean {
-  return !!name && /^F([1-9]|10)$/.test(name);
-}
-function variableSlot(name: string | null): string {
-  return presetIsFixed(name) || !name ? 'VAR1' : name;
-}
-
 // Translucent rectangle drawn inside the panadapter container to show the
 // active receive filter passband, mapped from [filterLowHz, filterHighHz]
 // relative to the VFO centre. Asymmetric by design: USB lives to the right
 // of carrier, LSB to the left, CW narrow around zero, AM symmetric.
 // Positioned by percentage of the total span so it tracks resize and tune
 // without measuring DOM width.
+//
+// DISPLAY-ONLY (2026-09-11, maintainer decision): the overlay used to grow
+// grab-to-resize edge handles under a `resizable` prop — two full-height
+// pointer-events strips at the passband walls. On the G2's touchscreen those
+// strips sat exactly where operators tune, so a drag-tune that started over a
+// wall silently resized the WDSP filter instead of tuning (field report).
+// The handles, the drag machinery and the prop are gone: this overlay never
+// captures a pointer and never writes the filter. Bandwidth is set through
+// the deliberate controls (preset chips, the ribbon's CUSTOM inputs). Do not
+// reintroduce pointer handlers here.
 type PassbandOverlayProps = {
-  /** Enable grab-to-resize edge handles that sync the RX filter low/high cut. */
-  resizable?: boolean;
-  /** The spectrum surface container, for mapping a pointer X to a frequency. */
-  containerRef?: RefObject<HTMLElement | null>;
   receiver?: ReceiverKey;
 };
 
-type EdgeDrag = {
-  side: 'lo' | 'hi';
-  slot: string;
-  pendingLo: number;
-  pendingHi: number;
-  lastWriteAt: number;
-  flushTimer: number | null;
-  pointerId: number;
-};
-
 export function PassbandOverlay({
-  resizable = false,
-  containerRef,
   receiver = 'A',
 }: PassbandOverlayProps = {}) {
   const centerHz = useDisplayStore((s) => selectDisplaySlice(s, receiver).centerHz);
@@ -118,105 +94,7 @@ export function PassbandOverlay({
   const cwPitchHz = useConnectionStore((s) => s.cwPitchHz);
 
   const rectRef = useRef<HTMLDivElement | null>(null);
-  const drag = useRef<EdgeDrag | null>(null);
   const vc = viewCenter.viewCenterFor(receiver);
-
-  // Map a client X to a filter offset (Hz relative to the dial/VFO) against the
-  // container's live width — the same settled geometry FilterCursorOverlay and
-  // NotchOverlay use for their pointer math. Filter edges are stored as offsets
-  // from the dial, so we subtract vfoHz from the absolute frequency under the
-  // pointer.
-  const clientXToOffsetHz = (clientX: number): number | null => {
-    const el = containerRef?.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0) return null;
-    const s = selectDisplaySlice(useDisplayStore.getState(), receiver);
-    const len = s.width;
-    if (!len || s.hzPerPixel <= 0) return null;
-    const viewport = resolveSpectrumViewport({
-      width: len,
-      sourceCenterHz: Number(s.centerHz),
-      sourceHzPerPixel: s.hzPerPixel,
-      viewCenterHz: vc.isInitialized() ? vc.getViewCenterHz() : undefined,
-      viewHzPerPixel: viewZoom.displayedViewHzPerPixelFor(receiver),
-    });
-    if (!viewport) return null;
-    const span = viewport.spanHz;
-    const frac = (clientX - rect.left) / rect.width;
-    const c = useConnectionStore.getState();
-    const visualCenter = viewport.centerHz;
-    const absHz = visualCenter - span / 2 + frac * span;
-    return absHz - getReceiverVfoHz(c, receiver);
-  };
-
-  // Throttled live write while dragging (50 ms), so a drag resizes the real
-  // WDSP filter in near-real-time without flooding the backend.
-  const flushPending = () => {
-    const d = drag.current;
-    if (!d) return;
-    d.flushTimer = null;
-    d.lastWriteAt = performance.now();
-    postReceiverFilter(receiver, d.pendingLo, d.pendingHi, d.slot).catch(() => {});
-  };
-  const scheduleWrite = () => {
-    const d = drag.current;
-    if (!d) return;
-    const elapsed = performance.now() - d.lastWriteAt;
-    if (elapsed >= DRAG_MIN_INTERVAL_MS) flushPending();
-    else if (d.flushTimer == null)
-      d.flushTimer = window.setTimeout(flushPending, DRAG_MIN_INTERVAL_MS - elapsed);
-  };
-
-  const onEdgeDown = (side: 'lo' | 'hi') => (e: ReactPointerEvent) => {
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const c = useConnectionStore.getState();
-    const filterPresetName = getReceiverFilterPresetName(c, receiver);
-    const filterLowHz = getReceiverFilterLowHz(c, receiver);
-    const filterHighHz = getReceiverFilterHighHz(c, receiver);
-    const slot = variableSlot(filterPresetName);
-    drag.current = {
-      side,
-      slot,
-      pendingLo: filterLowHz,
-      pendingHi: filterHighHz,
-      lastWriteAt: 0,
-      flushTimer: null,
-      pointerId: e.pointerId,
-    };
-    if (slot !== filterPresetName) {
-      optimisticSetReceiverPreset(receiver, slot);
-    }
-    try { (e.target as Element).setPointerCapture(e.pointerId); } catch { /* ok */ }
-  };
-  const onEdgeMove = (e: ReactPointerEvent) => {
-    const d = drag.current;
-    if (!d || e.pointerId !== d.pointerId) return;
-    const offset = clientXToOffsetHz(e.clientX);
-    if (offset === null) return;
-    let lo = d.pendingLo;
-    let hi = d.pendingHi;
-    if (d.side === 'lo') lo = Math.min(d.pendingHi - MIN_PASSBAND_HZ, Math.round(offset));
-    else hi = Math.max(d.pendingLo + MIN_PASSBAND_HZ, Math.round(offset));
-    d.pendingLo = lo;
-    d.pendingHi = hi;
-    optimisticSetReceiverFilter(receiver, lo, hi);
-    scheduleWrite();
-  };
-  const onEdgeUp = (e: ReactPointerEvent) => {
-    const d = drag.current;
-    if (!d || e.pointerId !== d.pointerId) return;
-    if (d.flushTimer != null) { clearTimeout(d.flushTimer); d.flushTimer = null; }
-    const { pendingLo, pendingHi, slot } = d;
-    drag.current = null;
-    try { (e.target as Element).releasePointerCapture(e.pointerId); } catch { /* ok */ }
-    const applyState = useConnectionStore.getState().applyState;
-    postReceiverFilter(receiver, pendingLo, pendingHi, slot).then(applyState).catch(() => {});
-  };
-
-  const showHandles = resizable && !!containerRef;
 
   // Smooth motion (issue #597): the rect is positioned against the animated
   // view-center by a draw-bus callback — same clock as the trace, waterfall,
@@ -354,29 +232,6 @@ export function PassbandOverlay({
         left: `${leftPct}%`,
         width: `${widthPct}%`,
       }}
-    >
-      {showHandles && (
-        <>
-          <div
-            onPointerDown={onEdgeDown('lo')}
-            onPointerMove={onEdgeMove}
-            onPointerUp={onEdgeUp}
-            onPointerCancel={onEdgeUp}
-            title="Drag to set low-cut / passband width"
-            className="pointer-events-auto absolute inset-y-0 left-0 -translate-x-1/2 cursor-ew-resize"
-            style={{ width: 9 }}
-          />
-          <div
-            onPointerDown={onEdgeDown('hi')}
-            onPointerMove={onEdgeMove}
-            onPointerUp={onEdgeUp}
-            onPointerCancel={onEdgeUp}
-            title="Drag to set high-cut / passband width"
-            className="pointer-events-auto absolute inset-y-0 right-0 translate-x-1/2 cursor-ew-resize"
-            style={{ width: 9 }}
-          />
-        </>
-      )}
-    </div>
+    />
   );
 }

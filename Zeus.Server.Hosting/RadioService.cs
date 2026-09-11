@@ -612,17 +612,23 @@ public sealed class RadioService : IDisposable
 
         // Restore per-mode-family filter memory from snapshot if available so
         // an AM→USB mode-switch at startup recalls the last SSB width, not the
-        // compile-time default.
+        // compile-time default. Every persisted pair passes through
+        // SanitizeFamilyFilter — a hand-edited DB row, a legacy write, or a
+        // historical UI bug (the old drag-anywhere passband handles) can leave
+        // crossed/zero-width/absurd values behind, and because family memory
+        // outranks defaults on every mode change, a broken pair would follow
+        // the operator forever. Insane pairs snap back to the compile-time
+        // family default and self-heal the store on the next mode change.
         if (rsSnap is not null)
         {
-            _ssbFilter = new(rsSnap.SsbFilterLoAbs, rsSnap.SsbFilterHiAbs);
-            _amFilter = new(rsSnap.AmFilterLoAbs, rsSnap.AmFilterHiAbs);
-            _fmFilter = new(rsSnap.FmFilterLoAbs, rsSnap.FmFilterHiAbs);
-            _cwFilter = new(rsSnap.CwFilterLoAbs, rsSnap.CwFilterHiAbs);
-            _ssbTxFilter = new(rsSnap.SsbTxFilterLoAbs, rsSnap.SsbTxFilterHiAbs);
-            _amTxFilter = new(rsSnap.AmTxFilterLoAbs, rsSnap.AmTxFilterHiAbs);
-            _fmTxFilter = new(rsSnap.FmTxFilterLoAbs, rsSnap.FmTxFilterHiAbs);
-            _cwTxFilter = new(rsSnap.CwTxFilterLoAbs, rsSnap.CwTxFilterHiAbs);
+            _ssbFilter = SanitizeFamilyFilter("ssb", new(rsSnap.SsbFilterLoAbs, rsSnap.SsbFilterHiAbs), _ssbFilter);
+            _amFilter = SanitizeFamilyFilter("am", new(rsSnap.AmFilterLoAbs, rsSnap.AmFilterHiAbs), _amFilter);
+            _fmFilter = SanitizeFamilyFilter("fm", new(rsSnap.FmFilterLoAbs, rsSnap.FmFilterHiAbs), _fmFilter);
+            _cwFilter = SanitizeFamilyFilter("cw", new(rsSnap.CwFilterLoAbs, rsSnap.CwFilterHiAbs), _cwFilter);
+            _ssbTxFilter = SanitizeFamilyFilter("ssb-tx", new(rsSnap.SsbTxFilterLoAbs, rsSnap.SsbTxFilterHiAbs), _ssbTxFilter);
+            _amTxFilter = SanitizeFamilyFilter("am-tx", new(rsSnap.AmTxFilterLoAbs, rsSnap.AmTxFilterHiAbs), _amTxFilter);
+            _fmTxFilter = SanitizeFamilyFilter("fm-tx", new(rsSnap.FmTxFilterLoAbs, rsSnap.FmTxFilterHiAbs), _fmTxFilter);
+            _cwTxFilter = SanitizeFamilyFilter("cw-tx", new(rsSnap.CwTxFilterLoAbs, rsSnap.CwTxFilterHiAbs), _cwTxFilter);
             _preampOn = rsSnap.PreampOn;
             _notches = rsSnap.Notches
                 .Select(n => new NotchDto(n.CenterHz, n.WidthHz, n.Active, NormalizeNotchSource(n.Source)))
@@ -646,6 +652,21 @@ public sealed class RadioService : IDisposable
         RxMode hydModeB = rsSnap?.ModeB ?? rsSnap?.Mode ?? RxMode.USB;
         int hydFilterLowB = rsSnap?.FilterLowHzB ?? rsSnap?.FilterLowHz ?? 100;
         int hydFilterHighB = rsSnap?.FilterHighHzB ?? rsSnap?.FilterHighHz ?? 2850;
+        // Live (active) edges get the same sanity net as the families above:
+        // a crossed / zero-width / off-Nyquist persisted pair is re-derived
+        // from the (already sanitized) mode family instead of booting the
+        // radio into a passband no deliberate control can produce.
+        RxMode hydMode = rsSnap?.Mode ?? RxMode.USB;
+        var (hydFilterLow, hydFilterHigh) = SanitizeActiveFilter(
+            "rx1", hydMode,
+            rsSnap?.FilterLowHz ?? 100, rsSnap?.FilterHighHz ?? 2850,
+            FamilyFilterFor(hydMode));
+        (hydFilterLowB, hydFilterHighB) = SanitizeActiveFilter(
+            "rx2", hydModeB, hydFilterLowB, hydFilterHighB, FamilyFilterFor(hydModeB, TxVfo.B));
+        var (hydTxFilterLow, hydTxFilterHigh) = SanitizeActiveFilter(
+            "tx", hydMode,
+            rsSnap?.TxFilterLowHz ?? 150, rsSnap?.TxFilterHighHz ?? 2850,
+            TxFamilyFilterFor(hydMode));
         string? hydPresetB = rsSnap?.FilterPresetNameB ?? rsSnap?.FilterPresetName ?? "VAR1";
         double hydAfGainB = Math.Clamp(rsSnap?.Rx2AfGainDb ?? 0.0, -50.0, 20.0);
         // RX2's own AGC-T baseline + Auto arm (per-receiver AGC-T). The servo
@@ -659,8 +680,8 @@ public sealed class RadioService : IDisposable
             Endpoint: null,
             VfoHz: rsSnap?.VfoHz ?? 14_200_000,
             Mode: rsSnap?.Mode ?? RxMode.USB,
-            FilterLowHz: rsSnap?.FilterLowHz ?? 100,
-            FilterHighHz: rsSnap?.FilterHighHz ?? 2850,
+            FilterLowHz: hydFilterLow,
+            FilterHighHz: hydFilterHigh,
             SampleRate: 192_000,    // set at connect time; not in global snapshot
             // Thetis / WDSP AGC_MEDIUM baseline. This gives the RX AGC enough
             // headroom to normalize weak post-demod audio immediately after a
@@ -693,8 +714,8 @@ public sealed class RadioService : IDisposable
             AdcOverloadWarning: false,
             FilterPresetName: rsSnap?.FilterPresetName ?? "VAR1",
             FilterAdvancedPaneOpen: filterPresetStore?.GetAdvancedPaneOpen() ?? false,
-            TxFilterLowHz: overlayTxFilterLow ?? rsSnap?.TxFilterLowHz ?? 150,
-            TxFilterHighHz: overlayTxFilterHigh ?? rsSnap?.TxFilterHighHz ?? 2850,
+            TxFilterLowHz: overlayTxFilterLow ?? hydTxFilterLow,
+            TxFilterHighHz: overlayTxFilterHigh ?? hydTxFilterHigh,
             RxFilterWindow: persistedRxFilterWindow,
             TxFilterWindow: persistedTxFilterWindow,
             RxAfGainDb: rsSnap?.RxAfGainDb ?? 0.0,
@@ -2064,6 +2085,49 @@ public sealed class RadioService : IDisposable
     // the min-abs/max-abs recomputation collapsed the passband to (5500,5500),
     // killing audio).
     private sealed record FamilyFilter(int LoAbs, int HiAbs);
+
+    // Persisted-filter sanity envelope. The width floor is the existing
+    // MinFilterWidthHz WDSP panic floor (10 Hz, issue #1028) — well below the
+    // narrowest shipped preset (CW F10 = 25 Hz), so no legitimate persisted
+    // pair can trip it. 24 kHz is the audio Nyquist at the lowest sample rate
+    // (48 k), so no legitimate passband edge can sit beyond it. The net exists
+    // to catch corrupt/legacy rows (crossed edges, zero width, garbage
+    // magnitudes), never to police narrow or wide operator choices.
+    private const int MaxFilterAbsHz = 24_000;
+
+    // Family pairs are stored as positive magnitudes (LoAbs <= HiAbs by
+    // construction of StoreFamilyFilter) — anything else in the DB is damage.
+    // Insane pairs revert to the compile-time family default; the store row
+    // self-heals on the next mode change (StoreFamilyFilter rewrites it).
+    private FamilyFilter SanitizeFamilyFilter(string family, FamilyFilter candidate, FamilyFilter fallback)
+    {
+        bool sane = candidate.LoAbs >= 0
+            && candidate.HiAbs <= MaxFilterAbsHz
+            && candidate.HiAbs - candidate.LoAbs >= MinFilterWidthHz;
+        if (sane) return candidate;
+        _log.LogWarning(
+            "radio.filterSanity family {Family}: persisted {Lo}/{Hi} Hz invalid — reset to default {DefLo}/{DefHi}",
+            family, candidate.LoAbs, candidate.HiAbs, fallback.LoAbs, fallback.HiAbs);
+        return fallback;
+    }
+
+    // Live signed edges: when the persisted active pair is out of envelope,
+    // re-derive it from the mode's (already sanitized) family via the same
+    // SignedFilterForMode every mode change uses — never invent a shape here.
+    private (int Low, int High) SanitizeActiveFilter(
+        string which, RxMode mode, int low, int high, FamilyFilter family)
+    {
+        bool sane = high - low >= MinFilterWidthHz
+            && low >= -MaxFilterAbsHz
+            && high <= MaxFilterAbsHz;
+        if (sane) return (low, high);
+        var (lo, hi) = SignedFilterForMode(mode, family.LoAbs, family.HiAbs);
+        _log.LogWarning(
+            "radio.filterSanity {Which}: persisted passband {Low}..{High} Hz invalid — reset to {Mode} family {NewLow}..{NewHigh}",
+            which, low, high, mode, lo, hi);
+        return (lo, hi);
+    }
+
     private FamilyFilter _ssbFilter = new(150, 2850);
     private FamilyFilter _amFilter = new(0, 4000);
     private FamilyFilter _fmFilter = new(0, 5500);

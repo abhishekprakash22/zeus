@@ -208,7 +208,11 @@ is enabled; with RX2 off, RX1 takes the whole display. Drag the bar
 inside each pane to set its spectrum/waterfall ratio. The analog S-meter
 (which follows the active receiver) and the bandwidth filter display
 float over the panes — drag by the title strip, resize by the corner
-handle; each receiver gets its own bandwidth filter card. Each receiver's
+handle; each receiver gets its own bandwidth filter card. The card is a
+read-only display of the passband: it never changes the filter, so
+touch-tuning across it (or across the passband on the main panadapter)
+cannot resize your bandwidth by accident. Set bandwidth deliberately with
+the filter preset chips or the CUSTOM low/high Hz fields. Each receiver's
 VFO flag shows RX number, frequency, mode, filter width, and a live mini
 S-meter with S-point markings and an S readout (RX1 from the calibrated
 meter, RX2 estimated from its spectrum), highlighted on the active

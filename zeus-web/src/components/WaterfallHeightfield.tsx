@@ -561,7 +561,7 @@ export function WaterfallHeightfield({
       {/* Each half shows its OWN receiver's filter passband, regardless of focus,
           so RX2 displays both bandwidth markers (A on its half, B on its half). */}
       {status === 'ready' && !widebandDisplay && (
-        <PassbandOverlay resizable containerRef={containerRef} receiver={receiver} />
+        <PassbandOverlay receiver={receiver} />
       )}
       {/* Hover filter crosshair on BOTH halves — each tracks its own RX
           geometry, and a click commits to THAT half's VFO (tuneReceiver follows

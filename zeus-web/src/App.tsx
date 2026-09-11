@@ -85,6 +85,7 @@ import { RecorderButton } from './components/RecorderButton';
 import { PaTempChip } from './components/PaTempChip';
 import { WorkspaceZoomControls } from './components/WorkspaceZoomControls';
 import { G2Drawer } from './components/g2/G2Drawer';
+import { G2MultiBadge } from './components/g2/G2MultiBadge';
 import { G2RxStack } from './components/g2/G2RxStack';
 import { AdminPage } from './components/AdminPage';
 import { QrzAccessGate } from './components/QrzAccessGate';
@@ -1434,6 +1435,10 @@ export default function App() {
       {/* Left layout bar — issue #241. Spans the full app height; lists named
           layouts for the active radio with switch/add/delete/reset actions. */}
       {g2LayoutOn && <G2Drawer />}
+      {/* MULTI-encoder assignment chip — main-screen chrome, not a settings
+          card (the round-1 mis-mount). Self-hides until the panel publishes
+          an assignment; goes prominent while the knob is in select mode. */}
+      {g2LayoutOn && <G2MultiBadge />}
       <LeftLayoutBar />
 
       {/* Top bar — brand on the left, transport-level inline controls

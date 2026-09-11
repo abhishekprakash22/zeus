@@ -125,6 +125,15 @@ Connect, then operate from the workspace:
   every connected client at once — and so does every other panel-driven
   value: AF, AGC, drive, filter edges, attenuation, and RIT track their
   encoders as you turn them.
+- **The MULTI encoder** works the way Thetis and piHPSDR taught your
+  fingers: **press** it once and the knob *chooses* the function — the badge
+  at the top-right of the main screen grows and goes solid accent, and each
+  detent steps through the assignable list (RX1/RX2 AF, AGC, attenuation,
+  filter edges, RIT, XIT, drive, diversity gain/phase — wrapping in both
+  directions). **Press again** and the knob *operates* the chosen function.
+  Idling five seconds in select mode drops back to operate on its own. The
+  badge is always on the main screen, flashing whenever the assignment
+  changes, so the knob is never a mystery.
 
 ---
 

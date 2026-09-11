@@ -441,6 +441,9 @@ export type RadioStateDto = {
   psCalibrationStalled?: boolean;
   psOverDriveDetected?: boolean;
   multiEncoderFunction?: string | null;
+  // True while the front-panel MULTI press has the knob choosing the
+  // function (select mode) rather than operating it.
+  multiEncoderSelecting?: boolean;
   psIntsSpiPreset: string;
   psFeedbackSource: 'internal' | 'external';
   txMonitorEnabled: boolean;
@@ -2611,6 +2614,8 @@ export function normalizeState(raw: unknown): RadioStateDto {
       typeof r.psOverDriveDetected === 'boolean' ? r.psOverDriveDetected : false,
     multiEncoderFunction:
       typeof r.multiEncoderFunction === 'string' ? r.multiEncoderFunction : null,
+    multiEncoderSelecting:
+      typeof r.multiEncoderSelecting === 'boolean' ? r.multiEncoderSelecting : false,
     psIntsSpiPreset: typeof r.psIntsSpiPreset === 'string' ? r.psIntsSpiPreset : '16/256',
     psFeedbackSource:
       r.psFeedbackSource === 'External' || r.psFeedbackSource === 'external' ? 'external' : 'internal',

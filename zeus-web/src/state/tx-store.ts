@@ -321,6 +321,9 @@ export type TxState = {
   psOverDriveDetected: boolean;
   // Front panel MULTI-encoder assignment (StateDto.multiEncoderFunction).
   multiEncoderFunction: string | null;
+  // Select mode (StateDto.multiEncoderSelecting): the MULTI press has the
+  // knob choosing the function; the badge renders this state prominently.
+  multiEncoderSelecting: boolean;
   // Hydrated from server state — true when calcc has been alive (PS armed +
   // keyed) for >5 s without producing a fit. Drives the HW-peak warning
   // banner in the PURESIGNAL panel. Server-side detection in
@@ -504,6 +507,7 @@ export const useTxStore = create<TxState>()(
       psCalAttempts: 0,
       psOverDriveDetected: false,
       multiEncoderFunction: null,
+      multiEncoderSelecting: false,
       psCalibrationStalled: false,
       setPsMeters: (m) => set({
         psFeedbackLevel: nonNegativeFinite(m.feedbackLevel),
@@ -568,6 +572,7 @@ export const useTxStore = create<TxState>()(
           psCalibrationStalled: s.psCalibrationStalled ?? false,
           psOverDriveDetected: s.psOverDriveDetected ?? false,
           multiEncoderFunction: s.multiEncoderFunction ?? null,
+          multiEncoderSelecting: s.multiEncoderSelecting ?? false,
           txMonitorEnabled: s.txMonitorEnabled,
           twoToneFreq1: s.twoToneFreq1,
           twoToneFreq2: s.twoToneFreq2,

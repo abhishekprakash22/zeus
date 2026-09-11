@@ -806,4 +806,23 @@ public sealed class RemoteWebRtcSessionTests
 
         Assert.Equal((1, 1, 1), RemoteWebRtcSession.CandidateCensus(reachable));
     }
+
+    /// <summary>
+    /// The 2026-09-10 root cause: SIPSorcery reported gathering 'complete' with
+    /// only host candidates present, ~1 s before the srflx/relay arrived. The
+    /// census must read that intermediate SDP as LAN-only (0 srflx, 0 relay) —
+    /// which is exactly why the answer wait is content-based, not state-based.
+    /// </summary>
+    [Fact]
+    public void CandidateCensus_HostOnlyDespiteCompleteState_IsLanOnly()
+    {
+        const string hostOnlyAtCompleteState =
+            "v=0\r\ns=sipsorcery\r\n"
+            + "a=candidate:1 1 udp 2113937663 192.168.1.221 44974 typ host generation 0\r\n"
+            + "a=candidate:2 1 udp 2113940223 [ipv6] 44974 typ host generation 0\r\n";
+
+        var (h, s, r) = RemoteWebRtcSession.CandidateCensus(hostOnlyAtCompleteState);
+        Assert.Equal(0, s + r);
+        Assert.Equal(2, h);
+    }
 }

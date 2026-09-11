@@ -295,15 +295,23 @@ public sealed class RemoteWebRtcSession
 
         // Vanilla ICE: this answer is the ONLY chance to tell the client our
         // candidates — the signal channel has no trickle leg, so anything
-        // gathered after this method returns is lost forever. 750 ms was not
-        // enough for STUN (a round trip) let alone TURN (allocate is several
-        // round trips behind an auth challenge): field capture 2026-09-10
-        // showed answers shipping host-only, which also poisons the client's
-        // relay path — its TURN permissions are keyed to the addresses in this
-        // SDP, so our checks arriving from the public NAT address are dropped
-        // at the relay. Wait for gathering to actually finish; the helper
-        // returns immediately once it does, so LAN answers stay fast.
-        await WaitForIceGatheringAsync(_pc, TimeSpan.FromSeconds(4), ct);
+        // gathered after this method returns is lost forever.
+        //
+        // We must NOT trust iceGatheringState here. Field capture 2026-09-10
+        // (SIPSorcery 10.0.14) showed the state reaching 'complete' the moment
+        // the host candidates were enumerated — ~30 ms in — and only THEN, a
+        // further ~1 s later, did the STUN srflx and TURN relay candidates
+        // arrive and re-open gathering. A wait that latches the first
+        // 'complete' therefore shipped a host-only answer while the public
+        // candidates were still in flight; the one attempt that worked was the
+        // one where srflx happened to beat the answer. That is the whole bug.
+        //
+        // So wait on the ANSWER'S CONTENT, not on a state enum: poll the local
+        // SDP until it actually carries a srflx or relay line, capped at 6 s.
+        // On the LAN (no public candidate is coming) the cap is spent in full
+        // once, then the honest LAN-only answer ships — acceptable, since a LAN
+        // client pairs on host candidates anyway.
+        await WaitForPublicCandidateAsync(_pc, TimeSpan.FromSeconds(6), ct);
 
         var sdp = _pc.localDescription.sdp.ToString();
         var (host, srflx, relay) = CandidateCensus(sdp);
@@ -318,6 +326,30 @@ public sealed class RemoteWebRtcSession
                 "rtc.remote answer candidates: {Host} host, {Srflx} srflx, {Relay} relay",
                 host, srflx, relay);
         return sdp;
+    }
+
+    /// <summary>
+    /// Wait until the peer connection's local description actually contains a
+    /// server-reflexive or relay candidate, or the timeout elapses. This is
+    /// deliberately content-based rather than state-based: SIPSorcery's
+    /// iceGatheringState can report 'complete' before the STUN/TURN candidates
+    /// arrive, so the state is not a safe signal that the answer is ready.
+    /// </summary>
+    private static async Task WaitForPublicCandidateAsync(
+        RTCPeerConnection pc, TimeSpan timeout, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var sdp = pc.localDescription?.sdp?.ToString();
+            if (sdp is not null
+                && (sdp.Contains(" typ srflx", StringComparison.Ordinal)
+                    || sdp.Contains(" typ relay", StringComparison.Ordinal)))
+                return;
+
+            try { await Task.Delay(100, ct); }
+            catch (OperationCanceledException) { return; }
+        }
     }
 
     /// <summary>
@@ -1055,30 +1087,4 @@ public sealed class RemoteWebRtcSession
             ["t"] = t,
             [field] = Convert.ToBase64String(value),
         });
-
-    private static async Task WaitForIceGatheringAsync(RTCPeerConnection pc, TimeSpan timeout, CancellationToken ct)
-    {
-        if (pc.iceGatheringState == RTCIceGatheringState.complete)
-            return;
-
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void OnChange(RTCIceGatheringState s)
-        {
-            if (s == RTCIceGatheringState.complete) tcs.TrySetResult();
-        }
-
-        pc.onicegatheringstatechange += OnChange;
-        try
-        {
-            if (pc.iceGatheringState == RTCIceGatheringState.complete) return;
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-            await using (cts.Token.Register(() => tcs.TrySetResult()))
-                await tcs.Task.ConfigureAwait(false);
-        }
-        finally
-        {
-            pc.onicegatheringstatechange -= OnChange;
-        }
-    }
 }

@@ -402,6 +402,18 @@ public sealed partial class RepoUpdateService
             // stops/starts the unit the same way. (InstanceGuard is the belt to
             // this brace: it kills any twin that still slips through.)
             var (unit, userUnit) = DetectSystemdUnit();
+            if (unit is null)
+            {
+                // cgroup came up empty (an orphan's cgroup can lose its unit
+                // after systemd marks the unit inactive — seen 2026-09-10 on
+                // the 1.53→1.54 handoff). The installer's unit file names the
+                // AppImage in ExecStart; if it names OURS, that unit is ours.
+                (unit, userUnit) = DetectSystemdUnitFromInstaller(appImagePath);
+                if (unit is not null)
+                    _log.LogInformation("self-update: unit {Unit} found via installer unit file (cgroup gave nothing)", unit);
+                else
+                    _log.LogInformation("self-update: not under a systemd unit — cgroup: {Cgroup}", ReadCgroupRaw());
+            }
             string supervise;
             var argList = new List<string>();
             if (unit is not null)
@@ -478,17 +490,52 @@ public sealed partial class RepoUpdateService
         if (!OperatingSystem.IsLinux()) return (null, false);
         try
         {
+            // Scan every line: cgroup v1/hybrid has one per controller, and the
+            // systemd-named one may not be first. First line yielding a unit wins.
             foreach (var line in File.ReadLines("/proc/self/cgroup"))
             {
-                // cgroup v2: "0::/user.slice/user-1000.slice/user@1000.service/app.slice/zeus.service"
                 int colon = line.LastIndexOf(':');
                 if (colon < 0) continue;
-                var path = line.AsSpan(colon + 1).ToString();
-                return ParseCgroupPath(path);
+                var hit = ParseCgroupPath(line.AsSpan(colon + 1).ToString());
+                if (hit.Unit is not null) return hit;
             }
         }
         catch { /* not readable → not systemd for our purposes */ }
         return (null, false);
+    }
+
+    /// <summary>
+    /// Fallback that does not depend on cgroup state: the installer writes
+    /// ~/.config/systemd/user/zeus.service with ExecStart=&lt;AppImage path&gt;.
+    /// If that file names OUR AppImage, that unit is ours to restart through.
+    /// </summary>
+    internal static (string? Unit, bool UserScope) DetectSystemdUnitFromInstaller(string appImagePath)
+    {
+        if (!OperatingSystem.IsLinux()) return (null, false);
+        try
+        {
+            string home = Environment.GetEnvironmentVariable("HOME") ?? "";
+            if (home.Length == 0) return (null, false);
+            string unitFile = Path.Combine(home, ".config", "systemd", "user", "zeus.service");
+            if (!File.Exists(unitFile)) return (null, false);
+            string full = Path.GetFullPath(appImagePath);
+            foreach (var raw in File.ReadLines(unitFile))
+            {
+                var line = raw.Trim();
+                if (!line.StartsWith("ExecStart=", StringComparison.Ordinal)) continue;
+                var exec = line.Substring("ExecStart=".Length).Trim().Trim('"');
+                if (string.Equals(Path.GetFullPath(exec), full, StringComparison.Ordinal))
+                    return ("zeus.service", true);
+            }
+        }
+        catch { /* unreadable → no fallback */ }
+        return (null, false);
+    }
+
+    private static string ReadCgroupRaw()
+    {
+        try { return File.ReadAllText("/proc/self/cgroup").Replace('\n', ' ').Trim(); }
+        catch (Exception ex) { return "(unreadable: " + ex.Message + ")"; }
     }
 
     internal static (string? Unit, bool UserScope) ParseCgroupPath(string path)

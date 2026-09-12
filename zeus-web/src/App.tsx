@@ -1437,8 +1437,13 @@ export default function App() {
       {g2LayoutOn && <G2Drawer />}
       {/* MULTI-encoder assignment chip — main-screen chrome, not a settings
           card (the round-1 mis-mount). Self-hides until the panel publishes
-          an assignment; goes prominent while the knob is in select mode. */}
-      {g2LayoutOn && <G2MultiBadge />}
+          an assignment; goes prominent while the knob is in select mode.
+          Not rendered in remote mode: the badge explains what the radio's
+          PHYSICAL MULTI knob is currently assigned to, which is meaningless
+          to an operator who isn't at the radio — and top-right is where the
+          remote session's own signal-strength indicator lives, so the badge
+          would sit on top of it. */}
+      {g2LayoutOn && !remoteMode && <G2MultiBadge />}
       <LeftLayoutBar />
 
       {/* Top bar — brand on the left, transport-level inline controls

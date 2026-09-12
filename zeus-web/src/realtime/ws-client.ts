@@ -287,6 +287,12 @@ let controlSender: ((bytes: ArrayBuffer) => void) | null = null;
  * control frames. The remote client sets this after the WebRTC session unlocks
  * so display/audio enables reach the radio over the control DataChannel.
  */
+/** The remote control-channel sender, when a remote session owns it. Used by
+ *  the digital event bridge to ask the host to open the plugin SSE stream. */
+export function getRemoteControlSender(): ((bytes: ArrayBuffer) => void) | null {
+  return controlSender;
+}
+
 export function setRemoteControlSender(fn: ((bytes: ArrayBuffer) => void) | null): void {
   controlSender = fn;
 }
@@ -304,6 +310,11 @@ getAudioBus().subscribe((frame) => getAudioClient().push(frame));
 // this is what feeds the browser CW decoder there. No-op when disconnected.
 const MSG_TYPE_AUDIO_STREAM_REQUEST = 0x21;
 export const MSG_TYPE_DISPLAY_STREAM_REQUEST = 0x22;
+// Digital-plugin SSE frame bridged over the remote control channel (host →
+// client). EventSource can't ride the fetch-based api tunnel, so on a remote
+// session the host opens the plugin's stream over its own loopback and
+// forwards each complete SSE frame under this type.
+const MSG_TYPE_DIGITAL_EVENT = 0x40;
 const DISPLAY_STREAM_OFF = 0;
 const DISPLAY_STREAM_VISIBLE_ON = 2;
 export function sendAudioStreamRequest(enable: boolean): void {
@@ -444,6 +455,15 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
   const ev = { data };
   try {
     const peekType = new DataView(ev.data).getUint8(0);
+    if (peekType === MSG_TYPE_DIGITAL_EVENT) {
+      // Remote bridge for the digital plugin's SSE stream. Payload is the
+      // frame text with the 0x40 type byte stripped. Imported lazily so the
+      // digital module stays out of the core bundle's critical path.
+      void import('../api/digital-plugin').then((m) => {
+        m.onRemoteDigitalFrame(ev.data.slice(1));
+      });
+      return;
+    }
     if (peekType === MSG_TYPE_DISPLAY_FRAME) {
       // Skip the decode + push when no spectrum surface is mounted.
       // decodeDisplayFrame allocates two Float32Arrays per tick and

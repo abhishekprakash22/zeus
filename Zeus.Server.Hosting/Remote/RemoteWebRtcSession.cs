@@ -60,6 +60,18 @@ public sealed class RemoteWebRtcSession
     // remote-armed (this session asked for it) — a desk operator keying
     // locally while a remote watches is never un-keyed by a remote hiccup.
     private const byte MsgTypeTxLeaseKeepalive = 0x23;
+    // Digital-plugin event bridge. The plugin's decode/TX-lamp stream is SSE
+    // (GET /api/plugins/<id>/events), and EventSource cannot ride the
+    // fetch-based api tunnel — so on a remote session the FT8 panel showed
+    // "Live decode stream disconnected" forever and no decodes ever arrived.
+    // The client subscribes by sending the path it wants (it knows the
+    // resolved plugin id); we open that stream over the same loopback HTTP
+    // the api tunnel uses and forward each SSE frame verbatim as 0x40, so the
+    // client parses exactly the bytes EventSource would have handed it.
+    private const byte MsgTypeDigitalEventsSubscribe = 0x24;
+    private const byte MsgTypeDigitalEvent = 0x40;
+    private CancellationTokenSource? _digitalEventsCts;
+    private readonly object _digitalEventsSync = new();
     private static readonly TimeSpan TxLeaseDeadline = TimeSpan.FromMilliseconds(1500);
     // Host-side zombie guard: a session whose keepalives have stopped for this
     // long is torn down (unwinds stream gates, frees the slot) without waiting
@@ -672,6 +684,9 @@ public sealed class RemoteWebRtcSession
             _hub.DetachSink(_sinkId);
         }
         _sink?.Dispose();
+        // The digital SSE bridge holds a loopback HTTP stream that never
+        // completes on its own — it must be cancelled with the session.
+        StopDigitalEventBridge();
         try { _pc.close(); } catch { /* already torn down */ }
         Closed?.Invoke();
     }
@@ -756,6 +771,14 @@ public sealed class RemoteWebRtcSession
         bool enable = data.Length > 1 && data[1] != 0;
         switch (data[0])
         {
+            case MsgTypeDigitalEventsSubscribe:
+            {
+                // Payload: [0x24][enable][UTF-8 path]. enable=0 tears down.
+                var path = data.Length > 2 ? Encoding.UTF8.GetString(data, 2, data.Length - 2) : string.Empty;
+                if (enable && path.StartsWith('/')) StartDigitalEventBridge(path);
+                else StopDigitalEventBridge();
+                return;
+            }
             case MsgTypeDisplayStreamRequest:
                 if (enable == _wantsDisplay)
                 {
@@ -1226,4 +1249,87 @@ public sealed class RemoteWebRtcSession
             ["t"] = t,
             [field] = Convert.ToBase64String(value),
         });
+
+    /// <summary>Open the digital plugin's SSE stream over loopback and forward
+    /// each frame to this remote client as 0x40. Idempotent: a second
+    /// subscribe replaces the first. Fire-and-forget; a failure simply leaves
+    /// the client's stream disconnected, which its banner already states.</summary>
+    private void StartDigitalEventBridge(string path)
+    {
+        if (_httpFactory is null || string.IsNullOrEmpty(_loopbackBaseUrl)) return;
+        if (path.Contains("..", StringComparison.Ordinal)) return;
+        if (!Uri.TryCreate(_loopbackBaseUrl + path, UriKind.Absolute, out var target)) return;
+
+        CancellationTokenSource cts;
+        lock (_digitalEventsSync)
+        {
+            _digitalEventsCts?.Cancel();
+            _digitalEventsCts?.Dispose();
+            cts = new CancellationTokenSource();
+            _digitalEventsCts = cts;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var client = _httpFactory.CreateClient(LoopbackHttpClientName);
+                using var req = new HttpRequestMessage(HttpMethod.Get, target);
+                req.Headers.Accept.ParseAdd("text/event-stream");
+                // ResponseHeadersRead: this stream never completes, so we must
+                // not wait for a full body. Timeout is per-client and infinite
+                // by design for SSE — the CTS is the only way out.
+                using var resp = await client
+                    .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token)
+                    .ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return;
+                await using var stream = await resp.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+
+                // SSE frames are terminated by a blank line. Accumulate and
+                // ship each complete frame so the client parses whole events,
+                // never a half-delivered one.
+                var frame = new StringBuilder();
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(cts.Token).ConfigureAwait(false);
+                    if (line is null) break;            // server closed
+                    if (line.Length == 0)
+                    {
+                        if (frame.Length == 0) continue; // keepalive / stray blank
+                        frame.Append('\n');
+                        SendDigitalEvent(frame.ToString());
+                        frame.Clear();
+                        continue;
+                    }
+                    frame.Append(line).Append('\n');
+                }
+            }
+            catch (OperationCanceledException) { /* unsubscribed or session gone */ }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "remote: digital event bridge ended");
+            }
+        }, cts.Token);
+    }
+
+    private void StopDigitalEventBridge()
+    {
+        lock (_digitalEventsSync)
+        {
+            _digitalEventsCts?.Cancel();
+            _digitalEventsCts?.Dispose();
+            _digitalEventsCts = null;
+        }
+    }
+
+    private void SendDigitalEvent(string sseFrame)
+    {
+        var body = Encoding.UTF8.GetBytes(sseFrame);
+        var payload = new byte[body.Length + 1];
+        payload[0] = MsgTypeDigitalEvent;
+        Buffer.BlockCopy(body, 0, payload, 1, body.Length);
+        TrySendFrame(payload);
+    }
+
 }

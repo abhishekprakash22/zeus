@@ -19,6 +19,7 @@
 // (not installed / activation failed) and 503 (shut down) both read as not-live.
 
 import { isRemoteMode } from '../remote/remote-client';
+import { getRemoteControlSender } from '../realtime/ws-client';
 import { getServerBaseUrl } from '../serverUrl';
 import { usePluginsStore } from '../plugins/state/plugins-store';
 import type { PluginDto } from '../plugins/api/plugins';
@@ -149,7 +150,16 @@ export function openDigitalEvents(h: DigitalEventsHandlers): () => void {
     // event stream simply stays closed; the handlers see a permanent
     // disconnected state, which is truthful.
     if (isRemoteMode()) {
-      h.onConnectionChange?.(false);
+      // Remote sessions bridge the stream over the WebRTC control channel
+      // instead: we ask the host to open the plugin's SSE endpoint on our
+      // behalf (loopback, host-side) and forward each frame verbatim as 0x40.
+      // The host sends exactly the bytes EventSource would have delivered, so
+      // the parsing below is shared.
+      setRemoteDigitalHandlers(h);
+      const ok = requestRemoteDigitalEvents(`${digitalPluginBase()}/events`);
+      // Connection state is reported when the first bridged frame lands (or
+      // stays false if the host never opens it) — see onRemoteDigitalFrame.
+      if (!ok) h.onConnectionChange?.(false);
       return;
     }
     // Relative on web/desktop; Capacitor builds prefix the configured LAN base
@@ -183,4 +193,78 @@ export function openDigitalEvents(h: DigitalEventsHandlers): () => void {
     es?.close();
     h.onConnectionChange?.(false);
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Remote (WebRTC) digital event bridge — client half.
+//
+// EventSource cannot ride the fetch-based api tunnel, so on a remote session
+// the host opens the plugin's SSE endpoint over its own loopback and forwards
+// each complete SSE frame to us as a 0x40 control frame. We parse the same
+// "event: <name>\ndata: <json>\n\n" text EventSource would have given us and
+// hand it to the same handlers, so nothing downstream knows the difference.
+
+let remoteHandlers: DigitalEventsHandlers | null = null;
+let remoteStreamLive = false;
+
+export function setRemoteDigitalHandlers(h: DigitalEventsHandlers | null): void {
+  remoteHandlers = h;
+  if (h === null) remoteStreamLive = false;
+}
+
+/** Ask the host to bridge the plugin's SSE stream. Returns false when no
+ *  remote control channel is available to carry the request. */
+export function requestRemoteDigitalEvents(path: string): boolean {
+  const sender = getRemoteControlSender();
+  if (!sender) return false;
+  const pathBytes = new TextEncoder().encode(path);
+  const buf = new Uint8Array(pathBytes.length + 2);
+  buf[0] = 0x24; // MsgTypeDigitalEventsSubscribe
+  buf[1] = 1;    // enable
+  buf.set(pathBytes, 2);
+  sender(buf.buffer);
+  return true;
+}
+
+/** Feed one bridged 0x40 frame (payload only, 0x40 already stripped). */
+export function onRemoteDigitalFrame(payload: ArrayBuffer): void {
+  const h = remoteHandlers;
+  if (!h) return;
+  if (!remoteStreamLive) {
+    // First frame through = the host's stream is genuinely open. Report the
+    // connection and re-hydrate, exactly as es.onopen would have.
+    remoteStreamLive = true;
+    h.onConnectionChange?.(true);
+    h.onOpen?.();
+  }
+  let text: string;
+  try {
+    text = new TextDecoder().decode(payload);
+  } catch {
+    return;
+  }
+  let event = '';
+  let data = '';
+  for (const line of text.split('\n')) {
+    if (line.startsWith('event: ')) event = line.slice(7).trim();
+    else if (line.startsWith('data: ')) data += line.slice(6);
+  }
+  if (!event || !data) return;
+  switch (event) {
+    case 'ft8decode':
+      h.onFt8Decode?.(data);
+      break;
+    case 'txstatus':
+      h.onTxStatus?.(data);
+      break;
+    case 'wsprspot':
+      h.onWsprSpot?.(data);
+      break;
+    case 'cwskim':
+      h.onCwSkim?.(data);
+      break;
+    default:
+      break;
+  }
 }

@@ -210,14 +210,60 @@ let remoteStreamLive = false;
 
 export function setRemoteDigitalHandlers(h: DigitalEventsHandlers | null): void {
   remoteHandlers = h;
-  if (h === null) remoteStreamLive = false;
+  if (h === null) {
+    remoteStreamLive = false;
+    remotePendingPath = null;
+    stopRemoteRetry();
+  }
+}
+
+// The path we want bridged, remembered so the subscribe can be re-sent. The
+// first attempt races the WebRTC control channel: openDigitalEvents fires
+// when the plugin store decides the plugin is live, which can easily be
+// BEFORE startRemoteClient installs the control sender (field: the banner
+// never cleared, because a one-shot subscribe with no sender was dropped
+// silently and nothing retried). It must also be re-sent after a reconnect,
+// since the host's bridge died with the old session.
+let remotePendingPath: string | null = null;
+let remoteRetryTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopRemoteRetry(): void {
+  if (remoteRetryTimer !== null) {
+    clearInterval(remoteRetryTimer);
+    remoteRetryTimer = null;
+  }
+}
+
+/** Re-send the pending subscribe — called when a remote control channel comes
+ *  up, so the request lands whichever way the race went. */
+export function resubscribeRemoteDigitalEvents(): void {
+  if (remotePendingPath === null) return;
+  remoteStreamLive = false;
+  requestRemoteDigitalEvents(remotePendingPath);
 }
 
 /** Ask the host to bridge the plugin's SSE stream. Returns false when no
- *  remote control channel is available to carry the request. */
+ *  remote control channel is available to carry the request yet — in which
+ *  case we keep trying until one appears. */
 export function requestRemoteDigitalEvents(path: string): boolean {
+  remotePendingPath = path;
   const sender = getRemoteControlSender();
-  if (!sender) return false;
+  if (!sender) {
+    if (remoteRetryTimer === null) {
+      remoteRetryTimer = setInterval(() => {
+        if (remotePendingPath === null) {
+          stopRemoteRetry();
+          return;
+        }
+        if (getRemoteControlSender()) {
+          stopRemoteRetry();
+          requestRemoteDigitalEvents(remotePendingPath);
+        }
+      }, 1000);
+    }
+    return false;
+  }
+  stopRemoteRetry();
   const pathBytes = new TextEncoder().encode(path);
   const buf = new Uint8Array(pathBytes.length + 2);
   buf[0] = 0x24; // MsgTypeDigitalEventsSubscribe

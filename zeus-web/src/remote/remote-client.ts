@@ -437,6 +437,14 @@ export async function startRemoteClient(
     }
   });
 
+  // The digital-plugin event bridge subscribes through that sender. Its first
+  // attempt may have run before this point (the plugin probe finishes over the
+  // api tunnel independently of the control channel), and on a reconnect the
+  // host's old bridge is gone — so re-send now that a channel exists.
+  void import('../api/digital-plugin').then((m) => {
+    m.resubscribeRemoteDigitalEvents();
+  });
+
   conn.pc.addEventListener('connectionstatechange', () => {
     const s = conn.pc.connectionState;
     if (s === 'closed' || s === 'failed' || s === 'disconnected') {

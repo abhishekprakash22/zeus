@@ -59,6 +59,16 @@ internal sealed class RemoteFrameSink : Zeus.Server.IClientSink, IDisposable
 
     public bool WantsDisplay => true;
 
+    // Set by RemoteWebRtcSession from the display stream request's byte[2].
+    // Volatile: written on the control-channel thread, read on the DSP fan-out
+    // thread. Default false → float32 until the remote page advertises u8.
+    private volatile bool _wantsU8Bins;
+    public bool WantsU8Bins
+    {
+        get => _wantsU8Bins;
+        set => _wantsU8Bins = value;
+    }
+
     public bool TryEnqueue(byte[] payload)
     {
         bool isAudio = payload.Length >= 1

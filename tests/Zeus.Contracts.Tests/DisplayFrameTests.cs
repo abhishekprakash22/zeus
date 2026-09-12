@@ -98,6 +98,71 @@ public class DisplayFrameTests
         Assert.Equal(wf, decoded.WfDb.ToArray());
     }
 
+    [Theory]
+    [InlineData(64)]
+    [InlineData(2048)]
+    public void U8RoundTrip_QuantizesWithinOneStep(int width)
+    {
+        var pan = new float[width];
+        var wf = new float[width];
+        for (int i = 0; i < width; i++)
+        {
+            pan[i] = -140f + i * (120f / width);   // sweep across the range
+            wf[i] = -20f - i * (120f / width);
+        }
+
+        var frame = new DisplayFrame(
+            Seq: 7,
+            TsUnixMs: 1_700_000_000_500.0,
+            RxId: 1,
+            BodyFlags: DisplayBodyFlags.PanValid | DisplayBodyFlags.WfValid,
+            Width: (ushort)width,
+            CenterHz: 7_100_000,
+            HzPerPixel: 192_000f / width,
+            PanDb: pan,
+            WfDb: wf);
+
+        var writer = new ArrayBufferWriter<byte>();
+        frame.SerializeU8(writer);
+
+        // u8 body is exactly a quarter of the float body's bin bytes.
+        Assert.Equal(frame.U8TotalByteLength, writer.WrittenCount);
+        int expectedBody = 1 + 1 + 2 + 8 + 4 + width * 2;
+        WireFormat.ReadHeader(writer.WrittenSpan, out var mt, out _, out var payloadLen, out _, out _);
+        Assert.Equal(MsgType.DisplayFrame, mt);
+        Assert.Equal(expectedBody, payloadLen);
+
+        var decoded = DisplayFrame.Deserialize(writer.WrittenSpan);
+        // The BinsU8 flag is set on the wire and survives decode.
+        Assert.True((decoded.BodyFlags & DisplayBodyFlags.BinsU8) != 0);
+        Assert.Equal(frame.Width, decoded.Width);
+        Assert.Equal(frame.CenterHz, decoded.CenterHz);
+
+        // Every bin recovers to within one quantization step (~0.55 dB) of the
+        // clamped original.
+        const float step = (DisplayFrame.QuantMaxDb - DisplayFrame.QuantMinDb) / 255f;
+        for (int i = 0; i < width; i++)
+        {
+            float pClamped = Math.Clamp(pan[i], DisplayFrame.QuantMinDb, DisplayFrame.QuantMaxDb);
+            float wClamped = Math.Clamp(wf[i], DisplayFrame.QuantMinDb, DisplayFrame.QuantMaxDb);
+            Assert.True(Math.Abs(decoded.PanDb.Span[i] - pClamped) <= step,
+                $"pan[{i}] {decoded.PanDb.Span[i]} vs {pClamped}");
+            Assert.True(Math.Abs(decoded.WfDb.Span[i] - wClamped) <= step,
+                $"wf[{i}] {decoded.WfDb.Span[i]} vs {wClamped}");
+        }
+    }
+
+    [Theory]
+    [InlineData(-200f, 0)]      // below floor clamps to 0
+    [InlineData(-160f, 0)]      // floor
+    [InlineData(-20f, 255)]     // ceiling
+    [InlineData(0f, 255)]       // above ceiling clamps to 255
+    [InlineData(float.NaN, 0)]  // non-finite → floor
+    public void Quantize_ClampsRange(float db, int expected)
+    {
+        Assert.Equal((byte)expected, DisplayFrame.QuantizeDb(db));
+    }
+
     [Fact]
     public void WireFormat_IsLittleEndian()
     {

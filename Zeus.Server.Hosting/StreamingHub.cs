@@ -501,6 +501,12 @@ public sealed class StreamingHub
         var payload = new byte[total];
         var writer = new FixedBufferWriter(payload, total);
         frame.Serialize(writer);
+
+        // The u8 payload is built at most once per frame, and only if a
+        // capable sink is actually connected — legacy-only fan-outs pay
+        // nothing. Capable sinks share the single u8 buffer.
+        byte[]? u8Payload = null;
+
         var preferredDisplayRequested = Volatile.Read(ref _preferredDisplayStreamRequests) > 0;
         foreach (var client in _clients.Values)
         {
@@ -509,7 +515,25 @@ public sealed class StreamingHub
                 if (!session.WantsDisplay) continue;
                 if (preferredDisplayRequested && !session.PrefersDisplay) continue;
             }
-            if (!client.TryEnqueue(payload)) System.Threading.Interlocked.Increment(ref _dropsDisplay);
+
+            byte[] toSend;
+            if (client.WantsU8Bins)
+            {
+                if (u8Payload is null)
+                {
+                    int u8Total = frame.U8TotalByteLength;
+                    u8Payload = new byte[u8Total];
+                    var u8Writer = new FixedBufferWriter(u8Payload, u8Total);
+                    frame.SerializeU8(u8Writer);
+                }
+                toSend = u8Payload;
+            }
+            else
+            {
+                toSend = payload;
+            }
+
+            if (!client.TryEnqueue(toSend)) System.Threading.Interlocked.Increment(ref _dropsDisplay);
         }
     }
 
@@ -1043,11 +1067,17 @@ public sealed class StreamingHub
         // DSP thread, so store it as an int and use Volatile/Interlocked.
         private int _wantsDisplay;
         private int _prefersDisplay;
+        private int _wantsU8Bins;
         public bool WantsDisplay => Volatile.Read(ref _wantsDisplay) != 0;
         public bool PrefersDisplay => Volatile.Read(ref _prefersDisplay) != 0;
+        public bool WantsU8Bins => Volatile.Read(ref _wantsU8Bins) != 0;
 
-        public void SetWantsDisplay(bool want, bool preferred = false)
+        public void SetWantsDisplay(bool want, bool preferred = false, bool u8Bins = false)
         {
+            // Capability is independent of the on/off level, so record it
+            // whenever a request arrives (a client that turns display off then
+            // on keeps its advertised u8 support).
+            Volatile.Write(ref _wantsU8Bins, want && u8Bins ? 1 : 0);
             int next = want ? 1 : 0;
             int nextPreferred = want && preferred ? 1 : 0;
             int prev = Interlocked.Exchange(ref _wantsDisplay, next);
@@ -1070,7 +1100,11 @@ public sealed class StreamingHub
             if (frame.Length >= 1 && frame.Span[0] == MsgTypeDisplayStreamRequest)
             {
                 var level = frame.Length > 1 ? frame.Span[1] : (byte)0;
-                SetWantsDisplay(level != 0, preferred: level >= 2);
+                // byte[2] (optional, back-compatible): non-zero = the client can
+                // decode u8-quantized bins. Absent on a stale bundle → false →
+                // it keeps getting float32 frames.
+                bool u8 = frame.Length > 2 && frame.Span[2] != 0;
+                SetWantsDisplay(level != 0, preferred: level >= 2, u8Bins: u8);
                 return;
             }
             _hub.DispatchInbound(frame);

@@ -55,6 +55,12 @@ public enum DisplayBodyFlags : byte
     None = 0,
     PanValid = 1 << 0,
     WfValid = 1 << 1,
+    // Bin payload is u8-quantized dB (Width bytes per array instead of Width
+    // floats) against the fixed QuantMinDb..QuantMaxDb range — 4x smaller on
+    // the wire. Sent ONLY to sinks that advertised the capability in their
+    // display stream request (byte[2] != 0), so a stale fielded bundle can
+    // never receive a frame it cannot parse.
+    BinsU8 = 1 << 2,
 }
 
 public readonly record struct DisplayFrame(
@@ -78,6 +84,72 @@ public readonly record struct DisplayFrame(
     public int BodyByteLength => BodyHeaderSize + Width * 4 * 2;
 
     public int TotalByteLength => WireFormat.HeaderSize + BodyByteLength;
+
+    public int U8BodyByteLength => BodyHeaderSize + Width * 2;
+
+    public int U8TotalByteLength => WireFormat.HeaderSize + U8BodyByteLength;
+
+    // ---- u8 bin quantization (bandwidth: 4x display-stream reduction) ------
+    // Fixed range, no per-frame scale: -160..-20 dB across 255 steps is
+    // 0.549 dB/step, unresolvable inside a noise floor that is several dB
+    // peak-to-peak and already dithers the staircase. A fixed range keeps the
+    // decoder stateless and the header unchanged. Non-finite inputs clamp to
+    // the floor (the sanitizer upstream already replaces them, this is
+    // belt-and-braces).
+    public const float QuantMinDb = -160f;
+    public const float QuantMaxDb = -20f;
+    private const float QuantScale = 255f / (QuantMaxDb - QuantMinDb);
+    private const float DequantStep = (QuantMaxDb - QuantMinDb) / 255f;
+
+    public static byte QuantizeDb(float db)
+    {
+        if (!float.IsFinite(db)) return 0;
+        float scaled = (db - QuantMinDb) * QuantScale;
+        if (scaled <= 0f) return 0;
+        if (scaled >= 255f) return 255;
+        return (byte)MathF.Round(scaled);
+    }
+
+    public static float DequantizeDb(byte b) => QuantMinDb + b * DequantStep;
+
+    /// <summary>Serialize with u8-quantized bins (BinsU8 set in BodyFlags).
+    /// Only for sinks that advertised u8 capability — every other layout
+    /// field is identical to <see cref="Serialize"/>.</summary>
+    public void SerializeU8(IBufferWriter<byte> writer, byte headerFlags = 1)
+    {
+        if (PanDb.Length != Width || WfDb.Length != Width)
+            throw new InvalidOperationException("PanDb/WfDb must be Width floats long.");
+
+        int total = U8TotalByteLength;
+        var span = writer.GetSpan(total);
+
+        WireFormat.WriteHeader(
+            span,
+            MsgType.DisplayFrame,
+            headerFlags,
+            checked((ushort)U8BodyByteLength),
+            Seq,
+            TsUnixMs);
+
+        var body = span.Slice(WireFormat.HeaderSize, U8BodyByteLength);
+        body[0] = RxId;
+        body[1] = (byte)(BodyFlags | DisplayBodyFlags.BinsU8);
+        BinaryPrimitives.WriteUInt16LittleEndian(body.Slice(2, 2), Width);
+        BinaryPrimitives.WriteInt64LittleEndian(body.Slice(4, 8), CenterHz);
+        BinaryPrimitives.WriteSingleLittleEndian(body.Slice(12, 4), HzPerPixel);
+
+        var pan = PanDb.Span;
+        var wf = WfDb.Span;
+        var panOut = body.Slice(BodyHeaderSize, Width);
+        var wfOut = body.Slice(BodyHeaderSize + Width, Width);
+        for (int i = 0; i < Width; i++)
+        {
+            panOut[i] = QuantizeDb(pan[i]);
+            wfOut[i] = QuantizeDb(wf[i]);
+        }
+
+        writer.Advance(total);
+    }
 
     public void Serialize(IBufferWriter<byte> writer, byte headerFlags = 1)
     {
@@ -122,11 +194,26 @@ public readonly record struct DisplayFrame(
         long centerHz = BinaryPrimitives.ReadInt64LittleEndian(body.Slice(4, 8));
         float hzPerPixel = BinaryPrimitives.ReadSingleLittleEndian(body.Slice(12, 4));
 
-        int panBytes = width * 4;
         var panArr = new float[width];
         var wfArr = new float[width];
-        body.Slice(16, panBytes).CopyTo(MemoryMarshal.AsBytes(panArr.AsSpan()));
-        body.Slice(16 + panBytes, panBytes).CopyTo(MemoryMarshal.AsBytes(wfArr.AsSpan()));
+        if ((flags & DisplayBodyFlags.BinsU8) != 0)
+        {
+            // u8-quantized body: expand back to float so every C# consumer
+            // downstream (sidecar bridge, tests) stays format-unaware.
+            var panU8 = body.Slice(16, width);
+            var wfU8 = body.Slice(16 + width, width);
+            for (int i = 0; i < width; i++)
+            {
+                panArr[i] = DequantizeDb(panU8[i]);
+                wfArr[i] = DequantizeDb(wfU8[i]);
+            }
+        }
+        else
+        {
+            int panBytes = width * 4;
+            body.Slice(16, panBytes).CopyTo(MemoryMarshal.AsBytes(panArr.AsSpan()));
+            body.Slice(16 + panBytes, panBytes).CopyTo(MemoryMarshal.AsBytes(wfArr.AsSpan()));
+        }
 
         return new DisplayFrame(seq, ts, rxId, flags, width, centerHz, hzPerPixel, panArr, wfArr);
     }

@@ -17,6 +17,13 @@ internal interface IClientSink
     /// <summary>Whether this consumer wants display frames (used to skip the heavy serialize).</summary>
     bool WantsDisplay { get; }
 
+    /// <summary>Whether this consumer advertised u8-quantized display bins in
+    /// its display stream request. Default false: a sink that never opts in
+    /// (remote sink pre-capability, test fakes, a stale bundle) keeps
+    /// receiving float32 frames. The fan-out serializes a u8 payload once and
+    /// shares it across all capable sinks.</summary>
+    bool WantsU8Bins => false;
+
     /// <summary>Enqueue a serialized frame. Must be non-blocking (callers run on the DSP thread).</summary>
     bool TryEnqueue(byte[] payload);
 

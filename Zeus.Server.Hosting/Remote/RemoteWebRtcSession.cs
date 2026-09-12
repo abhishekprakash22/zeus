@@ -757,8 +757,17 @@ public sealed class RemoteWebRtcSession
         switch (data[0])
         {
             case MsgTypeDisplayStreamRequest:
-                if (enable == _wantsDisplay) return;
+                if (enable == _wantsDisplay)
+                {
+                    // Level unchanged, but a capability re-advertisement can
+                    // still arrive — keep the sink's flag current.
+                    if (_sink is not null)
+                        _sink.WantsU8Bins = enable && data.Length > 2 && data[2] != 0;
+                    return;
+                }
                 _wantsDisplay = enable;
+                if (_sink is not null)
+                    _sink.WantsU8Bins = enable && data.Length > 2 && data[2] != 0;
                 _hub.AdjustDisplayRequests(enable ? 1 : -1);
                 break;
             case MsgTypeAudioStreamRequest:

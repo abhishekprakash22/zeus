@@ -699,7 +699,13 @@ export function Waterfall({
     };
   }, [receiver]);
 
-  usePanTuneGesture(canvasRef, receiver, { touchMode, tuneReceiver, dragMode: 'ruler-pan' });
+  // Drag on the waterfall TUNES, exactly like the panadapter directly above
+  // it (field report: dragging here slid the view while the receiver stayed
+  // put — the same surface, the same gesture, two different outcomes, which
+  // is indefensible on touch where there is no cursor to hint at the
+  // difference). Matches Thetis and piHPSDR. View panning still lives on the
+  // frequency ruler strip, which is its own ruler-pan surface.
+  usePanTuneGesture(canvasRef, receiver, { touchMode, tuneReceiver });
 
   return (
     <div

@@ -728,6 +728,91 @@ describe('usePanTuneGesture mobile touch mode', () => {
     unmount();
   });
 
+  // The waterfall drags to TUNE (dragMode defaults to 'tune'), matching the
+  // panadapter above it. Field report: on the waterfall a drag slid the view
+  // while the receiver stayed put — same surface, same gesture, two outcomes.
+  it('drag-tunes on a default (waterfall) surface instead of panning the view', async () => {
+    useConnectionStore.setState({
+      ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
+      vfoHz: 14_200_000,
+      radioLoHz: 14_200_000,
+    });
+    useDisplayStore.setState({
+      width: 200,
+      centerHz: 14_200_000n,
+      hzPerPixel: 100,
+      panDb: new Float32Array(200),
+      panValid: true,
+    });
+
+    // No dragMode → the hook's default 'tune', which is what the waterfall
+    // components now pass.
+    const { container, unmount } = render(
+      createElement(GestureProbe, { touchMode: 'normal' }),
+    );
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+
+    await act(async () => {
+      pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 100, pointerType: 'touch' });
+      pointer(canvas, 'pointermove', { pointerId: 1, clientX: 140, pointerType: 'touch' });
+      pointer(canvas, 'pointerup', { pointerId: 1, clientX: 140, pointerType: 'touch' });
+      await flush();
+    });
+
+    // The dial moved; the view was not panned via the radio LO.
+    expect(setVfoMock).toHaveBeenCalled();
+    expect(setRadioLoMock).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  // pointercancel must NOT commit a final frequency: a revoked pointer's
+  // clientX is not trustworthy, and committing it produced dial jumps
+  // unrelated to finger travel (iPad field report).
+  it('discards a drag on pointercancel instead of committing a bogus jump', async () => {
+    useConnectionStore.setState({
+      ctunEnabled: false,
+      ritEnabled: false,
+      ritHz: 0,
+      splitEnabled: false,
+      vfoHz: 14_200_000,
+      radioLoHz: 14_200_000,
+    });
+    useDisplayStore.setState({
+      width: 200,
+      centerHz: 14_200_000n,
+      hzPerPixel: 100,
+      panDb: new Float32Array(200),
+      panValid: true,
+    });
+
+    const { container, unmount } = render(
+      createElement(GestureProbe, { touchMode: 'normal' }),
+    );
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+
+    await act(async () => {
+      pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 100, pointerType: 'touch' });
+      pointer(canvas, 'pointermove', { pointerId: 1, clientX: 120, pointerType: 'touch' });
+      await flush();
+    });
+    setVfoMock.mockClear();
+
+    // WebKit revokes the touch and hands back a meaningless coordinate.
+    await act(async () => {
+      pointer(canvas, 'pointercancel', { pointerId: 1, clientX: 0, pointerType: 'touch' });
+      await flush();
+    });
+
+    // No commit from the cancel — in particular nothing derived from x=0.
+    expect(setVfoMock).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
   it('keeps optimistic VFO B during stale untrusted state polls', async () => {
     useConnectionStore.setState({
       ctunEnabled: false,

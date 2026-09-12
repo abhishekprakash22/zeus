@@ -1020,6 +1020,27 @@ export function usePanTuneGesture(
       if (canvas.hasPointerCapture(e.pointerId)) {
         canvas.releasePointerCapture(e.pointerId);
       }
+      // pointercancel discards the drag; only a real release commits. A
+      // cancelled pointer's clientX carries no guarantee (WebKit hands back
+      // the last-known or a zeroed coordinate when it revokes a touch), and
+      // the commit below turns that straight into a final frequency — a
+      // dial jump with no relation to where the finger actually was. The
+      // notch path has always guarded this; the tune path never did, which
+      // is the 'sometimes jumpy' drag on iPad. Everything already flushed
+      // during the drag stands; we simply don't add a bogus final commit.
+      if (e.type === 'pointercancel') {
+        if (pendingRaf !== 0) {
+          cancelAnimationFrame(pendingRaf);
+          pendingRaf = 0;
+        }
+        pendingHz = null;
+        if (pendingPanRaf !== 0) {
+          cancelAnimationFrame(pendingPanRaf);
+          pendingPanRaf = 0;
+        }
+        pendingPanHz = null;
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0) return;
       if (d.moved) {

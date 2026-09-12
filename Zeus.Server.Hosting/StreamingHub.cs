@@ -726,10 +726,12 @@ public sealed class StreamingHub
         frame.Serialize(writer);
         foreach (var client in _clients.Values)
         {
-            // Priority lane, latest-wins — never counted as a drop: a replaced
-            // unsent state frame was superseded, not lost (see ClientSession's
-            // priority-lane comment for the dial-starvation field history).
-            client.EnqueuePriorityState(payload);
+            // Priority lane, latest-wins — a replaced unsent state frame was
+            // superseded, not lost (see ClientSession's priority-lane comment
+            // for the dial-starvation field history). False only from a sink
+            // on the default bulk fallback (remote sink), where a drop is
+            // still a drop and stays counted.
+            if (!client.EnqueuePriorityState(payload)) System.Threading.Interlocked.Increment(ref _dropsOther);
         }
     }
 
@@ -743,7 +745,7 @@ public sealed class StreamingHub
         foreach (var client in _clients.Values)
         {
             // Priority lane, latest-wins — see Broadcast(StatePushFrame).
-            client.EnqueuePriorityVfo(payload);
+            if (!client.EnqueuePriorityVfo(payload)) System.Threading.Interlocked.Increment(ref _dropsOther);
         }
     }
 
@@ -994,16 +996,21 @@ public sealed class StreamingHub
                 SingleWriter = false,
             });
 
-        public void EnqueuePriorityVfo(byte[] payload)
+        // bool return implicitly implements IClientSink's priority members
+        // (which default to the bulk queue for sinks without a lane). The
+        // slot never fails — latest-wins replacement is the design.
+        public bool EnqueuePriorityVfo(byte[] payload)
         {
             Interlocked.Exchange(ref _priorityVfo, payload);
             _priorityKick.Writer.TryWrite(0);
+            return true;
         }
 
-        public void EnqueuePriorityState(byte[] payload)
+        public bool EnqueuePriorityState(byte[] payload)
         {
             Interlocked.Exchange(ref _priorityState, payload);
             _priorityKick.Writer.TryWrite(0);
+            return true;
         }
 
         private async Task SendPriorityAsync(CancellationToken ct)

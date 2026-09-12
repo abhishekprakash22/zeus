@@ -71,6 +71,7 @@ import { useVfoLockStore } from '../state/vfo-lock-store';
 const vfoLocked = () => useVfoLockStore.getState().locked;
 import { armSnapLock } from './snap-lock';
 import { useNotchStore } from '../state/notch-store';
+import { tuneDebugLog } from './tune-debug';
 import * as viewCenter from '../state/view-center';
 import * as viewZoom from '../state/view-zoom';
 import { useToolbarFavoritesStore } from '../state/toolbar-favorites-store';
@@ -422,6 +423,12 @@ export function usePanTuneGesture(
       spanHz: number;
       moved: boolean;
       mode: 'tune' | 'ruler-pan';
+      // Which pointer started this drag. Recorded for the ?tunedebug=1
+      // overlay: onPointerMove subtracts against startX without checking the
+      // moving pointer is this one, which is the leading suspect for the
+      // iPad-only non-proportional jumps.
+      pointerId: number;
+      pointerType: string;
     };
     type MapDrag = { lastX: number; lastY: number };
     type Pinch = {
@@ -818,6 +825,17 @@ export function usePanTuneGesture(
         spanHz: dragView.spanHz,
         moved: false,
         mode: dragMode,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType,
+      });
+      tuneDebugLog('DOWN', {
+        id: e.pointerId,
+        type: e.pointerType,
+        x: e.clientX,
+        ptrs: pointers.size,
+        startHz: dragView.centerHz,
+        spanHz: dragView.spanHz,
+        mode: dragMode,
       });
       canvas.style.cursor = dragMode === 'ruler-pan' ? 'grabbing' : SPECTRUM_TUNE_CURSOR;
     };
@@ -910,6 +928,19 @@ export function usePanTuneGesture(
       // starts mid-wheel-glide). RX2/VFO B drives its OWN tween instance, so its
       // half pans just as smoothly as RX1 without touching the RX1 tween.
       const newHz = snapHz(drag.startHz - (dx / rect.width) * drag.spanHz);
+      tuneDebugLog('MOVE', {
+        id: e.pointerId,
+        own: drag.pointerId,
+        match: e.pointerId === drag.pointerId ? 'Y' : 'NO',
+        type: e.pointerType,
+        ptrs: pointers.size,
+        x: e.clientX,
+        sx: drag.startX,
+        dx,
+        w: rect.width,
+        span: drag.spanHz,
+        newHz,
+      });
       if (newHz !== pendingHz) {
         vc.nudgeTargetHz(newHz - commandedHz());
         // Atomic with the nudge — keeps the marker's (vfo − target) offset
@@ -921,6 +952,13 @@ export function usePanTuneGesture(
     };
 
     const onPointerUp = (e: PointerEvent) => {
+      tuneDebugLog(e.type === 'pointercancel' ? 'CANCEL' : 'UP', {
+        id: e.pointerId,
+        own: drag ? drag.pointerId : -1,
+        type: e.pointerType,
+        ptrsBefore: pointers.size,
+        moved: drag ? (drag.moved ? 'Y' : 'N') : '-',
+      });
       pointers.delete(e.pointerId);
       if (notchDrag) {
         const start = notchDrag;

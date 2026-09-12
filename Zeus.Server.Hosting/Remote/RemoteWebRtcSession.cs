@@ -749,8 +749,16 @@ public sealed class RemoteWebRtcSession
                 Volatile.Write(ref _lastKeepaliveMs, Environment.TickCount64);
                 return;
             }
-            if (data[0] is MsgTypeDisplayStreamRequest or MsgTypeAudioStreamRequest)
+            if (data[0] is MsgTypeDisplayStreamRequest
+                         or MsgTypeAudioStreamRequest
+                         or MsgTypeDigitalEventsSubscribe)
             {
+                // 0x24 MUST be listed here. It is a BINARY frame, and anything
+                // not caught by this filter falls through to HandleControlAsync,
+                // which parses the payload as JSON — a binary first byte throws
+                // JsonReaderException and that path fails the session CLOSED.
+                // Field: every remote connect died at unlock with "'$' is an
+                // invalid start of a value" the moment the client subscribed.
                 HandleStreamRequest(data);
                 return;
             }
@@ -1147,6 +1155,16 @@ public sealed class RemoteWebRtcSession
 
     private async Task HandleControlAsync(byte[] data)
     {
+        // A frame that isn't JSON at all is a routing mistake on our side (a
+        // binary type missing from the pre-filter above), not an attack and
+        // not an auth failure. Dropping it keeps one stray frame from taking
+        // down a working session — the old behaviour cost every remote
+        // connect when 0x24 shipped unrouted.
+        if (data.Length >= 1 && data[0] != (byte)'{')
+        {
+            _log.LogDebug("remote: dropping non-JSON control frame type 0x{Type:X2}", data[0]);
+            return;
+        }
         try
         {
             using var doc = JsonDocument.Parse(data);

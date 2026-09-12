@@ -325,10 +325,15 @@ export function sendAudioStreamRequest(enable: boolean): void {
 }
 
 export function sendDisplayStreamRequest(enable: boolean): void {
-  const buf = new ArrayBuffer(2);
+  // 3-byte frame: [0x22][level][u8-capable]. byte[2]=1 tells the server this
+  // bundle can decode u8-quantized bins (4x smaller display stream). Older
+  // servers ignore the extra byte; older bundles never send it and keep
+  // getting float32 — the capability is strictly additive both ways.
+  const buf = new ArrayBuffer(3);
   const view = new DataView(buf);
   view.setUint8(0, MSG_TYPE_DISPLAY_STREAM_REQUEST);
   view.setUint8(1, displayStreamRequestLevel(enable));
+  view.setUint8(2, enable ? 1 : 0);
   if (controlSender) {
     controlSender(buf);
     return;

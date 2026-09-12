@@ -48,6 +48,12 @@ export const MSG_TYPE_DISPLAY_FRAME = 0x01;
 export const HEADER_BYTES = 16;
 export const BODY_FIXED_BYTES = 16;
 
+// u8 bin dequantization — must match Zeus.Contracts.DisplayFrame
+// QuantMinDb / QuantMaxDb. -160..-20 dB across 255 steps.
+export const QUANT_MIN_DB = -160;
+const QUANT_MAX_DB = -20;
+export const DEQUANT_STEP_DB = (QUANT_MAX_DB - QUANT_MIN_DB) / 255;
+
 export type DecodedFrame = {
   msgType: number;
   headerFlags: number;
@@ -57,6 +63,7 @@ export type DecodedFrame = {
   bodyFlags: number;
   panValid: boolean;
   wfValid: boolean;
+  binsU8?: boolean;
   width: number;
   centerHz: bigint;
   hzPerPixel: number;
@@ -119,27 +126,44 @@ export function decodeDisplayFrame(buffer: ArrayBuffer): DecodedFrame {
   }
 
   const pixelBytes = width * 4;
-  const needed = BODY_FIXED_BYTES + pixelBytes * 2;
+  const isU8 = (bodyFlags & 0x04) !== 0;
+  const needed = isU8 ? BODY_FIXED_BYTES + width * 2 : BODY_FIXED_BYTES + pixelBytes * 2;
   if (payloadLen < needed) {
     throw new FrameDecodeError(
       `payloadLen ${payloadLen} < required ${needed} for width ${width}`,
     );
   }
 
-  const panOffset = HEADER_BYTES + BODY_FIXED_BYTES;
-  const wfOffset = panOffset + pixelBytes;
+  let panDb: Float32Array;
+  let wfDb: Float32Array;
+  if (isU8) {
+    // u8-quantized bins (server SerializeU8): expand to float32 at ingest so
+    // the entire GL pipeline downstream stays float-native and unaware. Fixed
+    // range must match Zeus.Contracts.DisplayFrame.QuantMin/MaxDb.
+    const u8Pan = new Uint8Array(buffer, HEADER_BYTES + BODY_FIXED_BYTES, width);
+    const u8Wf = new Uint8Array(buffer, HEADER_BYTES + BODY_FIXED_BYTES + width, width);
+    panDb = new Float32Array(width);
+    wfDb = new Float32Array(width);
+    for (let i = 0; i < width; i++) {
+      panDb[i] = QUANT_MIN_DB + (u8Pan[i] ?? 0) * DEQUANT_STEP_DB;
+      wfDb[i] = QUANT_MIN_DB + (u8Wf[i] ?? 0) * DEQUANT_STEP_DB;
+    }
+  } else {
+    const panOffset = HEADER_BYTES + BODY_FIXED_BYTES;
+    const wfOffset = panOffset + pixelBytes;
 
-  // Source offsets (32, 32 + width*4) are 4-byte aligned by construction,
-  // but the incoming ArrayBuffer's base offset need not be — copy if misaligned.
-  const baseMod = (buffer as ArrayBuffer & { byteOffset?: number }).byteOffset ?? 0;
-  const panDb =
-    (baseMod + panOffset) % 4 === 0
-      ? new Float32Array(buffer, panOffset, width)
-      : new Float32Array(buffer.slice(panOffset, panOffset + pixelBytes));
-  const wfDb =
-    (baseMod + wfOffset) % 4 === 0
-      ? new Float32Array(buffer, wfOffset, width)
-      : new Float32Array(buffer.slice(wfOffset, wfOffset + pixelBytes));
+    // Source offsets (32, 32 + width*4) are 4-byte aligned by construction,
+    // but the incoming ArrayBuffer's base offset need not be — copy if misaligned.
+    const baseMod = (buffer as ArrayBuffer & { byteOffset?: number }).byteOffset ?? 0;
+    panDb =
+      (baseMod + panOffset) % 4 === 0
+        ? new Float32Array(buffer, panOffset, width)
+        : new Float32Array(buffer.slice(panOffset, panOffset + pixelBytes));
+    wfDb =
+      (baseMod + wfOffset) % 4 === 0
+        ? new Float32Array(buffer, wfOffset, width)
+        : new Float32Array(buffer.slice(wfOffset, wfOffset + pixelBytes));
+  }
 
   return {
     msgType,
@@ -150,6 +174,7 @@ export function decodeDisplayFrame(buffer: ArrayBuffer): DecodedFrame {
     bodyFlags,
     panValid: (bodyFlags & 0x01) !== 0,
     wfValid: (bodyFlags & 0x02) !== 0,
+    binsU8: (bodyFlags & 0x04) !== 0,
     width,
     centerHz,
     hzPerPixel,

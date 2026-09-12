@@ -829,13 +829,13 @@ export function usePanTuneGesture(
         pointerType: e.pointerType,
       });
       tuneDebugLog('DOWN', {
-        id: e.pointerId,
-        type: e.pointerType,
+        mode: dragMode,
         x: e.clientX,
         ptrs: pointers.size,
-        startHz: dragView.centerHz,
-        spanHz: dragView.spanHz,
-        mode: dragMode,
+        ctun: ctunSweep() ? 'Y' : 'N',
+        lock: vfoLocked() ? 'Y' : 'N',
+        span: dragView.spanHz,
+        id: e.pointerId,
       });
       canvas.style.cursor = dragMode === 'ruler-pan' ? 'grabbing' : SPECTRUM_TUNE_CURSOR;
     };
@@ -897,16 +897,24 @@ export function usePanTuneGesture(
       if (!drag) return;
       const dx = e.clientX - drag.startX;
       if (!drag.moved && Math.abs(dx) <= CLICK_SLOP_PX) return;
+      if (!drag.moved) tuneDebugLog('SLOP-PASS', { dx });
       drag.moved = true;
       const rect = canvas.getBoundingClientRect();
-      if (rect.width <= 0) return;
+      if (rect.width <= 0) {
+        tuneDebugLog('BAIL', { why: 'zero-width' });
+        return;
+      }
       if (drag.mode === 'ruler-pan') {
+        tuneDebugLog('BAIL', { why: 'ruler-pan', x: e.clientX, dx });
         queuePanCenter(rulerDragTargetHz(drag.startHz, drag.startX, e.clientX, rect.width, drag.spanHz));
         return;
       }
       // VFO lock: a body drag (either CTUN sweep or relative pan below) always
       // moves the dial — swallow it so the frequency can't be dragged.
-      if (vfoLocked()) return;
+      if (vfoLocked()) {
+        tuneDebugLog('BAIL', { why: 'vfo-locked', x: e.clientX, dx });
+        return;
+      }
       // RX1 CTUN: drag sweeps the dial across the frozen spectrum. The frame
       // center doesn't move (NCO frozen on the backend), so drag.startHz — the
       // view center captured at grab — is stationary; resolve the live pointer X
@@ -914,6 +922,7 @@ export function usePanTuneGesture(
       if (ctunSweep()) {
         const frac = (e.clientX - rect.left) / rect.width;
         const cursorHz = snapHz(drag.startHz + (frac - 0.5) * drag.spanHz);
+        tuneDebugLog('CTUN', { x: e.clientX, dx, frac, cursorHz, same: cursorHz === pendingHz ? 'Y' : 'N' });
         if (cursorHz !== pendingHz) {
           vc.markOptimisticTune();
           writeVfo(cursorHz);

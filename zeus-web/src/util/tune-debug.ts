@@ -56,7 +56,7 @@ function ensureHost(): HTMLDivElement | null {
     'left:4px',
     'bottom:4px',
     'z-index:99999',
-    'max-width:min(96vw,560px)',
+    'max-width:98vw',
     'max-height:46vh',
     'overflow:hidden',
     'background:rgba(0,0,0,0.82)',
@@ -65,7 +65,8 @@ function ensureHost(): HTMLDivElement | null {
     'padding:6px 8px',
     'border:1px solid #2a3a52',
     'border-radius:4px',
-    'white-space:pre',
+    'white-space:pre-wrap',
+    'word-break:break-all',
     'pointer-events:none',
   ].join(';');
   document.body.appendChild(el);

@@ -524,7 +524,10 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
               <input
                 type="range"
                 min={-30}
-                max={12}
+                /* 0 dB, not +12: above unity this chain audibly distorts, and
+                   0 dB is the engine's fresh-open default. Matches the top-bar
+                   AfGainSlider, which is the other place AF is set. */
+                max={0}
                 step={1}
                 value={afGainDb}
                 style={{ flex: 1, minWidth: 0, width: '100%' }}

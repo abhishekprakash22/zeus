@@ -98,8 +98,7 @@ function MuteKeyButton() {
   return (
     <button
       type="button"
-      className="btn ghost"
-      style={muted ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
+      className={`btn ghost${muted ? ' active' : ''}`}
       onClick={() => void setReceiverMuted(focused, !muted).then(applyState).catch(() => {})}
       title="Mute the focused receiver's audio"
     >
@@ -114,8 +113,7 @@ function VfoLockKeyButton() {
   return (
     <button
       type="button"
-      className="btn ghost"
-      style={locked ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
+      className={`btn ghost${locked ? ' active' : ''}`}
       onClick={toggle}
       title="Lock the VFO — touch tuning, scrolls, and band picks stop moving the dial"
     >

@@ -51,8 +51,10 @@ export function NrKeyButton() {
   return (
     <button
       type="button"
-      className="btn ghost"
-      style={on ? { background: 'var(--accent, #4aa3df)', color: '#08101d' } : undefined}
+      // .btn.active is the app's own on-state (themed tokens, border, glow) —
+      // an inline background is NOT the same thing and read as a foreign
+      // bright-blue slab next to CTUN/PS/TUN on the deck.
+      className={`btn ghost${on ? ' active' : ''}`}
       onClick={cycle}
       disabled={!connected}
       title={`${nrModeTitle(mode)} — press to step through the noise reduction modes`}

@@ -52,6 +52,7 @@ import { AzimuthPanel } from './panels/AzimuthPanel';
 import { RotatorCompassPanel } from './panels/RotatorCompassPanel';
 import { RotatorDialPanel } from './panels/RotatorDialPanel';
 import { DspFlexPanel } from './panels/DspFlexPanel';
+import { Ft8Panel } from './panels/Ft8Panel';
 import { FreeDvPanel } from './panels/FreeDvPanel';
 import { CwPanel } from './panels/CwPanel';
 import { DeepCwDecoderPanel } from '../plugins/deepcw/DeepCwDecoderPanel';
@@ -321,6 +322,20 @@ export const PANELS: Record<string, PanelDef> = {
     // (DspFlexPanel overflow:auto) when the tile is shorter than the controls.
     minW: 4,
     minH: 6,
+  },
+  ft8: {
+    id: 'ft8',
+    name: 'FT8 / FT4',
+    category: 'dsp',
+    tags: ['ft8', 'ft4', 'digital', 'decode', 'wsjt'],
+    component: Ft8Panel,
+    // Same content as the floating digital window, in a tile — which is what
+    // lets it go to a second monitor via "Send to second screen" (a fixed
+    // pop-out can never leave the browser viewport). The decode list and the
+    // TX/QSO controls stack, so it wants real height; below this it scrolls
+    // rather than collapsing.
+    minW: 6,
+    minH: 12,
   },
   freedv: {
     id: 'freedv',

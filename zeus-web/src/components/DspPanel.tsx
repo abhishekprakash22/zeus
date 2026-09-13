@@ -50,6 +50,7 @@ import {
   type NrConfigDto,
   type NrMode,
 } from '../api/client';
+import { NR_LABEL, nrCycleFor } from './nr-cycle';
 import { useConnectionStore } from '../state/connection-store';
 import { useSmartNrStore } from '../state/smart-nr-store';
 import { useAudioSuiteStore } from '../state/audio-suite-store';
@@ -65,22 +66,12 @@ import { Nr3ModelPanel } from './nr/Nr3ModelPanel';
 // operator-installed). NR5 (NNR, WDSP 2.1.0 neural NR) joins at the end of the
 // cycle only when libwdsp exports the NNR setters. Removed NR modes are not
 // exposed.
-const NR_CYCLE_WITHOUT_NR3: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Sbnr'];
-const NR_CYCLE_WITH_NR3: readonly NrMode[] = ['Off', 'Anr', 'Emnr', 'Rnnr', 'Sbnr'];
+// Cycle + labels live in nr-cycle.ts so the assignable NR deck key steps
+// through exactly the same availability-gated modes this panel does.
+// NOTE: this panel historically labelled Anr as 'NR'; the shared table calls
+// it 'NR1', which matches the tooltip this file already used and the way
+// operators refer to it.
 
-function nrCycleFor(nr3Ready: boolean, nnrAvailable = false): readonly NrMode[] {
-  const base = nr3Ready ? NR_CYCLE_WITH_NR3 : NR_CYCLE_WITHOUT_NR3;
-  return nnrAvailable ? [...base, 'Nnr'] : base;
-}
-
-const NR_LABEL: Record<NrMode, string> = {
-  Off: 'NR',
-  Anr: 'NR',
-  Emnr: 'NR2',
-  Sbnr: 'NR4',
-  Rnnr: 'NR3',
-  Nnr: 'NR5',
-};
 
 function nrButtonTitle(mode: NrMode): string {
   switch (mode) {

@@ -51,11 +51,18 @@ import { useLiveSlider } from '../hooks/useLiveSlider';
 // Master RX AF gain in dB. Drives WDSP's SetRXAPanelGain1(linear) server-side
 // after a dB→linear conversion; the browser audio GainNode stays at 1.0 so
 // the full operator range is realised in the DSP chain, not the soundcard.
-// -50..+20 mirrors Thetis's ptbAF range (console.cs:4312-4313). 0 dB is the
-// engine's fresh-open default — slider at centre on first connect is
-// audibly identical to pre-issue-#77 builds.
+// -50..0 dB. Thetis's ptbAF range (console.cs:4312-4313) runs to +20, but
+// anything above unity audibly distorts on this chain, so the slider stops at
+// 0 dB — which is also the engine's fresh-open default, putting the control at
+// full-right on first connect and audibly identical to pre-issue-#77 builds.
+// NOTE: this caps the SLIDER only. The server still accepts up to +20
+// (RadioService.SetRxAfGain) and the front-panel AF encoders still step there,
+// so a value above 0 set by those paths stays in effect — but a range input
+// pins its thumb at max, so the slider will read 0 while the radio is louder.
+// Capping the encoders and the server clamp too is the follow-up if we decide
+// >0 dB should be unreachable everywhere rather than merely off the slider.
 const MIN = -50;
-const MAX = 20;
+const MAX = 0;
 
 export function AfGainSlider() {
   // Follow the focused receiver (0=RX1, 1=RX2, >=2=RX3+) so the AF slider is the

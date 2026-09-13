@@ -34,6 +34,7 @@ import { TunButton } from '../TunButton';
 import { TxMonitorButton } from '../TxMonitorButton';
 import { PsToggleButton } from '../PsToggleButton';
 import { CtunButton } from '../CtunButton';
+import { NrKeyButton } from '../NrKeyButton';
 import { RecorderButton } from '../RecorderButton';
 import { DisplayPanel } from '../DisplayPanel';
 import { SplitButton, RitButton } from '../RitSplitButtons';
@@ -891,6 +892,7 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   '2ton': { node: <TwoToneKeyButton /> },
   cwd: { node: <CwDecodeToggleButton /> },
   fs: { node: <FullscreenKeyButton /> },
+  nr: { node: <NrKeyButton /> },
   pre: { node: <PreampButton />, boardOnly: 'Metis' },
 };
 

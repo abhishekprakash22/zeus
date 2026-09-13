@@ -105,3 +105,9 @@ installers/dmg_temp/
 # Operator manual — generated output + local deps (source lives on docs/operator-manual)
 docs/manual/node_modules/
 docs/manual/build/
+
+*.patch
+*.zip
+appimagetool-*.AppImage
+publish/
+zeus-freedv-arm64/

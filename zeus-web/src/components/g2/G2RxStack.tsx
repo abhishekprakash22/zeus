@@ -190,15 +190,26 @@ export function G2RxStack() {
           <FilterMiniPan receiver="B" />
         </G2Card>
       ) : null}
-      {hiddenCards.length > 0 ? (
-        <div style={restoreRow}>
-          {hiddenCards.map((id) => (
-            <button key={id} type="button" style={restorePill} onClick={() => showCard(id)}>
-              + {id === 'smeter' ? 'S-METER' : id === 'filter-a' ? 'FILTER RX1' : 'FILTER RX2'}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div style={restoreRow}>
+        {hiddenCards.map((id) => (
+          <button key={id} type="button" style={restorePill} onClick={() => showCard(id)}>
+            + {id === 'smeter' ? 'S-METER' : id === 'filter-a' ? 'FILTER RX1' : 'FILTER RX2'}
+          </button>
+        ))}
+        {/* Always available: a card can be lost by POSITION as well as by
+            being closed, and the pills above only cover the closed case. */}
+        <button
+          type="button"
+          style={restorePill}
+          title="Move the S-meter and filter cards back to their default positions"
+          onClick={() => {
+            resetCardPositions();
+            window.location.reload();
+          }}
+        >
+          ⤾ RESET CARDS
+        </button>
+      </div>
     </div>
   );
 }
@@ -613,15 +624,50 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
  *  the title strip, resize by the corner handle; session-only positions. */
 const CARD_STORE = 'zeus.g2.cards';
 
+/** Pull a stored box back into view. Finite numbers are not enough: a card
+ *  dragged off the edge — or saved when the window was larger, which the 8"
+ *  panel vs an external monitor makes easy — used to restore off-screen, and
+ *  since it is not HIDDEN there is no restore pill for it either. The card
+ *  simply vanishes with no way back through the UI (field report: the filter
+ *  card could not be reopened). Keep a grab-strip of it on screen always. */
+function clampCardBox(
+  b: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; w: number; h: number } {
+  if (typeof window === 'undefined') return b;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const MIN_VISIBLE = 48;   // enough of the title strip to grab
+  const w = Math.min(Math.max(b.w, 120), Math.max(vw, 120));
+  const h = Math.min(Math.max(b.h, 80), Math.max(vh, 80));
+  // Negative x is anchored from the right edge; that form is always on screen
+  // by construction, so only positive-x (left-anchored) boxes need clamping.
+  const x = b.x < 0
+    ? Math.max(b.x, -vw + MIN_VISIBLE)
+    : Math.min(Math.max(b.x, MIN_VISIBLE - w), vw - MIN_VISIBLE);
+  const y = Math.min(Math.max(b.y, 0), Math.max(vh - MIN_VISIBLE, 0));
+  return { x, y, w, h };
+}
+
 function readCardBox(id: string): { x: number; y: number; w: number; h: number } | null {
   try {
     const raw = localStorage.getItem(CARD_STORE);
     if (!raw) return null;
     const all = JSON.parse(raw);
     const b = all?.[id];
-    return b && [b.x, b.y, b.w, b.h].every((n: unknown) => Number.isFinite(n)) ? b : null;
+    if (!b || ![b.x, b.y, b.w, b.h].every((n: unknown) => Number.isFinite(n))) return null;
+    return clampCardBox(b);
   } catch {
     return null;
+  }
+}
+
+/** Forget every stored card position. Exported so the UI can offer a way out
+ *  that doesn't involve a browser console. */
+export function resetCardPositions(): void {
+  try {
+    localStorage.removeItem(CARD_STORE);
+  } catch {
+    /* private mode or storage disabled — nothing to reset */
   }
 }
 

@@ -29,6 +29,7 @@ import { useRadioStore } from '../state/radio-store';
 import { useTxStore } from '../state/tx-store';
 import { BOARD_LABELS } from '../api/radio';
 import { setSwrProtection, setTxTailDelay, setTxTimeout } from '../api/client';
+import { isRemoteMode } from '../remote/remote-client';
 import type { PaBandSettings } from '../api/pa';
 import anvelinaLogo from '../assets/anvelina-logo.png';
 
@@ -312,6 +313,9 @@ export function PaSettingsPanel() {
   const txTimeoutSec = useTxStore((s) => s.txTimeoutSec);
   const setTxTimeoutSecLocal = useTxStore((s) => s.setTxTimeoutSec);
   const swrProtectionEnabled = useTxStore((s) => s.swrProtectionEnabled);
+  // Constant for the life of the page — the client is either a remote session
+  // or it isn't.
+  const remoteMode = isRemoteMode();
   const setSwrProtectionLocal = useTxStore((s) => s.setSwrProtectionEnabled);
   const txMoxTailDelayMs = useTxStore((s) => s.txMoxTailDelayMs);
   const setTxMoxTailDelayMsLocal = useTxStore((s) => s.setTxMoxTailDelayMs);
@@ -514,13 +518,28 @@ export function PaSettingsPanel() {
 
           <div
             className="pa-field flex items-center gap-2 text-xs"
-            title="Automatic SWR trip: Zeus drops TX when the bridge reads above 2.5:1 on MOX (6:1 on TUN) for half a second. Turn it off only when you know why — a bridge reading you distrust, or a deliberately rough load you are matching through an external tuner. With it off nothing but the TX timeout protects the PA from a bad antenna. Desk-only: cannot be changed from a remote session."
+            title={
+              'Automatic SWR trip: Zeus drops TX when the bridge reads above 2.5:1 on MOX ' +
+              '(6:1 on TUN) for half a second. Turn it off only when you know why — a bridge ' +
+              'reading you distrust, or a deliberately rough load you are matching through an ' +
+              'external tuner. With it off nothing but the TX timeout protects the PA from a ' +
+              'bad antenna.' +
+              (remoteMode
+                ? ' Remote session: you can turn this ON, but only someone at the radio can turn it off.'
+                : '')
+            }
           >
             <span>SWR Protection</span>
             <label className="flex items-center gap-1">
               <input
                 type="checkbox"
                 checked={swrProtectionEnabled}
+                /* Remote sessions may ARM the guard but not disarm it (the host
+                   denies the disable direction). Disabling the control in that
+                   state is honest: it used to accept the click, get a 403, and
+                   silently spring back, which reads as a bug rather than a
+                   policy. */
+                disabled={remoteMode && swrProtectionEnabled}
                 onChange={(e) => {
                   const on = e.target.checked;
                   setSwrProtectionLocal(on);

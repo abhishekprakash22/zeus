@@ -208,7 +208,12 @@ public sealed class RemoteWebRtcSession
     {
         "/api/app",
         "/api/tx/ps",
-        "/api/tx/swr-protection",   // PA guard off is a desk decision, never a remote one
+        // NOTE: /api/tx/swr-protection is NOT here — it is handled by
+        // IsSwrProtectionDisable below, which denies only the DISABLE
+        // direction. Turning the guard ON is strictly safer than leaving it
+        // off and there is no reason a remote operator can't do it; turning
+        // it OFF stays a desk decision, because whoever does that should be
+        // able to see and smell the consequences.
         "/api/prefs/databases",
     };
 
@@ -969,7 +974,7 @@ public sealed class RemoteWebRtcSession
             }
 
             // Sensitive-endpoint denylist — refuse before any loopback call.
-            if (IsDenied(target.AbsolutePath, mutating))
+            if (IsDenied(target.AbsolutePath, mutating) || IsSwrProtectionDisable(target.AbsolutePath, mutating, body))
             {
                 _log.LogWarning("rtc.remote api DENY {Method} {Path}", method, target.AbsolutePath);
                 SendApiReply(id, 403);
@@ -1036,6 +1041,37 @@ public sealed class RemoteWebRtcSession
 
     private static bool IsMutatingMethod(string method)
         => method.ToUpperInvariant() is "POST" or "PUT" or "DELETE" or "PATCH";
+
+    /// <summary>True for a mutating /api/tx/swr-protection request that would
+    /// turn the PA's SWR guard OFF. Enabling it remotely is allowed: a remote
+    /// operator arming the protection can only make the radio safer, and the
+    /// blanket deny used to bounce that too — the checkbox silently sprang
+    /// back with no explanation, which read as a bug rather than a policy.
+    /// Body shape is {"enabled":bool}; anything we can't parse is treated as
+    /// a disable and denied, so a malformed body can't sneak the guard off.</summary>
+    private static bool IsSwrProtectionDisable(string path, bool mutating, string? body)
+    {
+        if (!mutating) return false;
+        int q = path.IndexOf('?');
+        var p = q >= 0 ? path[..q] : path;
+        if (!p.StartsWith("/api/tx/swr-protection", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.IsNullOrWhiteSpace(body)) return true;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("enabled", out var en)
+                && en.ValueKind == JsonValueKind.True)
+            {
+                return false;   // enabling — allowed
+            }
+        }
+        catch (JsonException)
+        {
+            return true;        // unparseable — treat as disable, deny
+        }
+        return true;
+    }
 
     private static bool IsDenied(string path, bool mutating)
     {

@@ -6,11 +6,11 @@
 //                         Christian Suarez (N9WAR), and contributors.
 //
 // Assignable NR key for the G2 touch deck: one press steps
-// Off → NR1 → NR2 → NR3 → NR4 → NR5 → Off, so noise reduction is reachable
-// from the front glass without opening the NB·NR page. Modes the engine can't
-// run are skipped by the shared cycle (NR3 needs libwdsp's RNNoise export and
-// a loaded model; NR5 needs the NNR setters), so the key never offers a mode
-// that would fail.
+// Off → NR (EMNR) → NR (Neural) → Off, so the two modes anyone actually
+// reaches for are on the front glass without opening the NB·NR page. The
+// other modes (ANR, RNNoise, SBNR) stay reachable there. Neural drops out of
+// the cycle when the engine can't run it, so the key never offers a mode that
+// would fail.
 //
 // The label carries the state — 'NR' when off, 'NR1'..'NR5' when active — and
 // the key lights like every other deck toggle, so the current mode is readable
@@ -19,7 +19,7 @@
 import { useCallback, useRef } from 'react';
 import { setNr } from '../api/client';
 import { useConnectionStore } from '../state/connection-store';
-import { NR_LABEL, nextNrMode, nrModeTitle } from './nr-cycle';
+import { NR_KEY_LABEL, nextNrMode, nrModeTitle } from './nr-cycle';
 
 export function NrKeyButton() {
   const connected = useConnectionStore((s) => s.status === 'Connected');
@@ -60,7 +60,7 @@ export function NrKeyButton() {
       title={`${nrModeTitle(mode)} — press to step through the noise reduction modes`}
       aria-label={`Noise reduction: ${nrModeTitle(mode)}`}
     >
-      {NR_LABEL[mode]}
+      {NR_KEY_LABEL[mode]}
     </button>
   );
 }

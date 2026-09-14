@@ -1248,7 +1248,12 @@ export default function App() {
     handleLogQso, handleClearQrz, onCallsignSubmit, runQrzLookup, submitBeam,
   ]);
 
-  if (startupUpdate?.forceUpdate) {
+  // The force-update gate REPLACES the whole app, and its only exit is
+  // installing at the radio. A remote client can do neither, so gating there
+  // would lock a remote operator out of a radio that is working fine — the
+  // modal has no button they can satisfy. The radio's own screen still gates;
+  // remote sessions carry on and see the notice in Settings → Updates.
+  if (startupUpdate?.forceUpdate && !remoteMode) {
     return (
       <>
         <ThemeApplier />

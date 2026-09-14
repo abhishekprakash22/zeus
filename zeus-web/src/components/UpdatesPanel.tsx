@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { FpgaFlashSection } from './FpgaFlashSection';
+import { isRemoteMode } from '../remote/remote-client';
 import { P2AppUpdateSection } from './P2AppUpdateSection';
 import {
   fetchUpdateStatus,
@@ -81,6 +82,11 @@ export function UpdatesPanel() {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // An in-place update restarts the radio's own process — it can only be
+  // driven from the radio. The host denies /api/app from a remote session, and
+  // a remote client has nothing to reload into afterwards. Declared before the
+  // callbacks that close over it.
+  const remoteMode = isRemoteMode();
   const [apply, setApply] = useState<UpdateApplyStatusDto | null>(null);
   const [applying, setApplying] = useState(false);
 
@@ -96,6 +102,15 @@ export function UpdatesPanel() {
         if (!ok) {
           setApplying(false);
           setResult(st.error ?? 'In-place update is not available on this install.');
+          return;
+        }
+        // Guard the poll loop below: a DENIED apply must never be read as
+        // "the server went away to restart". Two missed polls put the UI into
+        // a permanent fake 'restarting' phase waiting for a reboot that was
+        // never started.
+        if (remoteMode) {
+          setApplying(false);
+          setResult('Updates can only be installed at the radio.');
           return;
         }
         let missedPolls = 0;
@@ -133,7 +148,7 @@ export function UpdatesPanel() {
         setApplying(false);
         setResult(String(err));
       });
-  }, []);
+  }, [remoteMode]);
 
   const check = useCallback(async (fetch: boolean) => {
     setChecking(true);
@@ -171,7 +186,7 @@ export function UpdatesPanel() {
 
   const action = status?.updateAction ?? 'none';
   const updateAvailable = status?.updateAvailable ?? false;
-  const canUpdate = action === 'download' || action === 'openRelease';
+  const canUpdate = (action === 'download' || action === 'openRelease') && !remoteMode;
   const assetSize = fmtBytes(status?.releaseAssetSizeBytes ?? null);
 
   return (
@@ -274,21 +289,27 @@ export function UpdatesPanel() {
             >
               {checking ? 'CHECKING...' : 'CHECK FOR UPDATES'}
             </button>
-            <button
-              type="button"
-              className="btn sm active"
-              disabled={!canUpdate || checking || applying}
-              onClick={() => (action === 'download' ? doInstall() : doUpdate())}
-              title={
-                action === 'download'
-                  ? 'Download, verify, and install the update in place, then restart ANAN Core'
-                  : action === 'openRelease'
-                    ? 'Open the ANAN Core downloads page'
-                    : 'Already up to date'
-              }
-            >
-              {applying ? 'INSTALLING...' : action === 'download' ? 'INSTALL & RESTART' : 'UPDATE NOW'}
-            </button>
+            {remoteMode ? (
+              <span style={{ fontSize: 11, opacity: 0.85 }}>
+                Updates are installed at the radio.
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="btn sm active"
+                disabled={!canUpdate || checking || applying}
+                onClick={() => (action === 'download' ? doInstall() : doUpdate())}
+                title={
+                  action === 'download'
+                    ? 'Download, verify, and install the update in place, then restart ANAN Core'
+                    : action === 'openRelease'
+                      ? 'Open the ANAN Core downloads page'
+                      : 'Already up to date'
+                }
+              >
+                {applying ? 'INSTALLING...' : action === 'download' ? 'INSTALL & RESTART' : 'UPDATE NOW'}
+              </button>
+            )}
             {apply && applying && (
               <span style={{ fontSize: 11, opacity: 0.85 }}>
                 {apply.phase === 'downloading'

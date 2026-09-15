@@ -14,7 +14,7 @@
 // platform. Source checkouts see the same domain status; they update their
 // source manually with scripts/update.*.
 
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { FpgaFlashSection } from './FpgaFlashSection';
 import { isRemoteMode } from '../remote/remote-client';
 import { P2AppUpdateSection } from './P2AppUpdateSection';
@@ -25,6 +25,7 @@ import {
   type RepoUpdateStatus,
   type UpdateApplyStatusDto,
 } from '../api/client';
+import { isApplyActive, rideApply } from './update-apply-ride';
 
 const labelStyle: CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--fg-2)' };
 const valueStyle: CSSProperties = { fontSize: 12, color: 'var(--fg-1)', fontFamily: 'monospace' };
@@ -90,65 +91,105 @@ export function UpdatesPanel() {
   const [apply, setApply] = useState<UpdateApplyStatusDto | null>(null);
   const [applying, setApplying] = useState(false);
 
+  // One ride at a time, whether we started the install or adopted one that
+  // another screen started. Never reset on the reload path — the page dies.
+  const riding = useRef(false);
+
+  const followApply = useCallback(async (first: UpdateApplyStatusDto | null) => {
+    if (riding.current) return;
+    riding.current = true;
+    if (first) setApply(first);
+    await rideApply({
+      onStatus: setApply,
+      onFailed: (cur) => {
+        riding.current = false;
+        setApplying(false);
+        setResult(cur.error ?? 'Update failed.');
+      },
+      onRestarting: () =>
+        setApply({ phase: 'restarting', percent: 100, targetVersion: null, error: null }),
+    });
+    riding.current = false;
+  }, []);
+
   // In-place install driver: kick the server-side apply, poll its phase, and
   // when the server dies for the restart, keep probing until it's back — then
   // hard-reload so the SPA matches the new build.
   const doInstall = useCallback(() => {
-    setApplying(true);
-    setResult(null);
-    void postUpdateApply()
-      .then(async ({ ok, status: st }) => {
+    void (async () => {
+      setApplying(true);
+      setResult(null);
+      // Guard the poll loop below: a DENIED apply must never be read as
+      // "the server went away to restart". Two missed polls put the UI into
+      // a permanent fake 'restarting' phase waiting for a reboot that was
+      // never started.
+      if (remoteMode) {
+        setApplying(false);
+        setResult('Updates can only be installed at the radio.');
+        return;
+      }
+      // The offer on THIS screen may be stale: another screen may already
+      // have installed this version (and restarted the radio) since our last
+      // check. Re-check before acting so a stale button never re-runs a
+      // finished install. A failed re-check falls through — the server-side
+      // apply fails properly on its own if something is really wrong.
+      let fresh: RepoUpdateStatus | null = null;
+      try {
+        fresh = await fetchUpdateStatus(true);
+      } catch {
+        /* status unavailable — let the apply itself decide */
+      }
+      if (fresh) {
+        setStatus(fresh);
+        if (!fresh.updateAvailable && !fresh.forceUpdate) {
+          setApplying(false);
+          setResult('Already up to date — this update was installed from another screen.');
+          return;
+        }
+      }
+      try {
+        const { ok, status: st } = await postUpdateApply();
         setApply(st);
         if (!ok) {
           setApplying(false);
           setResult(st.error ?? 'In-place update is not available on this install.');
           return;
         }
-        // Guard the poll loop below: a DENIED apply must never be read as
-        // "the server went away to restart". Two missed polls put the UI into
-        // a permanent fake 'restarting' phase waiting for a reboot that was
-        // never started.
-        if (remoteMode) {
-          setApplying(false);
-          setResult('Updates can only be installed at the radio.');
-          return;
-        }
-        let missedPolls = 0;
-        for (;;) {
-          await new Promise((r) => setTimeout(r, 800));
-          try {
-            const cur = await getUpdateApplyStatus();
-            setApply(cur);
-            missedPolls = 0;
-            if (cur.phase === 'failed' || cur.phase === 'unsupported') {
-              setApplying(false);
-              setResult(cur.error ?? 'Update failed.');
-              return;
-            }
-          } catch {
-            // Server going away during 'restarting' is the plan working.
-            missedPolls++;
-            if (missedPolls >= 2) {
-              setApply({ phase: 'restarting', percent: 100, targetVersion: null, error: null });
-              for (;;) {
-                await new Promise((r) => setTimeout(r, 1200));
-                try {
-                  await fetchUpdateStatus(false);
-                  window.location.reload();
-                  return;
-                } catch {
-                  /* still rebooting */
-                }
-              }
-            }
-          }
-        }
-      })
-      .catch((err) => {
+        await followApply(null);
+      } catch (err) {
         setApplying(false);
         setResult(String(err));
-      });
-  }, [remoteMode]);
+      }
+    })();
+  }, [remoteMode, followApply]);
+
+  // Another screen may have started the install — the server runs at most one
+  // apply, so an active phase seen here is that same run. Adopt it: show the
+  // same progress line, disable the button, and ride through the restart to
+  // the reload, instead of offering a second INSTALL that races the first.
+  // Checked on mount and on a slow poll while the panel is open.
+  useEffect(() => {
+    if (remoteMode) return;
+    let disposed = false;
+    const adoptIfRunning = async () => {
+      if (disposed || riding.current) return;
+      try {
+        const st = await getUpdateApplyStatus();
+        if (disposed || riding.current || !isApplyActive(st.phase)) return;
+        setApplying(true);
+        setResult(null);
+        await followApply(st);
+      } catch {
+        /* status unavailable — nothing to adopt */
+      }
+    };
+    void adoptIfRunning();
+    const t = setInterval(() => void adoptIfRunning(), 3000);
+    return () => {
+      disposed = true;
+      clearInterval(t);
+    };
+  }, [remoteMode, followApply]);
 
   const check = useCallback(async (fetch: boolean) => {
     setChecking(true);

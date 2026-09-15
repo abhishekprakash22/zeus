@@ -328,6 +328,19 @@ Settings → Updates shows the installed and latest production versions.
 with automatic rollback if the new version fails to come up. p2app is stopped
 and restarted around the swap automatically.
 
+The radio runs **one install at a time**, no matter how many screens are
+open. If an install is already running — started from the front panel, a
+LAN PC, anywhere — every other screen's update prompt switches to showing
+that install's live progress instead of offering a second button, and every
+screen reloads itself when the radio comes back. Pressing an update button
+whose offer has gone stale (the update was already installed from another
+screen) reports "Already up to date" and does nothing.
+
+The blue **reload toast** ("A new version of ANAN Core is ready") only
+reloads the page — it never installs anything. If the radio is mid-restart
+when it's pressed, the toast waits for the radio to come back and then
+reloads on its own; it no longer sits on UPDATING forever.
+
 If the screen looks odd right after an update, reload the page once
 (Ctrl+Shift+R on a keyboard) — the browser can briefly hold the old
 interface in its cache.

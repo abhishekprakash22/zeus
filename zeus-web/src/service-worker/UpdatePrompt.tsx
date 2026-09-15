@@ -14,20 +14,26 @@
 // See ATTRIBUTIONS.md at the repository root for the full provenance
 // statement and per-component attribution.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 type UpdatePromptProps = {
   onUpdate: (() => Promise<void>) | null;
   show: boolean;
+  /** Test seam. Defaults to a hard reload. */
+  reloadFn?: () => void;
+  /** Test seam. Defaults to real timers. */
+  sleepFn?: (ms: number) => Promise<void>;
 };
 
 /**
  * Displays a prominent notification when a service worker update is available.
  * User can click to reload and apply the update immediately.
  */
-export function UpdatePrompt({ onUpdate, show }: UpdatePromptProps) {
+export function UpdatePrompt({ onUpdate, show, reloadFn, sleepFn }: UpdatePromptProps) {
   const [visible, setVisible] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [waitingForRadio, setWaitingForRadio] = useState(false);
+  const started = useRef(false);
 
   useEffect(() => {
     if (show) {
@@ -41,14 +47,37 @@ export function UpdatePrompt({ onUpdate, show }: UpdatePromptProps) {
   }
 
   const handleUpdate = async () => {
+    if (started.current) return;
+    started.current = true;
+    const sleep = sleepFn ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const reload = reloadFn ?? (() => window.location.reload());
     setUpdating(true);
     try {
       await onUpdate();
-      // Page will reload automatically after update
+      // Happy path: the SKIP_WAITING message activates the waiting worker,
+      // the 'controlling' event fires, and the page reloads out from under us.
     } catch (err) {
       console.error('Failed to apply update:', err);
-      setUpdating(false);
     }
+    // Every OTHER path used to end here with the button reading UPDATING...
+    // forever: no worker actually waiting (the kiosk launcher purges the SW
+    // store), a waiting worker that died, or a radio mid-restart from an
+    // install triggered on another screen. Converge instead: give the SW a
+    // moment to win the race, then probe the server and hard-reload the
+    // instant it answers — a plain reload always lands on the freshest
+    // bundle, because sw.js is served no-cache. Any response at all means
+    // the server is up; only a network-level failure keeps us waiting.
+    await sleep(4000);
+    setWaitingForRadio(true);
+    for (;;) {
+      try {
+        await fetch('/api/version', { cache: 'no-store' });
+        break;
+      } catch {
+        await sleep(1200);
+      }
+    }
+    reload();
   };
 
   return (
@@ -81,7 +110,9 @@ export function UpdatePrompt({ onUpdate, show }: UpdatePromptProps) {
             Update Available
           </div>
           <div style={{ fontSize: 12, opacity: 0.95 }}>
-            A new version of ANAN Core is ready. Click to reload and update.
+            {waitingForRadio
+              ? 'Waiting for the radio to come back — this page will reload.'
+              : 'A new version of ANAN Core is ready. Click to reload and update.'}
           </div>
         </div>
         <button

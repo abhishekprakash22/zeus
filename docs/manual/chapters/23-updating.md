@@ -2,7 +2,11 @@
 
 ### ANAN Core itself
 
-Settings → UPDATES shows installed and latest production versions. On the radio, **INSTALL & RESTART** downloads, verifies, swaps atomically, and restarts — with automatic rollback if the new version fails to come up. p2app is stopped and restarted around the swap automatically. A startup toast offers new versions when they appear. If the screen looks odd right after an update, reload once (Ctrl+Shift+R) — the browser can briefly hold the old interface.
+Settings → UPDATES shows installed and latest production versions. On the radio, **INSTALL & RESTART** downloads, verifies, swaps atomically, and restarts — with automatic rollback if the new version fails to come up. p2app is stopped and restarted around the swap automatically. A startup toast offers new versions when they appear.
+
+The radio runs one install at a time, no matter how many screens are open. If an install is already running — started from any screen — other screens' update prompts show that install's live progress instead of offering a second button, and reload themselves when the radio comes back. A stale update button (the update was already installed elsewhere) reports "Already up to date" and does nothing. The blue reload toast only reloads the page; if the radio is mid-restart when it's pressed, it waits for the radio and then reloads on its own.
+
+If the screen looks odd right after an update, reload once (Ctrl+Shift+R) — the browser can briefly hold the old interface.
 
 ### p2app
 

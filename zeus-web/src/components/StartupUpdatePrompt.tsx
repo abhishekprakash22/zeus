@@ -8,9 +8,10 @@
 // See ATTRIBUTIONS.md at the repository root for the full provenance
 // statement and per-component attribution.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RepoUpdateStatus } from '../api/client';
 import { fetchUpdateStatus, getUpdateApplyStatus, postUpdateApply } from '../api/client';
+import { isApplyActive, rideApply } from './update-apply-ride';
 
 type Props = {
   status: RepoUpdateStatus | null;
@@ -26,11 +27,52 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
   const [visible, setVisible] = useState(false);
   const [applying, setApplying] = useState(false);
   const [phaseText, setPhaseText] = useState<string | null>(null);
+  // One ride at a time, whether we started the install or adopted one that
+  // another screen started. Never reset on the reload path — the page dies.
+  const riding = useRef(false);
 
   useEffect(() => {
     if (!status || status.forceUpdate) return;
     const timer = setTimeout(() => setVisible(true), 100);
     return () => clearTimeout(timer);
+  }, [status]);
+
+  // Another screen may have started this install already — the server runs at
+  // most one apply, so an active phase seen here is that same run. Adopt it:
+  // show its progress instead of offering UPDATE NOW, and ride through the
+  // restart to the reload. Checked on mount and on a slow poll while the
+  // toast is up.
+  useEffect(() => {
+    if (!status || status.forceUpdate) return;
+    let disposed = false;
+    const adoptIfRunning = async () => {
+      if (disposed || riding.current) return;
+      try {
+        const st = await getUpdateApplyStatus();
+        if (disposed || riding.current || !isApplyActive(st.phase)) return;
+        riding.current = true;
+        setApplying(true);
+        setPhaseText(`${st.phase}… ${Math.round(st.percent ?? 0)}%`);
+        await rideApply({
+          onStatus: (cur) => setPhaseText(`${cur.phase}… ${Math.round(cur.percent ?? 0)}%`),
+          onFailed: (cur) => {
+            riding.current = false;
+            setApplying(false);
+            setPhaseText(cur.error ?? 'Update failed — see Settings → Updating.');
+          },
+          onRestarting: () => setPhaseText('restarting…'),
+        });
+        riding.current = false;
+      } catch {
+        /* status unavailable — nothing to adopt */
+      }
+    };
+    void adoptIfRunning();
+    const t = setInterval(() => void adoptIfRunning(), 3000);
+    return () => {
+      disposed = true;
+      clearInterval(t);
+    };
   }, [status]);
 
   if (!status || status.forceUpdate) return null;
@@ -50,11 +92,27 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
   };
 
   const installNow = () => {
-    if (applying) return;
+    if (applying || riding.current) return;
     setApplying(true);
     setPhaseText('starting…');
-    void postUpdateApply()
-      .then(async ({ ok }) => {
+    void (async () => {
+      // The offer on THIS screen may be stale: another screen may already
+      // have installed this version (and restarted the radio) since the
+      // status behind this toast was fetched. Re-check before acting so a
+      // stale UPDATE NOW never re-runs a finished install.
+      try {
+        const fresh = await fetchUpdateStatus(true);
+        if (!fresh.updateAvailable) {
+          setApplying(false);
+          setPhaseText('Already up to date — this update was installed from another screen.');
+          setTimeout(onDismiss, 2500);
+          return;
+        }
+      } catch {
+        /* status unavailable — let the apply itself decide */
+      }
+      try {
+        const { ok } = await postUpdateApply();
         if (!ok) {
           // In-place apply unavailable (portable/dev install) — fall back to
           // the old open-the-asset behaviour so the button still helps.
@@ -62,41 +120,22 @@ export function StartupUpdatePrompt({ status, onDismiss, onOpenSettings }: Props
           openUpdate();
           return;
         }
-        let missedPolls = 0;
-        for (;;) {
-          await new Promise((r) => setTimeout(r, 800));
-          try {
-            const cur = await getUpdateApplyStatus();
-            missedPolls = 0;
-            setPhaseText(`${cur.phase}… ${Math.round(cur.percent ?? 0)}%`);
-            if (cur.phase === 'failed' || cur.phase === 'unsupported') {
-              setApplying(false);
-              setPhaseText(cur.error ?? 'Update failed — see Settings → Updating.');
-              return;
-            }
-          } catch {
-            // Server going away during 'restarting' is the plan working.
-            missedPolls++;
-            if (missedPolls >= 2) {
-              setPhaseText('restarting…');
-              for (;;) {
-                await new Promise((r) => setTimeout(r, 1200));
-                try {
-                  await fetchUpdateStatus(false);
-                  window.location.reload();
-                  return;
-                } catch {
-                  /* still rebooting */
-                }
-              }
-            }
-          }
-        }
-      })
-      .catch(() => {
+        riding.current = true;
+        await rideApply({
+          onStatus: (cur) => setPhaseText(`${cur.phase}… ${Math.round(cur.percent ?? 0)}%`),
+          onFailed: (cur) => {
+            riding.current = false;
+            setApplying(false);
+            setPhaseText(cur.error ?? 'Update failed — see Settings → Updating.');
+          },
+          onRestarting: () => setPhaseText('restarting…'),
+        });
+        riding.current = false;
+      } catch {
         setApplying(false);
         setPhaseText('Could not start the update — see Settings → Updating.');
-      });
+      }
+    })();
   };
 
   return (

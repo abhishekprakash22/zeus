@@ -23,7 +23,7 @@
 import { PaCalibrationCard } from './PaCalibrationCard';
 import { FEATURES } from '../features';
 import { SwrAnalyzerCard } from './SwrAnalyzerCard';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { HF_BANDS, usePaStore } from '../state/pa-store';
 import { useRadioStore } from '../state/radio-store';
 import { useTxStore } from '../state/tx-store';
@@ -285,11 +285,75 @@ function PaSlider({
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
   const decimals = step >= 1 ? 0 : 1;
 
+  // Steppers. Dragging an 8px track to hit a particular dB is a fiddle —
+  // worse on the radio's touch panel, where a fingertip covers several steps.
+  // Press-and-hold repeats, and accelerates after a second, so crossing a
+  // wide gain range doesn't mean forty taps.
+  const repeat = useRef<{ t: ReturnType<typeof setTimeout> | null; n: number }>({ t: null, n: 0 });
+  const stopRepeat = useCallback(() => {
+    if (repeat.current.t !== null) clearTimeout(repeat.current.t);
+    repeat.current = { t: null, n: 0 };
+  }, []);
+  useEffect(() => stopRepeat, [stopRepeat]);
+
+  const bump = useCallback(
+    (dir: 1 | -1) => {
+      onChange(quantise(value + dir * step));
+    },
+    // quantise/value/step are read fresh each press; the deps keep the
+    // closure honest without re-creating the timer chain.
+    [onChange, value, step, min, max],
+  );
+
+  const startRepeat = (dir: 1 | -1) => {
+    bump(dir);
+    const tick = () => {
+      repeat.current.n += 1;
+      // After ~1s of holding, speed up: 400ms → 120ms → 60ms.
+      const delay = repeat.current.n < 3 ? 400 : repeat.current.n < 10 ? 120 : 60;
+      repeat.current.t = setTimeout(() => {
+        bump(dir);
+        tick();
+      }, delay);
+    };
+    tick();
+  };
+
   return (
     <div className="pa-slider">
+      <button
+        type="button"
+        className="pa-step"
+        aria-label="Decrease"
+        disabled={value <= min}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          startRepeat(-1);
+        }}
+        onPointerUp={stopRepeat}
+        onPointerLeave={stopRepeat}
+        onPointerCancel={stopRepeat}
+      >
+        −
+      </button>
       <div ref={trackRef} className="pa-slider-track" onMouseDown={startDrag}>
         <div className="pa-slider-fill" style={{ width: `${pct}%` }} />
       </div>
+      <button
+        type="button"
+        className="pa-step"
+        aria-label="Increase"
+        disabled={value >= max}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          startRepeat(1);
+        }}
+        onPointerUp={stopRepeat}
+        onPointerLeave={stopRepeat}
+        onPointerCancel={stopRepeat}
+      >
+        +
+      </button>
       <span className="pa-slider-val">
         {value.toFixed(decimals)}
         <em>{unit}</em>

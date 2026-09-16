@@ -667,3 +667,37 @@
   border-top: 1px solid var(--line-soft);
   color: var(--fg-1);
 }
+
+/* Per-band gain steppers. PA gain is set by ear against a wattmeter, so the
+   value needs to be nudgeable precisely — dragging an 8px track to a specific
+   dB is a fiddle with a mouse and worse with a fingertip on the radio's own
+   panel. Sized for touch (28px) while staying inside the dense PA grid row. */
+.pa-step {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 22px;
+  line-height: 1;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--panel-edge);
+  border-radius: 0;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+}
+.pa-step:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--btn-active-text);
+  border-color: var(--accent);
+}
+.pa-step:active:not(:disabled) {
+  background: var(--accent);
+  color: var(--btn-active-text);
+}
+.pa-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

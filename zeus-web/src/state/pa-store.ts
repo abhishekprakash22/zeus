@@ -83,6 +83,38 @@ type PaStore = {
   copyOcMasks: (direction: 'tx->rx' | 'rx->tx') => void;
 };
 
+// ---- live apply ----------------------------------------------------------
+// PA gain is set by EAR: you key the radio, watch the wattmeter, and move the
+// number until the output is right. Requiring APPLY after every nudge made
+// that loop unusable — you could not see what a change did while you were
+// making it. So an edit now pushes itself to the radio on a short debounce,
+// and the drive byte follows the value live, mid-transmission.
+//
+// Debounced rather than per-keystroke because a stepper held down emits many
+// values a second and each save is a round trip; 250 ms is below the
+// wattmeter's own settling time, so it reads as immediate.
+//
+// APPLY remains, and still does something real: it is the explicit
+// "write this to the radio now" for anyone who wants it, and the button that
+// reports failures. A live save that fails sets `error` exactly as save()
+// does, so a broken write is never silent.
+const LIVE_SAVE_DEBOUNCE_MS = 250;
+let liveSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleLiveSave(get: () => PaStore): void {
+  if (liveSaveTimer !== null) clearTimeout(liveSaveTimer);
+  liveSaveTimer = setTimeout(() => {
+    liveSaveTimer = null;
+    // Never stack writes: if a save is already in flight, come back once it
+    // has landed rather than racing it with a stale body.
+    if (get().inflight) {
+      scheduleLiveSave(get);
+      return;
+    }
+    void get().save();
+  }, LIVE_SAVE_DEBOUNCE_MS);
+}
+
 export const usePaStore = create<PaStore>((set, get) => ({
   settings: defaultState(),
   loaded: false,
@@ -115,16 +147,20 @@ export const usePaStore = create<PaStore>((set, get) => ({
     }
   },
 
-  setGlobal: (patch) =>
-    set((s) => ({ settings: { ...s.settings, global: { ...s.settings.global, ...patch } } })),
+  setGlobal: (patch) => {
+    set((s) => ({ settings: { ...s.settings, global: { ...s.settings.global, ...patch } } }));
+    scheduleLiveSave(get);
+  },
 
-  setBand: (band, patch) =>
+  setBand: (band, patch) => {
     set((s) => ({
       settings: {
         ...s.settings,
         bands: s.settings.bands.map((b) => (b.band === band ? { ...b, ...patch } : b)),
       },
-    })),
+    }));
+    scheduleLiveSave(get);
+  },
 
   copyOcMasks: (direction) =>
     set((s) => ({

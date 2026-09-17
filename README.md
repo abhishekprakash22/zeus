@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/pics/zeus.png" alt="OpenHPSDR Zeus" width="180"/>
+  <img src="docs/pics/zeus.png" alt="ANAN Core" width="180"/>
 </p>
 
-<h1 align="center">OpenHPSDR Zeus — Community Edition</h1>
+<h1 align="center">ANAN Core</h1>
 
 <p align="center"><b>The station software for the ANAN G2 Ultra.</b><br/>
 A self-updating, browser-based SDR console with next-generation DSP, a neural
@@ -13,7 +13,7 @@ core — developed and bench-verified on G2 Ultra hardware, end to end.</p>
 
 ## What this is
 
-This is the actively developed community fork of OpenHPSDR Zeus, built
+ANAN Core is Apache Labs' station software for the ANAN G2 family, built
 **specifically for the ANAN G2 Ultra**: the radio's Raspberry Pi 5, its
 8-inch 1280×800 front panel, its dual phase-coherent ADCs, and its
 Protocol-2 / Saturn architecture are the reference platform for every
@@ -35,7 +35,7 @@ chmod +x factory-install.sh && ./factory-install.sh
 
 This fetches the latest release, verifies its sha256 against the update
 manifest, installs to a stable path, writes the Desktop launcher, and
-enables a supervising systemd user service. **After that, Zeus updates
+enables a supervising systemd user service. **After that, ANAN Core updates
 itself**: Settings → Updates → *INSTALL & RESTART* downloads, verifies,
 swaps, and restarts in place — with automatic rollback to the previous
 version if a new build fails to come up.
@@ -86,13 +86,17 @@ factory provisioning script for golden images.
 
 ## Heritage & thanks
 
-Zeus was created by **Brian Keating, EI6LF**, whose architecture and
-copyright this fork preserves throughout, and it stands on the shoulders
-of the OpenHPSDR community: **Warren Pratt (WDSP)**, **David Rowe
-(Codec2/FreeDV)**, **K9AN (WSPR)**, the **e04 DeepCW engine**
-(AGPL-3.0, combined per GPLv3 §13 — see `zeus-web/public/deepcw/NOTICE.txt`),
-and Thetis, from which much of the DSP lineage flows. The name honors that
-lineage: Zeus, from Thetis.
+ANAN Core is Apache Labs' independently maintained derivative of an
+earlier GPL-licensed version of OpenHPSDR Zeus. Copyright attribution:
+**Brian Keating, EI6LF**, **Douglas J. Cerrato (KB2UKA)** and
+**Christian Suarez (N9WAR)**. ANAN Core is maintained and supported by
+Apache Labs and is separate from the current ZeusSDR project.
+
+It stands on the shoulders of the OpenHPSDR community: **Warren Pratt
+(WDSP)**, **David Rowe (Codec2/FreeDV)**, **K9AN (WSPR)**, the **e04
+DeepCW engine** (AGPL-3.0, combined per GPLv3 §13 — see
+`zeus-web/public/deepcw/NOTICE.txt`), and Thetis, from which much of the
+DSP lineage flows.
 
 ## Roadmap
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/pics/zeus.png" alt="ANAN Core" width="180"/>
+  <img src="zeus-web/public/branding/zeus-logo.svg" alt="ANAN Core" width="180"/>
 </p>
 
 <h1 align="center">ANAN Core</h1>

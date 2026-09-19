@@ -932,6 +932,13 @@ public static class ZeusHost
         builder.Services.AddSingleton<Zeus.Server.Hosting.FreeDv.FreeDvModemService>();
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.Hosting.FreeDv.FreeDvModemService>());
+        builder.Services.AddSingleton(sp => new Zeus.Server.Hosting.FreeDv.FreeDvReporterService(
+            sp.GetRequiredService<ILogger<Zeus.Server.Hosting.FreeDv.FreeDvReporterService>>(),
+            sp.GetRequiredService<Zeus.Server.Hosting.FreeDv.FreeDvSettingsStore>(),
+            sp.GetRequiredService<Zeus.Server.Hosting.FreeDv.FreeDvModemService>(),
+            sp.GetRequiredService<RadioService>()));
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Zeus.Server.Hosting.FreeDv.FreeDvReporterService>());
 
         // AudioModemPluginBridge publishes the one active IAudioModemPlugin
         // (FreeDV today) to the existing RX/TX insertion points. It also

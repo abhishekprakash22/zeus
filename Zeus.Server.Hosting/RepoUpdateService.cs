@@ -356,8 +356,12 @@ public sealed partial class RepoUpdateService
         {
             var cmp = vl.CompareTo(vi);
             if (cmp != 0) return cmp > 0;
-            // Same numeric prefix, different build string → newer rolling build.
-            return true;
+            // Same numeric prefix, different build string → newer rolling build
+            // ("0.9.1-dev" → "0.9.1-main.20260621.def"). Only the build suffix
+            // counts: "v1.01" and "1.1.0" are the same release written two
+            // ways, and offering it again would loop the updater forever.
+            return !string.Equals(
+                BuildSuffix(installedTrim), BuildSuffix(latestTrim), StringComparison.OrdinalIgnoreCase);
         }
 
         // One side couldn't be parsed (e.g. installed "unknown"): any difference
@@ -384,6 +388,13 @@ public sealed partial class RepoUpdateService
             int.Parse(m.Groups["minor"].Value),
             patch);
         return true;
+    }
+
+    /// <summary>Whatever follows the numeric version ("-main.20260620.abc1234", "-dev", or "").</summary>
+    private static string BuildSuffix(string value)
+    {
+        var m = VersionPattern().Match(value);
+        return m.Success ? value[(m.Index + m.Length)..] : value;
     }
 
     [GeneratedRegex(@"[vV]?(?<major>\d+)\.(?<minor>\d+)(?:\.(?<patch>\d+))?")]

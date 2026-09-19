@@ -45,6 +45,8 @@ public class RepoUpdateServiceTests
     [InlineData("1.01", "1.00", false)]
     [InlineData("1.01", "1.01", false)]
     [InlineData("v1.01", "1.1.0", false)]
+    // The same release spelled with / without the tag's "v" is not an update.
+    [InlineData("1.01", "v1.01", false)]
     public void IsManifestNewer_HandlesRollingMainBuilds(string installed, string latest, bool expected)
     {
         Assert.Equal(expected, RepoUpdateService.IsManifestNewer(installed, latest));

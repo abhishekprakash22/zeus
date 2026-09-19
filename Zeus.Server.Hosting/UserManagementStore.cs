@@ -79,9 +79,10 @@ public sealed class UserManagementStore : IDisposable
         }
 
         var user = RecordLogin(qrzStatus);
-        // Local builds do not gate the console on the admin-managed access flag.
-        // IsAdmin is deliberately left alone: this grants operation, not privilege.
-        var allowed = true;
+        // A signed-in user is held to the admin-managed access flag: when an
+        // admin disables someone, that has to take effect. New users default to
+        // allowed (RecordLogin), so this changes nothing until an admin acts.
+        var allowed = user.AccessAllowed;
         return new ZeusUserSession(
             QrzConnected: true,
             Callsign: user.Callsign,

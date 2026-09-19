@@ -6,15 +6,18 @@ using Zeus.Server.Hosting;
 
 namespace Zeus.Server.Tests;
 
+[Collection(RemoteUserManagementCollection.Name)]
 public sealed class RemoteUserAccessClientTests : IDisposable
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "zeus-remote-users-" + Guid.NewGuid().ToString("N"));
+    private readonly RemoteUserManagementEnvironment _env = new();
 
     public RemoteUserAccessClientTests() => Directory.CreateDirectory(_root);
 
     public void Dispose()
     {
+        _env.Dispose();
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 

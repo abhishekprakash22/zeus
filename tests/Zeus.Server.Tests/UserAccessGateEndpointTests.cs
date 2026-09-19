@@ -10,6 +10,7 @@ using Zeus.Server.Hosting;
 
 namespace Zeus.Server.Tests;
 
+[Collection(RemoteUserManagementCollection.Name)]
 public sealed class UserAccessGateEndpointTests
 {
     [Theory]
@@ -164,7 +165,7 @@ public sealed class UserAccessGateEndpointTests
         private readonly GateHttpStubs _http;
         private readonly string _dbPath = Path.Combine(
             Path.GetTempPath(), $"zeus-gate-test-{Guid.NewGuid():N}.db");
-        private readonly string? _previousRemoteUserManagement;
+        private readonly RemoteUserManagementEnvironment _env;
         private readonly ServiceProvider _services;
 
         public GateServices(Func<HttpRequestMessage, HttpResponseMessage> remoteUserResponse)
@@ -175,8 +176,7 @@ public sealed class UserAccessGateEndpointTests
         public GateServices(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> remoteUserResponse)
         {
             _http = new GateHttpStubs(remoteUserResponse);
-            _previousRemoteUserManagement = Environment.GetEnvironmentVariable("ZEUS_REMOTE_USER_MANAGEMENT");
-            Environment.SetEnvironmentVariable("ZEUS_REMOTE_USER_MANAGEMENT", null);
+            _env = new RemoteUserManagementEnvironment();
 
             var services = new ServiceCollection();
             services.AddLogging();
@@ -237,7 +237,7 @@ public sealed class UserAccessGateEndpointTests
         public void Dispose()
         {
             _services.Dispose();
-            Environment.SetEnvironmentVariable("ZEUS_REMOTE_USER_MANAGEMENT", _previousRemoteUserManagement);
+            _env.Dispose();
             try { if (File.Exists(_dbPath)) File.Delete(_dbPath); } catch { }
             try { if (File.Exists(_dbPath + "-log")) File.Delete(_dbPath + "-log"); } catch { }
         }

@@ -224,7 +224,7 @@ public sealed class DiagnosticReportBuilderTests
         var result = builder.Build(new DiagnosticRequest("wont-connect", null));
 
         Assert.StartsWith(
-            "https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus/issues/new",
+            "https://github.com/abhishekprakash22/zeus/issues/new",
             result.GithubIssueUrl);
         // Title is "[Report] Radio won't connect or keeps dropping", URL-encoded.
         Assert.Contains("title=", result.GithubIssueUrl);

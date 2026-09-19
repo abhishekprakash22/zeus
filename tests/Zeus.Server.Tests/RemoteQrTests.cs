@@ -6,11 +6,11 @@ public sealed class RemoteQrTests
 {
     [Fact]
     public void AddressFor_BuildsGoUrl_Uppercased()
-        => Assert.Equal("https://openhpsdrzeus.com/go/EI6LF", RemoteQr.AddressFor("ei6lf"));
+        => Assert.Equal("https://ananremote.com/go/EI6LF", RemoteQr.AddressFor("ei6lf"));
 
     [Fact]
     public void AddressFor_EscapesPortableCallsign()
-        => Assert.Equal("https://openhpsdrzeus.com/go/EI6LF%2FP", RemoteQr.AddressFor("EI6LF/P"));
+        => Assert.Equal("https://ananremote.com/go/EI6LF%2FP", RemoteQr.AddressFor("EI6LF/P"));
 
     [Theory]
     [InlineData(null)]

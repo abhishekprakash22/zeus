@@ -114,6 +114,31 @@ public sealed class FreeDvReporterTests : IDisposable
     }
 
     [Fact]
+    public void IncomingQsyRequest_IsExposed_WithAFreshIdEachTime()
+    {
+        var svc = NewService(out var store, out var modem);
+        using (store) using (modem) using (svc)
+        {
+            Assert.Null(svc.GetStations().IncomingQsy);
+
+            svc.HandleEvent("qsy_request", Json("""{"callsign":"EA5BZY","frequency":7177000,"message":"QSY?"}"""));
+            var first = svc.GetStations().IncomingQsy;
+            Assert.NotNull(first);
+            Assert.Equal("EA5BZY", first!.Callsign);
+            Assert.Equal(7177000, first.FreqHz);
+            Assert.Equal("QSY?", first.Message);
+
+            svc.HandleEvent("qsy_request", Json("""{"callsign":"EA5BZY","frequency":7177000,"message":""}"""));
+            Assert.True(svc.GetStations().IncomingQsy!.Id > first.Id);   // a repeat is a new request
+
+            // Malformed requests don't replace a good one.
+            var before = svc.GetStations().IncomingQsy;
+            svc.HandleEvent("qsy_request", Json("""{"callsign":"X","frequency":"soon"}"""));
+            Assert.Equal(before, svc.GetStations().IncomingQsy);
+        }
+    }
+
+    [Fact]
     public void Auth_IsViewOnly_UntilOptedInWithCallsignAndGrid()
     {
         var view = JsonDocument.Parse(FreeDvReporterService.BuildAuthJson(

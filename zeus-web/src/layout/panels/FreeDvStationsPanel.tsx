@@ -109,6 +109,9 @@ export function FreeDvStationsPanel() {
   const loadReporterSettings = useFreeDvStationsStore((s) => s.loadReporterSettings);
   const saveReporterSettings = useFreeDvStationsStore((s) => s.saveReporterSettings);
   const requestQsy = useFreeDvStationsStore((s) => s.requestQsy);
+  const incomingQsy = useFreeDvStationsStore((s) => s.incomingQsy);
+  const acceptIncomingQsy = useFreeDvStationsStore((s) => s.acceptIncomingQsy);
+  const dismissIncomingQsy = useFreeDvStationsStore((s) => s.dismissIncomingQsy);
 
   const qrzHome = useQrzStore((s) => s.home);
 
@@ -230,6 +233,35 @@ export function FreeDvStationsPanel() {
         qrzGrid={qrzHome?.grid ?? ''}
         onSave={saveReporterSettings}
       />
+
+      {/* Incoming QSY request — another station asks us to move to its frequency. */}
+      {incomingQsy && (
+        <div
+          role="alert"
+          style={{
+            padding: '6px 8px',
+            fontSize: 11,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            color: 'var(--fg-1)',
+            borderBottom: '1px solid var(--panel-border)',
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <strong>{incomingQsy.callsign}</strong> asks you to QSY to{' '}
+            <span className="mono">{fmtFreq(incomingQsy.freqHz)} MHz</span>
+            {incomingQsy.message ? ` — ${incomingQsy.message}` : ''}
+          </span>
+          <button type="button" className="btn sm" onClick={() => void acceptIncomingQsy()}>
+            Go
+          </button>
+          <button type="button" className="btn sm" onClick={dismissIncomingQsy}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Tune error banner */}
       {tuneError && (

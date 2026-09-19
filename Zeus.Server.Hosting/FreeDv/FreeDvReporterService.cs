@@ -26,7 +26,8 @@
 // WHAT IT KEEPS
 //   One row per station from new_connection / remove_connection / freq_change
 //   / tx_report / rx_report / message_update (bulk_update replays a list of
-//   those on connect). Cleared on disconnect.
+//   those on connect). Cleared on disconnect. Plus the last qsy_request sent
+//   to us, which the panel shows until dismissed or five minutes old.
 
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -95,9 +96,17 @@ public sealed class FreeDvReporterService : IHostedService, IDisposable
         double? LastRxSnr, string? LastRxCallsign, string? LastRxMode,
         string LastUpdate, string? ConnectTime);
 
+    /// <summary>A QSY request another station sent us (the panel offers to tune to it).</summary>
+    public sealed record QsyRequest(long Id, string Callsign, long FreqHz, string? Message, DateTimeOffset ReceivedUtc);
+
     public sealed record StationsSnapshot(
         string ConnectionState, bool Enabled, IReadOnlyList<Station> Stations,
-        bool Reporting, string? MySid);
+        bool Reporting, string? MySid, QsyRequest? IncomingQsy);
+
+    // Older requests are stale — the other station has likely moved on.
+    private static readonly TimeSpan QsyRequestTtl = TimeSpan.FromMinutes(5);
+    private QsyRequest? _incomingQsy;
+    private long _qsyId;
 
     /// <summary>Current station list; also keeps a view-role session alive.</summary>
     public StationsSnapshot GetStations()
@@ -111,7 +120,8 @@ public sealed class FreeDvReporterService : IHostedService, IDisposable
                 settings.ReportEnabled,
                 _stations.Values.OrderBy(s => s.Callsign, StringComparer.Ordinal).ToArray(),
                 Reporting: _fullyConnected && _reportRole,
-                MySid: _fullyConnected ? _mySid : null);
+                MySid: _fullyConnected ? _mySid : null,
+                IncomingQsy: _incomingQsy is { } q && DateTimeOffset.UtcNow - q.ReceivedUtc < QsyRequestTtl ? q : null);
         }
     }
 
@@ -453,10 +463,11 @@ public sealed class FreeDvReporterService : IHostedService, IDisposable
                         LastUpdate = Str(args, "last_update") ?? st.LastUpdate,
                     };
                     break;
-                case "qsy_request":
+                case "qsy_request" when Str(args, "callsign") is { } from && Long(args, "frequency") is long hz and > 0:
+                    _incomingQsy = new QsyRequest(++_qsyId, from, hz, Str(args, "message"), DateTimeOffset.UtcNow);
                     _log.LogInformation(
                         "freedv.reporter: {Callsign} asks for a QSY to {Freq} Hz ({Message})",
-                        Str(args, "callsign"), Long(args, "frequency"), Str(args, "message"));
+                        from, hz, Str(args, "message"));
                     break;
             }
         }

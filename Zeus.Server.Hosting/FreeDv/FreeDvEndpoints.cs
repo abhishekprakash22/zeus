@@ -93,6 +93,16 @@ public static class FreeDvEndpoints
                 }),
                 reporting = s.Reporting,
                 mySid = s.MySid,
+                incomingQsy = s.IncomingQsy is { } q
+                    ? new
+                    {
+                        id = q.Id,
+                        callsign = q.Callsign,
+                        freqHz = q.FreqHz,
+                        message = q.Message,
+                        receivedUtc = q.ReceivedUtc.ToString("o"),
+                    }
+                    : null,
             });
         });
 

@@ -88,9 +88,10 @@ factory provisioning script for golden images.
 
 ANAN Core is Apache Labs' independently maintained derivative of an
 earlier GPL-licensed version of OpenHPSDR Zeus. Copyright attribution:
-**Brian Keating, EI6LF**, **Douglas J. Cerrato (KB2UKA)** and
-**Christian Suarez (N9WAR)**. ANAN Core is maintained and supported by
-Apache Labs and is separate from the current ZeusSDR project.
+**Brian Keating (EI6LF)**, **Douglas J. Cerrato (KB2UKA)**, **Christian
+Suarez (N9WAR)** and **Ramón Martínez (EA5IUE)**. ANAN Core is maintained
+and supported by Apache Labs and is separate from the current ZeusSDR
+project.
 
 It stands on the shoulders of the OpenHPSDR community: **Warren Pratt
 (WDSP)**, **David Rowe (Codec2/FreeDV)**, **K9AN (WSPR)**, the **e04

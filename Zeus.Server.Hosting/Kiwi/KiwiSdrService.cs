@@ -651,7 +651,10 @@ public sealed class KiwiSdrService : BackgroundService, IKiwiReceiverProvider, I
         // "<id>.proxy.kiwisdr.com" entry connects instead of hanging.
         (host, port, secure) = await ResolveEndpointAsync(host, port, secure, ct).ConfigureAwait(false);
 
-        var client = new KiwiSdrClient(host, port, secure, password, "ZeusSDR", _loggerFactory.CreateLogger<KiwiSdrClient>());
+        // Ident string shown in the KiwiSDR's own user list and on the public
+        // KiwiSDR maps — i.e. a third party's UI, seen by strangers. It names
+        // this product, not the project it was forked from.
+        var client = new KiwiSdrClient(host, port, secure, password, "ANAN Core", _loggerFactory.CreateLogger<KiwiSdrClient>());
         client.AudioReceived = OnAudio;
         client.WaterfallReceived = OnWaterfall;
         client.StatusChanged = OnClientStatus;

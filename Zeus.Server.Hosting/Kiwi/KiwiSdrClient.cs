@@ -101,7 +101,7 @@ public sealed class KiwiSdrClient : IAsyncDisposable
         _port = port;
         _secure = secure;
         _password = string.IsNullOrEmpty(password) ? null : password;
-        _identUser = string.IsNullOrWhiteSpace(identUser) ? "ZeusSDR" : identUser;
+        _identUser = string.IsNullOrWhiteSpace(identUser) ? "ANAN Core" : identUser;
         _log = log;
     }
 

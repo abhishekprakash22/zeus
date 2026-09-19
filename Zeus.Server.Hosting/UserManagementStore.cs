@@ -57,8 +57,9 @@ public sealed class UserManagementStore : IDisposable
         // middleware 403 every protected route (and drop MOX/TUN) until a QRZ or
         // Zeus account signs in. Operating one's own radio from one's own machine
         // does not require an account, so the un-authenticated local session is
-        // allowed. Hosted services (chat relay, plugin checkout/billing) are
-        // enforced server-side by zeussdr.com and are NOT affected by this change.
+        // allowed. (The upstream hosted services this once deferred to are not
+        // used by this build: the account gate, billing and user-directory
+        // telemetry were removed when the fork became standalone.)
         if (!qrzStatus.Connected || qrzStatus.Home is null)
         {
             return new ZeusUserSession(

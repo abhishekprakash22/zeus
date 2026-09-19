@@ -60,6 +60,13 @@ export interface Ft8TxControllerOpts extends Ft8TxBehavior {
   fetchFn?: typeof fetch;
   /** Called once when a QSO should be logged (Team C's log endpoint). */
   onLogQso?: (state: QsoState) => void;
+  /** Called when the backend REFUSES a TX request, with a message fit to show
+   *  the operator. Distinct from a dropped POST: a refusal is the radio
+   *  telling us it will not transmit and why, and silence there is the worst
+   *  outcome — the operator clicks a decode, nothing happens, and there is
+   *  nothing to report but "it doesn't transmit". (Field: macOS arm returned
+   *  409 "clock not synchronised" and the panel showed nothing.) */
+  onTxRefused?: (reason: string) => void;
 }
 
 /** The QSO runner. Owns the live QsoState and the TX audio offset, and issues
@@ -81,6 +88,7 @@ export class Ft8TxController {
   private txAck: AckToken = 'RR73';
   private readonly doFetch: typeof fetch;
   private readonly onLogQso?: (state: QsoState) => void;
+  private readonly onTxRefused?: (reason: string) => void;
 
   constructor(opts: Ft8TxControllerOpts) {
     this.autoSequence = opts.autoSequence ?? true;
@@ -98,6 +106,7 @@ export class Ft8TxController {
     this.audioHz = opts.audioHz ?? 1500;
     this.doFetch = opts.fetchFn ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
     this.onLogQso = opts.onLogQso;
+    this.onTxRefused = opts.onTxRefused;
   }
 
   /** Snapshot of the current logical QSO state (read-only view for the UI). */
@@ -422,15 +431,53 @@ export class Ft8TxController {
 
   private async post(url: string, body: unknown): Promise<unknown> {
     try {
-      await this.doFetch(url, {
+      const res = await this.doFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      // fetch RESOLVES on 4xx/5xx — it only rejects on a transport failure —
+      // so a refusal never reached the catch below and was silently dropped.
+      if (!res.ok) await this.reportRefusal(url, res);
     } catch {
-      // The keyer's own watchdog + arm-state is authoritative; a dropped POST
-      // just means this window doesn't change the backend. Swallow.
+      // A dropped POST is different from a refusal: the keyer's own watchdog
+      // and arm-state remain authoritative, and this window simply failed to
+      // change the backend. Still swallowed, deliberately.
     }
     return undefined;
+  }
+
+  /** Turn a non-2xx reply into something worth showing an operator. Best
+   *  effort: if the body carries a message we use it, otherwise we fall back
+   *  to the status. Never throws — reporting a problem must not create one. */
+  private async reportRefusal(url: string, res: Response): Promise<void> {
+    if (!this.onTxRefused) return;
+    let detail = '';
+    try {
+      const text = await res.text();
+      if (text) {
+        try {
+          const j = JSON.parse(text) as { error?: unknown; message?: unknown };
+          const m = j.error ?? j.message;
+          if (typeof m === 'string' && m.trim()) detail = m.trim();
+        } catch {
+          // Not JSON — a short plain-text body is still useful to an operator.
+          if (text.length <= 200) detail = text.trim();
+        }
+      }
+    } catch {
+      /* body unreadable — status alone still tells the operator something */
+    }
+    const what = url.endsWith('/arm')
+      ? 'Transmit not armed'
+      : url.endsWith('/halt')
+        ? 'Halt refused'
+        : 'Transmit refused';
+    const why = detail || `HTTP ${res.status}`;
+    try {
+      this.onTxRefused(`${what}: ${why}`);
+    } catch {
+      /* a listener that throws must not break the keyer */
+    }
   }
 }

@@ -317,6 +317,66 @@ describe('Ft8TxController', () => {
     expect(tx(calls).length).toBeGreaterThan(txCountBefore);
   });
 
+  // A refusal is not a dropped POST. fetch RESOLVES on 4xx, so a 409 used to
+  // sail past the try/catch unnoticed: on macOS the arm was refused with
+  // "clock not synchronised" and the panel showed the operator nothing at all.
+  it('reports a backend refusal instead of swallowing it', async () => {
+    const seen: string[] = [];
+    const fn = vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      text: async () => JSON.stringify({ error: 'clock not synchronised' }),
+    })) as unknown as typeof fetch;
+
+    const ctrl = new Ft8TxController({
+      myCall: 'KB2UKA',
+      fetchFn: fn,
+      onTxRefused: (reason) => seen.push(reason),
+    });
+    ctrl.enableTx();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // enableTx issues BOTH the arm and the first stage POST, so a backend
+    // refusing everything produces a refusal for each — the arm one is the
+    // message that explains why nothing transmitted.
+    expect(seen.length).toBeGreaterThan(0);
+    const armRefusal = seen.find((m) => m.startsWith('Transmit not armed'));
+    expect(armRefusal).toBeDefined();
+    expect(armRefusal).toContain('clock not synchronised');
+  });
+
+  it('falls back to the status when a refusal carries no message', async () => {
+    const seen: string[] = [];
+    const fn = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      text: async () => '',
+    })) as unknown as typeof fetch;
+
+    const ctrl = new Ft8TxController({
+      myCall: 'KB2UKA',
+      fetchFn: fn,
+      onTxRefused: (reason) => seen.push(reason),
+    });
+    ctrl.enableTx();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(seen[0]).toContain('HTTP 503');
+  });
+
+  it('stays silent when the backend accepts', async () => {
+    const seen: string[] = [];
+    const fn = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' })) as unknown as typeof fetch;
+    const ctrl = new Ft8TxController({
+      myCall: 'KB2UKA',
+      fetchFn: fn,
+      onTxRefused: (reason) => seen.push(reason),
+    });
+    ctrl.enableTx();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toHaveLength(0);
+  });
+
   it('respects HOLD TX FREQ for waterfall clicks', () => {
     const { fn } = makeFetch();
     const ctrl = new Ft8TxController({ myCall: 'KB2UKA', audioHz: 1500, fetchFn: fn });

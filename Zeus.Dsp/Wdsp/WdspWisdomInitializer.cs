@@ -371,10 +371,75 @@ public sealed class WdspWisdomInitializer
         }
     }
 
-    private static string HashFile(string path)
+    internal static string HashFile(string path)
     {
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream))[..16].ToLowerInvariant();
+        byte[] data = File.ReadAllBytes(path);
+        byte[] hash = MachOSectionsHash(data) ?? SHA256.HashData(data);
+        return Convert.ToHexString(hash)[..16].ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// For a thin 64-bit Mach-O, hashes only the section contents (code and
+    /// data) — not the header, the load commands or __LINKEDIT. codesign
+    /// rewrites all three when it signs, so the release .app's Developer-ID
+    /// signed libwdsp and the linker-signed dev build hash the same, and
+    /// alternating between them no longer throws the wisdom cache away.
+    /// Returns null for anything else (Windows/Linux, fat binaries, malformed
+    /// input) so the caller falls back to the whole-file hash.
+    /// </summary>
+    internal static byte[]? MachOSectionsHash(ReadOnlySpan<byte> data)
+    {
+        const uint MhMagic64 = 0xFEEDFACF;
+        const uint LcSegment64 = 0x19;
+        const int HeaderSize = 32;
+        const int SegmentCommandSize = 72;
+        const int SectionSize = 80;
+        const uint SectionTypeMask = 0xFF;
+        const uint SZeroFill = 0x1, SGbZeroFill = 0xC, SThreadLocalZeroFill = 0x12;
+
+        if (data.Length < HeaderSize || ReadU32(data, 0) != MhMagic64) return null;
+        uint ncmds = ReadU32(data, 16);
+        uint sizeofcmds = ReadU32(data, 20);
+        if ((ulong)HeaderSize + sizeofcmds > (ulong)data.Length) return null;
+
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        int off = HeaderSize;
+        int end = HeaderSize + (int)sizeofcmds;
+        int sections = 0;
+        for (uint c = 0; c < ncmds; c++)
+        {
+            if (off + 8 > end) return null;
+            uint cmd = ReadU32(data, off);
+            uint cmdsize = ReadU32(data, off + 4);
+            if (cmdsize < 8 || off + cmdsize > end) return null;
+
+            if (cmd == LcSegment64)
+            {
+                if (cmdsize < SegmentCommandSize) return null;
+                uint nsects = ReadU32(data, off + 64);
+                if (SegmentCommandSize + (ulong)nsects * SectionSize > cmdsize) return null;
+                for (int s = 0; s < nsects; s++)
+                {
+                    var sect = data.Slice(off + SegmentCommandSize + s * SectionSize, SectionSize);
+                    ulong size = ReadU64(sect, 40);
+                    uint fileOff = ReadU32(sect, 48);
+                    uint type = ReadU32(sect, 64) & SectionTypeMask;
+                    sha.AppendData(sect[..32]);               // sectname + segname
+                    if (type is SZeroFill or SGbZeroFill or SThreadLocalZeroFill || size == 0)
+                        continue;                            // no file bytes
+                    if ((ulong)fileOff + size > (ulong)data.Length) return null;
+                    sha.AppendData(data.Slice((int)fileOff, (int)size));
+                    sections++;
+                }
+            }
+            off += (int)cmdsize;
+        }
+        return sections == 0 ? null : sha.GetHashAndReset();
+
+        static uint ReadU32(ReadOnlySpan<byte> b, int at) =>
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(b.Slice(at, 4));
+        static ulong ReadU64(ReadOnlySpan<byte> b, int at) =>
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(b.Slice(at, 8));
     }
 
     private static string ResolveFallbackVersion(Func<string> getVersion, ILogger logger)

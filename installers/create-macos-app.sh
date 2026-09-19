@@ -489,7 +489,7 @@ rm -f "${DMG_PATH}"
 #   Zeus.app                — full Photino desktop app
 #   Zeus Server.app         — thin wrapper, opens --server status window
 #   Applications -> /Applications  — drag-to-install target
-#   README.txt              — xattr / first-launch instructions
+#   README.txt              — unsigned builds only: the xattr workaround
 DMG_TEMP="${OUTPUT_DIR}/dmg_temp"
 rm -rf "${DMG_TEMP}"
 mkdir -p "${DMG_TEMP}"
@@ -497,64 +497,13 @@ cp -R "${APP_BUNDLE}" "${DMG_TEMP}/"
 cp -R "${SERVER_APP_BUNDLE}" "${DMG_TEMP}/"
 ln -s /Applications "${DMG_TEMP}/Applications"
 
-# README inside the DMG. Two flavours, picked from WILL_SIGN above:
-#   - signed/notarized   → drag-to-Applications + first-run notes only.
-#                          No xattr; Gatekeeper accepts the .app directly.
-#   - unsigned (dryrun)  → original README with the xattr -cr workaround,
-#                          which is the only way to launch an unsigned
-#                          .app on modern macOS without right-click +
-#                          Open Anyway acrobatics.
-if [ "${WILL_SIGN}" -eq 1 ]; then
-    cat > "${DMG_TEMP}/README.txt" << 'EOF'
-OpenHPSDR Zeus for macOS
-========================
-
-INSTALL
-  Drag BOTH "OpenHPSDR Zeus.app" and "OpenHPSDR Zeus Server.app" onto
-  the Applications shortcut in this window. "OpenHPSDR Zeus Server.app"
-  is a small wrapper around "OpenHPSDR Zeus.app" and won't work without
-  "OpenHPSDR Zeus.app" installed.
-
-  If you only want the desktop app, dragging "OpenHPSDR Zeus.app" alone
-  is fine.
-
-  Then launch from Applications normally — Zeus is signed and notarized,
-  so Gatekeeper lets it open without any xattr workaround.
-
-THE TWO ICONS
-
-  OpenHPSDR Zeus         Full native window. The radio backend runs
-                         in-process inside the same window. Closing the
-                         window stops Zeus completely. This is the right
-                         choice for most operators.
-
-  OpenHPSDR Zeus Server  Backend-only mode for LAN / remote / phone
-                         access. Opens a small status window showing
-                         the URLs to connect to from a browser, with a
-                         Stop Zeus button. Connect from this Mac at
-                         http://localhost:6060 or from another device
-                         at http://<your-mac>:6060. HTTPS uses a
-                         self-signed certificate — accept the browser
-                         warning on first connect.
-
-HEADLESS / CLI USE
-  If you're running Zeus on a headless Mac (no display, e.g. a mac mini
-  in a closet), use Terminal:
-
-      "/Applications/OpenHPSDR Zeus.app/Contents/Resources/app/OpenhpsdrZeus"
-
-  This is the no-window service mode. Identical to OpenHPSDR Zeus
-  Server's backend but without the status window. Closing the Terminal
-  (or Ctrl-C) stops the server.
-
-FIRST RUN — WDSP WISDOM
-  The first launch builds an FFTW "wisdom" cache and can take 1-3
-  minutes. The window will load, but do NOT click Discover/Connect
-  until the wisdom build settles. Subsequent launches are instant.
-
-More info: https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus
-EOF
-else
+# README inside the DMG, unsigned builds only. A signed + notarized DMG
+# needs no explanation — drag to Applications, Gatekeeper opens it — so it
+# ships just the two apps and the Applications shortcut. An unsigned
+# (dryrun) build carries the README with the xattr -cr workaround, which is
+# the only way to launch an unsigned .app on modern macOS without
+# right-click + Open Anyway acrobatics.
+if [ "${WILL_SIGN}" -ne 1 ]; then
     cat > "${DMG_TEMP}/README.txt" << 'EOF'
 OpenHPSDR Zeus for macOS  (UNSIGNED DEV BUILD)
 ==============================================

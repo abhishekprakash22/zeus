@@ -20,6 +20,7 @@ copied by `dotnet publish` automatically:
 
     linux-arm64/native/libzeus_ft8.so   (Raspberry Pi 4/5, 64-bit)
     linux-x64/native/libzeus_ft8.so
+    osx-arm64/native/libzeus_ft8.dylib  (Apple Silicon)
 
 ## Rebuilding
 
@@ -32,3 +33,11 @@ Cross-compiling for the Pi from an x86 Linux box:
     CC=aarch64-linux-gnu-gcc ./build.sh
 
 Then copy the result over `Zeus.Dsp/runtimes/linux-arm64/native/libzeus_ft8.so`.
+
+macOS (Apple clang, same sources, no extra deps):
+
+    bash build.sh libzeus_ft8.dylib
+    install_name_tool -id @rpath/libzeus_ft8.dylib libzeus_ft8.dylib
+    codesign -f -s - libzeus_ft8.dylib
+
+Then copy it over `Zeus.Dsp/runtimes/osx-arm64/native/libzeus_ft8.dylib`.

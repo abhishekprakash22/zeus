@@ -39,3 +39,18 @@ Outputs stage into `Zeus.Dsp/runtimes/{rid}/native/libzeus_wspr.so`.
 Validated end-to-end in-tree: native encode → synthesized slot →
 `MixAndDecimate32` → native decode round-trips the message (see
 `tests/Zeus.Server.Tests/WsprTests.cs`).
+
+## macOS
+
+Link against the FFTW Zeus already ships (headers from Homebrew `fftw`) and
+point the dependency at the copy beside the library, as libwdsp does:
+
+    R=../../Zeus.Dsp/runtimes/osx-arm64/native
+    CC="cc -I$(brew --prefix fftw)/include" FFTW="$R/libfftw3f.3.dylib" \
+      bash build.sh libzeus_wspr.dylib
+    install_name_tool -id @rpath/libzeus_wspr.dylib \
+      -change /opt/homebrew/opt/fftw/lib/libfftw3f.3.dylib @loader_path/libfftw3f.3.dylib \
+      libzeus_wspr.dylib
+    codesign -f -s - libzeus_wspr.dylib
+
+Then copy it over `Zeus.Dsp/runtimes/osx-arm64/native/libzeus_wspr.dylib`.

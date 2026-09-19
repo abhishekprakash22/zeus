@@ -149,9 +149,11 @@ export function FreeDvStationsPanel() {
   }, [filtered, sortKey, sortDir]);
 
   const emptyMessage =
-    connectionState !== 'Connected'
-      ? 'Connecting to FreeDV Reporter…'
-      : 'No active FreeDV stations.';
+    connectionState === 'Connected'
+      ? 'No active FreeDV stations.'
+      : connectionState === 'Connecting' || connectionState === 'Reconnecting'
+        ? 'Connecting to FreeDV Reporter…'
+        : 'Not connected to FreeDV Reporter.';
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>

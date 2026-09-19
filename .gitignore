@@ -111,3 +111,9 @@ docs/manual/build/
 appimagetool-*.AppImage
 publish/
 zeus-freedv-arm64/
+
+# RADE V1 — vendored upstream slices + local build dir (fetched by build-rade.yml, never committed)
+native/radae/vendor/radae_c/
+native/radae/vendor/opus_dnn/
+native/radae/vendor/freedv_text/
+native/build-rade/

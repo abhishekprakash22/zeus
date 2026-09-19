@@ -105,7 +105,7 @@ public sealed class FreeDvModemTests : IDisposable
 
         var st = modem.Snapshot();
         Assert.Equal(FreeDvNative.Available, st.NativeAvailable);
-        Assert.False(st.RadeAvailable);
+        Assert.Equal(RadeNative.Available, st.RadeAvailable);
         Assert.Equal(8000, st.SpeechSampleRateHz);
         Assert.Equal(8000, st.ModemSampleRateHz);
 
@@ -162,6 +162,97 @@ public sealed class FreeDvModemTests : IDisposable
         Assert.True(st.Synced, "no sync on a clean loopback");
         Assert.True(st.SnrDb > 5, $"SNR {st.SnrDb:F1} dB too low for clean loopback");
         Assert.True(speechBlocks > 20, "no decoded speech reached the output");
+
+        await modem.StopAsync(default);
+    }
+
+    [Fact]
+    public void Resampler16k_RoundTrip_IsUnityGain_InThePassband()
+    {
+        var d = new Decimator48To16();
+        var u = new Interpolator16To48();
+        const int n = 48_000;
+        var in48 = new float[n];
+        for (int i = 0; i < n; i++)
+            in48[i] = 0.5f * MathF.Sin(2 * MathF.PI * 3000 * i / 48_000f);
+
+        var mid16 = new float[n / 3 + 8];
+        int n16 = d.Process(in48, mid16);
+        Assert.InRange(n16, n / 3 - 1, n / 3 + 1);
+
+        var out48 = new float[n16 * 3];
+        int n48 = u.Process(mid16.AsSpan(0, n16), out48);
+        Assert.Equal(n16 * 3, n48);
+
+        double gOut = Rms(out48.AsSpan(200, n48 - 400));
+        Assert.InRange(gOut / Rms(in48), 0.95, 1.05);
+    }
+
+    [Fact]
+    public async Task Modem_CleanLoopback_SyncsDecodes_AndCarriesCallsign_RadeV1()
+    {
+        if (!RadeNative.Available) return; // libzeus_rade not staged on this leg
+
+        using var store = new FreeDvSettingsStore(
+            NullLogger<FreeDvSettingsStore>.Instance, _dbPath);
+        using var modem = new FreeDvModemService(
+            NullLogger<FreeDvModemService>.Instance, store);
+        await modem.StartAsync(default);
+        modem.Configure(FreeDvSubmode.RadeV1, autoDetect: false,
+            squelchEnabled: null, snrSquelchThreshDb: null, txText: "ea5iue 73");
+        modem.SyncMode((byte)Zeus.Contracts.RxMode.FreeDv);
+        Assert.True(modem.Active);
+        Assert.Equal(16000, modem.Snapshot().SpeechSampleRateHz);
+
+        // 4 s of voiced "speech" (a harmonic buzz) TX → modem audio + EOO tail.
+        const int rate = 48_000;
+        var onAir = new List<float>(5 * rate);
+        var blk = new float[1024];
+        for (int off = 0; off < 4 * rate; off += blk.Length)
+        {
+            for (int i = 0; i < blk.Length; i++)
+            {
+                float t = (off + i) / (float)rate;
+                float v = 0;
+                for (int h = 1; h <= 8; h++) v += MathF.Sin(2 * MathF.PI * 140 * h * t) / h;
+                blk[i] = 0.15f * v;
+            }
+            modem.ProcessTx(blk);
+            onAir.AddRange(blk);
+        }
+        Assert.True(modem.FinishTx() > 0);
+        int real;
+        while ((real = modem.DrainTx(blk)) > 0)
+            onAir.AddRange(blk.Take(real));
+
+        var air = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(onAir);
+        Assert.True(Rms(air) > 0.01, "no modem audio on air");
+        float peak = 0;
+        foreach (var x in air) peak = Math.Max(peak, Math.Abs(x));
+        Assert.True(peak < 1.0f, $"TX modem audio clips (peak {peak:F2})");
+
+        // Feed it straight back: a clean channel must sync, decode speech and
+        // recover the EOO callsign (first word of the TX text, upper-cased).
+        modem.FlushRx();
+        int speechBlocks = 0;
+        bool synced = false;
+        double bestSnr = double.MinValue;
+        for (int off = 0; off + blk.Length <= air.Length; off += blk.Length)
+        {
+            air.Slice(off, blk.Length).CopyTo(blk);
+            modem.ProcessRx(blk);
+            if (Rms(blk) > 1e-4) speechBlocks++;
+            var s = modem.Snapshot();
+            if (s.Synced) { synced = true; bestSnr = Math.Max(bestSnr, s.SnrDb); }
+        }
+        // Flush the EOO through the decoder with a little trailing silence.
+        Array.Clear(blk);
+        for (int i = 0; i < 20; i++) modem.ProcessRx(blk);
+
+        Assert.True(synced, "no sync on a clean loopback");
+        Assert.True(bestSnr > 5, $"SNR {bestSnr:F1} dB too low for clean loopback");
+        Assert.True(speechBlocks > 20, "no decoded speech reached the output");
+        Assert.Equal("EA5IUE", modem.Snapshot().RxText);
 
         await modem.StopAsync(default);
     }

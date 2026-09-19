@@ -133,13 +133,125 @@ internal sealed class Interpolator8To48
     }
 }
 
+// RADE V1 speech runs at 16 kHz (FARGAN output / LPCNet analyzer input), so it
+// needs a 3:1 pair beside the 6:1 modem-rate pair above. Same structure and
+// hot-path discipline; 96-tap prototype (32 taps per phase × 3 phases), cutoff
+// 7 kHz — inside the 8 kHz Nyquist of the 16 kHz side and flat across speech.
+
+/// <summary>48 kHz float → 16 kHz float, streaming, persistent phase.</summary>
+internal sealed class Decimator48To16
+{
+    private readonly float[] _taps;
+    private readonly float[] _delay;
+    private int _pos;
+    private int _phase;               // 0..2, output on phase 0
+
+    public Decimator48To16()
+    {
+        _taps = FreeDvFir.Prototype(96, 7000.0);
+        _delay = new float[_taps.Length];
+    }
+
+    /// <summary>Returns the number of 16 kHz samples produced.</summary>
+    public int Process(ReadOnlySpan<float> in48k, Span<float> out16k)
+    {
+        int produced = 0;
+        var taps = _taps;
+        var delay = _delay;
+        int len = delay.Length;
+        for (int i = 0; i < in48k.Length; i++)
+        {
+            delay[_pos] = in48k[i];
+            _pos = _pos + 1 == len ? 0 : _pos + 1;
+            if (++_phase == 3)
+            {
+                _phase = 0;
+                if (produced < out16k.Length)
+                {
+                    float acc = 0f;
+                    int idx = _pos;
+                    for (int t = len - 1; t >= 0; t--)
+                    {
+                        acc += delay[idx] * taps[t];
+                        idx = idx + 1 == len ? 0 : idx + 1;
+                    }
+                    out16k[produced++] = acc;
+                }
+            }
+        }
+        return produced;
+    }
+
+    public void Reset()
+    {
+        Array.Clear(_delay);
+        _pos = 0;
+        _phase = 0;
+    }
+}
+
+/// <summary>16 kHz float → 48 kHz float, streaming polyphase (×3 gain baked in).</summary>
+internal sealed class Interpolator16To48
+{
+    private const int TapsPerPhase = 32;
+    private readonly float[][] _phases; // [3][32], gain ×3 folded in
+    private readonly float[] _delay;
+    private int _pos;
+
+    public Interpolator16To48()
+    {
+        var proto = FreeDvFir.Prototype(96, 7000.0);
+        _phases = new float[3][];
+        for (int p = 0; p < 3; p++)
+        {
+            _phases[p] = new float[TapsPerPhase];
+            for (int t = 0; t < TapsPerPhase; t++)
+                _phases[p][t] = proto[t * 3 + p] * 3f;
+        }
+        _delay = new float[TapsPerPhase];
+    }
+
+    /// <summary>Returns samples produced (= 3 × in16k.Length when out48k is large enough).</summary>
+    public int Process(ReadOnlySpan<float> in16k, Span<float> out48k)
+    {
+        int produced = 0;
+        var delay = _delay;
+        for (int i = 0; i < in16k.Length; i++)
+        {
+            delay[_pos] = in16k[i];
+            _pos = _pos + 1 == TapsPerPhase ? 0 : _pos + 1;
+            for (int p = 0; p < 3 && produced < out48k.Length; p++)
+            {
+                var taps = _phases[p];
+                float acc = 0f;
+                int idx = _pos;
+                for (int t = TapsPerPhase - 1; t >= 0; t--)
+                {
+                    acc += delay[idx] * taps[t];
+                    idx = idx + 1 == TapsPerPhase ? 0 : idx + 1;
+                }
+                out48k[produced++] = acc;
+            }
+        }
+        return produced;
+    }
+
+    public void Reset()
+    {
+        Array.Clear(_delay);
+        _pos = 0;
+    }
+}
+
 internal static class FreeDvFir
 {
     /// <summary>96-tap Hamming-windowed sinc, fc = 3.4 kHz @ 48 kHz, unity DC gain.</summary>
-    public static float[] Prototype()
+    public static float[] Prototype() => Prototype(96, 3400.0);
+
+    /// <summary>Hamming-windowed sinc at 48 kHz, unity DC gain.</summary>
+    public static float[] Prototype(int n, double cutoffHz)
     {
-        const int n = 96;
-        const double fc = 3400.0 / 48000.0; // normalized cutoff
+        double fc = cutoffHz / 48000.0; // normalized cutoff
         var taps = new double[n];
         double sum = 0;
         for (int i = 0; i < n; i++)

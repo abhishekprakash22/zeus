@@ -21,9 +21,10 @@
 #     standalone (KERNEL32 + UCRT only). The static-link + PREFIX="" fixes are now
 #     baked into native/radae/CMakeLists.txt, so no win-specific flags are passed
 #     here. (CI runner toolchain — msys2 python3/shell — may still need a tweak.)
-#   - osx-arm64 : same CMake recipe + toolchain wired, NOT yet run — expect to
-#     iterate the first dispatch. The opus_dnn slice is scalar-only with stubbed
-#     SIMD subtrees, compiler-agnostic, so the risk is toolchain/link, not code.
+#   - osx-arm64 : PROVEN locally (2026-09-19, Apple clang) — `zeus_rade_test
+#     loopback` PASS with callsign round-trip. Needed two CMake fixes, now in
+#     native/radae/CMakeLists.txt: force <stdlib.h> into radc_rx.c (clang rejects
+#     its implicit abs()) and order the -force_load link after the opus archive.
 
 name: build-rade
 

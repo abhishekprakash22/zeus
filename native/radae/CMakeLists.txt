@@ -104,6 +104,15 @@ if(NOT MSVC)
     PROPERTIES COMPILE_OPTIONS "-O1")
 endif()
 
+# radc_rx.c calls abs() without including <stdlib.h>. GCC/MinGW accept the
+# implicit declaration; Clang (macOS, and C99+ generally) rejects it as an error.
+# The slice is re-vendored on every build, so force the header in rather than
+# patching upstream source. (GCC / Clang / MinGW; MSVC has no -include.)
+if(NOT MSVC)
+  set_property(SOURCE "${RADAE_C}/src/radc_rx.c"
+    APPEND PROPERTY COMPILE_OPTIONS "-include" "stdlib.h")
+endif()
+
 # ---------------------------------------------------------------------------
 # 3. freedv_text — FreeDV reliable-text (LDPC) EOO callsign codec. On-air
 #    compatible with FreeDV-GUI's RADE EOO frame (CRC8 + 6-bit chars + LDPC
@@ -160,6 +169,9 @@ endif()
 # Whole-archive the static opus so fargan_* / nnet symbols are retained even
 # though only the shim references them transitively.
 if(APPLE)
+  # -force_load names the archive by path only, so CMake does not know opus
+  # must be built first — declare the dependency or the link races the archive.
+  add_dependencies(zeus_rade opus)
   target_link_libraries(zeus_rade PRIVATE
     -Wl,-force_load,$<TARGET_FILE:opus> m)
 elseif(MSVC)

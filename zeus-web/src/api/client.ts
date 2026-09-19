@@ -7829,8 +7829,8 @@ export type FreeDvStatusDto = {
   // Auto submode detection: while unsynced the modem cycles submodes until one
   // locks. `submode` reflects the live (possibly scanner-chosen) mode.
   autoDetect: boolean;
-  // True when the native RADE modem is available. False until librade is
-  // integrated — RADEV1 then runs no decoder and the panel shows a gated state.
+  // True when the native RADE modem (libzeus_rade) loaded on this platform.
+  // When false, RADEV1 runs no decoder and the panel shows a gated state.
   radeAvailable: boolean;
 };
 

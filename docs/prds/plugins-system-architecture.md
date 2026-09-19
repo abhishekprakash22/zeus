@@ -940,7 +940,7 @@ MyPlugin/
 
 #### 5.8.2 Documentation site
 
-`docs.zeus-sdr.org/plugins/` includes:
+The plugin documentation site includes:
 - **Quickstart** — 5-minute "Hello World" plugin.
 - **API reference** — Generated from XML docs (via DocFX).
 - **Cookbook** — Common recipes:
@@ -1129,7 +1129,7 @@ public class PluginSettingsStore
 
 **Deliverables:**
 - `Zeus.Plugin.Template` NuGet package.
-- `docs.zeus-sdr.org/plugins/` site (via DocFX).
+- Plugin documentation site (via DocFX).
 - 5–10 sample plugins in `samples/plugins/`.
 - (v2.0) `brianbruff/zeus-plugins` registry repo.
 

@@ -2,7 +2,7 @@
 
 ## 1. What we're building
 
-An **interactive, click-to-configure visual signal-chain map** for the Zeus SDR client's TX path. Operators see the entire mic-to-antenna journey as a living diagram: each stage is a visible block, real-time meters flow through it, and clicking a block opens its parameters inline. Think *Thetis block diagram, but alive and editable.*
+An **interactive, click-to-configure visual signal-chain map** for the ANAN Core client's TX path. Operators see the entire mic-to-antenna journey as a living diagram: each stage is a visible block, real-time meters flow through it, and clicking a block opens its parameters inline. Think *Thetis block diagram, but alive and editable.*
 
 The reference aesthetic is the classic Thetis TX block diagram (orange "WDSP" panel feeding green "FPGA + RF" panel). We are **not** copying that palette — we are reinterpreting it in the Zeus visual language, which is faithful to the Hermes Lite 2 hardware front panel.
 

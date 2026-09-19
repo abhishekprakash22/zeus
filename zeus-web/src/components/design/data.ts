@@ -43,7 +43,7 @@
 // Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
 // License for details.
 
-// Static data mirrored from the design handoff for Zeus SDR.
+// Static data mirrored from the design handoff.
 // These are design-time mocks for the panels that aren't yet backend-wired
 // (QRZ lookup, logbook, memory channels, CW keyer macros).
 

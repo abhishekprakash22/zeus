@@ -30,8 +30,11 @@ public class TxMonitorPreviewTransmitTests : IDisposable
         return (radio, tx);
     }
 
+    // MON used to be force-cleared when MOX / TUN / two-tone engaged (a MOX-off
+    // preview tool). That auto-clear was retired on purpose (TxService: "MON
+    // survives the key") — the monitor stays where the operator put it.
     [Fact]
-    public void TrySetMox_On_ClearsTxMonitorPreview()
+    public void TrySetMox_On_KeepsTxMonitor()
     {
         var (radio, tx) = BuildRadioAndTx();
         radio.SetTxMonitor(new TxMonitorSetRequest(true));
@@ -41,11 +44,11 @@ public class TxMonitorPreviewTransmitTests : IDisposable
         Assert.True(ok);
         Assert.Null(err);
         Assert.True(tx.IsMoxOn);
-        Assert.False(radio.Snapshot().TxMonitorEnabled);
+        Assert.True(radio.Snapshot().TxMonitorEnabled);
     }
 
     [Fact]
-    public void TrySetTun_On_ClearsTxMonitorPreview()
+    public void TrySetTun_On_KeepsTxMonitor()
     {
         var (radio, tx) = BuildRadioAndTx();
         radio.SetTxMonitor(new TxMonitorSetRequest(true));
@@ -55,11 +58,11 @@ public class TxMonitorPreviewTransmitTests : IDisposable
         Assert.True(ok);
         Assert.Null(err);
         Assert.True(tx.IsTunOn);
-        Assert.False(radio.Snapshot().TxMonitorEnabled);
+        Assert.True(radio.Snapshot().TxMonitorEnabled);
     }
 
     [Fact]
-    public void TrySetTwoTone_On_ClearsTxMonitorPreview()
+    public void TrySetTwoTone_On_KeepsTxMonitor()
     {
         var (radio, tx) = BuildRadioAndTx();
         radio.SetTxMonitor(new TxMonitorSetRequest(true));
@@ -69,7 +72,7 @@ public class TxMonitorPreviewTransmitTests : IDisposable
         Assert.True(ok);
         Assert.Null(err);
         Assert.True(tx.IsTwoToneOn);
-        Assert.False(radio.Snapshot().TxMonitorEnabled);
+        Assert.True(radio.Snapshot().TxMonitorEnabled);
     }
 
     [Fact]

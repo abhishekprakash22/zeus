@@ -26,9 +26,9 @@ public sealed class NrModeRemovalTests : IDisposable
         using var dspStore = NewDspStore();
         using var radio = NewRadio(dspStore);
 
-        // 5 is one past the last defined mode (Rnnr = 4) — a corrupt/legacy
+        // 6 is one past the last defined mode (Nnr = 5) — a corrupt/legacy
         // DB value that must normalize to Off rather than be honored.
-        var snapshot = radio.SetNr(new NrConfig(NrMode: (NrMode)5));
+        var snapshot = radio.SetNr(new NrConfig(NrMode: (NrMode)6));
 
         Assert.Equal(NrMode.Off, snapshot.Nr?.NrMode);
         Assert.Equal(NrMode.Off, dspStore.Get()?.NrMode);
@@ -38,9 +38,9 @@ public sealed class NrModeRemovalTests : IDisposable
     public void Constructor_NormalizesPersistedUnsupportedModeToOff()
     {
         using var dspStore = NewDspStore();
-        // 5 is one past the last defined mode (Rnnr = 4): a stale persisted
+        // 6 is one past the last defined mode (Nnr = 5): a stale persisted
         // value from an older schema must be clamped to Off on load.
-        dspStore.Upsert(new NrConfig(NrMode: (NrMode)5));
+        dspStore.Upsert(new NrConfig(NrMode: (NrMode)6));
 
         using var radio = NewRadio(dspStore);
 

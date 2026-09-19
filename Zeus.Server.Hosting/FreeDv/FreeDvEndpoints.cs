@@ -108,8 +108,11 @@ public static class FreeDvEndpoints
         });
 
         g.MapPost("/stations/{sid}/qsy", async (string sid, FreeDvReporterService reporter, CancellationToken ct) =>
+            // 200 with a body, not 204: the panel's jsonFetch always parses the
+            // response, and WebKit rejects an empty body ("The string did not
+            // match the expected pattern").
             await reporter.RequestQsyAsync(sid, ct)
-                ? Results.NoContent()
+                ? Results.Ok(new { ok = true })
                 : Results.Json(
                     new { error = "not reporting", message = "Not reporting to FreeDV Reporter, or that station is gone" },
                     statusCode: StatusCodes.Status409Conflict));

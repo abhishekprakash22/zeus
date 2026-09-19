@@ -32,9 +32,13 @@ export function Ft8Panel() {
     <div
       className="digital-window"
       style={{
-        height: '100%',
+        // flex: 1 + overflow hidden, like the other workspace panels: the tile
+        // body is a flex column, so height: 100% alone didn't bound the panel
+        // and a long decode list pushed it out past the bottom of the tile.
+        flex: 1,
         width: '100%',
         minHeight: 0,
+        overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
         // The pop-out is position:fixed with its own size; in a tile the tile

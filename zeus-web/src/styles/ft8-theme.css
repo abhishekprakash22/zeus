@@ -213,7 +213,9 @@
   flex: 0 1 auto;
 }
 .dw-section--grow {
-  flex: 1 1 auto;
+  /* Basis 0, not auto: the decode list takes the space that is left and
+     scrolls inside it, instead of starting from its own (unbounded) height. */
+  flex: 1 1 0;
   min-height: 196px; /* ≈ head (22px) + 7 mono rows — never collapses below */
 }
 .dw-section:not(.dw-section--grow) {

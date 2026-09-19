@@ -47,6 +47,25 @@ public sealed unsafe partial class FreeDvModemService
     private readonly Interpolator16To48 _radeRxInterp = new();
     private readonly Decimator48To16 _radeTxDecim = new();
 
+    // Bumped once per decoded End-of-Over callsign (guarded by _state).
+    private int _rxCallsignSeq;
+
+    /// <summary>
+    /// The last End-of-Over callsign decoded on RADEV1, if one arrived after
+    /// <paramref name="afterSeq"/>. Control-thread only (takes the state lock);
+    /// used by the FreeDV Reporter to send rx_report once per heard over.
+    /// </summary>
+    public bool TryGetRxCallsign(int afterSeq, out int seq, out string callsign, out int snrDb)
+    {
+        lock (_state)
+        {
+            seq = _rxCallsignSeq;
+            callsign = seq != afterSeq && _rade != IntPtr.Zero ? new string(_rxText, 0, _rxTextLen) : "";
+            snrDb = (int)Math.Round(Interlocked.Read(ref _snrMilliDb) / 1000.0);
+            return callsign.Length > 0;
+        }
+    }
+
     /// <summary>True when libzeus_rade is loadable on this platform.</summary>
     public static bool RadeAvailable => RadeNative.Available;
 
@@ -179,6 +198,7 @@ public sealed unsafe partial class FreeDvModemService
                 int n = Math.Min(csn, RxTextCap);
                 for (int i = 0; i < n; i++) _rxText[i] = (char)_radeCallsign[i];
                 _rxTextLen = n;
+                _rxCallsignSeq++;   // one per over — the shim consumes it on read
             }
 
             for (int i = 0; i < nout && i < _radePcmOut.Length; i++)

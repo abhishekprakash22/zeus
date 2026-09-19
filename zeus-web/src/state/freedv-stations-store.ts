@@ -15,6 +15,7 @@ import {
   setVfo,
   setFreeDvConfig,
   type FreeDvStationDto,
+  type FreeDvIncomingQsyDto,
   type FreeDvReporterSettings,
   type FreeDvSubmode,
 } from '../api/client';
@@ -49,6 +50,11 @@ interface FreeDvStationsState {
   /** Transient feedback from the last tune attempt. */
   tuneError: string | null;
 
+  /** QSY request another station sent us, until tuned to or dismissed. */
+  incomingQsy: FreeDvIncomingQsyDto | null;
+  /** Id of the last request the operator answered, so polling doesn't re-show it. */
+  handledQsyId: number | null;
+
   setQuery: (query: string) => void;
   loadStations: () => Promise<void>;
   tuneToStation: (station: FreeDvStationDto) => Promise<void>;
@@ -56,6 +62,8 @@ interface FreeDvStationsState {
   loadReporterSettings: () => Promise<void>;
   saveReporterSettings: (settings: FreeDvReporterSettings) => Promise<void>;
   requestQsy: (sid: string) => Promise<void>;
+  acceptIncomingQsy: () => Promise<void>;
+  dismissIncomingQsy: () => void;
 }
 
 /** Map a FreeDV Reporter mode string to a FreeDvSubmode enum value.
@@ -107,6 +115,8 @@ export const useFreeDvStationsStore = create<FreeDvStationsState>()((set, get) =
   reporterSaving: false,
   query: '',
   tuneError: null,
+  incomingQsy: null,
+  handledQsyId: null,
 
   setQuery: (query) => set({ query }),
 
@@ -119,6 +129,8 @@ export const useFreeDvStationsStore = create<FreeDvStationsState>()((set, get) =
         connectionState: resp.connectionState,
         reporting: resp.reporting,
         mySid: resp.mySid,
+        incomingQsy:
+          resp.incomingQsy && resp.incomingQsy.id !== get().handledQsyId ? resp.incomingQsy : null,
         error: null,
         loading: false,
         lastUpdated: Date.now(),
@@ -164,6 +176,28 @@ export const useFreeDvStationsStore = create<FreeDvStationsState>()((set, get) =
     } catch (err) {
       set({ reporterError: err instanceof Error ? err.message : 'QSY request failed' });
     }
+  },
+
+  acceptIncomingQsy: async () => {
+    const qsy = get().incomingQsy;
+    if (!qsy) return;
+    if (useConnectionStore.getState().status !== 'Connected') {
+      set({ tuneError: 'No radio connected — connect first.' });
+      return;
+    }
+    set({ tuneError: null, incomingQsy: null, handledQsyId: qsy.id });
+    try {
+      // Only the frequency: the request comes from a station already in
+      // FreeDV on the same network, and we only report while in FREEDV.
+      await setVfo(qsy.freqHz);
+    } catch (err) {
+      set({ tuneError: err instanceof Error ? err.message : 'Tune failed' });
+    }
+  },
+
+  dismissIncomingQsy: () => {
+    const qsy = get().incomingQsy;
+    set({ incomingQsy: null, handledQsyId: qsy ? qsy.id : get().handledQsyId });
   },
 
   tuneToStation: async (station) => {

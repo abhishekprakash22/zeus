@@ -8000,7 +8000,32 @@ export type FreeDvStationsResponseDto = {
   stations: FreeDvStationDto[];
   reporting: boolean;      // true when on the public map ("report" role)
   mySid: string | null;    // operator's own session id while reporting
+  // Last QSY request another station sent us (null when none / older than 5 min).
+  incomingQsy: FreeDvIncomingQsyDto | null;
 };
+
+export type FreeDvIncomingQsyDto = {
+  id: number;              // increments per request — dismiss by id
+  callsign: string;
+  freqHz: number;
+  message: string | null;
+  receivedUtc: string;     // ISO-8601 UTC
+};
+
+function normalizeFreeDvIncomingQsy(raw: unknown): FreeDvIncomingQsyDto | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== 'number' || typeof r.callsign !== 'string' || typeof r.freqHz !== 'number') {
+    return null;
+  }
+  return {
+    id: r.id,
+    callsign: r.callsign,
+    freqHz: r.freqHz,
+    message: typeof r.message === 'string' && r.message.length > 0 ? r.message : null,
+    receivedUtc: typeof r.receivedUtc === 'string' ? r.receivedUtc : '',
+  };
+}
 
 // ---- FreeDV Reporter "report mode" settings (GET/POST /reporter/settings) ----
 // Mirrors the plugin-side FreeDvReporterSettings record. Strictly opt-in:
@@ -8053,6 +8078,7 @@ function normalizeFreeDvStationsResponse(raw: unknown): FreeDvStationsResponseDt
     stations: Array.isArray(r.stations) ? (r.stations as unknown[]).map(normalizeFreeDvStation) : [],
     reporting: r.reporting === true,
     mySid: typeof r.mySid === 'string' ? r.mySid : null,
+    incomingQsy: normalizeFreeDvIncomingQsy(r.incomingQsy),
   };
 }
 

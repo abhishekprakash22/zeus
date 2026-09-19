@@ -21,12 +21,11 @@
 //   the endpoint reports an already-installed shape when libcodec2 loads and
 //   a terminal "failed" shape (with the rebuild hint) when it does not —
 //   there is nothing to download.
-// - /stations and /reporter/settings: the FreeDV Reporter NETWORK CLIENT
-//   (qso.freedv.org socket.io session) is not implemented yet. /stations
-//   returns the honest disabled shape the panel already renders
-//   (connectionState "Disconnected", enabled:false, empty list); reporter
-//   settings persist so the opt-in survives until the client lands; QSY
-//   returns 409 because we are never in "report" role without it.
+// - /stations, /reporter/settings and QSY front FreeDvReporterService, the
+//   qso.freedv.org client. Polling /stations keeps a "view" session alive
+//   while the panel is open; "report" role (opt-in + callsign + grid) stays
+//   connected on its own. QSY returns 409 unless we are reporting and the
+//   station is known.
 
 using Zeus.Server.Hosting.FreeDv;
 
@@ -68,33 +67,65 @@ public static class FreeDvEndpoints
             Results.Ok(InstallDto.From(modem.NativeAvailable)));
 
         // ---- FreeDV Reporter ------------------------------------------------
-        g.MapGet("/stations", (FreeDvSettingsStore store) =>
+        g.MapGet("/stations", (FreeDvReporterService reporter) =>
         {
-            var r = store.GetReporter();
+            var s = reporter.GetStations();
             return Results.Ok(new
             {
-                connectionState = "Disconnected",
-                enabled = r.ReportEnabled,
-                stations = Array.Empty<object>(),
-                reporting = false,
-                mySid = (string?)null,
+                connectionState = s.ConnectionState,
+                enabled = s.Enabled,
+                stations = s.Stations.Select(st => new
+                {
+                    sid = st.Sid,
+                    callsign = st.Callsign,
+                    gridSquare = st.GridSquare,
+                    freqHz = st.FreqHz,
+                    mode = st.Mode,
+                    transmitting = st.Transmitting,
+                    rxOnly = st.RxOnly,
+                    message = st.Message,
+                    version = st.Version,
+                    lastRxSnr = st.LastRxSnr,
+                    lastRxCallsign = st.LastRxCallsign,
+                    lastRxMode = st.LastRxMode,
+                    lastUpdate = st.LastUpdate,
+                    connectTime = st.ConnectTime,
+                }),
+                reporting = s.Reporting,
+                mySid = s.MySid,
+                incomingQsy = s.IncomingQsy is { } q
+                    ? new
+                    {
+                        id = q.Id,
+                        callsign = q.Callsign,
+                        freqHz = q.FreqHz,
+                        message = q.Message,
+                        receivedUtc = q.ReceivedUtc.ToString("o"),
+                    }
+                    : null,
             });
         });
 
         g.MapGet("/reporter/settings", (FreeDvSettingsStore store) =>
             Results.Ok(ReporterDto.From(store.GetReporter())));
 
-        g.MapPost("/reporter/settings", (ReporterDto req, FreeDvSettingsStore store) =>
+        g.MapPost("/reporter/settings", (ReporterDto req, FreeDvSettingsStore store, FreeDvReporterService reporter) =>
         {
             var saved = store.SetReporter(new FreeDvReporterSettings(
                 req.ReportEnabled, req.Callsign ?? "", req.GridSquare ?? "", req.Message ?? ""));
+            reporter.ReporterSettingsChanged();
             return Results.Ok(ReporterDto.From(saved));
         });
 
-        g.MapPost("/stations/{sid}/qsy", (string sid) =>
-            Results.Json(
-                new { error = "not reporting", message = "FreeDV Reporter connection is not implemented yet" },
-                statusCode: StatusCodes.Status409Conflict));
+        g.MapPost("/stations/{sid}/qsy", async (string sid, FreeDvReporterService reporter, CancellationToken ct) =>
+            // 200 with a body, not 204: the panel's jsonFetch always parses the
+            // response, and WebKit rejects an empty body ("The string did not
+            // match the expected pattern").
+            await reporter.RequestQsyAsync(sid, ct)
+                ? Results.Ok(new { ok = true })
+                : Results.Json(
+                    new { error = "not reporting", message = "Not reporting to FreeDV Reporter, or that station is gone" },
+                    statusCode: StatusCodes.Status409Conflict));
 
         return app;
     }

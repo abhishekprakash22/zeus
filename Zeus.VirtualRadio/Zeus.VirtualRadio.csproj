@@ -22,9 +22,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 10.0.7 floor: this project references Zeus.Server.Hosting → SIPSorcery, which
-         requires Logging.Abstractions >= 10.0.7; pinning 10.0.0 here trips NU1605. -->
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <!-- 10.0.10 floor: this project references Zeus.Server.Hosting → SIPSorcery, which
+         requires Logging.Abstractions >= 10.0.10; pinning 10.0.0 here trips NU1605. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
   </ItemGroup>
 
 </Project>

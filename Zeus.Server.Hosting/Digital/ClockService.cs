@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Zeus.Server.Hosting.Digital;
 
-public enum ClockSource { None, Manual, TimeSyncd, Chrony, Gps }
+public enum ClockSource { None, Manual, TimeSyncd, Chrony, Gps, Sntp }
 
 public sealed record ClockStatus(
     string Source,
@@ -95,6 +95,7 @@ public sealed class ClockService : IDisposable
                         ClockSource.TimeSyncd => "ntp",
                         ClockSource.Gps => "gps",
                         ClockSource.Manual => "manual",
+                        ClockSource.Sntp => "sntp",
                         _ => "none",
                     },
                     OffsetMs: Math.Round(_offsetMs, 3),
@@ -133,7 +134,10 @@ public sealed class ClockService : IDisposable
         }
     }
 
-    /// <summary>Poll the host's time-sync daemon. Cheap; Pi OS ships one of these.</summary>
+    /// <summary>
+    /// Poll the host's time-sync daemon (chrony / timesyncd — Pi OS ships one of
+    /// these); elsewhere, measure the offset with an occasional SNTP query.
+    /// </summary>
     private void Refresh()
     {
         Discipline();
@@ -150,19 +154,123 @@ public sealed class ClockService : IDisposable
             return;
         }
 
-        if (TryTimedatectl(out bool synced))
+        if (TryTimedatectl(out bool synced) && synced)
         {
             lock (_sync)
             {
-                _source = synced ? ClockSource.TimeSyncd : ClockSource.None;
+                _source = ClockSource.TimeSyncd;
                 // timesyncd exposes no offset; assume in-spec when it claims sync.
-                _offsetMs = synced ? 0.0 : double.NaN;
-                if (synced) _syncedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                _offsetMs = 0.0;
+                _syncedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            }
+            return;
+        }
+
+        // No chrony, and timedatectl absent (macOS, Windows) or not yet synced:
+        // measure the offset ourselves with one SNTP query. Without this every
+        // non-Linux host reported "none" and FT8 TX could never arm.
+        if (TrySntpCached(out double sntpOffsetMs))
+        {
+            lock (_sync)
+            {
+                _source = ClockSource.Sntp;
+                _offsetMs = sntpOffsetMs;
+                _syncedAtUnixMs = _sntpAtUnixMs;
             }
             return;
         }
 
         lock (_sync) { _source = ClockSource.None; _offsetMs = double.NaN; }
+    }
+
+    // ---- SNTP fallback ------------------------------------------------------
+
+    // NTP pool etiquette: no more than one query per few minutes from a client.
+    private static readonly TimeSpan SntpInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan SntpRetryAfterFailure = TimeSpan.FromMinutes(1);
+    private const int SntpTimeoutMs = 1500;
+    private double _sntpOffsetMs = double.NaN;
+    private long? _sntpAtUnixMs;
+    private long _sntpNextAttemptUnixMs;
+
+    /// <summary>The platform's own time server — what the OS itself syncs to by default.</summary>
+    private static string SntpServer() =>
+        OperatingSystem.IsMacOS() ? "time.apple.com"
+        : OperatingSystem.IsWindows() ? "time.windows.com"
+        : "pool.ntp.org";
+
+    private bool TrySntpCached(out double offsetMs)
+    {
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (now < _sntpNextAttemptUnixMs)
+        {
+            offsetMs = _sntpOffsetMs;
+            return !double.IsNaN(offsetMs);
+        }
+        if (TrySntp(SntpServer(), out offsetMs))
+        {
+            _sntpOffsetMs = offsetMs;
+            _sntpAtUnixMs = now;
+            _sntpNextAttemptUnixMs = now + (long)SntpInterval.TotalMilliseconds;
+            return true;
+        }
+        _sntpOffsetMs = double.NaN;
+        _sntpNextAttemptUnixMs = now + (long)SntpRetryAfterFailure.TotalMilliseconds;
+        return false;
+    }
+
+    /// <summary>
+    /// One SNTP (RFC 4330) exchange: offset = ((T2 − T1) + (T3 − T4)) / 2, where
+    /// T1/T4 are our send/receive times and T2/T3 the server's receive/transmit
+    /// timestamps. Positive means the local clock is behind the server.
+    /// </summary>
+    internal static bool TrySntp(string server, out double offsetMs)
+    {
+        offsetMs = double.NaN;
+        try
+        {
+            using var udp = new System.Net.Sockets.UdpClient();
+            udp.Client.ReceiveTimeout = SntpTimeoutMs;
+            udp.Client.SendTimeout = SntpTimeoutMs;
+            udp.Connect(server, 123);
+
+            var request = new byte[48];
+            request[0] = 0x1B;                        // LI 0, VN 3, mode 3 (client)
+            double t1 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            udp.Send(request, request.Length);
+            var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
+            var reply = udp.Receive(ref remote);
+            double t4 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            return TryComputeSntpOffset(reply, t1, t4, out offsetMs);
+        }
+        catch
+        {
+            return false;   // no network / blocked port / DNS — caller reports "none"
+        }
+    }
+
+    /// <summary>Offset from a 48-byte SNTP reply and local send/receive unix-ms times.</summary>
+    internal static bool TryComputeSntpOffset(byte[] reply, double t1, double t4, out double offsetMs)
+    {
+        offsetMs = double.NaN;
+        if (reply.Length < 48) return false;
+        int mode = reply[0] & 0x7;
+        int stratum = reply[1];
+        if (mode != 4 || stratum == 0 || stratum > 15) return false;   // not a valid server reply / KoD
+        double t2 = NtpTimestampToUnixMs(reply, 32);
+        double t3 = NtpTimestampToUnixMs(reply, 40);
+        if (t2 <= 0 || t3 <= 0) return false;
+        offsetMs = ((t2 - t1) + (t3 - t4)) / 2.0;
+        return true;
+    }
+
+    private static double NtpTimestampToUnixMs(byte[] b, int at)
+    {
+        const double NtpToUnixSeconds = 2_208_988_800.0;   // 1900-01-01 → 1970-01-01
+        uint secs = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(at, 4));
+        uint frac = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(at + 4, 4));
+        if (secs == 0) return 0;
+        return (secs - NtpToUnixSeconds) * 1000.0 + frac * 1000.0 / 4294967296.0;
     }
 
     /// <summary>`chronyc tracking` → System time offset + frequency drift.</summary>

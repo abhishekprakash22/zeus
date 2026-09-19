@@ -1,7 +1,12 @@
 # RADE V1 integration — design & implementation plan
 
-**Status:** Phase 1 (UI/contract groundwork) landed. Native decoder NOT yet
-implemented — this document is the execution plan for it.
+**Status (2026-09-19):** Phases 1–4 done. `zeus_rade` builds for linux-x64/arm64,
+win-x64 and osx-arm64; `RadeNative` + `FreeDvModemService.Rade.cs` run RADEV1 RX
+and TX (with the EOO callsign) and `RadeAvailable` reflects whether the library
+loaded. A clean-channel loopback through the service passes
+(`FreeDvModemTests.Modem_CleanLoopback_SyncsDecodes_AndCarriesCallsign_RadeV1`).
+Remaining: on-air validation (Phase 5), osx-x64 / win-arm64 binaries. The rest of
+this document is the original plan, kept for history.
 
 ## Why
 
@@ -217,8 +222,8 @@ To build (the native phase):
 | 1 | UI/contract groundwork: `RadeV1` submode, gated panel, `RadeAvailable` | ✅ done (committed) |
 | 2a | Prove the dependency-free decoder (build radae_nopy, decode off-air sample) | ✅ done (WSL, 2026-06-23) |
 | 2b | **`zeus_rade` shim** — one C lib: complex IQ → `rade_rx` → FARGAN → 16 kHz PCM | ✅ done + validated (WSL: 2628 synced ticks, 14 dB, 5:14 speech out) |
-| 2c | `native/radae/` vendoring CMake: fetch radae_nopy + build Opus/FARGAN + shim into one shared lib, cross-platform (Win MinGW+autotools, arm `--disable-rtcd`), CI binaries | ⏳ next (the hard one) |
-| 4 | `RadeModem` P/Invoke the shim (`zeus_rade_*`) + 48k↔16k resample + real→complex; flip `RadeAvailable` | ⏳ (no model files; weights compiled in) |
+| 2c | `native/radae/` vendoring CMake (Thetis-RADE slices) + `build-rade.yml`; binaries for linux-x64/arm64, win-x64, osx-arm64 | ✅ done (osx-arm64 built locally 2026-09-19) |
+| 4 | P/Invoke the shim (`RadeNative`) + 48k↔16k resample + real→complex; RX + TX + EOO callsign; flip `RadeAvailable` | ✅ done (2026-09-19) |
 
 ### zeus_rade shim (PROVEN 2026-06-23)
 `native/radae/shim/{zeus_rade.h,zeus_rade.c,zeus_rade_test.c,build_test_wsl.sh}` —
@@ -234,7 +239,7 @@ Known issue: EOO callsign decode returns garbage — revisit (likely the EOO
 soft-bit handoff). Both RADE and FARGAN weights are compiled in → **no model
 files to ship**. The shim re-primes FARGAN on each sync re-acquire.
 | 3 | Model weights export + bundling/install | ⏳ |
-| 4 | `RadeModem` + P/Invoke + complex IO + FARGAN + 48k↔16k resample; flip `RadeAvailable` | ⏳ |
+| 4 | `RadeModem` + P/Invoke + complex IO + FARGAN + 48k↔16k resample; flip `RadeAvailable` | ✅ done — see row above |
 | 5 | On-air validation vs a live RADEV1 station | ⏳ |
 
 ## Open questions for Phase 2

@@ -1,8 +1,22 @@
 # native/radae — RADE V1 (Radio Autoencoder) vendoring
 
-> **STATUS: SCAFFOLD ONLY. THE NATIVE BUILD IS NOT IMPLEMENTED YET.**
-> RADEV1 is surfaced + gated in the UI (Phase 1, landed). This directory is the
-> starting point for Phase 2 (the native build).
+> **STATUS (2026-09-19): BUILT AND WIRED IN.** `zeus_rade` (radae_c + opus_dnn
+> FARGAN/LPCNet + freedv_text + the shim) builds from this directory via
+> `.github/workflows/build-rade.yml`, vendoring the slices from `sv1eia/Thetis-RADE`
+> at the SHA in `vendor/PROVENANCE.md`. Staged binaries: linux-x64, linux-arm64,
+> win-x64, osx-arm64 (`Zeus.Dsp/runtimes/<rid>/native/`). Zeus P/Invokes it from
+> `Zeus.Server.Hosting/FreeDv/RadeNative.cs`; the RX/TX path is
+> `FreeDvModemService.Rade.cs`. Missing: osx-x64, win-arm64.
+>
+> **Local build (macOS / Linux):** vendor the slices and stub the opus_dnn SIMD
+> references exactly as the workflow does, then
+> `cmake -S native/radae -B native/build-rade -G Ninja -DCMAKE_BUILD_TYPE=Release
+> -DOPUS_DISABLE_INTRINSICS=ON -DZEUS_RADE_VENDOR=$PWD/native/radae/vendor
+> -DZEUS_RADE_BUILD_TEST=ON && cmake --build native/build-rade`, and check with
+> `native/build-rade/zeus_rade_test loopback CALLSIGN` (must print `PASS`).
+>
+> The rest of this file is the original Phase 2 plan, kept for history — the
+> Thetis-RADE slices replaced the radae_nopy/FetchContent approach below.
 >
 > **⚠ VERIFIED 2026-06-23 — do NOT FetchContent `drowe67/radae`.** A real build
 > investigation found upstream `librade` embeds CPython + PyTorch at runtime

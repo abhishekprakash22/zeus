@@ -80,7 +80,7 @@ public sealed record FreeDvModemStatus(
     bool AutoDetect,
     bool RadeAvailable);
 
-public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedService, IDisposable
+public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHostedService, IDisposable
 {
     // Ring sizes (powers of two). 8 kHz shorts: 4 s of audio; 48 kHz floats:
     // ~0.68 s — comfortably above the largest 700D frame + tail backlog.
@@ -94,6 +94,14 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
     {
         FreeDvSubmode.Mode700D, FreeDvSubmode.Mode700E, FreeDvSubmode.Mode1600,
         FreeDvSubmode.Mode700C, FreeDvSubmode.Mode800XA,
+    };
+
+    // RADEV1 is freedv-gui's default and the busiest mode on air, so it leads
+    // the scan wherever libzeus_rade is present.
+    private static readonly FreeDvSubmode[] AutoScanSetWithRade =
+    {
+        FreeDvSubmode.RadeV1, FreeDvSubmode.Mode700D, FreeDvSubmode.Mode700E,
+        FreeDvSubmode.Mode1600, FreeDvSubmode.Mode700C, FreeDvSubmode.Mode800XA,
     };
 
     private readonly ILogger<FreeDvModemService> _log;
@@ -176,11 +184,13 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
     public bool NativeAvailable => FreeDvNative.Available;
 
     /// <summary>
-    /// Engaged (host mode is FREEDV) with a runnable codec. RadeV1 keeps the
-    /// modem inactive until librade lands — the RX path then passes modem
-    /// audio through untouched and the panel shows its gated state.
+    /// Engaged (host mode is FREEDV) with a runnable codec — codec2 for the
+    /// classic modes, zeus_rade for RADEV1. Where the selected mode's library is
+    /// missing the modem stays inactive: the RX path passes modem audio through
+    /// untouched and the panel shows its gated state.
     /// </summary>
-    public bool Active => _engaged && Volatile.Read(ref _f) != IntPtr.Zero;
+    public bool Active => _engaged
+        && (Volatile.Read(ref _f) != IntPtr.Zero || Volatile.Read(ref _rade) != IntPtr.Zero);
 
     public void SyncMode(byte rxModeByte)
     {
@@ -201,8 +211,9 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         if (!Monitor.TryEnter(_state)) { block48k.Clear(); return; }
         try
         {
-            if (_f == IntPtr.Zero) { block48k.Clear(); return; }
+            if (_f == IntPtr.Zero && _rade == IntPtr.Zero) { block48k.Clear(); return; }
             if (_pendingRxFlush) { FlushRxLocked(); _pendingRxFlush = false; }
+            if (_rade != IntPtr.Zero) { RadeProcessRxLocked(block48k); return; }
 
             // 1) 48 kHz demod audio → 8 kHz modem shorts into the ring.
             int off = 0;
@@ -276,20 +287,25 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
             }
 
             // 4) Replace the block with decoded speech (silence on underrun).
-            int have = Math.Min(_rxOutCount, block48k.Length);
-            for (int i = 0; i < have; i++)
-            {
-                block48k[i] = _rxOut48Ring[_rxOutHead];
-                _rxOutHead = (_rxOutHead + 1) & (Ring48k - 1);
-            }
-            _rxOutCount -= have;
-            if (have < block48k.Length)
-            {
-                block48k.Slice(have).Clear();
-                if (_rxOutCount == 0 && _rxSpeechCount < _nSpeech) _rxPrimed = false;
-            }
+            WriteRxOutLocked(block48k);
         }
         finally { Monitor.Exit(_state); }
+    }
+
+    private void WriteRxOutLocked(Span<float> block48k)
+    {
+        int have = Math.Min(_rxOutCount, block48k.Length);
+        for (int i = 0; i < have; i++)
+        {
+            block48k[i] = _rxOut48Ring[_rxOutHead];
+            _rxOutHead = (_rxOutHead + 1) & (Ring48k - 1);
+        }
+        _rxOutCount -= have;
+        if (have < block48k.Length)
+        {
+            block48k.Slice(have).Clear();
+            if (_rxOutCount == 0 && _rxSpeechCount < _nSpeech) _rxPrimed = false;
+        }
     }
 
     public void ProcessTx(Span<float> block48k)
@@ -298,8 +314,9 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         if (!Monitor.TryEnter(_state)) { block48k.Clear(); return; }
         try
         {
-            if (_f == IntPtr.Zero) { block48k.Clear(); return; }
+            if (_f == IntPtr.Zero && _rade == IntPtr.Zero) { block48k.Clear(); return; }
             if (_pendingTxFlush) { FlushTxLocked(); _pendingTxFlush = false; }
+            if (_rade != IntPtr.Zero) { RadeProcessTxLocked(block48k); return; }
 
             // 1) 48 kHz mic → 8 kHz speech shorts.
             int off = 0;
@@ -323,16 +340,21 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
 
             // 3) Replace the mic block with modem audio (zeros while the first
             //    frame is still filling — WDSP just modulates silence).
-            int have = Math.Min(_txOutCount, block48k.Length);
-            for (int i = 0; i < have; i++)
-            {
-                block48k[i] = _txOut48Ring[_txOutHead];
-                _txOutHead = (_txOutHead + 1) & (Ring48k - 1);
-            }
-            _txOutCount -= have;
-            if (have < block48k.Length) block48k.Slice(have).Clear();
+            WriteTxOutLocked(block48k);
         }
         finally { Monitor.Exit(_state); }
+    }
+
+    private void WriteTxOutLocked(Span<float> block48k)
+    {
+        int have = Math.Min(_txOutCount, block48k.Length);
+        for (int i = 0; i < have; i++)
+        {
+            block48k[i] = _txOut48Ring[_txOutHead];
+            _txOutHead = (_txOutHead + 1) & (Ring48k - 1);
+        }
+        _txOutCount -= have;
+        if (have < block48k.Length) block48k.Slice(have).Clear();
     }
 
     public void FlushRx()
@@ -356,6 +378,7 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         // parked by TxAudioIngest's _tailDraining handoff.
         lock (_state)
         {
+            if (_rade != IntPtr.Zero) return RadeFinishTxLocked();
             if (_f == IntPtr.Zero) return 0;
             EncodeQueuedSpeechLocked(padPartialFrame: true);
             return _txOutCount;
@@ -400,10 +423,11 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
             ModemSampleRateHz: _modemRateHz,
             RxText: rxText.Length == 0 ? null : rxText,
             TxText: _txText.Length == 0 ? null : _txText,
-            LibraryVersion: FreeDvNative.ApiVersion is int v
-                ? $"libcodec2 1.2.0 (freedv_api v{v})" : null,
+            LibraryVersion: sub == FreeDvSubmode.RadeV1
+                ? (RadeAvailable ? "zeus_rade (RADE V1 + FARGAN)" : null)
+                : FreeDvNative.ApiVersion is int v ? $"libcodec2 1.2.0 (freedv_api v{v})" : null,
             AutoDetect: _autoDetect,
-            RadeAvailable: false);
+            RadeAvailable: RadeAvailable);
     }
 
     public FreeDvModemStatus Configure(
@@ -445,11 +469,11 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
             _squelchEnabled = s.SquelchEnabled;
             Volatile.Write(ref _squelchThreshDb, s.SnrSquelchThreshDb);
             SetTxTextLocked(s.TxText);
-            if (NativeAvailable) ReopenLocked();
+            ReopenLocked();
         }
         _log.LogInformation(
-            "freedv: modem in core (native={Native}, submode={Submode}, api={Api})",
-            NativeAvailable, (FreeDvSubmode)_submode, FreeDvNative.ApiVersion);
+            "freedv: modem in core (native={Native}, rade={Rade}, submode={Submode}, api={Api})",
+            NativeAvailable, RadeAvailable, (FreeDvSubmode)_submode, FreeDvNative.ApiVersion);
         _autoDetectTimer = new Timer(AutoDetectTick, null, 500, 500);
         return Task.CompletedTask;
     }
@@ -524,6 +548,7 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         _rxPrimed = false;
         _rxDecim.Reset();
         _rxInterp.Reset();
+        _radeRxInterp.Reset();
         _rxTextLen = 0;
         _synced = false;
         Interlocked.Exchange(ref _snrMilliDb, 0);
@@ -535,6 +560,7 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         _txOutHead = _txOutCount = 0;
         _txDecim.Reset();
         _txInterp.Reset();
+        _radeTxDecim.Reset();
         _txTextIdx = 0;
     }
 
@@ -542,15 +568,14 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
     {
         CloseLocked();
         var sub = (FreeDvSubmode)_submode;
-        if (!NativeAvailable) return;
         if (sub == FreeDvSubmode.RadeV1)
         {
-            // librade is not integrated yet (native/radae is scaffold-only).
-            // Leave the codec closed: Active stays false, the pipeline skips
-            // ProcessRx (audio passes through) and the panel shows the gate.
-            _log.LogInformation("freedv: RADEV1 selected but librade is not integrated — modem idle");
+            // RADE has its own library and signal path (FreeDvModemService.Rade.cs).
+            // If it can't open, Active stays false and the panel shows the gate.
+            OpenRadeLocked();
             return;
         }
+        if (!NativeAvailable) return;
 
         int mode = sub switch
         {
@@ -617,11 +642,14 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
 
     private void CloseLocked()
     {
-        if (_f == IntPtr.Zero) return;
-        var f = _f;
-        _f = IntPtr.Zero;
-        try { FreeDvNative.Close(f); }
-        catch (Exception ex) { _log.LogDebug(ex, "freedv: freedv_close threw"); }
+        CloseRadeLocked();
+        if (_f != IntPtr.Zero)
+        {
+            var f = _f;
+            _f = IntPtr.Zero;
+            try { FreeDvNative.Close(f); }
+            catch (Exception ex) { _log.LogDebug(ex, "freedv: freedv_close threw"); }
+        }
         _synced = false;
         Interlocked.Exchange(ref _snrMilliDb, 0);
     }
@@ -642,6 +670,7 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         _txTextBytes = System.Text.Encoding.ASCII.GetBytes(
             trimmed.Length == 0 ? "\r" : trimmed + "\r");
         _txTextIdx = 0;
+        ApplyRadeCallsignLocked();
     }
 
     private void Persist()
@@ -668,8 +697,9 @@ public sealed unsafe class FreeDvModemService : IAudioModemPlugin, IHostedServic
         {
             if (!_autoDetect || !_engaged || _synced) return;
             var current = (FreeDvSubmode)_submode;
-            int idx = Array.IndexOf(AutoScanSet, current);
-            var next = AutoScanSet[(idx + 1 + AutoScanSet.Length) % AutoScanSet.Length];
+            var scan = RadeAvailable ? AutoScanSetWithRade : AutoScanSet;
+            int idx = Array.IndexOf(scan, current);
+            var next = scan[(idx + 1 + scan.Length) % scan.Length];
             Volatile.Write(ref _submode, (int)next);
             ReopenLocked();
             Interlocked.Exchange(ref _lastSyncOrSwitchTicks, Environment.TickCount64);

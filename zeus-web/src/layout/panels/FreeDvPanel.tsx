@@ -280,9 +280,9 @@ export function FreeDvPanel() {
           </button>
           {FREEDV_SUBMODES.map((m) => {
             const isCurrent = status.submode === m.value;
-            // RADEV1 needs the native RADE library, which isn't integrated yet —
-            // mark it as not-ready but still selectable so the operator sees the
-            // explanatory notice rather than a silently dead button.
+            // RADEV1 needs the native RADE library (libzeus_rade); where it isn't
+            // packaged, mark it as not-ready but still selectable so the operator
+            // sees the explanatory notice rather than a silently dead button.
             const radeUnavailable = m.rade === true && !status.radeAvailable;
             // When scanning, dim the 'active' look on the tried mode so AUTO is
             // visually the engaged control, not the transient submode.
@@ -336,9 +336,8 @@ export function FreeDvPanel() {
           }}
         >
           <strong>RADEV1</strong> is FreeDV's neural (Radio Autoencoder) mode. Its
-          native decoder isn't packaged for this platform yet, so this mode won't
-          produce audio. Use <strong>700D / 700E / 1600</strong> here — RADE ships
-          on Windows today; other platforms follow.
+          native library isn't included in this build for your platform, so this
+          mode won't produce audio. Use <strong>700D / 700E / 1600</strong> instead.
         </div>
       )}
 

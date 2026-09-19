@@ -48,4 +48,33 @@ public sealed class Ft8NativeTests
         Assert.All(symbols, s => Assert.InRange(s, (byte)0, (byte)3));
         Assert.Contains(symbols, s => s != 0);
     }
+
+    [SkippableFact]
+    public unsafe void Wspr_DecodesASlot_OnTheServiceThreadStack()
+    {
+        Skip.IfNot(WsprNative.Available, "libzeus_wspr not staged for this platform");
+
+        // One 120 s slot of noise at the decoder's 375 Hz complex input rate.
+        // wsprd keeps ~0.8 MB on the stack: on a default macOS thread (512 KB)
+        // this call overflowed and killed the process. It must run on a thread
+        // sized like WsprService's decode thread.
+        const int samples = 375 * 120;
+        var i = new float[samples];
+        var q = new float[samples];
+        var rng = new Random(3);
+        for (int k = 0; k < samples; k++) { i[k] = (float)(rng.NextDouble() - 0.5); q[k] = (float)(rng.NextDouble() - 0.5); }
+        var spots = new ZeusWsprSpot[64];
+
+        int n = int.MinValue;
+        var t = new Thread(() =>
+        {
+            fixed (float* pi = i)
+            fixed (float* pq = q)
+            fixed (ZeusWsprSpot* ps = spots)
+                n = WsprNative.Decode(pi, pq, samples, 14_095_600, ps, spots.Length);
+        }, WsprService.WsprDecodeStackBytes);
+        t.Start();
+        Assert.True(t.Join(TimeSpan.FromSeconds(60)), "WSPR decode did not finish");
+        Assert.InRange(n, 0, spots.Length);   // noise: no spots, but a clean return
+    }
 }

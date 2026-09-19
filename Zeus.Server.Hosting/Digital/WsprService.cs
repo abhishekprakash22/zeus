@@ -161,11 +161,17 @@ public sealed class WsprService : IHostedService, IDisposable
 
     // ---- lifecycle ----------------------------------------------------------
 
+    internal const int WsprDecodeStackBytes = 16 * 1024 * 1024;
+
     public Task StartAsync(CancellationToken ct)
     {
         _cts = new CancellationTokenSource();
         _pipeline.RxAudioAvailable += OnRxAudio;
-        _slotThread = new Thread(() => SlotLoop(_cts.Token))
+        // wsprd keeps its hash table (32768 × 13 B ≈ 426 KB) and reference
+        // waveforms (≈ 342 KB) on the stack. That fits Linux's 8 MB default
+        // thread stack but overflows macOS's 512 KB (and Windows's 1 MB) and
+        // kills the process, so the decode thread gets an explicit stack.
+        _slotThread = new Thread(() => SlotLoop(_cts.Token), maxStackSize: WsprDecodeStackBytes)
         { IsBackground = true, Name = "wspr-slots" };
         _beaconThread = new Thread(() => BeaconLoop(_cts.Token))
         { IsBackground = true, Name = "wspr-beacon" };

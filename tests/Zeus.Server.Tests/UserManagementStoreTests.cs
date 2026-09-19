@@ -40,13 +40,16 @@ public sealed class UserManagementStoreTests : IDisposable
     }
 
     [Fact]
-    public void GetSession_WhenLoggedOut_DeniesUntilQrzLogin()
+    public void GetSession_WhenLoggedOut_AllowsLocalOperation()
     {
+        // Local-operation patch (UserManagementStore.GetSession): operating
+        // one's own radio no longer requires a QRZ / Zeus account sign-in.
         var session = _store.GetSession(new QrzStatus(false, false, null, null));
 
         Assert.False(session.QrzConnected);
-        Assert.False(session.AccessAllowed);
-        Assert.Equal("QRZ login required", session.DenialReason);
+        Assert.True(session.AccessAllowed);
+        Assert.False(session.IsAdmin);
+        Assert.Null(session.DenialReason);
     }
 
     [Fact]

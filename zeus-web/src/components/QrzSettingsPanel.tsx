@@ -21,6 +21,7 @@
 // Both are GPL-2.0-or-later.
 
 import { useEffect, useState } from 'react';
+import { getQrzAutoPublish, setQrzAutoPublish } from '../api/log';
 import { useQrzStore } from '../state/qrz-store';
 
 export function QrzSettingsPanel() {
@@ -39,6 +40,31 @@ export function QrzSettingsPanel() {
   const [password, setPassword] = useState('');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+
+  // Publish-on-log. Server-owned (it is the server that uploads), so read it
+  // back rather than assuming: a second window, or a remote session, may have
+  // changed it.
+  const [autoPublish, setAutoPublish] = useState(false);
+  const [autoPublishError, setAutoPublishError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getQrzAutoPublish()
+      .then((v) => { if (!cancelled) setAutoPublish(v); })
+      .catch(() => { /* leave it off; the toggle reports its own failures */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleAutoPublish = async (next: boolean) => {
+    setAutoPublishError(null);
+    const previous = autoPublish;
+    setAutoPublish(next);
+    try {
+      setAutoPublish(await setQrzAutoPublish(next));
+    } catch (err) {
+      setAutoPublish(previous);
+      setAutoPublishError(err instanceof Error ? err.message : 'could not save');
+    }
+  };
 
   // Keep the form's username in sync when the store hydrates from localStorage
   // after first render (initial value of rememberedUsername may have been '').
@@ -178,6 +204,35 @@ export function QrzSettingsPanel() {
                 Find your API key
               </a>
             </div>
+
+            <label
+              style={{
+                marginTop: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 11,
+                color: 'var(--fg-2)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={autoPublish}
+                disabled={!hasApiKey}
+                onChange={(e) => void toggleAutoPublish(e.target.checked)}
+              />
+              <span>
+                Publish QSOs to QRZ as they are logged
+                <span style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)' }}>
+                  {hasApiKey
+                    ? 'Each logged QSO is uploaded on its own. ADIF imports are never uploaded.'
+                    : 'Set an API key first.'}
+                </span>
+              </span>
+            </label>
+            {autoPublishError && (
+              <div style={{ marginTop: 4, fontSize: 10, color: 'var(--tx)' }}>{autoPublishError}</div>
+            )}
           </div>
 
           <button type="button" className="btn sm" onClick={() => logout()}>

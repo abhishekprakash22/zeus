@@ -56,6 +56,22 @@ export const useFt8TxStore = create<Ft8TxState>((set) => ({
   txEcho: [],
   ingest: (status) =>
     set((s) => {
+      // Still transmitting, but the backend now reports a DIFFERENT message:
+      // it swapped in the freshly staged reply during the silent lead-in (see
+      // Ft8KeyerService.StageCommitMs). Correct the line we already wrote
+      // rather than leaving the operator's log claiming we sent the other one.
+      const newest = s.txEcho[0];
+      if (
+        status.transmitting && s.status?.transmitting &&
+        !!status.message && newest !== undefined &&
+        newest.message !== status.message
+      ) {
+        return {
+          status,
+          txEcho: [{ ...newest, message: status.message }, ...s.txEcho.slice(1)],
+        };
+      }
+
       // Rising transmitting edge with a message → record our own TX line.
       const startedTx = status.transmitting && !s.status?.transmitting && !!status.message;
       if (!startedTx) return { status };

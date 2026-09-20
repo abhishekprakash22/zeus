@@ -96,6 +96,13 @@ public sealed class WsprService : IHostedService, IDisposable
 
     public bool NativeAvailable => WsprNative.Available;
     public bool Enabled => _enabled;
+
+    /// <summary>
+    /// How many times the capture ring has been restarted. A restart costs a
+    /// whole slot of audio, so this must not move when the panel simply
+    /// re-asserts the same receive settings (see <see cref="Enable"/>).
+    /// </summary>
+    internal int CaptureRestarts { get; private set; }
     public bool Armed => _armed;
     public bool Transmitting => _transmitting;
 
@@ -116,19 +123,38 @@ public sealed class WsprService : IHostedService, IDisposable
 
     // ---- control ------------------------------------------------------------
 
+    /// <summary>
+    /// Starts (or re-asserts) WSPR receive. Idempotent on purpose: the panel
+    /// enables on every open, and a remount used to wipe the capture ring and
+    /// the slot counter, so the decoder had to refill a whole 120 s slot before
+    /// it could decode anything. Enable it twice inside one slot and it decoded
+    /// nothing, ever. Only a real change of receiver or dial — or a restart
+    /// after Disable — resets the capture now.
+    /// </summary>
     public bool Enable(int receiver, double dialFreqMhz)
     {
         if (!NativeAvailable) return false;
+        bool restarted;
         lock (_rxLock)
         {
-            _receiver = receiver;
-            _dialFreqMhz = dialFreqMhz;
-            _ringWrite = 0;
-            _decim.Reset();
-            _currentSlot = -1;
+            restarted = !_enabled
+                        || _receiver != receiver
+                        || Math.Abs(_dialFreqMhz - dialFreqMhz) > 1e-9;
+            if (restarted)
+            {
+                CaptureRestarts++;
+                _receiver = receiver;
+                _dialFreqMhz = dialFreqMhz;
+                _ringWrite = 0;
+                _decim.Reset();
+                _currentSlot = -1;
+            }
             _enabled = true;
         }
-        _log.LogInformation("wspr: RX enabled (rx={Rx}, dial={Dial} MHz)", receiver, dialFreqMhz);
+        if (restarted)
+            _log.LogInformation("wspr: RX enabled (rx={Rx}, dial={Dial} MHz)", receiver, dialFreqMhz);
+        else
+            _log.LogDebug("wspr: RX already enabled (rx={Rx}, dial={Dial} MHz) — capture kept", receiver, dialFreqMhz);
         return true;
     }
 

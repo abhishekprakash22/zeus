@@ -43,15 +43,30 @@ public sealed class DecoderPipeline : IDisposable
     private int _srcRate;
     private int _receiver;
     private long _currentSlot = -1;
+    private DigitalMode _watchedMode = DigitalMode.Ft8;
     private bool _running;
     private CancellationTokenSource? _cts;
     private Task? _worker;
 
-    public DecoderPipeline(ClockService clock, EventHub events)
+    /// <param name="mode">
+    /// The mode to decode, read fresh every cycle. FT4 halves the slot (7.5 s)
+    /// and selects a different waveform in ft8_lib; this pipeline used to hard-
+    /// wire FT8 in all three places — slot maths, the decode call and the
+    /// published protocol — so selecting FT4 produced a receiver that listened
+    /// on the wrong boundaries with the wrong demodulator and decoded nothing,
+    /// for ever, with no error anywhere.
+    /// </param>
+    public DecoderPipeline(ClockService clock, EventHub events, Func<DigitalMode>? mode = null)
     {
         _clock = clock;
         _events = events;
+        _mode = mode ?? (static () => DigitalMode.Ft8);
     }
+
+    private readonly Func<DigitalMode> _mode;
+
+    /// <summary>The mode the next decode cycle will use.</summary>
+    internal DigitalMode CurrentMode => _mode();
 
     /// <summary>True once a real decoder backend is linked. Reported in /status
     /// and as Ft8TxStatus.nativeAvailable.</summary>
@@ -121,7 +136,19 @@ public sealed class DecoderPipeline : IDisposable
                 await Task.Delay(100, ct);
 
                 double now = _clock.UtcNowMs;
-                long slot = SlotClock.SlotIndex(now, DigitalMode.Ft8);
+
+                // Mode is read every cycle: the operator can switch FT8<->FT4
+                // while the decoder runs, and the slot grid changes under us
+                // when they do. Re-baseline on the change instead of decoding
+                // one window straddling both grids.
+                DigitalMode mode = _mode();
+                if (mode != _watchedMode)
+                {
+                    _watchedMode = mode;
+                    _currentSlot = -1;
+                }
+
+                long slot = SlotClock.SlotIndex(now, mode);
                 if (slot == _currentSlot) continue;
 
                 long ended = slot - 1;
@@ -150,9 +177,9 @@ public sealed class DecoderPipeline : IDisposable
                 // `w` is the write head, i.e. now. We woke up to 100 ms after the
                 // boundary, so step back that far to find the boundary in the
                 // ring, then take the preceding slot.
-                double msSinceBoundary = now - SlotClock.SlotStartMs(slot, DigitalMode.Ft8);
+                double msSinceBoundary = now - SlotClock.SlotStartMs(slot, mode);
                 int samplesSinceBoundary = (int)(msSinceBoundary * rate / 1000.0);
-                int slotSamples = SlotClock.SlotMs(DigitalMode.Ft8) * rate / 1000;
+                int slotSamples = SlotClock.SlotMs(mode) * rate / 1000;
 
                 int end = w - samplesSinceBoundary;   // ring index of the boundary
                 audio = Snapshot(end, slotSamples);
@@ -162,7 +189,7 @@ public sealed class DecoderPipeline : IDisposable
                 IReadOnlyList<Ft8DecodeDto> decodes;
                 try
                 {
-                    decodes = DecodeSlot(audio, rate);
+                    decodes = DecodeSlot(audio, rate, mode);
                 }
                 catch
                 {
@@ -176,8 +203,8 @@ public sealed class DecoderPipeline : IDisposable
                 _events.PublishFt8Decode(new Ft8DecodeBatch
                 {
                     Receiver = rx,
-                    SlotStartUnixMs = (long)SlotClock.SlotStartMs(ended, DigitalMode.Ft8),
-                    Protocol = "FT8",
+                    SlotStartUnixMs = (long)SlotClock.SlotStartMs(ended, mode),
+                    Protocol = mode == DigitalMode.Ft4 ? "FT4" : "FT8",
                     Decodes = decodes,
                 });
             }
@@ -231,8 +258,8 @@ public sealed class DecoderPipeline : IDisposable
     /// otherwise every decode inherits the host clock's error and slot parity can
     /// flip under the sequencer.
     /// </summary>
-    private IReadOnlyList<Ft8DecodeDto> DecodeSlot(float[] audio, int rate)
-        => Ft8Native.Decode(audio, rate, isFt4: false);
+    private IReadOnlyList<Ft8DecodeDto> DecodeSlot(float[] audio, int rate, DigitalMode mode)
+        => Ft8Native.Decode(audio, rate, isFt4: mode == DigitalMode.Ft4);
 
     public void Dispose()
     {

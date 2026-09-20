@@ -102,7 +102,7 @@ jobs:
           ( cd flat && zip -X "../sherpa-${{ matrix.rid }}.zip" . -r )
           unzip -l "sherpa-${{ matrix.rid }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sherpa-${{ matrix.rid }}
           path: sherpa-${{ matrix.rid }}.zip
@@ -142,7 +142,7 @@ jobs:
           ls -lh flat
           ( cd flat && zip -X "../sherpa-${{ matrix.rid }}.zip" . -r )
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sherpa-${{ matrix.rid }}
           path: sherpa-${{ matrix.rid }}.zip
@@ -166,7 +166,7 @@ jobs:
           ( cd flat && zip -X "../parakeet-tdt-06b-int8.zip" . -r )
           unzip -l parakeet-tdt-06b-int8.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: parakeet-tdt-06b-int8
           path: parakeet-tdt-06b-int8.zip
@@ -178,7 +178,7 @@ jobs:
     needs: [sherpa-linux-win, sherpa-macos, parakeet-model]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true

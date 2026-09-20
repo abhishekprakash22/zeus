@@ -185,6 +185,77 @@ export function answerCq(
   };
 }
 
+/**
+ * Join a QSO at the stage the CLICKED message puts us in.
+ *
+ * Clicking a decode used to be treated as "answer a CQ" whatever it said, so
+ * clicking a station that had already sent us a report restarted the exchange
+ * from Tx1 (our grid) — throwing away the report he just gave us and asking him
+ * to repeat it. What he sent tells us where the QSO already is:
+ *
+ *   he sent CQ                 → we reply with our grid          (replying)
+ *   he called us with his grid → we reply with his report        (report)
+ *   he sent us a report        → we reply R + our report of him  (roger-report)
+ *   he sent us R + report      → we reply with the ack           (rogers)
+ *   he sent RRR / RR73         → we reply 73                     (signoff)
+ *
+ * `measuredSnrDb` is OUR measurement of HIM, taken from the clicked decode, and
+ * becomes the report we send. Returns null when the message gives us nothing to
+ * answer (a bare 73, or no callsign at all).
+ */
+export function engage(
+  opts: NewQsoOpts,
+  msg: Ft8Message,
+  senderSlot: Slot,
+  measuredSnrDb?: number,
+): QsoState | null {
+  if (!msg.deCall) return null;
+
+  const base: QsoState = {
+    ...baseState(opts),
+    dxCall: msg.deCall,
+    dxGrid4: msg.grid ?? null,
+    txSlot: opposite(senderSlot),
+  };
+  const mySnrOfHim = measuredSnrDb ?? null;
+
+  // Addressed to somebody else (or a CQ): we are starting the QSO, so we answer
+  // with our grid exactly as before.
+  if (!msg.isCallingMe || msg.kind === 'cq') {
+    return { ...base, role: 'answerer', progress: 'replying' };
+  }
+
+  switch (msg.kind) {
+    case 'grid':
+      // He answered a CQ of ours: send him his report.
+      return { ...base, role: 'cq-caller', progress: 'report', sentReportToHim: mySnrOfHim };
+    case 'report':
+      return {
+        ...base,
+        role: 'answerer',
+        progress: 'roger-report',
+        rcvdReportFromHim: msg.reportDb ?? null,
+        sentReportToHim: mySnrOfHim,
+      };
+    case 'rreport':
+      return {
+        ...base,
+        role: 'cq-caller',
+        progress: 'rogers',
+        rcvdReportFromHim: msg.reportDb ?? null,
+        sentReportToHim: mySnrOfHim,
+      };
+    case 'rrr':
+    case 'rr73':
+      return { ...base, role: 'answerer', progress: 'signoff', sentReportToHim: mySnrOfHim };
+    case '73':
+      // Nothing left to say — clicking a signoff must not start a new QSO.
+      return null;
+    default:
+      return { ...base, role: 'answerer', progress: 'replying' };
+  }
+}
+
 /** The message this state should be (re-)transmitting right now. */
 export function currentOutgoing(s: QsoState): string | null {
   const his = s.dxCall ?? '';

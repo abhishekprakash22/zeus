@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { computeFt8Stats, qsoStateToLogEntry } from './ft8-qso-log';
+import { computeFt8Stats, qsoIsLoggable, qsoStateToLogEntry } from './ft8-qso-log';
 import { startCq, type QsoState } from './ft8-sequencer';
 import type { LogEntry } from '../api/log';
 
@@ -17,6 +17,28 @@ function qso(overrides: Partial<QsoState> = {}): QsoState {
 }
 
 const CTX = { band: '20m', freqMhz: 14.074, mode: 'FT8' as const };
+
+describe('qsoIsLoggable', () => {
+  it('is true once both reports have been exchanged', () => {
+    expect(qsoIsLoggable(qso())).toBe(true);
+  });
+
+  it('is false before he has reported to us', () => {
+    // The half-finished state the manual LOG QSO button used to offer: it
+    // stored an entry with an empty RST_RCVD and latched `logged`, so the real
+    // auto-log at RR73 never fired.
+    expect(qsoIsLoggable(qso({ rcvdReportFromHim: null, progress: 'report' }))).toBe(false);
+  });
+
+  it('is false before we have reported to him', () => {
+    expect(qsoIsLoggable(qso({ sentReportToHim: null, progress: 'replying' }))).toBe(false);
+  });
+
+  it('is false with no DX call at all', () => {
+    expect(qsoIsLoggable(qso({ dxCall: null }))).toBe(false);
+    expect(qsoIsLoggable(qso({ dxCall: '   ' }))).toBe(false);
+  });
+});
 
 describe('qsoStateToLogEntry', () => {
   it('maps a completed QSO into a create request', () => {

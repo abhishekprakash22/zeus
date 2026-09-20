@@ -64,7 +64,7 @@ jobs:
       # Check out experimental with the App token. Full history needed
       # so the merge sees both branches' commit graphs.
       - name: Checkout experimental
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: experimental
           fetch-depth: 0

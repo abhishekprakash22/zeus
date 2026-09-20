@@ -921,6 +921,18 @@ public static class ZeusHost
             sp.GetRequiredService<ILogger<LogbookPluginBridge>>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<LogbookPluginBridge>());
 
+        // ...and when no such plugin is installed — the stock case, since no
+        // logbook plugin ships anywhere — the logbook lives IN CORE, same
+        // story as FreeDV and the Digital suite below. Without it every QSO
+        // the operator logs is accepted by /api/log/entry and then dropped,
+        // and QRZ/LoTW/Cloudlog have nothing to publish.
+        builder.Services.AddSingleton(sp => new CoreLogbook(
+            sp.GetRequiredService<ILogger<CoreLogbook>>(),
+            PrefsDbPath.CoreLogbookPath()));
+        builder.Services.AddHostedService(sp => new CoreLogbookInstaller(
+            sp.GetRequiredService<LogbookPluginBridge>(),
+            sp.GetRequiredService<CoreLogbook>()));
+
         // FreeDV digital voice — IN CORE, not a plugin. Same story as the
         // Digital/ FT8 suite: the org.openhpsdr.freedv plugin's registry is
         // gone, so the modem (libcodec2 via Zeus.Server.Hosting/FreeDv/) ships

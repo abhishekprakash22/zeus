@@ -117,3 +117,7 @@ native/radae/vendor/radae_c/
 native/radae/vendor/opus_dnn/
 native/radae/vendor/freedv_text/
 native/build-rade/
+
+# zeus_ft8 native build/test scratch
+native/ft8/.obj/
+native/ft8/.obj-test/

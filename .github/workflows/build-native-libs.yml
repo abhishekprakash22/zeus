@@ -27,7 +27,7 @@ jobs:
         # triplet, and dumpbin (a host-arch tool) reads the ARM64 PE fine.
         arch: [x64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install FFTW via vcpkg
         run: |
@@ -264,7 +264,7 @@ jobs:
           objdump -p Zeus.Dsp/runtimes/win-x64/native/codec2.dll | grep 'DLL Name'
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Directory upload (not a single file) so the artifact carries
           # wdsp.dll, miniaudio.dll and codec2.dll. Matches the linux job below.
@@ -284,7 +284,7 @@ jobs:
       matrix:
         arch: [x64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies (x64)
         if: matrix.arch == 'x64'
@@ -517,7 +517,7 @@ jobs:
       # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wdsp-linux-${{ matrix.arch }}
           # Directory upload (not a single file) so the bundled FFTW .so.3
@@ -528,7 +528,7 @@ jobs:
     name: Build macOS Native Libraries
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -629,7 +629,7 @@ jobs:
       # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wdsp-osx-arm64
           path: Zeus.Dsp/runtimes/osx-arm64/native/

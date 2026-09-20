@@ -947,7 +947,12 @@ public static class ZeusHost
             sp.GetRequiredService<ILogger<Zeus.Server.Hosting.Digital.SpottingService>>(),
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.SpottingSettingsStore>(),
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.DigitalService>(),
-            sp.GetRequiredService<RadioService>()));
+            sp.GetRequiredService<RadioService>(),
+            http: null,
+            // Spotting resolves its station the way every other subsystem does:
+            // panel override → shared operator override → QRZ home station.
+            identity: sp.GetRequiredService<OperatorIdentityStore>(),
+            qrz: sp.GetRequiredService<QrzService>()));
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.SpottingService>());
         builder.Services.AddSingleton<Zeus.Server.Hosting.FreeDv.FreeDvSettingsStore>();

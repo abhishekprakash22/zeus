@@ -14,8 +14,9 @@ import { useOperatorStore } from '../state/operator-store';
 import { useDigitalPluginStore } from '../state/digital-plugin-store';
 
 // Digital-mode spotting: upload RX decodes to the community spotting networks —
-// FT8/FT4 to PSK Reporter and WSPR to WSPRnet. New network egress — both
-// DISABLED by default. Uploads are spot reports OUT only; nothing controls the
+// FT8/FT4 to PSK Reporter, WSPR to WSPRnet and, when the PSK Reporter switch is
+// on, to PSK Reporter as well. New network egress — both DISABLED by
+// default. Uploads are spot reports OUT only; nothing controls the
 // radio or transmits. A callsign + Maidenhead grid are required (PSK Reporter /
 // WSPRnet attribute every spot to your station). The uploaders live in the
 // Zeus Digital plugin — the form greys out (with an install/restart cue) when
@@ -104,11 +105,13 @@ export function SpottingSettingsPanel() {
         }}
       >
         When enabled, Zeus uploads what it RECEIVES to the community spotting
-        networks: FT8/FT4 decodes go to{' '}
-        <strong>PSK Reporter</strong> (report.pskreporter.info) and WSPR spots to{' '}
-        <strong>WSPRnet</strong> (wsprnet.org). This is spot-report egress OUT only — it
-        never controls the radio or transmits. Your <strong>callsign and grid</strong> are
-        required (every spot is attributed to your station). Both networks are public.
+        networks: FT8/FT4 decodes go to <strong>PSK Reporter</strong>{' '}
+        (report.pskreporter.info). WSPR spots go to <strong>WSPRnet</strong>{' '}
+        (wsprnet.org), and to PSK Reporter as well whenever that switch is on. This is
+        spot-report egress OUT only — it never controls the radio or transmits. Your{' '}
+        <strong>callsign and grid</strong> are required (every spot is attributed to your
+        station). Both networks are public. Reports are batched and sent to PSK Reporter
+        every 5 minutes; WSPR slots go to WSPRnet as each slot decodes.
       </div>
 
       {!pluginReady && (
@@ -140,7 +143,7 @@ export function SpottingSettingsPanel() {
             style={{ accentColor: 'var(--accent)' }}
           />
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-1)' }}>
-            Upload FT8/FT4 decodes to PSK Reporter
+            Upload decodes to PSK Reporter (FT8, FT4 and WSPR)
           </span>
         </label>
 

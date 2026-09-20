@@ -268,7 +268,11 @@ internal sealed class Ft8KeyerService : BackgroundService
         _digital.KeyedStage = stage;
         _digital.Transmitting = true;
         _digital.LastTxSlotMs = boundaryMs;
-        _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
+        // Status is published BELOW, once the message is settled. The frontend
+        // latches its TX echo — the operator's own line in the decode list — on
+        // the rising transmitting edge, so announcing a message that the swap
+        // below may still replace writes the wrong line into their log and
+        // leaves it there.
 
         try
         {
@@ -303,10 +307,13 @@ internal sealed class Ft8KeyerService : BackgroundService
                             fresh.Message, stage.Message);
                         stage = fresh;
                         wave = freshWave;
-                        _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
+                        _digital.KeyedStage = stage;
                     }
                 }
             }
+
+            // One announcement, carrying the message that is actually going out.
+            _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
 
             if (skipMs > 0)
                 _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot}, late start {Late} ms)",

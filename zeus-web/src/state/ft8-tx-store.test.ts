@@ -93,3 +93,27 @@ describe('ft8-tx-store (0x3A status frames)', () => {
     });
   });
 });
+
+describe('a message swapped in mid-transmission', () => {
+  it('corrects the echo instead of leaving the wrong line logged', () => {
+    // The keyer picks a message before the boundary, then takes the fresher
+    // reply 350 ms into the silent lead-in. The echo latched on the rising
+    // edge must follow, or the operator's own log shows what was NOT sent.
+    const st = (transmitting: boolean, message: string | null): Ft8TxStatus => ({
+      armed: true, transmitting, mode: 'FT8', message,
+      audioHz: 1500, slot: 'even', watchdogSecsRemaining: 0,
+      lastTxSlotMs: null, nativeAvailable: true,
+    });
+
+    useFt8TxStore.setState({ status: null, txEcho: [] });
+    useFt8TxStore.getState().ingest(st(false, 'CQ EA5IUE IM98'));
+    useFt8TxStore.getState().ingest(st(true, 'CQ EA5IUE IM98'));
+    expect(useFt8TxStore.getState().txEcho).toHaveLength(1);
+
+    useFt8TxStore.getState().ingest(st(true, 'DD7EE EA5IUE R+17'));
+
+    const echo = useFt8TxStore.getState().txEcho;
+    expect(echo).toHaveLength(1);                     // one transmission, not two
+    expect(echo[0]?.message).toBe('DD7EE EA5IUE R+17');
+  });
+});

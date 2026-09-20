@@ -75,6 +75,27 @@ public sealed class TxStageBook
     /// lands 200 ms before the boundary is still perfectly good, because we have
     /// not keyed yet. This is the upstream bug.
     /// </summary>
+    /// <summary>
+    /// May this stage key a slot that has ALREADY started? A decode-driven reply
+    /// cannot exist before its own boundary — the station we answer stops
+    /// transmitting exactly when our slot begins, and only then can the decoder
+    /// run. Judging such a stage by <see cref="Eligible"/> alone (which demands
+    /// it predate the boundary) pushed every reply a full cycle late: the
+    /// operator saw their answer go out only after the DX had repeated.
+    ///
+    /// So a stage staged up to <paramref name="maxLateMs"/> into the slot is
+    /// eligible for it. Parity and the one-cycle freshness bound still apply.
+    /// </summary>
+    public static bool EligibleLate(TxStage stage, long slotIndex, double slotStartMs, int maxLateMs)
+    {
+        if (!string.Equals(stage.Slot, SlotClock.Parity(slotIndex), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        double age = slotStartMs - stage.StagedAtMs;
+        double cycle = SlotClock.SlotMs(stage.Mode) * 2.0;
+        return age <= cycle && age >= -maxLateMs;
+    }
+
     public static bool Eligible(TxStage stage, long slotIndex, double slotStartMs)
     {
         if (!string.Equals(stage.Slot, SlotClock.Parity(slotIndex), StringComparison.OrdinalIgnoreCase))

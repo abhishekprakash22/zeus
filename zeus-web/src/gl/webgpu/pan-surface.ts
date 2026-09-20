@@ -283,6 +283,16 @@ fn vsFill(@builtin(vertex_index) vi : u32) -> VsOut {
   return out;
 }
 
+// Where the palette stops being black (0.42 on Blue) — the floor sits just
+// above it, so a quiet band is deep blue rather than bright blue.
+const LUT_FLOOR : f32 = 0.46;
+// > 1 pushes the NOISE FLOOR down into deep blue while leaving the upper
+// palette reachable. (0.62 was the wrong way round: expanding the low end
+// brightened the floor, which is most of the screen — the very thing that
+// made everything read blue.) At 1.0 the spread is deep blue floor, blue
+// quiet band, cyan mid, green strong, yellow very strong, red at full scale.
+const LUT_GAMMA : f32 = 1.0;
+
 // How far the leading edge drops, in clip space. Shallow on purpose.
 const SKIRT_DEPTH : f32 = 0.16;
 
@@ -364,7 +374,14 @@ fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
   let shade = mix(1.0, in.light, smoothstep(0.06, 0.42, lvl));
   // Same compression as the 2D fill: the palettes' dark shelf swallowed the
   // noise floor and the surface went black. See LUT_COLOR_FLOOR in shaders.ts.
-  let lvlT = 0.55 + lvl * 0.45;
+  // Palette mapping. Two mistakes were baked into the old 0.55 + lvl*0.45:
+  // the floor was lifted to BRIGHT blue (and the floor is most of the screen,
+  // so everything read blue), and signals were left only the top 45% of the
+  // ramp, putting yellow and red out of reach for anything short of a
+  // full-scale carrier. Start just above the palette's black shelf so the
+  // floor is DEEP blue, and curve the response so mid-level signals climb
+  // through cyan and green instead of crawling.
+  let lvlT = LUT_FLOOR + pow(clamp(lvl, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
   var col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * shade;
   let txRow = smoothstep(1.5, 2.0, in.domain);
   col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.level));
@@ -384,7 +401,7 @@ fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
 // did the same would just be the black void with extra steps.
 @fragment
 fn fsSkirt(in : VsOut) -> @location(0) vec4<f32> {
-  let lvlT = 0.55 + clamp(in.level, 0.0, 1.0) * 0.45;
+  let lvlT = LUT_FLOOR + pow(clamp(in.level, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
   let col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * mix(0.62, 1.0, in.level);
   return vec4<f32>(min(col, vec3<f32>(1.0)), 0.96);
 }
@@ -397,7 +414,7 @@ fn fsLine(in : VsOut) -> @location(0) vec4<f32> {
   // drawn in the flat trace colour — and viewed close to head-on the traces
   // are most of what you see, so the whole surface read as one colour. With
   // the setting on they take the palette too, so 3D matches the 2D gradient.
-  let traceT = 0.55 + clamp(in.level, 0.0, 1.0) * 0.45;
+  let traceT = LUT_FLOOR + pow(clamp(in.level, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
   let lutTrace = textureSample(lutTex, lutSampler, vec2<f32>(traceT, 0.5)).rgb;
   let baseTrace = mix(u.p4.rgb, lutTrace, clamp(u.p5.w, 0.0, 1.0));
   let trace = mix(baseTrace, vec3<f32>(1.0, 0.22, 0.16), txRow);

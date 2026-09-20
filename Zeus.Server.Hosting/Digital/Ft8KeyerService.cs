@@ -167,6 +167,7 @@ internal sealed class Ft8KeyerService : BackgroundService
             return;
         }
 
+        _digital.KeyedStage = stage;
         _digital.Transmitting = true;
         _digital.LastTxSlotMs = boundaryMs;
         _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
@@ -195,6 +196,7 @@ internal sealed class Ft8KeyerService : BackgroundService
             }
 
             _digital.Transmitting = false;
+            _digital.KeyedStage = null;
             // One-shot: the runner re-stages every cycle while armed.
             _digital.Stages.Clear();
             _digital.Events.PublishTxStatus(_digital.BuildTxStatus());

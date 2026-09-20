@@ -11,6 +11,11 @@
 //
 //   FT8 / FT4 decode  → PskReporterUploader  (IPFIX/UDP, batched, 5 min)
 //   WSPR slot         → WsprnetUploader      (HTTP, one call per spot)
+//                     → PskReporterUploader  (same batch, mode "WSPR")
+//
+// WSJT-X sends WSPR only to WSPRnet, but PSK Reporter accepts WSPR reports and
+// the common map viewers show them, so a station that hears a WSPR beacon is
+// reported to both. Each network still has its own switch.
 //
 // Both are OFF by default and stay off without a callsign AND grid: every
 // spot is attributed to a station, so an anonymous upload is meaningless and
@@ -145,13 +150,39 @@ public sealed class SpottingService : IHostedService, IDisposable
     private void OnWsprSpotted(WsprSpotBatch batch)
     {
         var s = _settings;
-        if (!s.WsprnetEnabled || !s.IdentityResolved || batch.Spots.Length == 0) return;
+        if (!s.IdentityResolved || batch.Spots.Length == 0) return;
+
+        // PSK Reporter takes WSPR too, in the same batched report as FT8/FT4.
+        // The decoder already gives absolute frequencies in MHz.
+        if (s.PskReporterEnabled)
+            foreach (var p in WsprPskSpots(batch, s.Callsign)) _psk.Add(p);
+
+        if (!s.WsprnetEnabled) return;
         var ct = _cts?.Token ?? CancellationToken.None;
         _ = Task.Run(async () =>
         {
             try { await _wsprnet.UploadSlotAsync(batch, s, SoftwareVersion(), ct).ConfigureAwait(false); }
             catch (Exception ex) { _log.LogWarning(ex, "spotting.wsprnet: slot upload failed"); }
         }, ct);
+    }
+
+    /// <summary>
+    /// A WSPR slot as PSK Reporter sender records: the beacon's callsign at its
+    /// absolute frequency, mode "WSPR". Beacons we cannot attribute, and our own
+    /// transmissions heard back, are left out.
+    /// </summary>
+    internal static IEnumerable<PskSpot> WsprPskSpots(WsprSpotBatch batch, string ownCallsign)
+    {
+        long flowStart = batch.SlotStartUnixMs / 1000;
+        foreach (var spot in batch.Spots)
+        {
+            var tx = WsprnetUploader.ParseMessage(spot.Message);
+            if (tx is null) continue;
+            if (string.Equals(tx.Callsign, ownCallsign, StringComparison.OrdinalIgnoreCase)) continue;
+            yield return new PskSpot(
+                tx.Callsign, (long)Math.Round(spot.FreqMhz * 1e6),
+                (int)Math.Round(spot.SnrDb), "WSPR", flowStart);
+        }
     }
 
     private async Task FlushPskAsync()

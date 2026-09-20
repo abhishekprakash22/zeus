@@ -149,6 +149,26 @@ public sealed class SpottingUploaderTests : IDisposable
         Assert.Null(PskReporterUploader.ExtractSenderCallsign(message));
     }
 
+    [Fact]
+    public void WsprSlot_BecomesPskReporterSpots_InModeWspr()
+    {
+        var batch = new WsprSpotBatch(0, 1_789_000_020_000, 14.0956, new[]
+        {
+            new WsprSpotDtoOut(-21.4, 0.3, 14.097090, 0, "GI3VAF IO74 37"),
+            new WsprSpotDtoOut(-9.6, 0.1, 14.097034, 0, "EA5IUE IM76 23"),   // our own beacon, heard back
+            new WsprSpotDtoOut(-30.0, 0.0, 14.097180, 0, "not a beacon"),     // unattributable
+        });
+
+        var spots = SpottingService.WsprPskSpots(batch, ownCallsign: "EA5IUE").ToArray();
+
+        var only = Assert.Single(spots);
+        Assert.Equal("GI3VAF", only.Callsign);
+        Assert.Equal(14_097_090, only.FrequencyHz);   // absolute Hz, rounded
+        Assert.Equal(-21, only.SnrDb);
+        Assert.Equal("WSPR", only.Mode);
+        Assert.Equal(1_789_000_020, only.FlowStartUnix);
+    }
+
     // ---- opt-in gate ---------------------------------------------------------
 
     [Fact]

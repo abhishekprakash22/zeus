@@ -361,8 +361,29 @@ public class AutoAttControlLoopTests : IDisposable
         Assert.Equal(10_000, status.Config.ReleaseHoldMs);
     }
 
+    private static P2TelemetryReading HotMagnitude(ushort adc0) => new(
+        FwdAdc: 0,
+        RevAdc: 0,
+        ExciterAdc: 0,
+        PttIn: false,
+        PllLocked: true,
+        AdcOverloadBits: 0,          // NO hard overload — magnitude alone must act
+        Adc0MaxMagnitude: adc0,
+        Adc1MaxMagnitude: 0);
+
+    /// <summary>
+    /// The soft limit acts on magnitude alone, before any hard overload bit is
+    /// set — that is the whole point of it — and it acts on the FIRST reading
+    /// rather than spending an attack interval establishing a baseline. An ADC
+    /// that is already clipping does not benefit from us waiting 25 ms to begin.
+    ///
+    /// This replaces an older version of this test that expected 0 dB on the
+    /// first reading and a 2 dB-per-interval climb. That was the pre-predictive
+    /// contract; the loop now handles the first threat immediately (see
+    /// "First threat after quiet is handled immediately" in RadioService).
+    /// </summary>
     [Fact]
-    public void P2MagnitudeSoftLimit_RampsBeforeHardOverload()
+    public void P2MagnitudeSoftLimit_ActsOnFirstReading_WithoutHardOverload()
     {
         var r = MakeService();
         r.SetAdcProtection(new AdcProtectionSetRequest(
@@ -371,30 +392,67 @@ public class AutoAttControlLoopTests : IDisposable
             AttackStepDb: 2,
             ReleaseStepDb: 1,
             MaxOffsetDb: 4,
-            WarningThreshold: 0,   // isolate the magnitude-soft-limit ramp from the gate
+            WarningThreshold: 0,   // isolate the magnitude path from the overload gate
             MagnitudeSoftLimit: 1_000));
 
-        var hot = new P2TelemetryReading(
-            FwdAdc: 0,
-            RevAdc: 0,
-            ExciterAdc: 0,
-            PttIn: false,
-            PllLocked: true,
-            AdcOverloadBits: 0,
-            Adc0MaxMagnitude: 1_200,
-            Adc1MaxMagnitude: 0);
+        var hot = HotMagnitude(1_200);
 
+        // Zones for a 1000 soft limit put Target at 795 (2 dB below attack), so
+        // a peak of 1200 is 20*log10(1200/795) = 3.58 dB high and the loop asks
+        // for 4 dB — the smallest whole decibel that seats the peak at Target.
+        // MaxOffsetDb is also 4, so it arrives there in one move and holds.
         r.HandleP2AdcTelemetry(hot, nowMs: 0);
-        Assert.Equal(0, r.Snapshot().AttOffsetDb);
+        Assert.Equal(4, r.Snapshot().AttOffsetDb);
 
         r.HandleP2AdcTelemetry(hot, nowMs: 25);
-        Assert.Equal(2, r.Snapshot().AttOffsetDb);
-
-        r.HandleP2AdcTelemetry(hot, nowMs: 50);
         Assert.Equal(4, r.Snapshot().AttOffsetDb);
 
         r.HandleP2AdcTelemetry(hot, nowMs: 75);
         Assert.Equal(4, r.Snapshot().AttOffsetDb);
+    }
+
+    /// <summary>
+    /// AttackStepDb is a FLOOR on the magnitude path, not a ceiling. The step is
+    /// derived from how far the observed peak sits above the target zone
+    /// (MagnitudeAttackStepDb takes Math.Max(floor, excessDb)), so a configured
+    /// step larger than the excess wins, and a configured step smaller than the
+    /// excess is overridden.
+    ///
+    /// Pinned deliberately: this is the behaviour that made the older test look
+    /// like a regression — an operator configuring 2 dB saw the attenuator move
+    /// 4. It is intended for a protection path, where seating the peak in one
+    /// move beats creeping toward it while the converter clips, and MaxOffsetDb
+    /// still bounds the total. If that judgement is ever revisited, this test is
+    /// the thing that should fail.
+    /// </summary>
+    [Fact]
+    public void P2MagnitudeSoftLimit_AttackStepIsAFloorNotACeiling()
+    {
+        // Configured step (6) EXCEEDS the 3.58 dB excess, so the floor wins.
+        var big = MakeService();
+        big.SetAdcProtection(new AdcProtectionSetRequest(
+            AttackMs: 25,
+            ReleaseMs: 50,
+            AttackStepDb: 6,
+            ReleaseStepDb: 1,
+            MaxOffsetDb: 31,
+            WarningThreshold: 0,
+            MagnitudeSoftLimit: 1_000));
+        big.HandleP2AdcTelemetry(HotMagnitude(1_200), nowMs: 0);
+        Assert.Equal(6, big.Snapshot().AttOffsetDb);
+
+        // Configured step (2) is BELOW the excess, so the derived 4 dB wins.
+        var small = MakeService();
+        small.SetAdcProtection(new AdcProtectionSetRequest(
+            AttackMs: 25,
+            ReleaseMs: 50,
+            AttackStepDb: 2,
+            ReleaseStepDb: 1,
+            MaxOffsetDb: 31,
+            WarningThreshold: 0,
+            MagnitudeSoftLimit: 1_000));
+        small.HandleP2AdcTelemetry(HotMagnitude(1_200), nowMs: 0);
+        Assert.Equal(4, small.Snapshot().AttOffsetDb);
     }
 
     [Fact]

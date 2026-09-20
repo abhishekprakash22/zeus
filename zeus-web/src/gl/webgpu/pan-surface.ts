@@ -283,6 +283,9 @@ fn vsFill(@builtin(vertex_index) vi : u32) -> VsOut {
   return out;
 }
 
+// How far the leading edge drops, in clip space. Shallow on purpose.
+const SKIRT_DEPTH : f32 = 0.16;
+
 fn seg_of(cell : u32, segs : u32) -> u32 {
   return cell - (cell / segs) * segs;
 }
@@ -309,10 +312,18 @@ fn vsSkirt(@builtin(vertex_index) vi : u32) -> VsOut {
   let c = corners[tri];
   let freqU = (f32(seg_of(cell, segs)) + c.x) / f32(segs);
   let s = sampleSurface(freqU, 0.0);
-  // c.y == 1 is the crest (the row's own height), c.y == 0 the baseline.
-  let lvl = s.level * c.y;
+  // A SHORT front edge, not a wall. Dropping to the baseline painted an opaque
+  // slab from every crest to the bottom of the pane, which hid the terrain
+  // behind it — the reference shows only a shallow vertical face along the
+  // leading edge. Clamped so it never runs past the baseline.
+  let crest = project(freqU, 0.0, s.level);
+  let bottomY = max(crest.y - SKIRT_DEPTH, u.p2.z);
+  let y = mix(bottomY, crest.y, c.y);
+  // Level for colour still ramps across the face, so it runs through the
+  // palette the way the terrain does.
+  let lvl = s.level * mix(max(0.0, 1.0 - SKIRT_DEPTH), 1.0, c.y);
   var out : VsOut;
-  out.clip = project(freqU, 0.0, lvl);
+  out.clip = vec4<f32>(crest.x, y, crest.z, 1.0);
   out.level = lvl;
   out.depth = 0.0;
   out.light = s.light;

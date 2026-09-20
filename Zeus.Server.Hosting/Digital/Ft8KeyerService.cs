@@ -60,6 +60,39 @@ internal sealed class Ft8KeyerService : BackgroundService
     /// </summary>
     private static int MaxLateStartMs(DigitalMode m) => m == DigitalMode.Ft4 ? 1_000 : 2_500;
 
+    /// <summary>
+    /// May this stage key the slot that is ALREADY running, and how much of the
+    /// waveform has that slot already eaten?
+    ///
+    /// ORDERING IS LOAD-BEARING: the loop must ask this BEFORE it naps toward
+    /// the next boundary. A decode-driven reply is staged one or two seconds
+    /// into its own slot, when the next boundary is still most of a slot away —
+    /// so a late-start test placed after the "nap until the lead window" guard
+    /// is only ever evaluated at boundary minus <see cref="SlotClock.KeyLeadMs"/>,
+    /// where the current slot is ~14.9 s old and the answer is always false.
+    /// That is how the fix for the one-cycle-late reply shipped as dead code and
+    /// the QSO kept slipping a cycle.
+    /// </summary>
+    internal static bool WantsLateStart(
+        TxStage stage, double nowMs, double? lastTxSlotMs, out double slotStartMs, out int skipMs)
+    {
+        int slotMs = SlotClock.SlotMs(stage.Mode);
+        long curIdx = (long)Math.Floor(nowMs / slotMs);
+        slotStartMs = SlotClock.SlotStartMs(curIdx, stage.Mode);
+        double intoSlot = nowMs - slotStartMs;
+        int maxLate = MaxLateStartMs(stage.Mode);
+        skipMs = 0;
+
+        if (intoSlot <= 0 || intoSlot > maxLate) return false;
+        // Never key the same slot twice.
+        if (lastTxSlotMs is double last && Math.Abs(last - slotStartMs) <= 1.0) return false;
+        if (!TxStageBook.EligibleLate(stage, curIdx, slotStartMs, maxLate)) return false;
+
+        // Inside the nominal start delay we simply start on time.
+        skipMs = (int)Math.Max(0, intoSlot - TxStartDelayMs);
+        return true;
+    }
+
     /// <summary>Watchdog slack past the waveform's own duration.</summary>
     private const int WatchdogSlackMs = 3_000;
 
@@ -128,23 +161,10 @@ internal sealed class Ft8KeyerService : BackgroundService
             double boundaryMs = SlotClock.SlotStartMs(nextIdx, stage.Mode);
             double msToBoundary = boundaryMs - now;
 
-            if (msToBoundary > SlotClock.KeyLeadMs)
-            {
-                // Not our moment yet — nap, but wake before the lead window.
-                int nap = (int)Math.Min(IdlePollMs, Math.Max(1, msToBoundary - SlotClock.KeyLeadMs));
-                if (ct.WaitHandle.WaitOne(nap)) return;
-                continue;
-            }
-
             // Is the CURRENT slot still keyable? A reply staged just after its
             // boundary belongs to this slot, not the next one of that parity.
-            long curIdx = (long)Math.Floor(now / slotMs);
-            double curStart = SlotClock.SlotStartMs(curIdx, stage.Mode);
-            double intoSlot = now - curStart;
-            int maxLate = MaxLateStartMs(stage.Mode);
-            if (intoSlot > 0 && intoSlot <= maxLate
-                && (_digital.LastTxSlotMs is not double last || Math.Abs(last - curStart) > 1.0)
-                && TxStageBook.EligibleLate(stage, curIdx, curStart, maxLate))
+            // This MUST come before the nap below — see WantsLateStart.
+            if (WantsLateStart(stage, now, _digital.LastTxSlotMs, out double curStart, out int skipMs))
             {
                 bool lateFt4 = stage.Mode == DigitalMode.Ft4;
                 float[]? lateWave = Ft8Native.Synth(stage.Message, lateFt4, stage.AudioHz,
@@ -156,9 +176,15 @@ internal sealed class Ft8KeyerService : BackgroundService
                     _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
                     continue;
                 }
-                // Inside the nominal start delay we simply start on time.
-                int skipMs = (int)Math.Max(0, intoSlot - TxStartDelayMs);
                 Transmit(lateWave, stage, curStart, ct, skipMs);
+                continue;
+            }
+
+            if (msToBoundary > SlotClock.KeyLeadMs)
+            {
+                // Not our moment yet — nap, but wake before the lead window.
+                int nap = (int)Math.Min(IdlePollMs, Math.Max(1, msToBoundary - SlotClock.KeyLeadMs));
+                if (ct.WaitHandle.WaitOne(nap)) return;
                 continue;
             }
 

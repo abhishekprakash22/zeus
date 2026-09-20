@@ -200,6 +200,6 @@ public sealed class SpottingService : IHostedService, IDisposable
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
         int plus = v.IndexOf('+');
         if (plus >= 0) v = v[..plus];
-        return v.Length == 0 ? "ANAN-Core" : $"ANAN-Core {v}";
+        return v.Length == 0 ? "ANAN Core" : $"ANAN Core {v}";
     }
 }

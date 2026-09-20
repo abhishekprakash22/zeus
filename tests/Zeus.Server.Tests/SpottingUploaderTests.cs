@@ -33,7 +33,7 @@ public sealed class SpottingUploaderTests : IDisposable
             Message: "G4ABC IO91 37");
         var url = WsprnetUploader.BuildSpotUrl(
             spot, WsprnetUploader.ParseMessage(spot.Message)!, dialMhz: 7.038600,
-            slotStartUtc: new DateTime(2026, 9, 20, 4, 6, 0, DateTimeKind.Utc), Me, "ANAN-Core 1.76");
+            slotStartUtc: new DateTime(2026, 9, 20, 4, 6, 0, DateTimeKind.Utc), Me, "ANAN Core 1.76");
 
         Assert.StartsWith("http://wsprnet.org/post?", url);
         foreach (var expected in new[]
@@ -45,7 +45,7 @@ public sealed class SpottingUploaderTests : IDisposable
         {
             Assert.Contains(expected, url);
         }
-        Assert.Contains("version=ANAN-Core%201.76", url);
+        Assert.Contains("version=ANAN%20Core%201.76", url);
     }
 
     [Theory]
@@ -84,7 +84,7 @@ public sealed class SpottingUploaderTests : IDisposable
             new PskSpot("DL1XYZ", 14_074_900, 3, "FT8", 1_789_000_000),
         };
         var dg = PskReporterUploader.BuildDatagram(
-            "EA5IUE", "IM76", "ANAN-Core", spots,
+            "EA5IUE", "IM76", "ANAN Core", spots,
             sequence: 7, observationId: 0x1234_5678, exportTimeUnix: 1_789_000_123);
 
         Assert.Equal(0x000A, BinaryPrimitives.ReadUInt16BigEndian(dg.AsSpan(0, 2)));   // IPFIX version
@@ -97,7 +97,7 @@ public sealed class SpottingUploaderTests : IDisposable
         var text = Encoding.ASCII.GetString(dg);
         Assert.Contains("EA5IUE", text);
         Assert.Contains("IM76", text);
-        Assert.Contains("ANAN-Core", text);
+        Assert.Contains("ANAN Core", text);
         Assert.Contains("G4ABC", text);
         Assert.Contains("DL1XYZ", text);
 
@@ -110,7 +110,7 @@ public sealed class SpottingUploaderTests : IDisposable
     public void PskDatagram_WithoutSpots_OmitsTheSenderTemplate()
     {
         var dg = PskReporterUploader.BuildDatagram(
-            "EA5IUE", "IM76", "ANAN-Core", Array.Empty<PskSpot>(), 0, 1, 1_789_000_000);
+            "EA5IUE", "IM76", "ANAN Core", Array.Empty<PskSpot>(), 0, 1, 1_789_000_000);
 
         Assert.Equal(dg.Length, BinaryPrimitives.ReadUInt16BigEndian(dg.AsSpan(2, 2)));
         Assert.DoesNotContain(FindSetHeaders(dg), h => h == 0x9993);
@@ -203,14 +203,14 @@ public sealed class SpottingUploaderTests : IDisposable
 
         var psk = new PskReporterUploader(NullLogger.Instance);
         psk.Add(new PskSpot("G4ABC", 14_075_000, -10, "FT8", 1_789_000_000));
-        await psk.FlushAsync(anonymous, "ANAN-Core", CancellationToken.None);
+        await psk.FlushAsync(anonymous, "ANAN Core", CancellationToken.None);
         Assert.Equal(0, psk.Uploaded);
         Assert.Equal(1, psk.PendingCount);           // kept, not sent
 
         var wsprnet = new WsprnetUploader(new HttpClient(), NullLogger.Instance);
         var batch = new WsprSpotBatch(0, 1_789_000_000_000, 7.0386,
             new[] { new WsprSpotDtoOut(-20, 0.2, 7.040, 0, "G4ABC IO91 37") });
-        await wsprnet.UploadSlotAsync(batch, anonymous, "ANAN-Core", CancellationToken.None);
+        await wsprnet.UploadSlotAsync(batch, anonymous, "ANAN Core", CancellationToken.None);
         Assert.Equal(0, wsprnet.Uploaded);
     }
 }

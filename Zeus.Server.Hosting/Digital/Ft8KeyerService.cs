@@ -49,6 +49,17 @@ internal sealed class Ft8KeyerService : BackgroundService
     /// <summary>Nominal in-slot start of the FT8/FT4 signal (WSJT-X: 0.5 s).</summary>
     private const int TxStartDelayMs = 500;
 
+    /// <summary>
+    /// How far into a slot we will still start transmitting. The reply to a
+    /// decode is staged after the boundary by definition (the DX stops
+    /// transmitting as our slot opens, and only then does the decoder run), so
+    /// without this every answer slipped a whole cycle. Inside the nominal
+    /// start delay nothing is lost at all; past it the waveform starts
+    /// truncated, which receivers tolerate — WSJT-X decodes a late start of a
+    /// couple of seconds. FT4's slot is half as long, so its window is too.
+    /// </summary>
+    private static int MaxLateStartMs(DigitalMode m) => m == DigitalMode.Ft4 ? 1_000 : 2_500;
+
     /// <summary>Watchdog slack past the waveform's own duration.</summary>
     private const int WatchdogSlackMs = 3_000;
 
@@ -125,6 +136,32 @@ internal sealed class Ft8KeyerService : BackgroundService
                 continue;
             }
 
+            // Is the CURRENT slot still keyable? A reply staged just after its
+            // boundary belongs to this slot, not the next one of that parity.
+            long curIdx = (long)Math.Floor(now / slotMs);
+            double curStart = SlotClock.SlotStartMs(curIdx, stage.Mode);
+            double intoSlot = now - curStart;
+            int maxLate = MaxLateStartMs(stage.Mode);
+            if (intoSlot > 0 && intoSlot <= maxLate
+                && (_digital.LastTxSlotMs is not double last || Math.Abs(last - curStart) > 1.0)
+                && TxStageBook.EligibleLate(stage, curIdx, curStart, maxLate))
+            {
+                bool lateFt4 = stage.Mode == DigitalMode.Ft4;
+                float[]? lateWave = Ft8Native.Synth(stage.Message, lateFt4, stage.AudioHz,
+                                                    SampleRateHz, out string? lateErr);
+                if (lateWave is null)
+                {
+                    _log.LogWarning("ft8 keyer: synth failed for '{Msg}': {Err}", stage.Message, lateErr);
+                    _digital.Stages.Clear();
+                    _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
+                    continue;
+                }
+                // Inside the nominal start delay we simply start on time.
+                int skipMs = (int)Math.Max(0, intoSlot - TxStartDelayMs);
+                Transmit(lateWave, stage, curStart, ct, skipMs);
+                continue;
+            }
+
             if (!TxStageBook.Eligible(stage, nextIdx, boundaryMs))
             {
                 // Wrong parity (or stale) for THIS boundary — sleep just past it
@@ -157,7 +194,8 @@ internal sealed class Ft8KeyerService : BackgroundService
     }
 
     /// <summary>Key MOX, stream the waveform paced in real time, unkey.</summary>
-    private void Transmit(float[] wave, TxStage stage, double boundaryMs, CancellationToken ct)
+    private void Transmit(float[] wave, TxStage stage, double boundaryMs, CancellationToken ct,
+                          int skipMs = 0)
     {
         if (!_tx.TrySetMox(true, MoxSource.Ft8Keyer, out var moxError))
         {
@@ -170,14 +208,21 @@ internal sealed class Ft8KeyerService : BackgroundService
         _digital.Transmitting = true;
         _digital.LastTxSlotMs = boundaryMs;
         _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
-        _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot})",
-            stage.Message, stage.AudioHz, stage.Mode, stage.Slot);
+        if (skipMs > 0)
+            _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot}, late start {Late} ms)",
+                stage.Message, stage.AudioHz, stage.Mode, stage.Slot, skipMs);
+        else
+            _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot})",
+                stage.Message, stage.AudioHz, stage.Mode, stage.Slot);
 
         try
         {
-            // Nominal in-slot signal start (abortable).
-            if (WaitMs(TxStartDelayMs, ct) && _digital.Armed)
-                Pump(wave, ct);
+            // Nominal in-slot signal start (abortable). A late start skips the
+            // audio the slot has already consumed instead of delaying further.
+            int skipSamples = Math.Min(wave.Length, (int)(skipMs / 1000.0 * SampleRateHz));
+            int waitMs = skipMs > 0 ? 0 : TxStartDelayMs;
+            if ((waitMs == 0 || WaitMs(waitMs, ct)) && _digital.Armed)
+                Pump(wave, ct, skipSamples);
         }
         finally
         {
@@ -202,7 +247,7 @@ internal sealed class Ft8KeyerService : BackgroundService
     }
 
     /// <summary>Stopwatch-paced block pump (the SignalJammer pattern).</summary>
-    private void Pump(float[] wave, CancellationToken ct)
+    private void Pump(float[] wave, CancellationToken ct, int startSample = 0)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         long periodTicks = (long)(System.Diagnostics.Stopwatch.Frequency
@@ -211,7 +256,7 @@ internal sealed class Ft8KeyerService : BackgroundService
         long watchdogTicks = (long)(System.Diagnostics.Stopwatch.Frequency
             * ((wave.Length / (double)SampleRateHz) + WatchdogSlackMs / 1000.0));
 
-        int offset = 0;
+        int offset = startSample;
         while (offset < wave.Length)
         {
             if (ct.IsCancellationRequested) return;

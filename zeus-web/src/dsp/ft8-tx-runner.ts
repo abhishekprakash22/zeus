@@ -43,7 +43,12 @@ export function slotMsFor(mode: DigitalQsoMode): number {
  * G2 bench-tune.
  */
 function settleMsFor(mode: DigitalQsoMode): number {
-  return mode === 'FT4' ? 800 : 2_000;
+  // Measured decode latency on a current machine is ~20 ms for a whole slot,
+  // so seconds of settle bought nothing and cost everything: the reply landed
+  // deep inside our own transmit slot. Keep a small margin for the audio tail
+  // reaching the decoder and for slower hosts (a Pi), and let the backend's
+  // late-start window absorb the rest.
+  return mode === 'FT4' ? 250 : 400;
 }
 
 /** The UTC slot index a given epoch-ms falls in, for a slot length. */

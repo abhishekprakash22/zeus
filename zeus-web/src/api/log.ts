@@ -388,3 +388,26 @@ export async function deleteLogEntries(
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return await response.json();
 }
+
+/** Publish-on-log preference: upload each QSO to QRZ.com as it is logged. */
+export async function getQrzAutoPublish(signal?: AbortSignal): Promise<boolean> {
+  const res = await fetch('/api/log/qrz/settings', { signal });
+  if (!res.ok) throw new Error(`GET /api/log/qrz/settings → ${res.status}`);
+  const body = (await res.json()) as { autoPublishOnLog?: unknown };
+  return body.autoPublishOnLog === true;
+}
+
+export async function setQrzAutoPublish(
+  autoPublishOnLog: boolean,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const res = await fetch('/api/log/qrz/settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ autoPublishOnLog }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`POST /api/log/qrz/settings → ${res.status}`);
+  const body = (await res.json()) as { autoPublishOnLog?: unknown };
+  return body.autoPublishOnLog === true;
+}

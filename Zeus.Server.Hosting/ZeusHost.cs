@@ -1252,6 +1252,10 @@ public static class ZeusHost
         builder.Services.AddSingleton<CloudLog.WavelogClient>();
         builder.Services.AddSingleton<CloudLog.ClubLogClient>();
         builder.Services.AddSingleton<CloudLog.CloudLogService>();
+        // Publish-on-log to QRZ.com — the fourth logged-QSO target, OFF by
+        // default (Zeus.Server.Hosting/Logbook/QrzAutoPublishService.cs).
+        builder.Services.AddSingleton<QrzPublishSettingsStore>();
+        builder.Services.AddSingleton<QrzAutoPublishService>();
         builder.Services.AddSingleton<LotwSettingsStore>();
         builder.Services.AddSingleton<ILotwTqslLocator, LotwTqslLocator>();
         builder.Services.AddSingleton<ILotwProcessRunner, LotwProcessRunner>();

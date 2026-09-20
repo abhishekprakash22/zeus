@@ -4405,6 +4405,7 @@ public static class ZeusEndpoints
             Wsjtx.N1mmBroadcaster n1mm,
             CloudLog.CloudLogService cloudLog,
             LotwService lotw,
+            QrzAutoPublishService qrzPublish,
             HttpContext ctx) =>
         {
             if (string.IsNullOrWhiteSpace(req.Callsign))
@@ -4448,6 +4449,7 @@ public static class ZeusEndpoints
                 _ = wsjtx.BroadcastLoggedQsoAsync(entry, CancellationToken.None);   // Class A: WSJT-X type-12 UDP
                 _ = n1mm.BroadcastLoggedQsoAsync(entry, CancellationToken.None);    // Class B: N1MM contactinfo UDP
                 _ = cloudLog.PublishAsync(entry, CancellationToken.None);           // Class C: Wavelog/Cloudlog + Club Log HTTP
+                _ = qrzPublish.PublishIfEnabledAsync(entry, CancellationToken.None); // Class D: QRZ.com logbook HTTP
                 return Results.Ok(entry);
             }, logbook, plugin, log);
         });
@@ -4553,6 +4555,19 @@ public static class ZeusEndpoints
                 }
             }, logbook, plugin, log);
         });
+
+        // Publish-on-log preference. OFF by default; the QRZ tab owns the
+        // credential this needs, so it owns the switch too.
+        app.MapGet("/api/log/qrz/settings", (QrzAutoPublishService qrzPublish) =>
+            Results.Ok(new { autoPublishOnLog = qrzPublish.Settings.AutoPublishOnLog }));
+
+        app.MapPost("/api/log/qrz/settings", (QrzAutoPublishRequest req, QrzAutoPublishService qrzPublish) =>
+            Results.Ok(new
+            {
+                autoPublishOnLog = qrzPublish
+                    .Configure(new QrzPublishSettings(req.AutoPublishOnLog))
+                    .AutoPublishOnLog,
+            }));
 
         app.MapPost("/api/log/publish/qrz", async (QrzPublishRequest req, QrzService qrz, LogbookPluginBridge logbook, HttpContext ctx) =>
         {
@@ -6834,3 +6849,6 @@ internal sealed record TxDutyGuidanceDto(
 // "P1" or "P2" so the server sends the correct stop frame.
 internal sealed record ReclaimRadioRequest(string? Endpoint, string? Protocol);
 internal sealed record HardwareDiagnosticsMarkerRequest(string? Label, string? Notes);
+
+/// <summary>POST /api/log/qrz/settings body — publish each QSO as it is logged.</summary>
+internal sealed record QrzAutoPublishRequest(bool AutoPublishOnLog);

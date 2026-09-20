@@ -8,7 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OUT=${1:-libzeus_ft8.so}
 CC=${CC:-gcc}
-CFLAGS="-O3 -DHAVE_STPCPY -fPIC -I."
+# -pthread: the callsign hashtable outlives a decode call and is reached
+# from the decode worker and the keyer thread, so it is taken under a mutex.
+# A no-op on glibc >= 2.34 (pthreads are in libc), needed on older ones.
+CFLAGS="-O3 -DHAVE_STPCPY -fPIC -pthread -I."
 echo "compiling ft8_lib + shim..."
 rm -rf .obj && mkdir -p .obj
 for s in ft8/*.c common/*.c fft/*.c; do

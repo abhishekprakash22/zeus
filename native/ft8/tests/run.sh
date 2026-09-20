@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CC=${CC:-cc}
-CFLAGS="-O1 -g -DHAVE_STPCPY -I."
+CFLAGS="-O1 -g -DHAVE_STPCPY -pthread -I."
 OBJ=.obj-test
 BIN=${TMPDIR:-/tmp}/zeus_ft8_tests
 

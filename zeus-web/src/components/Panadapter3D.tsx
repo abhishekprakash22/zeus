@@ -239,6 +239,12 @@ export function Panadapter3D({
         rxDbMax: s.dbMax,
         txDbMin: s.txDbMin,
         txDbMax: s.txDbMax,
+        // Colour from the WATERFALL's range: the surface uses the waterfall's
+        // palette, and the field screenshots showed a band full of red and
+        // yellow below rendering as a blue slab above purely because the pan's
+        // window is far wider than the waterfall's.
+        colourDbMin: s.wfDbMin,
+        colourDbMax: s.wfDbMax,
       });
     };
 

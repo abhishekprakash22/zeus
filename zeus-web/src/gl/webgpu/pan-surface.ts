@@ -19,7 +19,7 @@ const HISTORY_ROWS = 512;
 const MAX_TEXTURE_COLUMNS = 1024;
 const MESH_COLUMNS = 640;
 const VISIBLE_ROWS = 160;
-const UNIFORM_FLOATS = 28;
+const UNIFORM_FLOATS = 32;
 const LARGE_CENTER_SHIFT_HZ = 25_000_000;
 
 export type PanSurfaceRowDomain = 'rx' | 'pop' | 'tx';
@@ -29,6 +29,11 @@ export type PanSurfaceDbWindows = {
   rxDbMax: number;
   txDbMin: number;
   txDbMax: number;
+  /** dB window used for COLOUR only — the waterfall's range, so the surface
+   *  and the waterfall agree about what a colour means. Height keeps the
+   *  panadapter's own window (rxDbMin/rxDbMax). */
+  colourDbMin: number;
+  colourDbMax: number;
 };
 
 export type PanSurfaceRenderer = {
@@ -155,6 +160,7 @@ struct Uniforms {
   p4 : vec4<f32>, // traceColor.rgb, popGlow
   p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, panafallStyle
   p6 : vec4<f32>, // txDbMin, txDbMax, popDbMin, popDbMax
+  p7 : vec4<f32>, // colourDbMin, colourDbMax, _, _
 };
 @group(0) @binding(0) var<uniform> u : Uniforms;
 @group(0) @binding(1) var historyTex : texture_2d<f32>;
@@ -189,6 +195,26 @@ fn rawLevel(freqU : f32, age : f32) -> f32 {
     dbMax = u.p6.w;
   }
   return clamp((db - dbMin) / max(0.0001, dbMax - dbMin), 0.0, 1.0);
+}
+
+// Level for COLOUR, taken from its own dB window. The surface borrows the
+// waterfall's palette, so it should borrow the waterfall's range too:
+// otherwise the same signal that sits mid-palette in the waterfall lands near
+// the bottom on the surface, and a band full of colour below renders as a
+// blue slab above. Height still uses the panadapter's window — that is the
+// pan's own geometry and should not change.
+fn colourLevel(freqU : f32, age : f32) -> f32 {
+  if (age < 0.0 || age > u.p0.w - 1.0) { return 0.0; }
+  let row = ringRow(age);
+  let g = rowGeom[row];
+  if (g.y <= 0.0) { return 0.0; }
+  let texW = u.p0.z;
+  let rowSpanHz = g.y * texW;
+  let srcX = 0.5 + (u.p2.x - g.x) / rowSpanHz + (freqU - 0.5) * (u.p2.y / rowSpanHz);
+  if (srcX < 0.0 || srcX > 1.0) { return 0.0; }
+  let texX = clamp(i32(round(srcX * (texW - 1.0))), 0, i32(texW) - 1);
+  let db = textureLoad(historyTex, vec2<i32>(texX, row), 0).r;
+  return clamp((db - u.p7.x) / max(0.0001, u.p7.y - u.p7.x), 0.0, 1.0);
 }
 
 fn rowDomain(age : f32) -> f32 {
@@ -250,6 +276,7 @@ struct VsOut {
   @location(2) light : f32,
   @location(3) crest : f32,
   @location(4) domain : f32,
+  @location(5) colour : f32,
 };
 
 @vertex
@@ -338,6 +365,7 @@ fn vsSkirt(@builtin(vertex_index) vi : u32) -> VsOut {
   out.depth = 0.0;
   out.light = s.light;
   out.crest = s.crest * c.y;
+  out.colour = colourLevel(freqU, 0.0) * mix(max(0.0, 1.0 - SKIRT_DEPTH), 1.0, c.y);
   out.domain = rowDomain(0.0);
   return out;
 }
@@ -381,7 +409,7 @@ fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
   // full-scale carrier. Start just above the palette's black shelf so the
   // floor is DEEP blue, and curve the response so mid-level signals climb
   // through cyan and green instead of crawling.
-  let lvlT = LUT_FLOOR + pow(clamp(lvl, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
+  let lvlT = LUT_FLOOR + pow(clamp(in.colour, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
   var col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * shade;
   let txRow = smoothstep(1.5, 2.0, in.domain);
   col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.level));
@@ -401,7 +429,7 @@ fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
 // did the same would just be the black void with extra steps.
 @fragment
 fn fsSkirt(in : VsOut) -> @location(0) vec4<f32> {
-  let lvlT = LUT_FLOOR + pow(clamp(in.level, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
+  let lvlT = LUT_FLOOR + pow(clamp(in.colour, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
   let col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * mix(0.62, 1.0, in.level);
   return vec4<f32>(min(col, vec3<f32>(1.0)), 0.96);
 }
@@ -414,7 +442,7 @@ fn fsLine(in : VsOut) -> @location(0) vec4<f32> {
   // drawn in the flat trace colour — and viewed close to head-on the traces
   // are most of what you see, so the whole surface read as one colour. With
   // the setting on they take the palette too, so 3D matches the 2D gradient.
-  let traceT = LUT_FLOOR + pow(clamp(in.level, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
+  let traceT = LUT_FLOOR + pow(clamp(in.colour, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
   let lutTrace = textureSample(lutTex, lutSampler, vec2<f32>(traceT, 0.5)).rgb;
   let baseTrace = mix(u.p4.rgb, lutTrace, clamp(u.p5.w, 0.0, 1.0));
   let trace = mix(baseTrace, vec3<f32>(1.0, 0.22, 0.16), txRow);
@@ -606,6 +634,10 @@ export function createPanSurfaceRenderer(
     uniformData[25] = windows.txDbMax;
     uniformData[26] = 0;
     uniformData[27] = 1;
+    uniformData[28] = windows.colourDbMin;
+    uniformData[29] = windows.colourDbMax;
+    uniformData[30] = 0;
+    uniformData[31] = 0;
     device.queue.writeBuffer(uniformBuffer, 0, gpuSrc(uniformData));
   };
 
@@ -677,6 +709,8 @@ export function createPanSurfaceRenderer(
         rxDbMax: dbMax,
         txDbMin: dbMin,
         txDbMax: dbMax,
+        colourDbMin: dbMin,
+        colourDbMax: dbMax,
       });
 
       const encoder = device.createCommandEncoder();

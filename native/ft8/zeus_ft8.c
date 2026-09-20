@@ -18,6 +18,7 @@
  * below), so every access to it is taken under hash_lock.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -322,6 +323,34 @@ static int estimate_snr_db(const float* sig, int n12, float freq_hz, float time_
 
     float noise_ref = noise_per_bin * (ZEUS_SNR_REF_BW / bin_hz);
     float snr = 10.0f * log10f(sig_power / noise_ref);
+
+    /* Field diagnostic. The estimator is correct on the synthetic audio in
+       Ft8NativeTests but reads high on a real receiver, and guessing which
+       term is wrong has failed repeatedly. Set ZEUS_FT8_SNR_DEBUG=1 to have
+       every decode print the intermediate values, so the fault can be READ
+       rather than inferred:
+
+         blocks   - Welch blocks averaged; 0 means the window was too short
+         bins     - signal bins summed (expect ~19 for FT8 at 2.93 Hz)
+         n_around - noise bins surviving the guard band (expect >150)
+         sigP     - signal power with the noise floor already subtracted
+         noiseBin - median noise power PER BIN
+         noiseRef - that floor scaled to 2500 Hz
+
+       If noiseBin is implausibly small the noise estimate is being taken
+       somewhere the receiver has already removed the noise (filter skirt,
+       NR, a squelch gate). If sigP is huge relative to it, the signal span
+       is picking up something it should not. */
+    if (getenv("ZEUS_FT8_SNR_DEBUG"))
+    {
+        fprintf(stderr,
+                "ft8snr f=%.1f dt=%.2f blocks=%d bins=%d n_around=%d "
+                "sigP=%.3e noiseBin=%.3e noiseRef=%.3e snr=%.1f\n",
+                (double)freq_hz, (double)time_sec, blocks,
+                sig_hi - sig_lo + 1, n_around,
+                (double)sig_power, (double)noise_per_bin,
+                (double)noise_ref, (double)snr);
+    }
 
     if (snr < -30.0f) snr = -30.0f;                /* WSJT-X's own floor       */
     if (snr > 49.0f) snr = 49.0f;

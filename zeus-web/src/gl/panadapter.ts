@@ -43,6 +43,7 @@
 // Zeus is distributed WITHOUT ANY WARRANTY; see the GNU General Public
 // License for details.
 
+import { lutFor, type RenderColormapId } from './colormap';
 import { instrumentGlForStats } from './render-stats';
 import { buildProgram } from './util';
 import {
@@ -69,6 +70,9 @@ export type PanRenderer = {
   setTraceColor: (r: number, g: number, b: number) => void;
   /** Enables and tunes the high-contrast Signal Pop visual treatment. */
   setPopMode: (active: boolean, intensity?: number) => void;
+  /** Colour the fill by each bin's own level, using the waterfall's palette.
+   *  0 = the flat trace colour (unchanged behaviour), 1 = fully level-coloured. */
+  setLevelFill: (on: boolean, colormap?: RenderColormapId) => void;
   dispose: () => void;
 };
 
@@ -159,6 +163,27 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
   const uFillAlphaTop = gl.getUniformLocation(fillProg, 'uFillAlphaTop');
   const uFillPan = gl.getUniformLocation(fillProg, 'uPan');
   const uFillPopIntensity = gl.getUniformLocation(fillProg, 'uPopIntensity');
+  const uFillLut = gl.getUniformLocation(fillProg, 'uLut');
+  const uFillLevelFill = gl.getUniformLocation(fillProg, 'uLevelFill');
+
+  // The panadapter has its OWN GL context, so it cannot share the waterfall's
+  // LUT texture object — it builds an identical one from the same table. Unit
+  // 1; unit 0 is the pan dB row.
+  const lutTex = gl.createTexture()!;
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, lutTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const uploadLut = (id: RenderColormapId) => {
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, lutTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, lutFor(id));
+  };
+  uploadLut('blue');
+  gl.activeTexture(gl.TEXTURE0);
+  let levelFill = 0;
 
   // Trace VBO: one float per bin, rendered as LINE_STRIP for the sharp
   // top edge. Fill reuses the same data via a 1-row R32F texture sampled
@@ -271,6 +296,11 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.uniform1f(uFillScaleX, sx);
       gl.uniform3f(uFillColor, traceR, traceG, traceB);
       gl.uniform1f(uFillAlphaTop, FILL_ALPHA_TOP);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, lutTex);
+      gl.uniform1i(uFillLut, 1);
+      gl.uniform1f(uFillLevelFill, levelFill);
+      gl.activeTexture(gl.TEXTURE0);
       gl.uniform1f(uFillPopIntensity, popIntensity);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, panDb.length * 2);
 
@@ -308,6 +338,10 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       traceR = r;
       traceG = g;
       traceB = b;
+    },
+    setLevelFill(on, colormap) {
+      levelFill = on ? 1 : 0;
+      if (colormap) uploadLut(colormap);
     },
     setPopMode(active, intensity = active ? 1 : 0) {
       popIntensity = Math.max(0, Math.min(1, intensity));

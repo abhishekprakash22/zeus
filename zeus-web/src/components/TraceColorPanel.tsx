@@ -62,6 +62,8 @@ function buildTracePath(): string {
 }
 
 export function TraceColorPanel() {
+  const panLevelFill = useDisplaySettingsStore((st) => st.panLevelFill);
+  const setPanLevelFill = useDisplaySettingsStore((st) => st.setPanLevelFill);
   const rxTraceColor = useDisplaySettingsStore((s) => s.rxTraceColor);
   const setRxTraceColor = useDisplaySettingsStore((s) => s.setRxTraceColor);
   const norm = rxTraceColor.toUpperCase();
@@ -152,6 +154,33 @@ export function TraceColorPanel() {
           </div>
         </div>
       </div>
+
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 10,
+          marginTop: 14,
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={panLevelFill}
+          onChange={(e) => setPanLevelFill(e.currentTarget.checked)}
+          style={{ marginTop: 3 }}
+        />
+        <span>
+          <span style={{ display: 'block', fontSize: 13, color: 'var(--fg-0)' }}>
+            Color the fill by signal level
+          </span>
+          <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-3)' }}>
+            Shades the area under the trace with the waterfall's palette, so a
+            strong signal is obvious without reading the dB scale. The trace
+            itself keeps the color above, so the envelope stays crisp.
+          </span>
+        </span>
+      </label>
     </section>
   );
 }

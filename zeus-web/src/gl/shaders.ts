@@ -121,6 +121,14 @@ in float v_alpha;
 in float v_level;
 uniform vec3 uColor;
 uniform float uPopIntensity;
+// Level-coloured fill: sample the SAME 256-entry palette the waterfall uses,
+// indexed by the bin's own normalised dB, instead of painting one flat colour.
+// uLevelFill blends between the two so the setting can be switched at runtime
+// with no GL re-init. The trace itself is drawn by PAN_FS and is deliberately
+// left alone — a fixed bright line keeps the envelope crisp against a fill
+// that is now the same hue as the signal sitting on top of it.
+uniform sampler2D uLut;
+uniform float uLevelFill;
 out vec4 fragColor;
 vec3 popRamp(float n) {
   vec3 floorGlow = vec3(0.00, 0.10, 0.18);
@@ -132,7 +140,13 @@ vec3 popRamp(float n) {
   return mix(c, peak, smoothstep(0.72, 1.0, n));
 }
 void main() {
-  vec4 base = vec4(uColor * v_alpha, v_alpha);
+  // Darkened toward the baseline so the fill reads as shadow under the trace
+  // rather than a slab of paint: full palette colour at the trace, sinking to
+  // a fraction of it at the floor.
+  vec3 lutCol = texture(uLut, vec2(clamp(v_level, 0.0, 1.0), 0.5)).rgb;
+  vec3 flat3 = uColor;
+  vec3 tint = mix(flat3, lutCol, clamp(uLevelFill, 0.0, 1.0));
+  vec4 base = vec4(tint * v_alpha, v_alpha);
   float popI = clamp(uPopIntensity, 0.0, 1.0);
   float lift = smoothstep(0.04, 0.92, v_level);
   float alpha = v_alpha * mix(0.42, 0.86, lift);

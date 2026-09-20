@@ -217,10 +217,10 @@ jobs:
           $rid = "win-${{ matrix.arch }}"
           Copy-Item "native/build-miniaudio/Release/miniaudio.dll" "Zeus.Dsp/runtimes/$rid/native/miniaudio.dll"
 
-      # zeus_wspr still lives in the com.kb2uka.digital plugin repo
-      # (openhpsdr-zeus-plugins/modes/Digital). zeus_ft8's source is in-tree
-      # under native/ft8, so it is built HERE — leaving it out is why the
-      # shipped binaries silently fell behind the source.
+      # zeus_ft8's source is in-tree under native/ft8, so it is built HERE.
+      # zeus_wspr is NOT built on this leg: no libzeus_wspr ships for Windows
+      # at all (see Zeus.Dsp/runtimes/win-*/native), so there is nothing to
+      # keep in sync here. The Linux and macOS legs do build it.
 
       - name: Build zeus_ft8 (x64)
         if: matrix.arch == 'x64'
@@ -543,10 +543,11 @@ jobs:
           cp "$so" Zeus.Dsp/runtimes/linux-arm64/native/libcodec2.so
           file Zeus.Dsp/runtimes/linux-arm64/native/libcodec2.so
 
-      # zeus_wspr still lives in the com.kb2uka.digital plugin repo
-      # (openhpsdr-zeus-plugins/modes/Digital). zeus_ft8's source is in-tree
-      # under native/ft8, so it is built HERE — leaving it out is why the
-      # shipped binaries silently fell behind the source.
+      # Both zeus_ft8 (native/ft8) and zeus_wspr (native/wspr) have their
+      # source in-tree, so both are built HERE. zeus_wspr used to be taken
+      # from the com.kb2uka.digital plugin repo instead, which is exactly how
+      # a shipped binary silently falls behind its source: a stack-overflow
+      # fix in wsprd.c could sit in-tree while the old .so kept shipping.
 
       - name: Build zeus_ft8 (x64)
         if: matrix.arch == 'x64'
@@ -575,6 +576,28 @@ jobs:
           CC=aarch64-linux-gnu-gcc \
             TEST_RUNNER="qemu-aarch64-static -L /usr/aarch64-linux-gnu" \
             bash native/ft8/tests/run.sh
+
+      - name: Build zeus_wspr (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          set -eux
+          bash native/wspr/build.sh libzeus_wspr.so
+          mv native/wspr/libzeus_wspr.so Zeus.Dsp/runtimes/linux-x64/native/libzeus_wspr.so
+          file Zeus.Dsp/runtimes/linux-x64/native/libzeus_wspr.so
+          nm -D --defined-only Zeus.Dsp/runtimes/linux-x64/native/libzeus_wspr.so | grep zeus_wspr
+
+      - name: Build zeus_wspr (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          set -eux
+          # No arm64 fftw3f headers on the runner: link straight against the
+          # cross-built .so already staged for this RID (build.sh FFTW=).
+          CC=aarch64-linux-gnu-gcc \
+            FFTW=Zeus.Dsp/runtimes/linux-arm64/native/libfftw3f.so.3 \
+            NM=aarch64-linux-gnu-nm \
+            bash native/wspr/build.sh libzeus_wspr.so
+          mv native/wspr/libzeus_wspr.so Zeus.Dsp/runtimes/linux-arm64/native/libzeus_wspr.so
+          file Zeus.Dsp/runtimes/linux-arm64/native/libzeus_wspr.so
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -685,10 +708,11 @@ jobs:
           cp "$dylib" Zeus.Dsp/runtimes/osx-arm64/native/libcodec2.dylib
           otool -L Zeus.Dsp/runtimes/osx-arm64/native/libcodec2.dylib
 
-      # zeus_wspr still lives in the com.kb2uka.digital plugin repo
-      # (openhpsdr-zeus-plugins/modes/Digital). zeus_ft8's source is in-tree
-      # under native/ft8, so it is built HERE — leaving it out is why the
-      # shipped binaries silently fell behind the source.
+      # Both zeus_ft8 (native/ft8) and zeus_wspr (native/wspr) have their
+      # source in-tree, so both are built HERE. zeus_wspr used to be taken
+      # from the com.kb2uka.digital plugin repo instead, which is exactly how
+      # a shipped binary silently falls behind its source: a stack-overflow
+      # fix in wsprd.c could sit in-tree while the old .so kept shipping.
 
       - name: Build zeus_ft8
         run: |
@@ -698,6 +722,31 @@ jobs:
 
       - name: Test zeus_ft8
         run: bash native/ft8/tests/run.sh
+
+      - name: Build zeus_wspr
+        run: |
+          set -eux
+          destDir="Zeus.Dsp/runtimes/osx-arm64/native"
+          fftw_lib="$(brew --prefix fftw)/lib"
+          CC=clang CPATH="$(brew --prefix fftw)/include" \
+            FFTW="-L${fftw_lib} -lfftw3f" \
+            bash native/wspr/build.sh libzeus_wspr.dylib
+          mv native/wspr/libzeus_wspr.dylib "$destDir/libzeus_wspr.dylib"
+
+          # Same rewrite the WDSP stage does: the loader must find FFTW next
+          # to the library, not in the builder's Homebrew prefix.
+          install_name_tool -id @rpath/libzeus_wspr.dylib "$destDir/libzeus_wspr.dylib"
+          install_name_tool \
+            -change "${fftw_lib}/libfftw3f.3.dylib" @loader_path/libfftw3f.3.dylib \
+            "$destDir/libzeus_wspr.dylib"
+
+          if otool -L "$destDir/libzeus_wspr.dylib" | grep -q '/opt/homebrew'; then
+            echo "ERROR: Homebrew absolute paths still present after install_name_tool rewrite"
+            otool -L "$destDir/libzeus_wspr.dylib"
+            exit 1
+          fi
+          otool -L "$destDir/libzeus_wspr.dylib"
+          nm -gU "$destDir/libzeus_wspr.dylib" | grep zeus_wspr
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

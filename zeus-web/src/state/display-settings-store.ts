@@ -161,7 +161,7 @@ function writeSavedSpotLabelFontPx(value: number): void {
 // load to migrate the operator's existing image / colour up to the backend,
 // then removed. New code should never read or write these.
 const LEGACY_PAN_BG_KEY = 'zeus.display.panBackground';
-const PAN_LEVEL_FILL_STORAGE_KEY = 'zeus.display.panLevelFill';
+const PAN3D_PANAFALL_STORAGE_KEY = 'zeus.display.pan3dPanafall';
 const LEGACY_BG_IMAGE_KEY = 'zeus.display.backgroundImage';
 const LEGACY_BG_FIT_KEY = 'zeus.display.backgroundImageFit';
 const LEGACY_RX_TRACE_COLOR_KEY = 'zeus.display.rxTraceColor';
@@ -582,11 +582,10 @@ export type DisplaySettingsState = {
   // string, not a data:URL. setBackgroundImage returns false on upload
   // failure (network or server-side rejection).
   panBackground: PanBackgroundMode;
-  /** Colour the panadapter FILL by each bin's own level, using the waterfall's
-   *  palette, instead of one flat trace colour. The trace stays a fixed bright
-   *  line so the envelope keeps its definition against the fill. Off by
-   *  default: existing radios look exactly as they did. */
-  panLevelFill: boolean;
+  /** 3D panadapter style. true = panafall (filled terrain with a front wall,
+   *  perspective, no traces); false = the original stacked surface with
+   *  traces and frequency-linear rows. */
+  pan3dPanafall: boolean;
   backgroundImage: string | null;
   backgroundImageFit: BackgroundImageFit;
   // RX panadapter trace colour as #RRGGBB. Drives both the sharp trace line
@@ -611,7 +610,7 @@ export type DisplaySettingsState = {
   spotLabelFontPx: number;
   setShowBandOverlay: (v: boolean) => void;
   setBandEdgeAlertEnabled: (v: boolean) => void;
-  setPanLevelFill: (v: boolean) => void;
+  setPan3dPanafall: (v: boolean) => void;
   setShowChatRosterOverlay: (v: boolean) => void;
   setSpotLabelFontPx: (v: number) => void;
   setPanBackground: (v: PanBackgroundMode) => Promise<void>;
@@ -770,7 +769,7 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
   // first paint instead of their saved image — acceptable trade-off for not
   // shipping the image on every page-load via localStorage.
   panBackground: 'basic',
-  panLevelFill: readBoolFlag(PAN_LEVEL_FILL_STORAGE_KEY, false),
+  pan3dPanafall: readBoolFlag(PAN3D_PANAFALL_STORAGE_KEY, true),
   backgroundImage: null,
   backgroundImageFit: 'fill',
   // Hydrated from the server on module load (see hydrateFromServer). Until
@@ -789,9 +788,9 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
     set({ bandEdgeAlertEnabled: v });
     writeBoolFlag(BAND_EDGE_ALERT_STORAGE_KEY, v);
   },
-  setPanLevelFill: (v) => {
-    set({ panLevelFill: v });
-    writeBoolFlag(PAN_LEVEL_FILL_STORAGE_KEY, v);
+  setPan3dPanafall: (v) => {
+    set({ pan3dPanafall: v });
+    writeBoolFlag(PAN3D_PANAFALL_STORAGE_KEY, v);
   },
   setShowChatRosterOverlay: (v) => {
     set({ showChatRosterOverlay: v });

@@ -121,22 +121,6 @@ in float v_alpha;
 in float v_level;
 uniform vec3 uColor;
 uniform float uPopIntensity;
-// Level-coloured fill: sample the SAME 256-entry palette the waterfall uses,
-// indexed by the bin's own normalised dB, instead of painting one flat colour.
-// uLevelFill blends between the two so the setting can be switched at runtime
-// with no GL re-init. The trace itself is drawn by PAN_FS and is deliberately
-// left alone — a fixed bright line keeps the envelope crisp against a fill
-// that is now the same hue as the signal sitting on top of it.
-uniform sampler2D uLut;
-uniform float uLevelFill;
-// Where each palette stops being black. Shared by the 2D fill and the 3D
-// surface so both views agree about where the colour ramp begins.
-// 0.55 puts a quiet band's noise floor in the palette's mid-blue rather than
-// its dark shelf, so the floor reads as a solid coloured bed and signals climb
-// through cyan → green → yellow → red above it. Reference: the Blue anchors
-// are black to 0.42, dark blue 0.52, bright blue 0.62, cyan 0.71, green 0.79,
-// yellow 0.87, red 0.94. Lower this if a quiet band looks too colourful.
-const float LUT_COLOR_FLOOR = 0.55;
 out vec4 fragColor;
 vec3 popRamp(float n) {
   vec3 floorGlow = vec3(0.00, 0.10, 0.18);
@@ -148,20 +132,7 @@ vec3 popRamp(float n) {
   return mix(c, peak, smoothstep(0.72, 1.0, n));
 }
 void main() {
-  // Darkened toward the baseline so the fill reads as shadow under the trace
-  // rather than a slab of paint: full palette colour at the trace, sinking to
-  // a fraction of it at the floor.
-  // The palettes deliberately hold their bottom ~35-42% at or near black so a
-  // noisy band doesn't flood the WATERFALL with colour. The panadapter's noise
-  // floor normalises straight into that shelf, so sampling raw v_level made
-  // the fill black and invisible — the operator saw only the trace. Compress
-  // the sample into the palette's coloured region instead: the floor lands
-  // where colour starts, peaks still reach the top of the ramp.
-  float lutT = LUT_COLOR_FLOOR + clamp(v_level, 0.0, 1.0) * (1.0 - LUT_COLOR_FLOOR);
-  vec3 lutCol = texture(uLut, vec2(lutT, 0.5)).rgb;
-  vec3 flat3 = uColor;
-  vec3 tint = mix(flat3, lutCol, clamp(uLevelFill, 0.0, 1.0));
-  vec4 base = vec4(tint * v_alpha, v_alpha);
+  vec4 base = vec4(uColor * v_alpha, v_alpha);
   float popI = clamp(uPopIntensity, 0.0, 1.0);
   float lift = smoothstep(0.04, 0.92, v_level);
   float alpha = v_alpha * mix(0.42, 0.86, lift);

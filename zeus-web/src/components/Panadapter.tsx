@@ -276,10 +276,6 @@ export function Panadapter({
       const dbMax = popOn ? 1 : keyed ? s.txDbMax : ownRange ? s.rx2DbMax : s.dbMax;
       const { r, g, b } = hexToRgbFloats(s.rxTraceColor);
       renderer.setTraceColor(r, g, b);
-      // Level-coloured fill uses the waterfall's own palette so the two halves
-      // of the display agree about what a colour means. Pop has its own ramp
-      // and owns the fill while it is on, so the two never fight.
-      renderer.setLevelFill(s.panLevelFill && !popOn, s.colormap);
       renderer.setPopMode(popOn, popIntensity);
       // Fractional offset — the shaders take a float uOffsetPx, so the
       // glide is sub-pixel-smooth for free (issue #597).

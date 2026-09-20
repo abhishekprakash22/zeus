@@ -62,10 +62,10 @@ function buildTracePath(): string {
 }
 
 export function TraceColorPanel() {
-  const panLevelFill = useDisplaySettingsStore((st) => st.panLevelFill);
-  const setPanLevelFill = useDisplaySettingsStore((st) => st.setPanLevelFill);
   const rxTraceColor = useDisplaySettingsStore((s) => s.rxTraceColor);
   const setRxTraceColor = useDisplaySettingsStore((s) => s.setRxTraceColor);
+  const pan3dPanafall = useDisplaySettingsStore((s) => s.pan3dPanafall);
+  const setPan3dPanafall = useDisplaySettingsStore((s) => s.setPan3dPanafall);
   const norm = rxTraceColor.toUpperCase();
   const gradId = useId();
   const tracePath = useMemo(() => buildTracePath(), []);
@@ -166,18 +166,18 @@ export function TraceColorPanel() {
       >
         <input
           type="checkbox"
-          checked={panLevelFill}
-          onChange={(e) => setPanLevelFill(e.currentTarget.checked)}
+          checked={pan3dPanafall}
+          onChange={(e) => setPan3dPanafall(e.currentTarget.checked)}
           style={{ marginTop: 3 }}
         />
         <span>
           <span style={{ display: 'block', fontSize: 13, color: 'var(--fg-0)' }}>
-            Color the fill by signal level
+            Fill the 3D surface
           </span>
           <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-3)' }}>
-            Shades the area under the trace with the waterfall's palette, so a
-            strong signal is obvious without reading the dB scale. The trace
-            itself keeps the color above, so the envelope stays crisp.
+            Draws the 3D panadapter as solid terrain coloured by signal level,
+            with a filled front face. Turn it off for the older look — the same
+            surface with a trace line over each row, in the color above.
           </span>
         </span>
       </label>

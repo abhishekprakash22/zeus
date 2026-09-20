@@ -131,7 +131,12 @@ uniform sampler2D uLut;
 uniform float uLevelFill;
 // Where each palette stops being black. Shared by the 2D fill and the 3D
 // surface so both views agree about where the colour ramp begins.
-const float LUT_COLOR_FLOOR = 0.40;
+// 0.55 puts a quiet band's noise floor in the palette's mid-blue rather than
+// its dark shelf, so the floor reads as a solid coloured bed and signals climb
+// through cyan → green → yellow → red above it. Reference: the Blue anchors
+// are black to 0.42, dark blue 0.52, bright blue 0.62, cyan 0.71, green 0.79,
+// yellow 0.87, red 0.94. Lower this if a quiet band looks too colourful.
+const float LUT_COLOR_FLOOR = 0.55;
 out vec4 fragColor;
 vec3 popRamp(float n) {
   vec3 floorGlow = vec3(0.00, 0.10, 0.18);

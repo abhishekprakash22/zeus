@@ -130,8 +130,13 @@ public static class DigitalEndpoints
             return Results.Ok(new { ok = true });
         });
         g.MapPost("/config/wsjtx-live", (WsjtxLiveRequest _) => Results.Ok(new { ok = true }));
-        g.MapPost("/config/spotting", () => Results.Ok(new { ok = true }));
-        g.MapGet("/spotting/status", () => Results.Ok(new { enabled = false, uploaded = 0 }));
+        // Spotting: FT8/FT4 → PSK Reporter, WSPR → WSPRnet. Opt-in, and inert
+        // without a callsign + grid (both networks attribute every spot).
+        g.MapPost("/config/spotting", (SpottingConfigRequest req, SpottingService spotting) =>
+            Results.Ok(SpottingStatusDto.From(spotting.Configure(new SpottingSettings(
+                req.PskReporterEnabled, req.WsprnetEnabled, req.Callsign ?? "", req.Grid ?? "")))));
+        g.MapGet("/spotting/status", (SpottingService spotting) =>
+            Results.Ok(SpottingStatusDto.From(spotting.Status)));
 
         // ---- SSE ------------------------------------------------------------
         // Replaces the legacy 0x38/0x39/0x3A WS frames (RESERVED in ws-client.ts).
@@ -162,4 +167,17 @@ public static class DigitalEndpoints
 
         return app;
     }
+}
+
+/// <summary>POST /config/spotting body — mirrors zeus-web's SpottingConfig.</summary>
+internal sealed record SpottingConfigRequest(
+    bool PskReporterEnabled, bool WsprnetEnabled, string? Callsign, string? Grid);
+
+/// <summary>GET /spotting/status + the POST reply — zeus-web's SpottingStatus.</summary>
+internal sealed record SpottingStatusDto(
+    bool PskReporterEnabled, bool WsprnetEnabled, string Callsign, string Grid,
+    bool IdentityResolved, int Uploaded)
+{
+    public static SpottingStatusDto From(SpottingService.SpottingStatus s) => new(
+        s.PskReporterEnabled, s.WsprnetEnabled, s.Callsign, s.Grid, s.IdentityResolved, s.Uploaded);
 }

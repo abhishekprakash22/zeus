@@ -130,6 +130,12 @@ public sealed class DigitalService : IHostedService, IDisposable
                     "FT8 needs the clock within ±1.5 s before transmitting.";
             return false;
         }
+        // Log every edge. The keyer logs what it transmits, but an arm that
+        // never happened, or a disarm nobody asked for, left no trace at all —
+        // which made "it stopped transmitting mid-QSO" impossible to place
+        // between the operator, the UI and the sequencer.
+        if (Armed != enabled)
+            _log.LogInformation("digital: keyer {State}", enabled ? "ARMED" : "disarmed");
         Armed = enabled;
         if (!enabled) Stages.Clear();
         Events.PublishTxStatus(BuildTxStatus());
@@ -138,6 +144,7 @@ public sealed class DigitalService : IHostedService, IDisposable
 
     public void Halt()
     {
+        if (Armed) _log.LogInformation("digital: keyer halted");
         // Armed=false aborts an in-flight keyer pump within one audio block;
         // the keyer's finally then drops MOX and publishes the idle status.
         Armed = false;

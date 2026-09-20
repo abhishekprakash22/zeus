@@ -79,7 +79,7 @@ describe('logger-store addLogEntry logbook gate', () => {
   it('resets the one-shot unavailable notice after the plugin becomes ready', async () => {
     await expect(useLoggerStore.getState().addLogEntry(makeRequest('K1ABC'))).resolves.toBeNull();
     expect(h.createLogEntry).not.toHaveBeenCalled();
-    expect(useLoggerStore.getState().error).toBe('Install the Logbook plugin from Settings → Plugins');
+    expect(useLoggerStore.getState().error).toBe('Logbook unavailable — the backend has no logbook store');
 
     useLogbookPluginStore.setState({ installed: true, live: true, probed: true });
     await expect(useLoggerStore.getState().addLogEntry(makeRequest('K1ABC'))).resolves.toMatchObject({
@@ -91,6 +91,6 @@ describe('logger-store addLogEntry logbook gate', () => {
     useLogbookPluginStore.setState({ installed: false, live: false, probed: true });
     await expect(useLoggerStore.getState().addLogEntry(makeRequest('N9WAR'))).resolves.toBeNull();
     expect(h.createLogEntry).toHaveBeenCalledTimes(1);
-    expect(useLoggerStore.getState().error).toBe('Install the Logbook plugin from Settings → Plugins');
+    expect(useLoggerStore.getState().error).toBe('Logbook unavailable — the backend has no logbook store');
   });
 });

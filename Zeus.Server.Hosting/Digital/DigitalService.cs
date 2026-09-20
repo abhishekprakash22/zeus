@@ -76,6 +76,21 @@ public sealed class DigitalService : IHostedService, IDisposable
     /// <summary>Slot-start UTC ms of the most recent keyed transmission.</summary>
     public double? LastTxSlotMs { get; internal set; }
 
+    private volatile TxStage? _keyedStage;
+
+    /// <summary>
+    /// The stage the keyer is actually putting on the air, held for the whole
+    /// transmission. The frontend re-stages the NEXT message roughly a second
+    /// into the current one (decodes land, the sequencer steps), so reporting
+    /// Stages.Peek() while transmitting shows the operator the message AFTER the
+    /// one their radio is sending.
+    /// </summary>
+    public TxStage? KeyedStage
+    {
+        get => _keyedStage;
+        internal set => _keyedStage = value;
+    }
+
     public DigitalService(DspPipelineService pipeline, ILogger<DigitalService> log)
     {
         _pipeline = pipeline;
@@ -145,9 +160,19 @@ public sealed class DigitalService : IHostedService, IDisposable
         Events.PublishTxStatus(BuildTxStatus());
     }
 
+    /// <summary>
+    /// Which stage the TX status reports. While transmitting it is the one ON
+    /// THE AIR; otherwise the staged one. The frontend re-stages the next
+    /// message about a second into the current transmission (decodes land, the
+    /// sequencer steps), so reporting the staged one throughout showed the
+    /// operator the message AFTER the one their radio was sending.
+    /// </summary>
+    internal static TxStage? ReportedStage(bool transmitting, TxStage? keyed, TxStage? staged) =>
+        (transmitting ? keyed : null) ?? staged;
+
     public Ft8TxStatus BuildTxStatus()
     {
-        var s = Stages.Peek();
+        var s = ReportedStage(Transmitting, KeyedStage, Stages.Peek());
         return new Ft8TxStatus
         {
             Armed = Armed,

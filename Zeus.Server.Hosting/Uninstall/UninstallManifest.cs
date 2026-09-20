@@ -256,7 +256,8 @@ public static class UninstallManifestBuilder
                     foreach (var f in new[] { full, full + "-log" })
                         candidates.Add(new(f, EntryKind.File, Path.GetFileName(f), dir, Essential: false));
                     var logbook = Path.Combine(dir, "zeus-logbook.db");
-                    foreach (var f in new[] { logbook, logbook + "-log" })
+                    var coreLogbook = Path.Combine(dir, "zeus-core-logbook.db");
+                    foreach (var f in new[] { logbook, logbook + "-log", coreLogbook, coreLogbook + "-log" })
                         candidates.Add(new(f, EntryKind.File, Path.GetFileName(f), dir, Essential: false));
                 }
             }

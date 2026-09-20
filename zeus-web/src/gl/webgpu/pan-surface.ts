@@ -297,14 +297,24 @@ fn vsLine(@builtin(vertex_index) vi : u32) -> VsOut {
 @fragment
 fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
   let lvl = clamp(in.level * 0.98 + in.crest * 0.55 * u.p4.w, 0.0, 1.0);
-  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvl, 0.5)).rgb * in.light;
+  // Hillshade is weighted BY LEVEL. It reaches 1.48x, and on the noise floor
+  // the surface is flat so the normal points straight up and lambert is at its
+  // maximum — which took the palette's near-black floor colour and lit it into
+  // a pale grey-blue sheet across the front of the display, exactly where the
+  // newest data is. Relief is worth having on signals and worth nothing on
+  // flat noise, so the shading now fades in with level.
+  let shade = mix(1.0, in.light, smoothstep(0.06, 0.42, lvl));
+  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvl, 0.5)).rgb * shade;
   let txRow = smoothstep(1.5, 2.0, in.domain);
   col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.level));
   let horizon = vec3<f32>(0.015, 0.045, 0.09);
   col = mix(col, horizon, in.depth * 0.42);
   let glow = smoothstep(0.42, 0.95, in.level) * (0.18 + u.p4.w * 0.28) + in.crest * u.p4.w * 0.75;
   col += vec3<f32>(0.35, 0.68, 1.0) * glow * (1.0 - in.depth * 0.45);
-  let alpha = mix(0.58, 0.93, smoothstep(0.04, 0.82, in.level)) * (1.0 - in.depth * 0.28);
+  // Floor alpha was 0.58: even fully dark, that much coverage over the
+  // background still reads as a grey wash. Signals keep their opacity; the
+  // floor sinks into the background instead of sheeting over it.
+  let alpha = mix(0.16, 0.93, smoothstep(0.04, 0.82, in.level)) * (1.0 - in.depth * 0.28);
   return vec4<f32>(min(col, vec3<f32>(1.0)), alpha);
 }
 
@@ -455,7 +465,12 @@ export function createPanSurfaceRenderer(
     const centerOffset = viewCenterHz - base;
     const viewSpanHz = panSurfaceViewSpanHzForTest(viewHzPerPixel, anchorSourceWidth, texWidth);
     const usableHeight = Math.max(80, canvasH);
-    const frontY = -0.88;
+    // Nearest row sits ON the bottom edge (-1.0 in clip space) rather than
+    // floating above it, so the newest trace meets the splitter and lines up
+    // with the top row of the waterfall below — the same instant, one directly
+    // above the other. The old -0.88 left a band under the surface that read
+    // as a wall.
+    const frontY = -1.0;
     const backY = Math.max(-0.08, Math.min(0.34, -0.02 + usableHeight / 900));
     const heightGain = Math.max(0.30, Math.min(0.76, 0.42 + usableHeight / 1000)) * (0.72 + reliefDepth * 0.48);
 

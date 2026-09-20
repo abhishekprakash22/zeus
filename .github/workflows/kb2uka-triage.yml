@@ -23,7 +23,7 @@ jobs:
       issues: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Mint KB2UKA-Agent App token
         id: app-token

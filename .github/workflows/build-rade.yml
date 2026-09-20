@@ -50,7 +50,7 @@ jobs:
           - { os: macos-14,     rid: osx-arm64,  lib: libzeus_rade.dylib }
     steps:
       - name: Checkout Zeus
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up CMake + Ninja
         uses: lukka/get-cmake@latest
@@ -159,7 +159,7 @@ jobs:
           ls -la "$dest"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zeus_rade-${{ matrix.rid }}
           path: Zeus.Dsp/runtimes/${{ matrix.rid }}/native/${{ matrix.lib }}

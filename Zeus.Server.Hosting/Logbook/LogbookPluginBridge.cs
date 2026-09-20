@@ -24,6 +24,7 @@ public sealed class LogbookPluginBridge : IHostedService
     private readonly object _gate = new();
     private ILogbookPlugin? _current;
     private string? _currentId;
+    private ILogbookPlugin? _fallback;
 
     public LogbookPluginBridge(PluginManager manager, ILogger<LogbookPluginBridge> log)
     {
@@ -36,7 +37,27 @@ public sealed class LogbookPluginBridge : IHostedService
         _log = log;
     }
 
-    public ILogbookPlugin? Current => Volatile.Read(ref _current);
+    /// <summary>
+    /// The logbook the /api/log/* surface talks to: an installed plugin when
+    /// there is one, otherwise the logbook Zeus ships with itself
+    /// (<see cref="CoreLogbook"/>). A plugin always wins — the fallback only
+    /// keeps a stock install from silently discarding every QSO.
+    /// </summary>
+    public ILogbookPlugin? Current => Volatile.Read(ref _current) ?? Volatile.Read(ref _fallback);
+
+    /// <summary>
+    /// Register the built-in logbook. Unlike <see cref="Attach(ILogbookPlugin)"/>
+    /// this never blocks a plugin from taking over later.
+    /// </summary>
+    public void AttachFallback(ILogbookPlugin logbook)
+    {
+        lock (_gate)
+        {
+            Volatile.Write(ref _fallback, logbook);
+            if (Volatile.Read(ref _current) is null)
+                _log.LogInformation("Logbook: using the built-in store (no logbook plugin installed).");
+        }
+    }
 
     public Task StartAsync(CancellationToken ct)
     {
@@ -57,6 +78,7 @@ public sealed class LogbookPluginBridge : IHostedService
         lock (_gate)
         {
             Volatile.Write(ref _current, null);
+            Volatile.Write(ref _fallback, null);
             _currentId = null;
         }
         return Task.CompletedTask;
@@ -68,7 +90,7 @@ public sealed class LogbookPluginBridge : IHostedService
     {
         lock (_gate)
         {
-            if (!ReferenceEquals(Current, plugin)) return;
+            if (!ReferenceEquals(Volatile.Read(ref _current), plugin)) return;
             var inactiveId = _currentId;
             Volatile.Write(ref _current, null);
             _currentId = null;
@@ -103,7 +125,7 @@ public sealed class LogbookPluginBridge : IHostedService
     {
         lock (_gate)
         {
-            var existing = Current;
+            var existing = Volatile.Read(ref _current);
             if (ReferenceEquals(existing, plugin)) return;
             if (existing is not null)
             {
@@ -116,7 +138,11 @@ public sealed class LogbookPluginBridge : IHostedService
 
             _currentId = id;
             Volatile.Write(ref _current, plugin);
-            _log.LogInformation("Logbook plugin {Id} active.", _currentId ?? "(manual)");
+            _log.LogInformation(
+                Volatile.Read(ref _fallback) is null
+                    ? "Logbook plugin {Id} active."
+                    : "Logbook plugin {Id} active; the built-in store steps aside.",
+                _currentId ?? "(manual)");
         }
     }
 }

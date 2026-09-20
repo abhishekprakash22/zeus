@@ -69,11 +69,15 @@ import {
   deleteLogEntries,
 } from '../api/log';
 import { useCapabilitiesStore } from './capabilities-store';
-import { isLogbookPluginReady, logbookPluginUnavailableReason } from './logbook-plugin-store';
+import {
+  LOGBOOK_UNAVAILABLE_REASON,
+  isLogbookPluginReady,
+  logbookPluginUnavailableReason,
+} from './logbook-plugin-store';
 
 let logbookUnavailableNoticeShown = false;
-const LOGBOOK_UNAVAILABLE_FALLBACK = 'Logbook plugin unavailable';
-const LOGBOOK_INSTALL_REASON = 'Install the Logbook plugin from Settings → Plugins';
+const LOGBOOK_UNAVAILABLE_FALLBACK = 'Logbook unavailable';
+const LOGBOOK_INSTALL_REASON = LOGBOOK_UNAVAILABLE_REASON;
 
 function isLogbookUnavailableMessage(message: string | null): boolean {
   return message === LOGBOOK_UNAVAILABLE_FALLBACK || message === LOGBOOK_INSTALL_REASON;

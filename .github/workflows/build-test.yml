@@ -74,7 +74,7 @@ jobs:
           # x86_64 on macos-14) if a hard Intel gate is wanted again later.
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The DeepCW ONNX model lives in a git submodule and is a build-time
       # dependency of the web bundle (decode-worker.ts statically imports
@@ -84,12 +84,12 @@ jobs:
         run: git submodule update --init zeus-web/external/deepcw-engine
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'

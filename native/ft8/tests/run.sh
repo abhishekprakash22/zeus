@@ -9,7 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CC=${CC:-cc}
-CFLAGS="-O1 -g -DHAVE_STPCPY -pthread -I."
+CFLAGS="-O1 -g -pthread -I."
+# Windows (MSYS2/mingw, or a cross toolchain): ft8_lib's one use of POSIX
+# stpcpy needs the shim. Same detection as build.sh.
+case "${CC}${MSYSTEM:-}" in
+  *mingw*|*MINGW*) CFLAGS="$CFLAGS -include win-compat.h" ;;
+esac
 OBJ=.obj-test
 BIN=${TMPDIR:-/tmp}/zeus_ft8_tests
 
@@ -24,7 +29,9 @@ for t in tests/*_test.c; do
   name=$(basename "$t" .c)
   echo "building $name..."
   $CC $CFLAGS -o "$BIN-$name" "$t" "$OBJ"/*.o -lm
-  "$BIN-$name" || status=1
+  # TEST_RUNNER lets a cross build still execute its tests, e.g.
+  #   TEST_RUNNER="qemu-aarch64-static -L /usr/aarch64-linux-gnu"
+  ${TEST_RUNNER:-} "$BIN-$name" || status=1
 done
 
 rm -rf "$OBJ"

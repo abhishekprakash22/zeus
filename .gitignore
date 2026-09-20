@@ -121,3 +121,6 @@ native/build-rade/
 # zeus_ft8 native build/test scratch
 native/ft8/.obj/
 native/ft8/.obj-test/
+native/ft8/libzeus_ft8.so
+native/ft8/libzeus_ft8.dylib
+native/ft8/zeus_ft8.dll

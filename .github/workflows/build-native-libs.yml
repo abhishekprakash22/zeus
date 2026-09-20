@@ -217,8 +217,38 @@ jobs:
           $rid = "win-${{ matrix.arch }}"
           Copy-Item "native/build-miniaudio/Release/miniaudio.dll" "Zeus.Dsp/runtimes/$rid/native/miniaudio.dll"
 
-      # zeus_ft8 / zeus_wspr moved to the com.kb2uka.digital plugin repo
-      # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
+      # zeus_wspr still lives in the com.kb2uka.digital plugin repo
+      # (openhpsdr-zeus-plugins/modes/Digital). zeus_ft8's source is in-tree
+      # under native/ft8, so it is built HERE — leaving it out is why the
+      # shipped binaries silently fell behind the source.
+
+      - name: Build zeus_ft8 (x64)
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          # mingw gcc, not MSVC: the same toolchain the .so/.dylib builds use,
+          # so all four runtimes come out of one script. The runner image ships
+          # it; probe the usual locations rather than assume PATH.
+          for c in gcc /c/msys64/mingw64/bin/gcc /c/mingw64/bin/gcc; do
+            if command -v "$c" >/dev/null 2>&1; then CC="$c"; break; fi
+          done
+          test -n "${CC:-}" || { echo "no mingw gcc on this runner"; exit 1; }
+          echo "using $CC"; "$CC" --version | head -1
+
+          CC="$CC" bash native/ft8/build.sh zeus_ft8.dll
+          mkdir -p Zeus.Dsp/runtimes/win-x64/native
+          mv native/ft8/zeus_ft8.dll Zeus.Dsp/runtimes/win-x64/native/zeus_ft8.dll
+
+      - name: Test zeus_ft8 (x64)
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          # Runs natively on the Windows runner — this is the only place the
+          # Windows build is actually EXECUTED rather than just linked.
+          for c in gcc /c/msys64/mingw64/bin/gcc /c/mingw64/bin/gcc; do
+            if command -v "$c" >/dev/null 2>&1; then CC="$c"; break; fi
+          done
+          CC="$CC" bash native/ft8/tests/run.sh
 
       # ---------- codec2 (FreeDV digital voice modem) ---------------------
       #
@@ -513,8 +543,38 @@ jobs:
           cp "$so" Zeus.Dsp/runtimes/linux-arm64/native/libcodec2.so
           file Zeus.Dsp/runtimes/linux-arm64/native/libcodec2.so
 
-      # zeus_ft8 / zeus_wspr moved to the com.kb2uka.digital plugin repo
-      # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
+      # zeus_wspr still lives in the com.kb2uka.digital plugin repo
+      # (openhpsdr-zeus-plugins/modes/Digital). zeus_ft8's source is in-tree
+      # under native/ft8, so it is built HERE — leaving it out is why the
+      # shipped binaries silently fell behind the source.
+
+      - name: Build zeus_ft8 (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          bash native/ft8/build.sh libzeus_ft8.so
+          mv native/ft8/libzeus_ft8.so Zeus.Dsp/runtimes/linux-x64/native/libzeus_ft8.so
+          file Zeus.Dsp/runtimes/linux-x64/native/libzeus_ft8.so
+
+      - name: Test zeus_ft8 (x64)
+        if: matrix.arch == 'x64'
+        run: bash native/ft8/tests/run.sh
+
+      - name: Build zeus_ft8 (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          CC=aarch64-linux-gnu-gcc bash native/ft8/build.sh libzeus_ft8.so
+          mv native/ft8/libzeus_ft8.so Zeus.Dsp/runtimes/linux-arm64/native/libzeus_ft8.so
+          file Zeus.Dsp/runtimes/linux-arm64/native/libzeus_ft8.so
+
+      - name: Test zeus_ft8 (arm64, under qemu)
+        if: matrix.arch == 'arm64'
+        run: |
+          # A cross build that is never executed is a build, not a test. qemu
+          # runs the arm64 harness against the cross toolchain's own libc.
+          sudo apt-get install -y qemu-user-static
+          CC=aarch64-linux-gnu-gcc \
+            TEST_RUNNER="qemu-aarch64-static -L /usr/aarch64-linux-gnu" \
+            bash native/ft8/tests/run.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -625,8 +685,19 @@ jobs:
           cp "$dylib" Zeus.Dsp/runtimes/osx-arm64/native/libcodec2.dylib
           otool -L Zeus.Dsp/runtimes/osx-arm64/native/libcodec2.dylib
 
-      # zeus_ft8 / zeus_wspr moved to the com.kb2uka.digital plugin repo
-      # (openhpsdr-zeus-plugins/modes/Digital) together with their sources.
+      # zeus_wspr still lives in the com.kb2uka.digital plugin repo
+      # (openhpsdr-zeus-plugins/modes/Digital). zeus_ft8's source is in-tree
+      # under native/ft8, so it is built HERE — leaving it out is why the
+      # shipped binaries silently fell behind the source.
+
+      - name: Build zeus_ft8
+        run: |
+          bash native/ft8/build.sh libzeus_ft8.dylib
+          mv native/ft8/libzeus_ft8.dylib Zeus.Dsp/runtimes/osx-arm64/native/libzeus_ft8.dylib
+          file Zeus.Dsp/runtimes/osx-arm64/native/libzeus_ft8.dylib
+
+      - name: Test zeus_ft8
+        run: bash native/ft8/tests/run.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

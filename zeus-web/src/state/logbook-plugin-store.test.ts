@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// logbook-plugin-store tests — Logbook panel gate. installed = plugin id
-// appears in the installed list; live = GET /status answers 2xx.
+// logbook-plugin-store tests — Logbook panel gate. With the logbook plugin
+// installed: installed = the plugin id is in the list, live = GET /status
+// answers 2xx. Without it the gate follows the backend, which answers for the
+// built-in store through /api/log/capabilities.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  LOGBOOK_UNAVAILABLE_REASON,
   isLogbookPluginReady,
   logbookPluginUnavailableReason,
   useLogbookPluginStore,
@@ -16,7 +19,7 @@ import { parsePluginDto } from '../plugins/api/plugins';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-function stubFetch(statusCode: number, pluginIds: string[] = []) {
+function stubFetch(statusCode: number, pluginIds: string[] = [], coreLogbook = false) {
   const fn = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === `${LOGBOOK_PLUGIN_BASE}/status`) {
@@ -37,6 +40,14 @@ function stubFetch(statusCode: number, pluginIds: string[] = []) {
           sdkVersion: '1.3.0',
           plugins: pluginIds.map((id) => ({ id, scanned: false, name: id, version: '1.0.0' })),
         }),
+      };
+    }
+    if (url === '/api/log/capabilities') {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({ pluginInstalled: coreLogbook, canEdit: true, canQsl: true, canTags: true }),
       };
     }
     return { ok: true, status: 200, headers: new Headers(), json: async () => ({}) };
@@ -99,6 +110,27 @@ describe('logbook-plugin-store', () => {
     expect(fn.mock.calls.some((c) => String(c[0]) === `${LOGBOOK_PLUGIN_BASE}/status`)).toBe(false);
   });
 
+  it('opens the gate off the built-in store when no plugin is installed', async () => {
+    const fn = stubFetch(404, [], true);
+    await useLogbookPluginStore.getState().probe();
+    expect(isLogbookPluginReady()).toBe(true);
+    expect(logbookPluginUnavailableReason()).toBeNull();
+    expect(fn.mock.calls.some((c) => String(c[0]) === '/api/log/capabilities')).toBe(true);
+  });
+
+  it('keeps the gate shut when the backend reports no logbook at all', async () => {
+    stubFetch(404, [], false);
+    await useLogbookPluginStore.getState().probe();
+    expect(isLogbookPluginReady()).toBe(false);
+  });
+
+  it('keeps the gate shut when /api/log/capabilities cannot be reached', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))) as never);
+    await useLogbookPluginStore.getState().probe();
+    expect(isLogbookPluginReady()).toBe(false);
+    expect(useLogbookPluginStore.getState().probed).toBe(true);
+  });
+
   it('installed follows the plugins-store list and re-probes on change', async () => {
     const fn = stubFetch(200);
     usePluginsStore.setState({
@@ -124,11 +156,11 @@ describe('logbook-plugin-store', () => {
   it('readiness and reason require both installed and live', () => {
     useLogbookPluginStore.setState({ installed: false, live: false });
     expect(isLogbookPluginReady()).toBe(false);
-    expect(logbookPluginUnavailableReason()).toBe('Install the Logbook plugin from Settings → Plugins');
+    expect(logbookPluginUnavailableReason()).toBe(LOGBOOK_UNAVAILABLE_REASON);
 
     useLogbookPluginStore.setState({ installed: true, live: false });
     expect(isLogbookPluginReady()).toBe(false);
-    expect(logbookPluginUnavailableReason()).toBe('Install the Logbook plugin from Settings → Plugins');
+    expect(logbookPluginUnavailableReason()).toBe(LOGBOOK_UNAVAILABLE_REASON);
 
     useLogbookPluginStore.setState({ installed: true, live: true });
     expect(isLogbookPluginReady()).toBe(true);

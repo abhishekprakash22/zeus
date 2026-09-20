@@ -13,21 +13,47 @@
  *
  * Threading: zeus_ft8_decode() and zeus_ft8_synth() are self-contained —
  * they allocate what they need per call and free it before returning. The
- * caller invokes them from worker threads, never the audio thread. NOTE the
- * callsign hashtable is shared static state (as upstream); decode resets it
- * per call, and synth only APPENDS via save_hash for nonstandard calls, so
- * interleaving is benign for standard traffic.
+ * caller invokes them from worker threads, never the audio thread. The
+ * callsign hashtable is shared static state that OUTLIVES a decode call (see
+ * below), so every access to it is taken under hash_lock.
  */
 
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
+/* Minimal mutex shim — the hashtable is reached from the decode worker and
+ * from the keyer thread (synth), and it is now long-lived state. No new
+ * dependency: CRITICAL_SECTION on Windows, pthreads everywhere else. */
+#ifdef _WIN32
+#include <windows.h>
+static CRITICAL_SECTION hash_cs;
+static INIT_ONCE hash_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK hash_init_once(PINIT_ONCE o, PVOID p, PVOID* c)
+{
+    (void)o; (void)p; (void)c;
+    InitializeCriticalSection(&hash_cs);
+    return TRUE;
+}
+static void hash_lock(void)
+{
+    InitOnceExecuteOnce(&hash_once, hash_init_once, NULL, NULL);
+    EnterCriticalSection(&hash_cs);
+}
+static void hash_unlock(void) { LeaveCriticalSection(&hash_cs); }
+#else
+#include <pthread.h>
+static pthread_mutex_t hash_mutex = PTHREAD_MUTEX_INITIALIZER;
+static void hash_lock(void) { pthread_mutex_lock(&hash_mutex); }
+static void hash_unlock(void) { pthread_mutex_unlock(&hash_mutex); }
+#endif
+
 #include "ft8/decode.h"
 #include "ft8/encode.h"
 #include "ft8/message.h"
 #include "ft8/constants.h"
 #include "common/monitor.h"
+#include "fft/kiss_fftr.h"
 
 #include "zeus_ft8.h"
 
@@ -40,8 +66,19 @@
 
 /* --- callsign hash table -------------------------------------------------
  * ft8_lib needs somewhere to remember callsigns so it can resolve the hashed
- * <...> forms used by compound/portable calls. The demo uses a fixed table; we
- * do the same, reset per call.
+ * <...> forms that carry compound, portable and special-event calls.
+ *
+ * The table MUST outlive a single decode call. A nonstandard callsign travels
+ * in full exactly once — in the type-4 message that announces it (e.g.
+ * "CQ II7ABB") — and every later message refers to it by hash alone. Those
+ * later messages arrive in LATER slots, i.e. later decode calls. Wiping the
+ * table per call (as this shim used to) therefore guaranteed that no hashed
+ * call could ever resolve: the operator saw "EA5IUE <...> -10" and had nobody
+ * to answer. It is a session-long cache, as in WSJT-X.
+ *
+ * save_callsign() in ft8_lib stores the 22-bit hash, and the 10/12-bit forms
+ * are its TOP bits (n12 = n22 >> 10, n10 = n22 >> 12). A lookup must therefore
+ * compare the stored hash SHIFTED DOWN, not its low bits masked off.
  */
 #define CALLSIGN_HASHTABLE_SIZE 256
 
@@ -51,18 +88,21 @@ static struct
     uint32_t hash;
 } hashtable[CALLSIGN_HASHTABLE_SIZE];
 
-static int hashtable_size = 0;
-
-static void hashtable_init(void)
+/* Home slot for a 22-bit hash: its top 10 bits, which is the one part every
+ * hash width has in common (n10 IS those bits), so a 10-, 12- or 22-bit
+ * lookup all probe from the same place. */
+static int hashtable_home(uint32_t hash22)
 {
-    memset(hashtable, 0, sizeof(hashtable));
-    hashtable_size = 0;
+    return (int)(((hash22 >> 12) & 0x3FFu) % CALLSIGN_HASHTABLE_SIZE);
 }
 
 static void hashtable_add(const char* callsign, uint32_t hash)
 {
-    uint16_t hash10 = (hash >> 12) & 0x3FFu;
-    int idx = hash10 % CALLSIGN_HASHTABLE_SIZE;
+    if (callsign == NULL || callsign[0] == '\0') return;
+
+    hash_lock();
+    int home = hashtable_home(hash);
+    int idx = home;
     for (int i = 0; i < CALLSIGN_HASHTABLE_SIZE; i++)
     {
         if (hashtable[idx].callsign[0] == '\0')
@@ -70,14 +110,25 @@ static void hashtable_add(const char* callsign, uint32_t hash)
             strncpy(hashtable[idx].callsign, callsign, 11);
             hashtable[idx].callsign[11] = '\0';
             hashtable[idx].hash = hash;
-            hashtable_size++;
+            hash_unlock();
             return;
         }
         if (hashtable[idx].hash == hash &&
             strcmp(hashtable[idx].callsign, callsign) == 0)
+        {
+            hash_unlock();
             return;                                   /* already known */
+        }
         idx = (idx + 1) % CALLSIGN_HASHTABLE_SIZE;
     }
+
+    /* Full. Take the home slot rather than dropping the callsign: a table that
+     * silently stops learning would bring the <...> symptom back after a busy
+     * session. */
+    strncpy(hashtable[home].callsign, callsign, 11);
+    hashtable[home].callsign[11] = '\0';
+    hashtable[home].hash = hash;
+    hash_unlock();
 }
 
 static bool hashtable_lookup(ftx_callsign_hash_type_t hash_type,
@@ -85,19 +136,27 @@ static bool hashtable_lookup(ftx_callsign_hash_type_t hash_type,
 {
     uint8_t hash_shift = (hash_type == FTX_CALLSIGN_HASH_10_BITS) ? 12
                        : (hash_type == FTX_CALLSIGN_HASH_12_BITS) ? 10 : 0;
-    uint16_t hash10 = (hash >> (12 - hash_shift)) & 0x3FFu;
-    int idx = hash10 % CALLSIGN_HASHTABLE_SIZE;
+    /* Re-align the received n-bit hash to the top 10 bits used for the home
+     * slot: n10 is already there, n12 is 2 bits down, n22 is 12 bits down. */
+    uint16_t hash10 = (uint16_t)((hash >> (12 - hash_shift)) & 0x3FFu);
+
+    hash_lock();
+    int idx = (int)(hash10 % CALLSIGN_HASHTABLE_SIZE);
     for (int i = 0; i < CALLSIGN_HASHTABLE_SIZE; i++)
     {
-        if ((hashtable[idx].hash & ((1u << (22 - hash_shift)) - 1u)) ==
-            (hash & ((1u << (22 - hash_shift)) - 1u)))
+        /* Empty slot ends the probe — and must be tested FIRST, or a received
+         * hash of 0 "matches" an empty entry and resolves to an empty call. */
+        if (hashtable[idx].callsign[0] == '\0') break;
+        if (((hashtable[idx].hash & 0x3FFFFFu) >> hash_shift) == hash)
         {
             strcpy(callsign, hashtable[idx].callsign);
+            hash_unlock();
             return true;
         }
-        if (hashtable[idx].callsign[0] == '\0') break;
         idx = (idx + 1) % CALLSIGN_HASHTABLE_SIZE;
     }
+    hash_unlock();
+
     callsign[0] = '\0';
     return false;
 }
@@ -146,6 +205,129 @@ static float* resample_to_12k(const float* in, int n_in, int rate_in, int* n_out
 
 int zeus_ft8_version(void) { return 1; }
 
+/* =========================================================================
+ * SNR
+ *
+ * ft8_lib's demo prints `candidate->score / 2` and calls it SNR. It is not:
+ * it is a correlation score, always positive, so every decode was reported
+ * around +6..+18 dB while the rest of the network reported the same stations
+ * at -25..0 dB — roughly 28 dB high, and never negative.
+ *
+ * WSJT-X reports SNR in the standard 2500 Hz noise bandwidth. Measure it:
+ * average the power spectrum over the message (Welch, Hann, 50% overlap),
+ * take the signal as the power in the 50 Hz the transmission occupies (8
+ * tones x 6.25 Hz), and the noise floor as the MEDIAN power of the bins
+ * around it — the median ignores the other FT8 signals sharing the passband,
+ * which a mean would not. Then normalise the noise to 2500 Hz.
+ * ========================================================================= */
+
+#define ZEUS_SNR_NFFT   4096                      /* 2.93 Hz bins at 12 kHz   */
+#define ZEUS_SNR_BINS   (ZEUS_SNR_NFFT / 2 + 1)
+#define ZEUS_SNR_REF_BW 2500.0f                   /* WSJT-X reference         */
+#define ZEUS_SIG_BW     50.0f                     /* 8 tones x 6.25 Hz        */
+
+static int cmp_float(const void* a, const void* b)
+{
+    float x = *(const float*)a, y = *(const float*)b;
+    return (x > y) - (x < y);
+}
+
+/* Mean power spectrum of sig[from..to) — returns 0 when the window is too short. */
+static int welch_power(const float* sig, int n, int from, int to, float* power)
+{
+    if (from < 0) from = 0;
+    if (to > n) to = n;
+    if (to - from < ZEUS_SNR_NFFT) return 0;
+
+    kiss_fftr_cfg cfg = kiss_fftr_alloc(ZEUS_SNR_NFFT, 0, NULL, NULL);
+    if (!cfg) return 0;
+
+    float* win = (float*)malloc(sizeof(float) * ZEUS_SNR_NFFT);
+    kiss_fft_cpx* spec = (kiss_fft_cpx*)malloc(sizeof(kiss_fft_cpx) * ZEUS_SNR_BINS);
+    if (!win || !spec) { free(win); free(spec); kiss_fftr_free(cfg); return 0; }
+
+    for (int i = 0; i < ZEUS_SNR_BINS; i++) power[i] = 0.0f;
+
+    int blocks = 0;
+    for (int start = from; start + ZEUS_SNR_NFFT <= to; start += ZEUS_SNR_NFFT / 2)
+    {
+        for (int i = 0; i < ZEUS_SNR_NFFT; i++)
+        {
+            float w = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * i / (ZEUS_SNR_NFFT - 1));
+            win[i] = sig[start + i] * w;
+        }
+        kiss_fftr(cfg, win, spec);
+        for (int i = 0; i < ZEUS_SNR_BINS; i++)
+            power[i] += spec[i].r * spec[i].r + spec[i].i * spec[i].i;
+        blocks++;
+    }
+
+    if (blocks > 0)
+        for (int i = 0; i < ZEUS_SNR_BINS; i++) power[i] /= blocks;
+
+    free(win);
+    free(spec);
+    kiss_fftr_free(cfg);
+    return blocks;
+}
+
+/* SNR in dB (2500 Hz reference) of the transmission at freq_hz starting at
+   time_sec, or ZEUS_SNR_UNKNOWN when it cannot be measured. */
+static int estimate_snr_db(const float* sig, int n12, float freq_hz, float time_sec, int is_ft4)
+{
+    const float slot = is_ft4 ? 7.5f : 15.0f;
+    const float dur  = is_ft4 ? 4.48f : 12.64f;   /* 105 x 0.048 / 79 x 0.16   */
+    if (freq_hz < 100.0f || freq_hz > 2900.0f) return ZEUS_SNR_UNKNOWN;
+
+    float t0 = time_sec;
+    if (t0 < 0.0f) t0 = 0.0f;
+    if (t0 > slot) return ZEUS_SNR_UNKNOWN;
+
+    static float power[ZEUS_SNR_BINS];
+    int blocks = welch_power(sig, n12,
+                             (int)(t0 * ZEUS_FT8_RATE),
+                             (int)((t0 + dur) * ZEUS_FT8_RATE), power);
+    if (blocks == 0) return ZEUS_SNR_UNKNOWN;
+
+    const float bin_hz = (float)ZEUS_FT8_RATE / ZEUS_SNR_NFFT;
+    int sig_lo = (int)((freq_hz - bin_hz) / bin_hz);
+    int sig_hi = (int)((freq_hz + ZEUS_SIG_BW + bin_hz) / bin_hz);
+    if (sig_lo < 1) sig_lo = 1;
+    if (sig_hi >= ZEUS_SNR_BINS) sig_hi = ZEUS_SNR_BINS - 1;
+    if (sig_hi <= sig_lo) return ZEUS_SNR_UNKNOWN;
+
+    /* Noise floor: median of the bins within +-400 Hz, minus the signal's own
+       span and a guard band, so a neighbour 100 Hz away does not become "noise". */
+    static float around[ZEUS_SNR_BINS];
+    int n_around = 0;
+    int lo = sig_lo - (int)(400.0f / bin_hz), hi = sig_hi + (int)(400.0f / bin_hz);
+    if (lo < 1) lo = 1;
+    if (hi >= ZEUS_SNR_BINS) hi = ZEUS_SNR_BINS - 1;
+    int guard = (int)(30.0f / bin_hz);
+    for (int i = lo; i <= hi; i++)
+    {
+        if (i >= sig_lo - guard && i <= sig_hi + guard) continue;
+        around[n_around++] = power[i];
+    }
+    if (n_around < 16) return ZEUS_SNR_UNKNOWN;
+    qsort(around, n_around, sizeof(float), cmp_float);
+    float noise_per_bin = around[n_around / 2];
+    if (noise_per_bin <= 0.0f) return ZEUS_SNR_UNKNOWN;
+
+    /* Signal power above the floor, and the floor scaled to 2500 Hz. */
+    float sig_power = 0.0f;
+    for (int i = sig_lo; i <= sig_hi; i++) sig_power += power[i];
+    sig_power -= noise_per_bin * (sig_hi - sig_lo + 1);
+    if (sig_power <= 0.0f) return -30;
+
+    float noise_ref = noise_per_bin * (ZEUS_SNR_REF_BW / bin_hz);
+    float snr = 10.0f * log10f(sig_power / noise_ref);
+
+    if (snr < -30.0f) snr = -30.0f;                /* WSJT-X's own floor       */
+    if (snr > 49.0f) snr = 49.0f;
+    return (int)lrintf(snr);
+}
+
 int zeus_ft8_decode(const float* audio, int n_samples, int sample_rate,
                     int is_ft4, zeus_ft8_decode_t* out, int max_out)
 {
@@ -169,7 +351,9 @@ int zeus_ft8_decode(const float* audio, int n_samples, int sample_rate,
 
     monitor_t mon;
     monitor_init(&mon, &cfg);
-    hashtable_init();
+    /* NO hashtable reset here — see the callsign hash table notes above. A
+     * nonstandard call is spelled out in one slot and referenced by hash in
+     * the next, so the table has to survive between decode calls. */
 
     /* Feed the slot through the monitor one block at a time. */
     int frame_pos = 0;
@@ -218,8 +402,10 @@ int zeus_ft8_decode(const float* audio, int n_samples, int sample_rate,
         if (dup) continue;
 
         zeus_ft8_decode_t* d = &out[n_out++];
-        /* ft8_lib's own approximation (demo/decode_ft8.c). */
-        d->snr_db  = (int)(cand->score * 0.5f);
+        /* Measured against the 2500 Hz reference — NOT ft8_lib's demo
+           approximation (candidate score / 2), which is always positive. */
+        int snr = estimate_snr_db(sig, n12, freq_hz, time_sec, is_ft4);
+        d->snr_db  = (snr == ZEUS_SNR_UNKNOWN) ? (int)(cand->score * 0.5f) - 26 : snr;
         d->dt_sec  = time_sec;
         d->freq_hz = freq_hz;
         d->score   = cand->score;

@@ -21,7 +21,7 @@ import { useFt8SettingsStore } from '../../state/ft8-settings-store';
 import { DIGITAL_BANDS, nearestDigitalBand } from '../../dsp/digital-segments';
 import { slotOf, type Slot } from '../../dsp/ft8-sequencer';
 import { useFt8TxRunner } from '../../dsp/ft8-tx-runner';
-import { qsoStateToLogEntry } from '../../dsp/ft8-qso-log';
+import { qsoIsLoggable, qsoStateToLogEntry } from '../../dsp/ft8-qso-log';
 import { parseFt8Message } from '../../dsp/ft8-message';
 import { useLoggerStore } from '../../state/logger-store';
 import { useLayoutStore } from '../../state/layout-store';
@@ -161,9 +161,11 @@ export function Ft8PopBody() {
     },
   });
 
-  // Manual LOG QSO — record the in-progress QSO on demand (same pure mapper).
+  // Manual LOG QSO — record the QSO on demand (same pure mapper). Refuses a
+  // half-finished exchange: storing one leaves RST_SENT/RST_RCVD empty AND
+  // latches `logged`, which then suppresses the real auto-log at RR73.
   const logCurrentQso = () => {
-    if (tx.qso.logged) return;
+    if (tx.qso.logged || !qsoIsLoggable(tx.qso)) return;
     const req = qsoStateToLogEntry(tx.qso, {
       band,
       freqMhz: (vfoHz ?? 0) / 1e6,
@@ -238,7 +240,8 @@ export function Ft8PopBody() {
     }
     const secs = new Date(row.slotStartUnixMs).getUTCSeconds();
     const senderSlot = slotOf(secs, protocol);
-    tx.callStation(row.text, senderSlot);
+    // row.snr is OUR measurement of him — it becomes the report we send.
+    tx.callStation(row.text, senderSlot, row.snrDb);
     const parsed = parseFt8Message(row.text);
     if (parsed.deCall) runQrzLookup(parsed.deCall);
     // HamClock "on-click" trigger: push the clicked station's grid to the map.
@@ -398,7 +401,7 @@ export function Ft8PopBody() {
       <section className="dw-section">
         <div className="ft8-region__head">
           TX control · QSO
-          {!!tx.qso.dxCall && !tx.qso.logged && (
+          {qsoIsLoggable(tx.qso) && !tx.qso.logged && (
             <button type="button" className="ft8-log__btn dw-logbtn" onClick={logCurrentQso}>
               LOG QSO
             </button>

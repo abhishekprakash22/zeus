@@ -22,6 +22,7 @@ import { parseFt8Message } from './ft8-message';
 import { FT8_MAX_TX_OFFSET_HZ, FT8_MIN_OFFSET_HZ } from './ft8-passband';
 import {
   answerCq as seqAnswerCq,
+  engage as seqEngage,
   currentOutgoing,
   halt as seqHalt,
   startCq as seqStartCq,
@@ -359,10 +360,13 @@ export class Ft8TxController {
    *  with an identifiable callsign as a station to call — we open with our grid
    *  reply (Tx1) in the slot opposite the one it was heard in. Returns false if
    *  no callsign could be parsed. */
-  callStation(decodeText: string, senderSlot: Slot): boolean {
+  callStation(decodeText: string, senderSlot: Slot, measuredSnrDb?: number): boolean {
     const parsed = parseFt8Message(decodeText, this.state.myCall);
     if (!parsed.deCall) return false;
-    const next = seqAnswerCq(
+    // Join the QSO where HIS message leaves it — forcing kind:'cq' here meant a
+    // click on a station that had already reported to us restarted from our
+    // grid and asked him to send the report again.
+    const next = seqEngage(
       {
         myCall: this.state.myCall,
         myGrid4: this.state.myGrid4,
@@ -371,8 +375,9 @@ export class Ft8TxController {
         noReplyLimit: this.noReplyLimit,
         disableTxAfter73: this.disableTxAfter73,
       },
-      { ...parsed, kind: 'cq' },
+      parsed,
       senderSlot,
+      measuredSnrDb,
     );
     if (!next) return false;
     this.state = next;

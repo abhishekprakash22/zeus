@@ -29,6 +29,25 @@ export interface QsoLogContext {
 }
 
 /**
+ * Is this QSO worth logging yet? True once BOTH reports have been exchanged —
+ * we sent him one and he sent us one — which is the point where the contact is
+ * a real QSO with a complete ADIF record (RST_SENT and RST_RCVD both filled).
+ *
+ * The sequencer's own auto-log already fires at exactly this point or later
+ * (the answerer on RRR/RR73, the caller on the R-report). This predicate exists
+ * for the MANUAL log action, which used to be offered from the first
+ * transmission onward: clicking it then stored a QSO with empty RST fields and
+ * latched the `logged` flag, so the real auto-log at RR73 never fired.
+ */
+export function qsoIsLoggable(state: QsoState): boolean {
+  return (
+    !!state.dxCall?.trim() &&
+    state.sentReportToHim != null &&
+    state.rcvdReportFromHim != null
+  );
+}
+
+/**
  * Map a completed (or in-progress) QSO state into a logbook create request.
  * Returns null when there is no DX callsign to log (nothing to record yet).
  *

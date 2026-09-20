@@ -36,7 +36,18 @@ public static class DigitalEndpoints
 
         // ---- FT8 ------------------------------------------------------------
         g.MapGet("/ft8", (DigitalService d) => Results.Ok(new { enabled = d.Ft8Enabled, mode = d.Mode }));
-        g.MapPost("/ft8/enable", (DigitalService d) => { d.EnableFt8(true); return Results.Ok(new { enabled = true }); });
+        // The body the workspace has always sent — {receiver, protocol, passes}
+        // — used to be discarded, so selecting FT4 enabled an FT8 receiver and
+        // nothing ever decoded. Protocol is honoured here; it drives both the
+        // slot grid and the demodulator (see DecoderPipeline).
+        g.MapPost("/ft8/enable", (Ft8EnableRequest? req, DigitalService d) =>
+        {
+            if (!string.IsNullOrWhiteSpace(req?.Protocol))
+                d.Mode = string.Equals(req!.Protocol, "FT4", StringComparison.OrdinalIgnoreCase)
+                    ? "FT4" : "FT8";
+            d.EnableFt8(true);
+            return Results.Ok(new { enabled = true, protocol = d.Mode });
+        });
         g.MapPost("/ft8/disable", (DigitalService d) => { d.EnableFt8(false); return Results.Ok(new { enabled = false }); });
 
         g.MapGet("/ft8/tx", (DigitalService d) => Results.Ok(d.BuildTxStatus()));

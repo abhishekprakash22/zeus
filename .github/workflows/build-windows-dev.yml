@@ -37,7 +37,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout ${{ github.event.inputs.ref || 'develop' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.ref || 'develop' }}
           # Need real history so the short SHA used in the version string is
@@ -72,12 +72,12 @@ jobs:
           ls -la Zeus.Plugins.Host/runtimes/win-x64/native/
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -137,7 +137,7 @@ jobs:
           iscc /DMyAppVersion="${{ steps.version.outputs.version }}" /DArch="x64" installers\zeus-windows.iss
 
       - name: Upload Windows Installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zeus-windows-dev-${{ steps.version.outputs.version }}
           path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-win-x64-setup.exe

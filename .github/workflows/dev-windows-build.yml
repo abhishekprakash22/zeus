@@ -38,7 +38,7 @@ jobs:
     name: Build portable desktop (win-${{ github.event.inputs.arch }})
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The DeepCW ONNX model is a git submodule statically imported by the web
       # bundle; without it `npm run build` (run by the csproj BuildSpa target
@@ -47,7 +47,7 @@ jobs:
         run: git submodule update --init zeus-web/external/deepcw-engine
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -55,7 +55,7 @@ jobs:
       # shells out to `npm ci` + `npm run build` before publish. The cache keys
       # off zeus-web/package-lock.json.
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -94,7 +94,7 @@ jobs:
           ls -la "$dest"
 
       - name: Upload portable build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zeus-dev-win-${{ github.event.inputs.arch }}-${{ steps.sha.outputs.short }}
           path: OpenhpsdrZeus/bin/Release/net10.0/win-${{ github.event.inputs.arch }}/publish/

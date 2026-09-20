@@ -124,3 +124,10 @@ native/ft8/.obj-test/
 native/ft8/libzeus_ft8.so
 native/ft8/libzeus_ft8.dylib
 native/ft8/zeus_ft8.dll
+
+# zeus_wspr native build scratch — the shipped binaries live under
+# Zeus.Dsp/runtimes/, never next to the source.
+native/wspr/.obj/
+native/wspr/libzeus_wspr.so
+native/wspr/libzeus_wspr.dylib
+native/wspr/zeus_wspr.dll

@@ -475,8 +475,11 @@ int wspr_decode(float  *idat,
     /* Setup/Load hash tables */
     FILE  *fhash;
     int   nh;
-    char  hashtab[HASHTAB_SIZE * HASHTAB_ENTRY_LEN] = {0};
-    char  loctab[HASHTAB_SIZE * LOCTAB_ENTRY_LEN] = {0};
+    /* Heap, not stack: these two are 416 KB + 160 KB, and this function runs
+       on whatever thread the host hands it — a .NET pool thread gets 1 MB. */
+    char *hashtab = calloc(HASHTAB_SIZE, HASHTAB_ENTRY_LEN);
+    char *loctab  = calloc(HASHTAB_SIZE, LOCTAB_ENTRY_LEN);
+    if (!hashtab || !loctab) { free(hashtab); free(loctab); return 0; }
 
     if (options.usehashtable) {
         char line[80], hcall[12], hgrid[5];;
@@ -512,10 +515,22 @@ int wspr_decode(float  *idat,
         hann[i] = sinf(0.006147931 * i);
     }
 
-    /* FFT output alloc */
-    const int blocks = 4 * floor(samples / FFT_SIZE) - 1;
-    float ps[FFT_SIZE][blocks];
-    memset(ps, 0.0, sizeof(float) * FFT_SIZE * blocks);
+    /* FFT output alloc.
+       This was a stack VLA sized FFT_SIZE * blocks floats — 694 KB for a
+       normal 120 s slot at 375 Hz, and it scales with the slot. On the stack
+       that overflows any ordinary thread; on the heap it is unremarkable. */
+    const int blocks = 4 * (int)floor(samples / FFT_SIZE) - 1;
+    float (*ps)[blocks] = NULL;
+    if (blocks > 0)
+        ps = calloc((size_t)FFT_SIZE * (size_t)blocks, sizeof(float));
+    if (!ps) {                             /* slot too short, or out of memory */
+        fftwf_free(fftin);
+        fftwf_free(fftout);
+        fftwf_destroy_plan(PLAN);
+        free(hashtab);
+        free(loctab);
+        return 0;
+    }
 
     /* Main loop starts here */
     for (int ipass = 0; ipass < options.npasses; ipass++) {
@@ -850,6 +865,10 @@ int wspr_decode(float  *idat,
             fclose(fhash);
         }
     }
+
+    free(ps);
+    free(hashtab);
+    free(loctab);
 
     return 0;
 }

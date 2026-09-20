@@ -76,7 +76,7 @@ jobs:
       is-nightly: ${{ steps.parse.outputs.is-nightly }}
       sign-macos: ${{ steps.parse.outputs.sign-macos }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.ref }}
@@ -200,7 +200,7 @@ jobs:
       matrix:
         arch: [x64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -313,7 +313,7 @@ jobs:
         run: ./tools/stage-windows-vst-bridge.ps1 -Arch "${{ matrix.arch }}" -InitSubmodules
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Artifact name kept as `wdsp-native-*` for compatibility with the
           # build-release `Map RID to native artifact name` step; the staged
@@ -324,7 +324,7 @@ jobs:
           path: staged/win-${{ matrix.arch }}/
 
       - name: Upload VST bridge artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zeus-vst-bridge-win-${{ matrix.arch }}
           path: Zeus.Plugins.Host/runtimes/win-${{ matrix.arch }}/native/
@@ -339,7 +339,7 @@ jobs:
     # needs an aarch64 toolchain and arm64 FFTW build.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -418,7 +418,7 @@ jobs:
           ldd staged/linux-x64/libminiaudio.so
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Staged dir now contains libwdsp.so + libfftw3.so.3 +
           # libfftw3f.so.3 + libminiaudio.so. The downstream
@@ -433,7 +433,7 @@ jobs:
     needs: determine-version
     runs-on: macos-latest  # Apple Silicon — matches release.yml macos-arm64 host
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -522,7 +522,7 @@ jobs:
           otool -L staged/osx-arm64/libminiaudio.dylib
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Staged dir now contains libwdsp.dylib + libfftw3.3.dylib +
           # libfftw3f.3.dylib + libminiaudio.dylib. The downstream
@@ -542,7 +542,7 @@ jobs:
     # committed linux-arm64 native blobs.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -636,7 +636,7 @@ jobs:
           aarch64-linux-gnu-objdump -p staged/linux-arm64/libminiaudio.so | grep NEEDED
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wdsp-native-linux-arm64
           path: staged/linux-arm64/
@@ -654,11 +654,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
       - name: Build the operator's manual PDF
@@ -671,7 +671,7 @@ jobs:
           chmod +x docs/manual/build.sh
           docs/manual/build.sh
       - name: Upload manual PDF artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: operator-manual-pdf
           path: docs/manual/build/Zeus-Operator-Manual.pdf
@@ -738,7 +738,7 @@ jobs:
             artifact: macos-arm64-pkg
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -781,14 +781,14 @@ jobs:
       # built from the exact source the tag points at.
       - name: Download fresh native WDSP for ${{ matrix.config.rid }}
         if: matrix.config.uses_committed_native != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: ${{ steps.native-artifact.outputs.name }}
           path: Zeus.Dsp/runtimes/${{ matrix.config.rid }}/native/
 
       - name: Download fresh VST bridge for Windows
         if: matrix.config.os == 'windows'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: zeus-vst-bridge-${{ matrix.config.rid }}
           path: Zeus.Plugins.Host/runtimes/${{ matrix.config.rid }}/native/
@@ -804,12 +804,12 @@ jobs:
           fi
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -848,7 +848,7 @@ jobs:
       # macOS `cp -r publish/* Resources/app/`), so this one copy ships the
       # manual inside every installer with no per-packager edits.
       - name: Download operator's manual PDF
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: operator-manual-pdf
           path: manual-pdf
@@ -915,7 +915,7 @@ jobs:
 
       - name: Upload Windows Installer
         if: matrix.config.os == 'windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.config.artifact }}
           path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-win-${{ matrix.config.arch }}-setup.exe
@@ -929,7 +929,7 @@ jobs:
 
       - name: Upload Linux Package
         if: matrix.config.os == 'linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.config.artifact }}
           path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-${{ matrix.config.rid }}.tar.gz
@@ -949,7 +949,7 @@ jobs:
 
       - name: Upload Linux Desktop + Server AppImages
         if: matrix.config.build_appimage == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.config.appimage_artifact }}
           # Both AppImages — the desktop one (--desktop default) and the
@@ -1203,7 +1203,7 @@ jobs:
 
       - name: Upload macOS Package
         if: startsWith(matrix.config.os, 'macos')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.config.artifact }}
           path: installers/output/openhpsdr-zeus-${{ steps.version.outputs.version }}-macos-*.pkg
@@ -1236,7 +1236,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
@@ -1248,7 +1248,7 @@ jobs:
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: release-artifacts
 
@@ -1386,7 +1386,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -1402,7 +1402,7 @@ jobs:
           echo "date=${DATE_STAMP}" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: release-artifacts
 
@@ -1543,12 +1543,12 @@ jobs:
       ZEUS_DOWNLOAD_BRANCH: ${{ github.ref_name }}
       WRANGLER_SEND_METRICS: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: release-artifacts
 

@@ -160,7 +160,6 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
   const uFillPan = gl.getUniformLocation(fillProg, 'uPan');
   const uFillPopIntensity = gl.getUniformLocation(fillProg, 'uPopIntensity');
 
-
   // Trace VBO: one float per bin, rendered as LINE_STRIP for the sharp
   // top edge. Fill reuses the same data via a 1-row R32F texture sampled
   // with `texelFetch(uPan, ivec2(gl_VertexID >> 1, 0))` so both verts of a

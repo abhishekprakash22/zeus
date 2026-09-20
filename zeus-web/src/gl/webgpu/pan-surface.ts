@@ -19,7 +19,7 @@ const HISTORY_ROWS = 512;
 const MAX_TEXTURE_COLUMNS = 1024;
 const MESH_COLUMNS = 640;
 const VISIBLE_ROWS = 160;
-const UNIFORM_FLOATS = 32;
+const UNIFORM_FLOATS = 28;
 const LARGE_CENTER_SHIFT_HZ = 25_000_000;
 
 export type PanSurfaceRowDomain = 'rx' | 'pop' | 'tx';
@@ -29,11 +29,6 @@ export type PanSurfaceDbWindows = {
   rxDbMax: number;
   txDbMin: number;
   txDbMax: number;
-  /** dB window used for COLOUR only — the waterfall's range, so the surface
-   *  and the waterfall agree about what a colour means. Height keeps the
-   *  panadapter's own window (rxDbMin/rxDbMax). */
-  colourDbMin: number;
-  colourDbMax: number;
 };
 
 export type PanSurfaceRenderer = {
@@ -53,8 +48,6 @@ export type PanSurfaceRenderer = {
   resize: (w: number, h: number) => void;
   setColormap: (id: RenderColormapId) => void;
   setTraceColor: (r: number, g: number, b: number) => void;
-  /** true = filled terrain with a front wall; false = wireframe traces only. */
-  setSurfaceFill: (on: boolean) => void;
   setReliefDepth: (depth: number) => void;
   setPopGlow: (intensity: number) => void;
   clearHistory: () => void;
@@ -158,9 +151,8 @@ struct Uniforms {
   p2 : vec4<f32>, // viewCenterOffsetHz, viewSpanHz, frontY, backY
   p3 : vec4<f32>, // reserved, heightGain, zCurve, reliefDepth
   p4 : vec4<f32>, // traceColor.rgb, popGlow
-  p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, panafallStyle
+  p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, _
   p6 : vec4<f32>, // txDbMin, txDbMax, popDbMin, popDbMax
-  p7 : vec4<f32>, // colourDbMin, colourDbMax, _, _
 };
 @group(0) @binding(0) var<uniform> u : Uniforms;
 @group(0) @binding(1) var historyTex : texture_2d<f32>;
@@ -197,26 +189,6 @@ fn rawLevel(freqU : f32, age : f32) -> f32 {
   return clamp((db - dbMin) / max(0.0001, dbMax - dbMin), 0.0, 1.0);
 }
 
-// Level for COLOUR, taken from its own dB window. The surface borrows the
-// waterfall's palette, so it should borrow the waterfall's range too:
-// otherwise the same signal that sits mid-palette in the waterfall lands near
-// the bottom on the surface, and a band full of colour below renders as a
-// blue slab above. Height still uses the panadapter's window — that is the
-// pan's own geometry and should not change.
-fn colourLevel(freqU : f32, age : f32) -> f32 {
-  if (age < 0.0 || age > u.p0.w - 1.0) { return 0.0; }
-  let row = ringRow(age);
-  let g = rowGeom[row];
-  if (g.y <= 0.0) { return 0.0; }
-  let texW = u.p0.z;
-  let rowSpanHz = g.y * texW;
-  let srcX = 0.5 + (u.p2.x - g.x) / rowSpanHz + (freqU - 0.5) * (u.p2.y / rowSpanHz);
-  if (srcX < 0.0 || srcX > 1.0) { return 0.0; }
-  let texX = clamp(i32(round(srcX * (texW - 1.0))), 0, i32(texW) - 1);
-  let db = textureLoad(historyTex, vec2<i32>(texX, row), 0).r;
-  return clamp((db - u.p7.x) / max(0.0001, u.p7.y - u.p7.x), 0.0, 1.0);
-}
-
 fn rowDomain(age : f32) -> f32 {
   if (age < 0.0 || age > u.p0.w - 1.0) { return 0.0; }
   let row = ringRow(age);
@@ -251,18 +223,11 @@ fn project(freqU : f32, age : f32, level : f32) -> vec4<f32> {
   let drawRows = max(1.0, u.p1.w);
   let depth = clamp(age / max(1.0, drawRows - 1.0), 0.0, 1.0);
   let curveDepth = pow(depth, 0.82);
-  // Perspective: older rows narrow toward the horizon, which is what gives the
-  // reference panafall its receding-terrain look. This was previously left
-  // frequency-linear at every depth to keep older rows in exact horizontal
-  // registration with the waterfall below — a real cost, accepted here because
-  // only the NEWEST row has to line up with anything (it is the one adjacent
-  // to the waterfall's top line, and at depth 0 the scale is still exactly
-  // 1.0). Older rows drifting inward is the perspective, not an error.
-  // Perspective and horizon are the geometry of the view and apply to BOTH
-  // styles — the fill option changes what is drawn on the surface, not where
-  // the surface sits. Older rows narrow toward the horizon; only the newest
-  // row abuts the waterfall, and at depth 0 the scale is still exactly 1.0.
-  let x = (freqU - 0.5) * 2.0 * mix(1.0, 0.78, curveDepth);
+  // X is deliberately frequency-linear at every depth. Perspective width
+  // compression looks dramatic, but it makes older rows drift inward and breaks
+  // registration with the waterfall below. Depth comes from Y, relief, haze,
+  // and ridge lighting; frequency stays exact for RX and TX rows.
+  let x = (freqU - 0.5) * 2.0;
   let baseY = mix(u.p2.z, u.p2.w, curveDepth);
   let gain = u.p3.y * mix(1.0, 0.55, curveDepth);
   let y = baseY + pow(level, u.p3.z) * gain;
@@ -276,7 +241,6 @@ struct VsOut {
   @location(2) light : f32,
   @location(3) crest : f32,
   @location(4) domain : f32,
-  @location(5) colour : f32,
 };
 
 @vertex
@@ -310,66 +274,6 @@ fn vsFill(@builtin(vertex_index) vi : u32) -> VsOut {
   return out;
 }
 
-// Where the palette stops being black (0.42 on Blue) — the floor sits just
-// above it, so a quiet band is deep blue rather than bright blue.
-const LUT_FLOOR : f32 = 0.46;
-// > 1 pushes the NOISE FLOOR down into deep blue while leaving the upper
-// palette reachable. (0.62 was the wrong way round: expanding the low end
-// brightened the floor, which is most of the screen — the very thing that
-// made everything read blue.) At 1.0 the spread is deep blue floor, blue
-// quiet band, cyan mid, green strong, yellow very strong, red at full scale.
-const LUT_GAMMA : f32 = 1.0;
-
-// How far the leading edge drops, in clip space. Shallow on purpose.
-const SKIRT_DEPTH : f32 = 0.16;
-
-fn seg_of(cell : u32, segs : u32) -> u32 {
-  return cell - (cell / segs) * segs;
-}
-
-// The nearest row's FRONT FACE. Without it the surface is an open shell: you
-// see the terrain, and below its leading edge nothing but background, which
-// reads as a black void across the bottom of the display. A panafall shows a
-// solid wall of colour there. Level ramps from the row's own dB at the crest
-// down to the window floor at the base, so the face runs through the palette
-// exactly as the 2D fill does.
-@vertex
-fn vsSkirt(@builtin(vertex_index) vi : u32) -> VsOut {
-  let segs = max(1u, u32(u.p1.z) - 1u);
-  let cell = vi / 6u;
-  let tri = vi % 6u;
-  var corners = array<vec2<f32>, 6>(
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(1.0, 0.0),
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(1.0, 0.0),
-    vec2<f32>(1.0, 1.0)
-  );
-  let c = corners[tri];
-  let freqU = (f32(seg_of(cell, segs)) + c.x) / f32(segs);
-  let s = sampleSurface(freqU, 0.0);
-  // A SHORT front edge, not a wall. Dropping to the baseline painted an opaque
-  // slab from every crest to the bottom of the pane, which hid the terrain
-  // behind it — the reference shows only a shallow vertical face along the
-  // leading edge. Clamped so it never runs past the baseline.
-  let crest = project(freqU, 0.0, s.level);
-  let bottomY = max(crest.y - SKIRT_DEPTH, u.p2.z);
-  let y = mix(bottomY, crest.y, c.y);
-  // Level for colour still ramps across the face, so it runs through the
-  // palette the way the terrain does.
-  let lvl = s.level * mix(max(0.0, 1.0 - SKIRT_DEPTH), 1.0, c.y);
-  var out : VsOut;
-  out.clip = vec4<f32>(crest.x, y, crest.z, 1.0);
-  out.level = lvl;
-  out.depth = 0.0;
-  out.light = s.light;
-  out.crest = s.crest * c.y;
-  out.colour = colourLevel(freqU, 0.0) * mix(max(0.0, 1.0 - SKIRT_DEPTH), 1.0, c.y);
-  out.domain = rowDomain(0.0);
-  return out;
-}
-
 @vertex
 fn vsLine(@builtin(vertex_index) vi : u32) -> VsOut {
   let segs = max(1u, u32(u.p1.z) - 1u);
@@ -393,59 +297,22 @@ fn vsLine(@builtin(vertex_index) vi : u32) -> VsOut {
 @fragment
 fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
   let lvl = clamp(in.level * 0.98 + in.crest * 0.55 * u.p4.w, 0.0, 1.0);
-  // Hillshade is weighted BY LEVEL. It reaches 1.48x, and on the noise floor
-  // the surface is flat so the normal points straight up and lambert is at its
-  // maximum — which took the palette's near-black floor colour and lit it into
-  // a pale grey-blue sheet across the front of the display, exactly where the
-  // newest data is. Relief is worth having on signals and worth nothing on
-  // flat noise, so the shading now fades in with level.
-  let shade = mix(1.0, in.light, smoothstep(0.06, 0.42, lvl));
-  // Same compression as the 2D fill: the palettes' dark shelf swallowed the
-  // noise floor and the surface went black. See LUT_COLOR_FLOOR in shaders.ts.
-  // Palette mapping. Two mistakes were baked into the old 0.55 + lvl*0.45:
-  // the floor was lifted to BRIGHT blue (and the floor is most of the screen,
-  // so everything read blue), and signals were left only the top 45% of the
-  // ramp, putting yellow and red out of reach for anything short of a
-  // full-scale carrier. Start just above the palette's black shelf so the
-  // floor is DEEP blue, and curve the response so mid-level signals climb
-  // through cyan and green instead of crawling.
-  let lvlT = LUT_FLOOR + pow(clamp(in.colour, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
-  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * shade;
+  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvl, 0.5)).rgb * in.light;
   let txRow = smoothstep(1.5, 2.0, in.domain);
   col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.level));
   let horizon = vec3<f32>(0.015, 0.045, 0.09);
   col = mix(col, horizon, in.depth * 0.42);
   let glow = smoothstep(0.42, 0.95, in.level) * (0.18 + u.p4.w * 0.28) + in.crest * u.p4.w * 0.75;
   col += vec3<f32>(0.35, 0.68, 1.0) * glow * (1.0 - in.depth * 0.45);
-  // Floor alpha was 0.58: even fully dark, that much coverage over the
-  // background still reads as a grey wash. Signals keep their opacity; the
-  // floor sinks into the background instead of sheeting over it.
-  let alpha = mix(0.16, 0.93, smoothstep(0.04, 0.82, in.level)) * (1.0 - in.depth * 0.28);
+  let alpha = mix(0.58, 0.93, smoothstep(0.04, 0.82, in.level)) * (1.0 - in.depth * 0.28);
   return vec4<f32>(min(col, vec3<f32>(1.0)), alpha);
-}
-
-// Same colour ramp as the surface, but SOLID. fsFill fades to 0.16 at the
-// floor so a quiet band's surface sinks into the background; a front wall that
-// did the same would just be the black void with extra steps.
-@fragment
-fn fsSkirt(in : VsOut) -> @location(0) vec4<f32> {
-  let lvlT = LUT_FLOOR + pow(clamp(in.colour, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
-  let col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * mix(0.62, 1.0, in.level);
-  return vec4<f32>(min(col, vec3<f32>(1.0)), 0.96);
 }
 
 @fragment
 fn fsLine(in : VsOut) -> @location(0) vec4<f32> {
   let whiteLift = smoothstep(0.74, 1.0, in.level) * 0.55;
   let txRow = smoothstep(1.5, 2.0, in.domain);
-  // Level colouring: the fill has always sampled the LUT, but the TRACES were
-  // drawn in the flat trace colour — and viewed close to head-on the traces
-  // are most of what you see, so the whole surface read as one colour. With
-  // the setting on they take the palette too, so 3D matches the 2D gradient.
-  let traceT = LUT_FLOOR + pow(clamp(in.colour, 0.0, 1.0), LUT_GAMMA) * (1.0 - LUT_FLOOR);
-  let lutTrace = textureSample(lutTex, lutSampler, vec2<f32>(traceT, 0.5)).rgb;
-  let baseTrace = mix(u.p4.rgb, lutTrace, clamp(u.p5.w, 0.0, 1.0));
-  let trace = mix(baseTrace, vec3<f32>(1.0, 0.22, 0.16), txRow);
+  let trace = mix(u.p4.rgb, vec3<f32>(1.0, 0.22, 0.16), txRow);
   let col = mix(trace, vec3<f32>(1.0), whiteLift);
   let alpha = (0.10 + smoothstep(0.02, 0.90, in.level) * 0.88) * (1.0 - in.depth * 0.32) * u.p5.z;
   return vec4<f32>(col, alpha);
@@ -498,12 +365,6 @@ export function createPanSurfaceRenderer(
     fragment: { module, entryPoint: 'fsLine', targets: [{ format, blend }] },
     primitive: { topology: 'line-list' },
   });
-  const skirtPipeline = device.createRenderPipeline({
-    layout: pipelineLayout,
-    vertex: { module, entryPoint: 'vsSkirt' },
-    fragment: { module, entryPoint: 'fsSkirt', targets: [{ format, blend }] },
-    primitive: { topology: 'triangle-list' },
-  });
 
   const lutTexture = device.createTexture({
     size: [256, 1, 1],
@@ -534,7 +395,6 @@ export function createPanSurfaceRenderer(
   let canvasH = 1;
   let reliefDepth = 0.74;
   let popGlow = 0;
-  let surfaceFill = true;
   let traceR = 1;
   let traceG = 0.62;
   let traceB = 0.16;
@@ -595,15 +455,12 @@ export function createPanSurfaceRenderer(
     const centerOffset = viewCenterHz - base;
     const viewSpanHz = panSurfaceViewSpanHzForTest(viewHzPerPixel, anchorSourceWidth, texWidth);
     const usableHeight = Math.max(80, canvasH);
-    // Nearest row sits ON the bottom edge (-1.0 in clip space) rather than
-    // floating above it, so the newest trace meets the splitter and lines up
-    // with the top row of the waterfall below — the same instant, one directly
-    // above the other. The old -0.88 left a band under the surface that read
-    // as a wall.
+    // Nearest row sits ON the bottom edge rather than floating above it, so
+    // the newest trace meets the splitter and lines up with the top row of the
+    // waterfall below — the same instant, one directly above the other. The
+    // old -0.88 left a band under the surface that read as a wall.
     const frontY = -1.0;
-    // Far edge sits high so the surface reads as ground receding toward a
-    // horizon. Applies to both styles — see project().
-    const backY = Math.max(-0.08, Math.min(0.62, 0.10 + usableHeight / 700));
+    const backY = Math.max(-0.08, Math.min(0.34, -0.02 + usableHeight / 900));
     const heightGain = Math.max(0.30, Math.min(0.76, 0.42 + usableHeight / 1000)) * (0.72 + reliefDepth * 0.48);
 
     uniformData[0] = writeRow;
@@ -629,15 +486,11 @@ export function createPanSurfaceRenderer(
     uniformData[20] = canvasW;
     uniformData[21] = canvasH;
     uniformData[22] = 0.86;
-    uniformData[23] = surfaceFill ? 1 : 0;
+    uniformData[23] = 0;
     uniformData[24] = windows.txDbMin;
     uniformData[25] = windows.txDbMax;
     uniformData[26] = 0;
     uniformData[27] = 1;
-    uniformData[28] = windows.colourDbMin;
-    uniformData[29] = windows.colourDbMax;
-    uniformData[30] = 0;
-    uniformData[31] = 0;
     device.queue.writeBuffer(uniformBuffer, 0, gpuSrc(uniformData));
   };
 
@@ -709,8 +562,6 @@ export function createPanSurfaceRenderer(
         rxDbMax: dbMax,
         txDbMin: dbMin,
         txDbMax: dbMax,
-        colourDbMin: dbMin,
-        colourDbMax: dbMax,
       });
 
       const encoder = device.createCommandEncoder();
@@ -725,24 +576,12 @@ export function createPanSurfaceRenderer(
         ],
       });
       pass.setBindGroup(0, bindGroup);
-      // Two styles, and they are exclusive by design. FILLED is solid terrain
-      // whose colour carries the level, and a trace over the crest would fight
-      // the ramp for the brightest part of every peak. WIREFRAME is the older
-      // look: traces alone, no surface, no wall.
       if (drawRows >= 2) {
         pass.setPipeline(fillPipeline);
         pass.draw((drawRows - 1) * (meshCols - 1) * 6);
       }
-      if (surfaceFill) {
-        // Panafall: a front wall closes the open shell, and no trace is drawn
-        // over the crest — the colour ramp owns the brightest part of a peak.
-        pass.setPipeline(skirtPipeline);
-        pass.draw((meshCols - 1) * 6);
-      } else {
-        // Original: surface plus traces, no wall, no perspective.
-        pass.setPipeline(linePipeline);
-        pass.draw(drawRows * (meshCols - 1) * 2);
-      }
+      pass.setPipeline(linePipeline);
+      pass.draw(drawRows * (meshCols - 1) * 2);
       pass.end();
       device.queue.submit([encoder.finish()]);
     },
@@ -755,9 +594,6 @@ export function createPanSurfaceRenderer(
     },
     setColormap(id) {
       uploadLut(id);
-    },
-    setSurfaceFill(on) {
-      surfaceFill = on;
     },
     setTraceColor(r, g, b) {
       traceR = Math.max(0, Math.min(1, r));

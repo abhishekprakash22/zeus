@@ -57,6 +57,19 @@ public sealed record Ft8TxStatus
     [JsonPropertyName("nativeAvailable")] public bool NativeAvailable { get; init; }
 }
 
+/// <summary>
+/// POST /ft8/enable body. The workspace has always sent this; the handler used
+/// to ignore it, which is how FT4 ended up decoding nothing. `receiver` and
+/// `passes` are accepted and still unused — the receiver comes from the audio
+/// tap, and decode depth is not wired through yet.
+/// </summary>
+public sealed record Ft8EnableRequest
+{
+    [JsonPropertyName("protocol")] public string? Protocol { get; init; }
+    [JsonPropertyName("receiver")] public int? Receiver { get; init; }
+    [JsonPropertyName("passes")] public int? Passes { get; init; }
+}
+
 /// <summary>POST /ft8/tx — the stage. `message` is keyed VERBATIM.</summary>
 public sealed record TxStageRequest
 {

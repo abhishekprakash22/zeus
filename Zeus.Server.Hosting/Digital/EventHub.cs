@@ -43,9 +43,26 @@ public sealed class EventHub
         return (ch.Reader, new Lease(this, ch));
     }
 
-    public void PublishFt8Decode(Ft8DecodeBatch batch) => Publish("ft8decode", batch);
+    // The SSE channel carries already-serialised frames, so in-process
+    // consumers (the spotting uploaders) get typed events instead of parsing
+    // their own output back. Handlers run on the decoder thread: keep them
+    // cheap and non-throwing.
+    public event Action<Ft8DecodeBatch>? Ft8Decoded;
+    public event Action<WsprSpotBatch>? WsprSpotted;
+
+    public void PublishFt8Decode(Ft8DecodeBatch batch)
+    {
+        Publish("ft8decode", batch);
+        try { Ft8Decoded?.Invoke(batch); } catch { /* a subscriber must never stall the decoder */ }
+    }
+
     public void PublishTxStatus(Ft8TxStatus status) => Publish("txstatus", status);
-    public void PublishWsprSpot(object spot) => Publish("wsprspot", spot);
+
+    public void PublishWsprSpot(WsprSpotBatch batch)
+    {
+        Publish("wsprspot", batch);
+        try { WsprSpotted?.Invoke(batch); } catch { /* ditto */ }
+    }
     public void PublishCwSkim(object payload) => Publish("cwskim", payload);
 
     private void Publish<T>(string eventName, T payload)

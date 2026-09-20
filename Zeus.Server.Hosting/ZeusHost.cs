@@ -940,6 +940,16 @@ public static class ZeusHost
         // already targets. The host-side seams (pipeline inserts, tail drain,
         // mode gate) are untouched — the core modem rides them through
         // AudioModemPluginBridge's core-modem fallback below.
+        // Spotting uploaders (PSK Reporter / WSPRnet) — opt-in, see
+        // Zeus.Server.Hosting/Digital/SpottingService.cs.
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.SpottingSettingsStore>();
+        builder.Services.AddSingleton(sp => new Zeus.Server.Hosting.Digital.SpottingService(
+            sp.GetRequiredService<ILogger<Zeus.Server.Hosting.Digital.SpottingService>>(),
+            sp.GetRequiredService<Zeus.Server.Hosting.Digital.SpottingSettingsStore>(),
+            sp.GetRequiredService<Zeus.Server.Hosting.Digital.DigitalService>(),
+            sp.GetRequiredService<RadioService>()));
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Zeus.Server.Hosting.Digital.SpottingService>());
         builder.Services.AddSingleton<Zeus.Server.Hosting.FreeDv.FreeDvSettingsStore>();
         builder.Services.AddSingleton<Zeus.Server.Hosting.FreeDv.FreeDvModemService>();
         builder.Services.AddHostedService(sp =>

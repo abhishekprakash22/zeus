@@ -38,13 +38,13 @@ jobs:
     # Native arm64 runner — the existing installer script runs unmodified.
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "10.0.x"
 
@@ -56,7 +56,7 @@ jobs:
         # shallow actions/checkout clone produced exit 1 (tagless clone),
         # then exit 128 (git's own error class) across two hand-cranked
         # runs. The action handles tag refs and shallow bookkeeping itself.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ inputs.tag }}
 

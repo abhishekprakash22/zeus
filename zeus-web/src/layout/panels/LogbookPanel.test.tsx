@@ -138,7 +138,7 @@ describe('LogbookPanel plugin gate', () => {
     const { container, unmount } = renderPanel();
 
     expect(container.textContent).toContain('Logbook unavailable');
-    expect(container.textContent).toContain('Install the Logbook plugin from Settings → Plugins');
+    expect(container.textContent).toContain('Logbook unavailable — the backend has no logbook store');
     expect(container.querySelector('[data-testid="logbook-live"]')).toBeNull();
     expect((container.querySelector('input[type="search"]') as HTMLInputElement).disabled).toBe(true);
     expect(mocks.liveRenders).toBe(0);

@@ -64,6 +64,20 @@ public static class PrefsDbPath
         return Path.Combine(dir, "zeus-logbook.db");
     }
 
+    /// <summary>
+    /// The built-in logbook's LiteDB file. Deliberately NOT zeus-logbook.db:
+    /// that one belongs to a logbook plugin, which opens it with its own
+    /// LiteDatabase instance and would collide with the lease core holds.
+    /// </summary>
+    public static string CoreLogbookPath()
+    {
+        var env = Environment.GetEnvironmentVariable("ZEUS_PREFS_PATH");
+        var dir = string.IsNullOrEmpty(env)
+            ? DataDir
+            : (Path.GetDirectoryName(Path.GetFullPath(env)) ?? DataDir);
+        return Path.Combine(dir, "zeus-core-logbook.db");
+    }
+
     // Directory for the rolling on-disk runtime log (DiagnosticLogFileSink). Lives
     // under DataDir/logs so it can be tailed by the out-of-process support sidecar
     // after a backend crash. Follows the same ZEUS_PREFS_PATH override as the

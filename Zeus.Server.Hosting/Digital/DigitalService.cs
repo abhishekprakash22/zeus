@@ -60,6 +60,19 @@ public sealed class DigitalService : IHostedService, IDisposable
     public bool Armed { get; private set; }
     public int AudioHz { get; set; } = 1500;
     public string Mode { get; set; } = "FT8";
+
+    /// <summary>
+    /// <see cref="Mode"/> as the enum the slot maths and the decoder need. FT4
+    /// is not a variant of FT8 on the wire: half the slot (7.5 s) and a
+    /// different waveform, so RX has to be told, not assumed.
+    /// </summary>
+    public DigitalMode ModeKind => ModeKindOf(Mode);
+
+    /// <summary>The mode string as the enum, in one place so RX and TX cannot
+    /// disagree about what "FT4" means.</summary>
+    public static DigitalMode ModeKindOf(string? mode) =>
+        string.Equals(mode, "FT4", StringComparison.OrdinalIgnoreCase)
+            ? DigitalMode.Ft4 : DigitalMode.Ft8;
     public string? Callsign { get; set; }
     public string? Grid { get; set; }
 
@@ -95,7 +108,7 @@ public sealed class DigitalService : IHostedService, IDisposable
     {
         _pipeline = pipeline;
         _log = log;
-        Decoder = new DecoderPipeline(Clock, Events);
+        Decoder = new DecoderPipeline(Clock, Events, () => ModeKind);
     }
 
     public Task StartAsync(CancellationToken ct)

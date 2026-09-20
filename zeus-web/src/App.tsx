@@ -819,7 +819,7 @@ export default function App() {
   const logSelectedCount = logSelectedIds.size;
   const publishDisabled = !logbookPluginReady || logSelectedCount === 0 || logPublishInFlight || !qrzHasApiKey;
   const publishTitle = !logbookPluginReady
-    ? (logbookUnavailableReason ?? 'Logbook plugin unavailable')
+    ? (logbookUnavailableReason ?? 'Logbook unavailable')
     : !qrzHasApiKey
     ? 'Set a QRZ API key in the QRZ panel to enable publishing'
     : logSelectedCount === 0
@@ -827,7 +827,7 @@ export default function App() {
       : 'Publish selected QSOs to QRZ logbook';
   const deleteDisabled = !logbookPluginReady || logSelectedCount === 0 || logDeleteInFlight;
   const deleteTitle = !logbookPluginReady
-    ? (logbookUnavailableReason ?? 'Logbook plugin unavailable')
+    ? (logbookUnavailableReason ?? 'Logbook unavailable')
     : logSelectedCount === 0
     ? 'Select one or more rows to delete'
     : `Delete ${logSelectedCount} selected ${logSelectedCount === 1 ? 'entry' : 'entries'} from the logbook`;
@@ -852,7 +852,7 @@ export default function App() {
         className="btn ghost sm"
         onClick={() => logImportInputRef.current?.click()}
         disabled={!logbookPluginReady || logImportInFlight}
-        title={logbookPluginReady ? 'Import an ADIF logbook file' : (logbookUnavailableReason ?? 'Logbook plugin unavailable')}
+        title={logbookPluginReady ? 'Import an ADIF logbook file' : (logbookUnavailableReason ?? 'Logbook unavailable')}
         aria-label="Import ADIF logbook file"
       >
         <Upload size={13} strokeWidth={2.2} aria-hidden="true" />
@@ -883,7 +883,7 @@ export default function App() {
         className="btn ghost sm"
         onClick={() => void logExportAdif()}
         disabled={!logbookPluginReady || logExportInFlight}
-        title={logbookPluginReady ? 'Export all log entries to ADIF file' : (logbookUnavailableReason ?? 'Logbook plugin unavailable')}
+        title={logbookPluginReady ? 'Export all log entries to ADIF file' : (logbookUnavailableReason ?? 'Logbook unavailable')}
       >
         <Download size={13} strokeWidth={2.2} aria-hidden="true" />
         Export

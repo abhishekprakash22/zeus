@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseFt8Message } from './ft8-message';
 import {
   answerCq,
+  engage,
   currentOutgoing,
   fmtSnr,
   genCq,
@@ -238,5 +239,60 @@ describe('repeats, no-reply, halt, arming', () => {
     expect(r.next.progress).toBe('calling');
     expect(r.next.enableTx).toBe(false);
     expect(r.halt).toBe('operator');
+  });
+});
+
+describe('engage — clicking a decode joins the QSO where his message leaves it', () => {
+  const me = { myCall: 'EA5IUE', myGrid4: 'IM98' };
+
+  it('a CQ is answered with our grid, as before', () => {
+    const s = engage(me, parseFt8Message('CQ DD7EE JO31', 'EA5IUE'), 'even', -13)!;
+    expect(s.progress).toBe('replying');
+    expect(s.dxCall).toBe('DD7EE');
+    expect(s.txSlot).toBe('odd');
+    expect(currentOutgoing(s)).toBe('DD7EE EA5IUE IM98');
+  });
+
+  it('a report to us is answered with R + our report — not with our grid', () => {
+    // The bug: this used to restart at Tx1 and ask him to repeat the report.
+    const s = engage(me, parseFt8Message('EA5IUE DD7EE -13', 'EA5IUE'), 'even', -7)!;
+    expect(s.progress).toBe('roger-report');
+    expect(s.rcvdReportFromHim).toBe(-13);
+    expect(currentOutgoing(s)).toBe('DD7EE EA5IUE R-07');
+  });
+
+  it('a station answering our CQ with his grid gets his report', () => {
+    const s = engage(me, parseFt8Message('EA5IUE DD7EE JO31', 'EA5IUE'), 'even', -7)!;
+    expect(s.progress).toBe('report');
+    expect(s.dxGrid4).toBe('JO31');
+    expect(currentOutgoing(s)).toBe('DD7EE EA5IUE -07');
+  });
+
+  it('an R + report to us is answered with the ack', () => {
+    const s = engage(me, parseFt8Message('EA5IUE DD7EE R-13', 'EA5IUE'), 'even', -7)!;
+    expect(s.progress).toBe('rogers');
+    expect(s.rcvdReportFromHim).toBe(-13);
+    expect(currentOutgoing(s)).toBe('DD7EE EA5IUE RR73');
+  });
+
+  it('an RR73 to us is answered with 73', () => {
+    const s = engage(me, parseFt8Message('EA5IUE DD7EE RR73', 'EA5IUE'), 'even', -7)!;
+    expect(s.progress).toBe('signoff');
+    expect(currentOutgoing(s)).toBe('DD7EE EA5IUE 73');
+  });
+
+  it('clicking a bare 73 starts nothing', () => {
+    expect(engage(me, parseFt8Message('EA5IUE DD7EE 73', 'EA5IUE'), 'even', -7)).toBeNull();
+  });
+
+  it('a report aimed at someone else is a fresh call, with our grid', () => {
+    const s = engage(me, parseFt8Message('MW0USK DD7EE -13', 'EA5IUE'), 'even', -7)!;
+    expect(s.progress).toBe('replying');
+    expect(s.dxCall).toBe('DD7EE');
+    expect(currentOutgoing(s)).toBe('DD7EE EA5IUE IM98');
+  });
+
+  it('without a callsign there is nothing to engage', () => {
+    expect(engage(me, parseFt8Message('TNX 73 GL', 'EA5IUE'), 'even', -7)).toBeNull();
   });
 });

@@ -129,7 +129,8 @@ export interface Ft8TxRunnerView {
   dismissTxRefusal: () => void;
   startCq: (opts?: Partial<NewQsoOpts>) => void;
   answerCq: (decodeText: string, senderSlot: Slot) => boolean;
-  callStation: (decodeText: string, senderSlot: Slot) => boolean;
+  /** Click-to-call: join the QSO where his message leaves it, and arm TX. */
+  callStation: (decodeText: string, senderSlot: Slot, measuredSnrDb?: number) => boolean;
   stageMacro: (message: string) => void;
   /** Latch the live QSO as logged (manual LOG QSO) so the auto-log can't double-fire. */
   markLogged: () => void;
@@ -460,8 +461,12 @@ export function useFt8TxRunner(opts: UseFt8TxRunnerOpts): Ft8TxRunnerView {
       sync();
       return ok;
     },
-    callStation: (text, senderSlot) => {
-      const ok = ctrl.callStation(text, senderSlot);
+    callStation: (text, senderSlot, measuredSnrDb) => {
+      const ok = ctrl.callStation(text, senderSlot, measuredSnrDb);
+      // Clicking a station IS the decision to work it, so arm the keyer —
+      // WSJT-X's "double-click on call sets Tx enable". Only on success: a
+      // click that gave us nothing to answer must never key the radio.
+      if (ok) ctrl.enableTx();
       sync();
       return ok;
     },

@@ -342,6 +342,23 @@ export function Ft8PopBody() {
         </div>
       )}
 
+      {/* TX refusal — the backend declined an arm/stage/halt and told us why.
+          Field: on macOS the arm returned 409 "clock not synchronised" and the
+          panel showed nothing at all, so clicking a decode simply did nothing
+          and the operator had no way to find out why. */}
+      {tx.txRefusal && (
+        <div className="dw-banner" role="alert">
+          <strong>{tx.txRefusal}</strong>
+          <button
+            type="button"
+            className="dw-banner__cta"
+            onClick={tx.dismissTxRefusal}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Band row — click a band to re-QSY the MAIN radio's digital dial. */}
       <div className="ft8-band-grid dw-bands">
         {bandsForProtocol.map((b) => (

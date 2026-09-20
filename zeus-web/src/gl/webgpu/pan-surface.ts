@@ -455,7 +455,11 @@ export function createPanSurfaceRenderer(
     const centerOffset = viewCenterHz - base;
     const viewSpanHz = panSurfaceViewSpanHzForTest(viewHzPerPixel, anchorSourceWidth, texWidth);
     const usableHeight = Math.max(80, canvasH);
-    const frontY = -0.88;
+    // Nearest row sits ON the bottom edge rather than floating above it, so
+    // the newest trace meets the splitter and lines up with the top row of the
+    // waterfall below — the same instant, one directly above the other. The
+    // old -0.88 left a band under the surface that read as a wall.
+    const frontY = -1.0;
     const backY = Math.max(-0.08, Math.min(0.34, -0.02 + usableHeight / 900));
     const heightGain = Math.max(0.30, Math.min(0.76, 0.42 + usableHeight / 1000)) * (0.72 + reliefDepth * 0.48);
 

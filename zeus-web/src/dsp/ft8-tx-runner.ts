@@ -105,6 +105,9 @@ export interface Ft8TxRunnerView {
   callFirst: boolean;
   /** The message the machine would key next (preview). */
   outgoing: string | null;
+  /** Last backend REFUSAL of a TX request, fit to show the operator, or null.
+   *  Cleared by dismissTxRefusal() or by the next successful arm. */
+  txRefusal: string | null;
 
   // Operator actions (each mirrors a controller method, then re-syncs the view).
   enableTx: () => void;
@@ -114,6 +117,8 @@ export interface Ft8TxRunnerView {
   setHoldTxFreq: (hold: boolean) => void;
   setTxFreq: (hz: number) => void;
   setCallFirst: (on: boolean) => void;
+  /** Dismiss the current refusal notice. */
+  dismissTxRefusal: () => void;
   startCq: (opts?: Partial<NewQsoOpts>) => void;
   answerCq: (decodeText: string, senderSlot: Slot) => boolean;
   callStation: (decodeText: string, senderSlot: Slot) => boolean;
@@ -219,6 +224,7 @@ export function useFt8TxRunner(opts: UseFt8TxRunnerOpts): Ft8TxRunnerView {
       myGrid4: myGrid,
       mode,
       onLogQso,
+      onTxRefused: (reason) => setTxRefusal(reason),
       audioHz: seed?.audioHz,
       fetchFn,
       ...behavior,
@@ -233,6 +239,10 @@ export function useFt8TxRunner(opts: UseFt8TxRunnerOpts): Ft8TxRunnerView {
   const ctrl = ctrlRef.current;
 
   const [view, setView] = useState(() => snapshot(ctrl));
+  // Backend refusals (e.g. arm rejected because the host clock is out of
+  // sync). Held separately from the snapshot because it is event-driven, not
+  // derived from controller state.
+  const [txRefusal, setTxRefusal] = useState<string | null>(null);
   const sync = () => setView(snapshot(ctrl));
   const lastLocalArmAtMs = useRef(Number.NEGATIVE_INFINITY);
 
@@ -396,7 +406,12 @@ export function useFt8TxRunner(opts: UseFt8TxRunnerOpts): Ft8TxRunnerView {
 
   return {
     ...view,
+    txRefusal,
+    dismissTxRefusal: () => setTxRefusal(null),
     enableTx: () => {
+      // A fresh attempt supersedes the last complaint; if it is refused
+      // again the controller sets it straight back.
+      setTxRefusal(null);
       lastLocalArmAtMs.current = Date.now();
       ctrl.enableTx();
       sync();

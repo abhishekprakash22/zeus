@@ -48,6 +48,9 @@ export type PanSurfaceRenderer = {
   resize: (w: number, h: number) => void;
   setColormap: (id: RenderColormapId) => void;
   setTraceColor: (r: number, g: number, b: number) => void;
+  /** Colour the surface TRACES by level as well as the fill, so the 3D view
+   *  matches the 2D level-coloured fill. */
+  setLevelFill: (on: boolean) => void;
   setReliefDepth: (depth: number) => void;
   setPopGlow: (intensity: number) => void;
   clearHistory: () => void;
@@ -151,7 +154,7 @@ struct Uniforms {
   p2 : vec4<f32>, // viewCenterOffsetHz, viewSpanHz, frontY, backY
   p3 : vec4<f32>, // reserved, heightGain, zCurve, reliefDepth
   p4 : vec4<f32>, // traceColor.rgb, popGlow
-  p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, _
+  p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, levelFill
   p6 : vec4<f32>, // txDbMin, txDbMax, popDbMin, popDbMax
 };
 @group(0) @binding(0) var<uniform> u : Uniforms;
@@ -322,7 +325,13 @@ fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
 fn fsLine(in : VsOut) -> @location(0) vec4<f32> {
   let whiteLift = smoothstep(0.74, 1.0, in.level) * 0.55;
   let txRow = smoothstep(1.5, 2.0, in.domain);
-  let trace = mix(u.p4.rgb, vec3<f32>(1.0, 0.22, 0.16), txRow);
+  // Level colouring: the fill has always sampled the LUT, but the TRACES were
+  // drawn in the flat trace colour — and viewed close to head-on the traces
+  // are most of what you see, so the whole surface read as one colour. With
+  // the setting on they take the palette too, so 3D matches the 2D gradient.
+  let lutTrace = textureSample(lutTex, lutSampler, vec2<f32>(clamp(in.level, 0.0, 1.0), 0.5)).rgb;
+  let baseTrace = mix(u.p4.rgb, lutTrace, clamp(u.p5.w, 0.0, 1.0));
+  let trace = mix(baseTrace, vec3<f32>(1.0, 0.22, 0.16), txRow);
   let col = mix(trace, vec3<f32>(1.0), whiteLift);
   let alpha = (0.10 + smoothstep(0.02, 0.90, in.level) * 0.88) * (1.0 - in.depth * 0.32) * u.p5.z;
   return vec4<f32>(col, alpha);
@@ -405,6 +414,7 @@ export function createPanSurfaceRenderer(
   let canvasH = 1;
   let reliefDepth = 0.74;
   let popGlow = 0;
+  let levelFill = 0;
   let traceR = 1;
   let traceG = 0.62;
   let traceB = 0.16;
@@ -497,7 +507,7 @@ export function createPanSurfaceRenderer(
     uniformData[20] = canvasW;
     uniformData[21] = canvasH;
     uniformData[22] = 0.86;
-    uniformData[23] = 0;
+    uniformData[23] = levelFill;
     uniformData[24] = windows.txDbMin;
     uniformData[25] = windows.txDbMax;
     uniformData[26] = 0;
@@ -605,6 +615,9 @@ export function createPanSurfaceRenderer(
     },
     setColormap(id) {
       uploadLut(id);
+    },
+    setLevelFill(on) {
+      levelFill = on ? 1 : 0;
     },
     setTraceColor(r, g, b) {
       traceR = Math.max(0, Math.min(1, r));

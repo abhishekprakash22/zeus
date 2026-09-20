@@ -30,10 +30,12 @@ export function SpottingSettingsPanel() {
   const pluginInstalled = useDigitalPluginStore((s) => s.installed);
   const pluginReady = useDigitalPluginStore((s) => s.installed && s.live);
 
-  // Seed call/grid from the client operator identity so the operator usually
-  // doesn't retype — but the authoritative value is what's persisted server-side.
-  const opCall = useOperatorStore((s) => s.call);
-  const opGrid = useOperatorStore((s) => s.grid);
+  // Seed call/grid from the RESOLVED operator identity (override → QRZ home),
+  // not the saved override: an operator whose identity comes from QRZ has no
+  // override, and seeding from that showed them an empty box. The server
+  // resolves the same way at upload time, so a late QRZ login also works.
+  const opCall = useOperatorStore((s) => s.resolvedCall);
+  const opGrid = useOperatorStore((s) => s.resolvedGrid);
 
   const [psk, setPsk] = useState(config.pskReporterEnabled);
   const [wsprnet, setWsprnet] = useState(config.wsprnetEnabled);
@@ -188,8 +190,9 @@ export function SpottingSettingsPanel() {
             style={inputStyle}
           />
           <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
-            4 or 6 characters. Leave callsign/grid blank to fall back to your QRZ home
-            station. Applies immediately — no restart required.
+            4 or 6 characters. Prefilled from your operator identity, falling back to
+            your QRZ home station — leave them as they are unless you spot under a
+            different call. Applies immediately — no restart required.
           </span>
         </label>
 

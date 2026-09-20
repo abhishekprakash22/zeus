@@ -40,6 +40,8 @@ public sealed class SpottingService : IHostedService, IDisposable
     private readonly SpottingSettingsStore _store;
     private readonly DigitalService _digital;
     private readonly RadioService? _radio;
+    private readonly OperatorIdentityStore? _identity;
+    private readonly QrzService? _qrz;
     private readonly HttpClient _http;
     private readonly WsprnetUploader _wsprnet;
     private readonly PskReporterUploader _psk;
@@ -53,12 +55,16 @@ public sealed class SpottingService : IHostedService, IDisposable
         SpottingSettingsStore store,
         DigitalService digital,
         RadioService? radio = null,
-        HttpClient? http = null)
+        HttpClient? http = null,
+        OperatorIdentityStore? identity = null,
+        QrzService? qrz = null)
     {
         _log = log;
         _store = store;
         _digital = digital;
         _radio = radio;
+        _identity = identity;
+        _qrz = qrz;
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
         _wsprnet = new WsprnetUploader(_http, log);
         _psk = new PskReporterUploader(log);
@@ -73,7 +79,7 @@ public sealed class SpottingService : IHostedService, IDisposable
     {
         get
         {
-            var s = _settings;
+            var s = Effective(_settings);
             return new SpottingStatus(
                 s.PskReporterEnabled, s.WsprnetEnabled, s.Callsign, s.Grid,
                 s.IdentityResolved, _psk.Uploaded + _wsprnet.Uploaded);
@@ -124,14 +130,14 @@ public sealed class SpottingService : IHostedService, IDisposable
     private void Apply(SpottingSettings settings)
     {
         _settings = settings;
-        if (!settings.PskReporterEnabled || !settings.IdentityResolved) _psk.Clear();
+        if (!settings.PskReporterEnabled || !Effective(settings).IdentityResolved) _psk.Clear();
     }
 
     // ---- decode handlers (decoder thread — queue, never block) ---------------
 
     private void OnFt8Decoded(Ft8DecodeBatch batch)
     {
-        var s = _settings;
+        var s = Effective(_settings);
         if (!s.PskReporterEnabled || !s.IdentityResolved || batch.Decodes.Count == 0) return;
 
         long dialHz = _radio?.Snapshot().VfoHz ?? 0;
@@ -149,7 +155,7 @@ public sealed class SpottingService : IHostedService, IDisposable
 
     private void OnWsprSpotted(WsprSpotBatch batch)
     {
-        var s = _settings;
+        var s = Effective(_settings);
         if (!s.IdentityResolved || batch.Spots.Length == 0) return;
 
         // PSK Reporter takes WSPR too, in the same batched report as FT8/FT4.
@@ -187,10 +193,40 @@ public sealed class SpottingService : IHostedService, IDisposable
 
     private async Task FlushPskAsync()
     {
-        var s = _settings;
+        var s = Effective(_settings);
         if (!s.PskReporterEnabled || !s.IdentityResolved) return;
         try { await _psk.FlushAsync(s, SoftwareVersion(), _cts?.Token ?? CancellationToken.None).ConfigureAwait(false); }
         catch (Exception ex) { _log.LogWarning(ex, "spotting.pskreporter: flush failed"); }
+    }
+
+    /// <summary>
+    /// The settings as the uploaders should see them: the panel's own callsign
+    /// and grid where the operator typed them, otherwise the station identity
+    /// every other subsystem already resolves — the shared operator override,
+    /// then the QRZ home station. That is OperatorIdentityResolver, the same
+    /// precedence the WSJT-X and N1MM broadcasters use; spotting was the one
+    /// subsystem that kept its own copy and demanded a retype.
+    ///
+    /// Resolved per use, not at save time, because the QRZ home station can
+    /// arrive after the panel was last saved — a late login then just works
+    /// instead of needing the panel reopened.
+    /// </summary>
+    internal SpottingSettings Effective(SpottingSettings s) => Effective(s, _identity, _qrz);
+
+    /// <summary>The resolution itself, free of the service so it can be tested.</summary>
+    internal static SpottingSettings Effective(
+        SpottingSettings s, OperatorIdentityStore? identity, QrzService? qrz)
+    {
+        if (s.IdentityResolved) return s;           // the panel has both; nothing to fill
+        if (identity is null || qrz is null) return s;
+
+        var (call, grid) = OperatorIdentityResolver.Resolve(identity, qrz, s.Callsign, s.Grid);
+        return s with
+        {
+            // A value typed into the panel wins; only the blanks get filled.
+            Callsign = string.IsNullOrWhiteSpace(s.Callsign) ? call : s.Callsign,
+            Grid = string.IsNullOrWhiteSpace(s.Grid) ? grid : s.Grid,
+        };
     }
 
     /// <summary>How this station identifies itself to both networks.</summary>

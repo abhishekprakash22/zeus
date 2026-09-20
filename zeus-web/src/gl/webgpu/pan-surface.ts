@@ -307,7 +307,10 @@ fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
   // newest data is. Relief is worth having on signals and worth nothing on
   // flat noise, so the shading now fades in with level.
   let shade = mix(1.0, in.light, smoothstep(0.06, 0.42, lvl));
-  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvl, 0.5)).rgb * shade;
+  // Same compression as the 2D fill: the palettes' dark shelf swallowed the
+  // noise floor and the surface went black. See LUT_COLOR_FLOOR in shaders.ts.
+  let lvlT = 0.40 + lvl * 0.60;
+  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvlT, 0.5)).rgb * shade;
   let txRow = smoothstep(1.5, 2.0, in.domain);
   col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.level));
   let horizon = vec3<f32>(0.015, 0.045, 0.09);
@@ -329,7 +332,8 @@ fn fsLine(in : VsOut) -> @location(0) vec4<f32> {
   // drawn in the flat trace colour — and viewed close to head-on the traces
   // are most of what you see, so the whole surface read as one colour. With
   // the setting on they take the palette too, so 3D matches the 2D gradient.
-  let lutTrace = textureSample(lutTex, lutSampler, vec2<f32>(clamp(in.level, 0.0, 1.0), 0.5)).rgb;
+  let traceT = 0.40 + clamp(in.level, 0.0, 1.0) * 0.60;
+  let lutTrace = textureSample(lutTex, lutSampler, vec2<f32>(traceT, 0.5)).rgb;
   let baseTrace = mix(u.p4.rgb, lutTrace, clamp(u.p5.w, 0.0, 1.0));
   let trace = mix(baseTrace, vec3<f32>(1.0, 0.22, 0.16), txRow);
   let col = mix(trace, vec3<f32>(1.0), whiteLift);

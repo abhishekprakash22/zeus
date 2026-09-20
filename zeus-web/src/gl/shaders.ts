@@ -129,6 +129,9 @@ uniform float uPopIntensity;
 // that is now the same hue as the signal sitting on top of it.
 uniform sampler2D uLut;
 uniform float uLevelFill;
+// Where each palette stops being black. Shared by the 2D fill and the 3D
+// surface so both views agree about where the colour ramp begins.
+const float LUT_COLOR_FLOOR = 0.40;
 out vec4 fragColor;
 vec3 popRamp(float n) {
   vec3 floorGlow = vec3(0.00, 0.10, 0.18);
@@ -143,7 +146,14 @@ void main() {
   // Darkened toward the baseline so the fill reads as shadow under the trace
   // rather than a slab of paint: full palette colour at the trace, sinking to
   // a fraction of it at the floor.
-  vec3 lutCol = texture(uLut, vec2(clamp(v_level, 0.0, 1.0), 0.5)).rgb;
+  // The palettes deliberately hold their bottom ~35-42% at or near black so a
+  // noisy band doesn't flood the WATERFALL with colour. The panadapter's noise
+  // floor normalises straight into that shelf, so sampling raw v_level made
+  // the fill black and invisible — the operator saw only the trace. Compress
+  // the sample into the palette's coloured region instead: the floor lands
+  // where colour starts, peaks still reach the top of the ramp.
+  float lutT = LUT_COLOR_FLOOR + clamp(v_level, 0.0, 1.0) * (1.0 - LUT_COLOR_FLOOR);
+  vec3 lutCol = texture(uLut, vec2(lutT, 0.5)).rgb;
   vec3 flat3 = uColor;
   vec3 tint = mix(flat3, lutCol, clamp(uLevelFill, 0.0, 1.0));
   vec4 base = vec4(tint * v_alpha, v_alpha);

@@ -238,7 +238,8 @@ export function Ft8PopBody() {
     }
     const secs = new Date(row.slotStartUnixMs).getUTCSeconds();
     const senderSlot = slotOf(secs, protocol);
-    tx.callStation(row.text, senderSlot);
+    // row.snr is OUR measurement of him — it becomes the report we send.
+    tx.callStation(row.text, senderSlot, row.snrDb);
     const parsed = parseFt8Message(row.text);
     if (parsed.deCall) runQrzLookup(parsed.deCall);
     // HamClock "on-click" trigger: push the clicked station's grid to the map.

@@ -7,6 +7,9 @@
 #ifndef ZEUS_FT8_H
 #define ZEUS_FT8_H
 
+/* estimate_snr_db() could not measure this decode. */
+#define ZEUS_SNR_UNKNOWN (-999)
+
 #ifdef __cplusplus
 extern "C" {
 #endif

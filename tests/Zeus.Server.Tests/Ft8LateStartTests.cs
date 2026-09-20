@@ -137,4 +137,58 @@ public sealed class Ft8LateStartTests
             new TxStage("CQ EA5IUE IM76", 1500, SlotClock.Parity(idx), DigitalMode.Ft4, start + 1_100),
             start + 1_100, null, out _, out _));
     }
+
+    // ---- taking the fresher reply mid-lead-in -------------------------
+    //
+    // The keyer picks a stage up KeyLeadMs BEFORE the boundary, when the reply
+    // to the slot that just ended does not exist yet. Committing there sent the
+    // previous message every time (seen on air with DO6MFD: two grid messages
+    // after the report had already been decoded), so the choice is re-made
+    // StageCommitMs into the silent lead-in.
+
+    [Fact]
+    public void TheReplyThatLandsDuringTheLeadIn_ReplacesTheStaleMessage()
+    {
+        long idx = 4;
+        double boundary = SlotClock.SlotStartMs(idx, DigitalMode.Ft8);
+        var keyed = Stage(boundary - SlotMs, slot: SlotClock.Parity(idx));      // staged a cycle ago
+        var fresh = new TxStage("DO6MFD EA5IUE R+17", 1500, SlotClock.Parity(idx),
+                                DigitalMode.Ft8, boundary + 250);
+
+        Assert.True(Ft8KeyerService.WantsFresherStage(keyed, fresh, boundary));
+    }
+
+    [Fact]
+    public void TheSameMessageRestaged_IsNotWorthReSynthesising()
+    {
+        long idx = 4;
+        double boundary = SlotClock.SlotStartMs(idx, DigitalMode.Ft8);
+        var keyed = Stage(boundary - SlotMs, slot: SlotClock.Parity(idx));
+        var again = new TxStage(keyed.Message, 1500, SlotClock.Parity(idx),
+                                DigitalMode.Ft8, boundary + 250);
+
+        Assert.False(Ft8KeyerService.WantsFresherStage(keyed, again, boundary));
+    }
+
+    [Fact]
+    public void NothingFresher_LeavesTheKeyedMessageAlone()
+    {
+        long idx = 4;
+        double boundary = SlotClock.SlotStartMs(idx, DigitalMode.Ft8);
+        var keyed = Stage(boundary - SlotMs, slot: SlotClock.Parity(idx));
+
+        Assert.False(Ft8KeyerService.WantsFresherStage(keyed, null, boundary));
+    }
+
+    [Fact]
+    public void AStageForTheOtherParity_IsNeverSwappedIn()
+    {
+        long idx = 4;                                   // even
+        double boundary = SlotClock.SlotStartMs(idx, DigitalMode.Ft8);
+        var keyed = Stage(boundary - SlotMs, slot: SlotClock.Parity(idx));
+        var wrongParity = new TxStage("DO6MFD EA5IUE R+17", 1500, "odd",
+                                      DigitalMode.Ft8, boundary + 250);
+
+        Assert.False(Ft8KeyerService.WantsFresherStage(keyed, wrongParity, boundary));
+    }
 }

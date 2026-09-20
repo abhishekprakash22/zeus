@@ -43,12 +43,15 @@ export function slotMsFor(mode: DigitalQsoMode): number {
  * G2 bench-tune.
  */
 function settleMsFor(mode: DigitalQsoMode): number {
-  // Measured decode latency on a current machine is ~20 ms for a whole slot,
-  // so seconds of settle bought nothing and cost everything: the reply landed
-  // deep inside our own transmit slot. Keep a small margin for the audio tail
-  // reaching the decoder and for slower hosts (a Pi), and let the backend's
-  // late-start window absorb the rest.
-  return mode === 'FT4' ? 250 : 400;
+  // The backend publishes one decode batch per slot about 110 ms after the
+  // boundary (its watcher polls at 100 ms; the decode itself measures ~13 ms
+  // for a whole slot). What matters is that the reply reaches the keyer before
+  // it commits to a message, which it does StageCommitMs (350 ms) into the
+  // slot — see Ft8KeyerService. A 400 ms settle on top of a 250 ms detection
+  // tick put the stage at 400-650 ms, i.e. AFTER that commit, which is why the
+  // QSO kept answering the DX's second copy. Keep the margin small and let the
+  // keyer's late-start window absorb a slow host.
+  return mode === 'FT4' ? 100 : 150;
 }
 
 /** The UTC slot index a given epoch-ms falls in, for a slot length. */
@@ -194,7 +197,10 @@ export function startFt8SlotDriver(opts: {
     pending.push(id);
   };
 
-  const interval = setInterval(tick, 250);
+  // Boundary detection granularity. It adds directly to the settle above
+  // before the reply is staged, so it has to stay well inside the keyer's
+  // commit point.
+  const interval = setInterval(tick, 50);
   return () => {
     clearInterval(interval);
     for (const id of pending) clearTimeout(id);

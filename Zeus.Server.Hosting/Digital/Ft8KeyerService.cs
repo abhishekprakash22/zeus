@@ -32,7 +32,10 @@
 // TIMING: audio starts TxStartDelayMs (500 ms) after the slot boundary — the
 // WSJT-X convention for the nominal FT8/FT4 signal start, so remote stations
 // see DT ≈ 0 (plus path/pipeline latency). KeyLeadMs before the boundary the
-// stage is picked up and synthesized; MOX keys at the boundary itself.
+// stage is picked up and synthesized; MOX keys at the boundary itself; and
+// StageCommitMs into that silent lead-in the keyer takes the freshest eligible
+// stage, because the reply to the slot that just ended cannot exist any
+// earlier (see StageCommitMs).
 
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -48,6 +51,37 @@ internal sealed class Ft8KeyerService : BackgroundService
 {
     /// <summary>Nominal in-slot start of the FT8/FT4 signal (WSJT-X: 0.5 s).</summary>
     private const int TxStartDelayMs = 500;
+
+    /// <summary>
+    /// How far into the slot the keyer settles on WHICH message to send.
+    ///
+    /// The stage is picked up KeyLeadMs BEFORE the boundary so the waveform can
+    /// be synthesised in time — but the reply to the slot that just ended does
+    /// not exist yet at that instant: the DX stops transmitting exactly at our
+    /// boundary, the decoder runs (~13 ms here), the frontend settles and posts,
+    /// and the fresh stage lands a few hundred ms INTO our slot. Committing at
+    /// the boundary therefore sent the PREVIOUS message and pushed the whole QSO
+    /// a cycle late — the operator answered the DX's second copy, every time.
+    ///
+    /// So MOX keys at the boundary as always and the signal still starts at
+    /// TxStartDelayMs; we simply take the freshest eligible stage at this point
+    /// inside that silent lead-in. No RF timing moves.
+    /// </summary>
+    private const int StageCommitMs = 350;
+
+    /// <summary>
+    /// At <see cref="StageCommitMs"/> into a transmission that began on the
+    /// boundary: has a fresher reply landed that should go out instead of the
+    /// message picked up before the boundary? Same slot, same parity, a
+    /// different message — the freshness rules are <see cref="TxStageBook"/>'s.
+    /// </summary>
+    internal static bool WantsFresherStage(TxStage keyed, TxStage? fresh, double boundaryMs)
+    {
+        if (fresh is null) return false;
+        if (string.Equals(fresh.Message, keyed.Message, StringComparison.Ordinal)) return false;
+        return TxStageBook.EligibleLate(
+            fresh, SlotClock.SlotIndex(boundaryMs, fresh.Mode), boundaryMs, MaxLateStartMs(fresh.Mode));
+    }
 
     /// <summary>
     /// How far into a slot we will still start transmitting. The reply to a
@@ -234,19 +268,53 @@ internal sealed class Ft8KeyerService : BackgroundService
         _digital.Transmitting = true;
         _digital.LastTxSlotMs = boundaryMs;
         _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
-        if (skipMs > 0)
-            _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot}, late start {Late} ms)",
-                stage.Message, stage.AudioHz, stage.Mode, stage.Slot, skipMs);
-        else
-            _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot})",
-                stage.Message, stage.AudioHz, stage.Mode, stage.Slot);
 
         try
         {
             // Nominal in-slot signal start (abortable). A late start skips the
             // audio the slot has already consumed instead of delaying further.
-            int skipSamples = Math.Min(wave.Length, (int)(skipMs / 1000.0 * SampleRateHz));
             int waitMs = skipMs > 0 ? 0 : TxStartDelayMs;
+
+            // Started on the boundary: spend the first part of the silent
+            // lead-in waiting for the reply to the slot that just ended, then
+            // send THAT instead. See StageCommitMs.
+            if (waitMs > 0)
+            {
+                if (!WaitMs(StageCommitMs, ct) || !_digital.Armed) return;
+                waitMs -= StageCommitMs;
+
+                if (_digital.Stages.Peek() is { } fresh
+                    && WantsFresherStage(stage, fresh, boundaryMs))
+                {
+                    float[]? freshWave = Ft8Native.Synth(
+                        fresh.Message, fresh.Mode == DigitalMode.Ft4, fresh.AudioHz,
+                        SampleRateHz, out string? freshErr);
+                    if (freshWave is null)
+                    {
+                        // Keep the message we already have rather than dropping
+                        // the slot: a stale reply beats silence.
+                        _log.LogWarning("ft8 keyer: synth failed for the fresher '{Msg}': {Err}",
+                            fresh.Message, freshErr);
+                    }
+                    else
+                    {
+                        _log.LogInformation("ft8 keyer: took the fresher reply '{New}' over '{Old}'",
+                            fresh.Message, stage.Message);
+                        stage = fresh;
+                        wave = freshWave;
+                        _digital.Events.PublishTxStatus(_digital.BuildTxStatus());
+                    }
+                }
+            }
+
+            if (skipMs > 0)
+                _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot}, late start {Late} ms)",
+                    stage.Message, stage.AudioHz, stage.Mode, stage.Slot, skipMs);
+            else
+                _log.LogInformation("ft8 keyer: TX '{Msg}' @{Hz} Hz ({Mode}, slot {Slot})",
+                    stage.Message, stage.AudioHz, stage.Mode, stage.Slot);
+
+            int skipSamples = Math.Min(wave.Length, (int)(skipMs / 1000.0 * SampleRateHz));
             if ((waitMs == 0 || WaitMs(waitMs, ct)) && _digital.Armed)
                 Pump(wave, ct, skipSamples);
         }

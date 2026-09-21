@@ -137,6 +137,15 @@ else
   echo "WARNING: ${MANUAL_PDF} not found - AppImage will ship without the operator manual."
 fi
 
+# License texts: staged into wwwroot so UseStaticFiles serves them at
+# /LICENSE.txt and /ATTRIBUTIONS.md, and a copy travels on disk inside
+# every AppImage. The server-mode AppDir below is copied from this one,
+# so it inherits both.
+mkdir -p "${APPDIR}/usr/bin/wwwroot"
+cp "${REPO_ROOT}/LICENSE" "${APPDIR}/usr/bin/wwwroot/LICENSE.txt"
+cp "${REPO_ROOT}/ATTRIBUTIONS.md" "${APPDIR}/usr/bin/wwwroot/ATTRIBUTIONS.md"
+echo "Staged LICENSE and ATTRIBUTIONS.md into AppDir wwwroot."
+
 # Runtime dependency-check helper, sourced by AppRun to verify WebKitGTK
 # (Photino's webview backend) before opening the native window. Lands next to
 # the binary so AppRun can source it after cd'ing into usr/bin. The server-mode

@@ -12,11 +12,11 @@
 name: release-macos
 
 on:
-  # No push trigger. Tagging must not publish anything by itself: a release is
-  # assembled as a DRAFT by release-draft.yml, looked at, and only then made
-  # public by release-publish.yml. v1.85 and v1.86 both went straight to
-  # operators carrying a native library older than its own source, and nobody
-  # had a chance to look first.
+  # A tag publishes, as it always did. The two manual workflows
+  # (release-draft / release-publish) exist to rehearse a release before
+  # tagging: assemble it as a draft, look at it, then tag for real.
+  push:
+    tags: ["v*"]
   workflow_call:
     inputs:
       tag:
@@ -44,12 +44,29 @@ permissions:
   contents: write
 
 jobs:
+  # v1.85 shipped a libzeus_ft8 older than the measured-SNR fix and v1.86 a
+  # libzeus_wspr older than the stack-overflow fix, both down this path. The
+  # check is seconds; the build is not, so it goes first.
+  freshness:
+    name: Native binaries are not older than their source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', inputs.tag) }}
+          # Compares commit dates, so it needs the history.
+          fetch-depth: 0
+
+      - name: Check native freshness
+        run: bash tools/check-native-freshness.sh
+
   build:
+    needs: freshness
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', inputs.tag) }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -65,7 +82,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
@@ -97,6 +114,6 @@ jobs:
       - name: Attach installer to the release
         uses: softprops/action-gh-release@v2
         with:
-          draft: ${{ inputs.draft }}
+          draft: ${{ github.event_name != 'push' && inputs.draft }}
           tag_name: ${{ steps.version.outputs.tag }}
           files: installers/output/*.pkg

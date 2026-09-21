@@ -18,11 +18,11 @@
 name: release-appimage
 
 on:
-  # No push trigger. Tagging must not publish anything by itself: a release is
-  # assembled as a DRAFT by release-draft.yml, looked at, and only then made
-  # public by release-publish.yml. v1.85 and v1.86 both went straight to
-  # operators carrying a native library older than its own source, and nobody
-  # had a chance to look first.
+  # A tag publishes, as it always did. The two manual workflows
+  # (release-draft / release-publish) exist to rehearse a release before
+  # tagging: assemble it as a draft, look at it, then tag for real.
+  push:
+    tags: ["v*"]
   workflow_call:
     inputs:
       tag:
@@ -50,7 +50,24 @@ permissions:
   contents: write
 
 jobs:
+  # v1.85 shipped a libzeus_ft8 older than the measured-SNR fix and v1.86 a
+  # libzeus_wspr older than the stack-overflow fix, both down this path. The
+  # check is seconds; the build is not, so it goes first.
+  freshness:
+    name: Native binaries are not older than their source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', inputs.tag) }}
+          # Compares commit dates, so it needs the history.
+          fetch-depth: 0
+
+      - name: Check native freshness
+        run: bash tools/check-native-freshness.sh
+
   build:
+    needs: freshness
     # Native arm64 runner — the existing installer script runs unmodified.
     runs-on: ubuntu-24.04-arm
     steps:
@@ -58,7 +75,7 @@ jobs:
         with:
           # Without this the manual handle built the default branch,
           # not the tag it was given.
-          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', inputs.tag) }}
 
       - uses: actions/setup-node@v5
         with:
@@ -78,12 +95,12 @@ jobs:
         # runs. The action handles tag refs and shallow bookkeeping itself.
         uses: actions/checkout@v5
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: refs/tags/${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
 
       - name: Resolve version from tag
         id: ver
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       # Build the operator's manual PDF so the installer script stages it into
@@ -115,7 +132,7 @@ jobs:
         env:
           # On dispatch, ref_name is the BRANCH — the manifest must point at
           # the release tag's download path or every updater would 404.
-          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}
+          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
           ZEUS_DOWNLOAD_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           mkdir -p /tmp/release-artifacts
@@ -139,8 +156,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: ${{ inputs.draft }}
-          tag_name: ${{ inputs.tag }}
+          draft: ${{ github.event_name != 'push' && inputs.draft }}
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
           files: |
             /tmp/release-artifacts/*.AppImage
             /tmp/release-artifacts/latest.json

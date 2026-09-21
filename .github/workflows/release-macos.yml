@@ -12,15 +12,33 @@
 name: release-macos
 
 on:
-  push:
-    tags:
-      - "v*"
+  # No push trigger. Tagging must not publish anything by itself: a release is
+  # assembled as a DRAFT by release-draft.yml, looked at, and only then made
+  # public by release-publish.yml. v1.85 and v1.86 both went straight to
+  # operators carrying a native library older than its own source, and nobody
+  # had a chance to look first.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v1.87)."
+        required: true
+        type: string
+      draft:
+        description: "Attach to a draft release rather than publishing."
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build (e.g. v0.15.65). Must exist."
+        description: "Existing tag to build (e.g. v1.87)."
         required: true
         type: string
+      draft:
+        description: "Attach to a draft release rather than publishing."
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -31,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -47,7 +65,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          TAG="${{ inputs.tag }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
@@ -79,5 +97,6 @@ jobs:
       - name: Attach installer to the release
         uses: softprops/action-gh-release@v2
         with:
+          draft: ${{ inputs.draft }}
           tag_name: ${{ steps.version.outputs.tag }}
           files: installers/output/*.pkg

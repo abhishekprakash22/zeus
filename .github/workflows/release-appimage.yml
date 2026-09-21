@@ -18,17 +18,33 @@
 name: release-appimage
 
 on:
-  push:
-    tags: ["v*"]
-  # Manual crank handle: GitHub has (twice in one day) failed to create runs
-  # for delivered tag-push events. Dispatch builds and RELEASES the given
-  # existing tag by hand: Actions -> this workflow -> Run workflow -> tag.
+  # No push trigger. Tagging must not publish anything by itself: a release is
+  # assembled as a DRAFT by release-draft.yml, looked at, and only then made
+  # public by release-publish.yml. v1.85 and v1.86 both went straight to
+  # operators carrying a native library older than its own source, and nobody
+  # had a chance to look first.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v1.87)."
+        required: true
+        type: string
+      draft:
+        description: "Attach to a draft release rather than publishing."
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and release (e.g. v0.15.36)"
+        description: "Existing tag to build (e.g. v1.87)."
         required: true
         type: string
+      draft:
+        description: "Attach to a draft release rather than publishing."
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -39,6 +55,10 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Without this the manual handle built the default branch,
+          # not the tag it was given.
+          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
 
       - uses: actions/setup-node@v5
         with:
@@ -63,7 +83,7 @@ jobs:
       - name: Resolve version from tag
         id: ver
         run: |
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          TAG="${{ inputs.tag }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       # Build the operator's manual PDF so the installer script stages it into
@@ -95,7 +115,7 @@ jobs:
         env:
           # On dispatch, ref_name is the BRANCH — the manifest must point at
           # the release tag's download path or every updater would 404.
-          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}
           ZEUS_DOWNLOAD_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           mkdir -p /tmp/release-artifacts
@@ -119,7 +139,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          draft: ${{ inputs.draft }}
+          tag_name: ${{ inputs.tag }}
           files: |
             /tmp/release-artifacts/*.AppImage
             /tmp/release-artifacts/latest.json

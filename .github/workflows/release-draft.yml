@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Assemble a release as a DRAFT. Nothing here is visible to an operator.
+#
+# Two things go wrong when tagging publishes directly, and both have happened:
+#
+#   1. Nobody gets to look. v1.85 and v1.86 were cut by a tag push and were
+#      public before anyone could check what was inside them.
+#   2. What is inside is not what the source says. Both of those releases
+#      shipped a native library older than the code it was built from — the
+#      FT8 SNR fix in one, the WSPR stack-overflow fix in the other — because
+#      the native libraries are committed by hand and nobody had rebuilt them.
+#
+# So this workflow refuses to assemble anything until the committed binaries
+# are at least as new as their source, and what it does assemble stays a draft
+# until release-publish.yml is run against it deliberately.
+#
+# The platform builds are the existing release-appimage / release-macos /
+# release-windows workflows, called rather than copied, so there is one
+# definition of how each installer is made.
+
+name: release-draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to assemble (e.g. v1.87). Create the tag first."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # Cheap, and the only thing standing between a stale binary and an operator.
+  # Runs before any build so a bad tree fails in seconds rather than after
+  # three platform builds.
+  freshness:
+    name: Native binaries are not older than their source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
+          # The check compares commit dates, so it needs the history.
+          fetch-depth: 0
+
+      - name: Check native freshness
+        run: bash tools/check-native-freshness.sh
+
+  appimage:
+    needs: freshness
+    uses: ./.github/workflows/release-appimage.yml
+    with:
+      tag: ${{ inputs.tag }}
+      draft: true
+    secrets: inherit
+
+  macos:
+    needs: freshness
+    uses: ./.github/workflows/release-macos.yml
+    with:
+      tag: ${{ inputs.tag }}
+      draft: true
+    secrets: inherit
+
+  windows:
+    needs: freshness
+    uses: ./.github/workflows/release-windows.yml
+    with:
+      tag: ${{ inputs.tag }}
+      draft: true
+    secrets: inherit
+
+  summary:
+    needs: [appimage, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Point at the draft
+        run: |
+          {
+            echo "### Draft assembled for ${{ inputs.tag }}"
+            echo
+            echo "Nothing is public yet. Review the draft's assets, then run"
+            echo "**release-publish** against the same tag to make it visible."
+          } >> "$GITHUB_STEP_SUMMARY"

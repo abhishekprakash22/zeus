@@ -595,10 +595,12 @@ jobs:
           # no libfftw3-dev here, only the cross toolchain), so point CPATH at
           # the headers the arm64 FFTW cross-build already installed. The LINK
           # then goes straight against the cross-built .so staged for this RID,
-          # so the SONAME matches what ships.
+          # so the SONAME matches what ships — by ABSOLUTE path, because
+          # build.sh cds into its own directory and a relative one resolves
+          # against native/wspr/.
           CC=aarch64-linux-gnu-gcc \
             CPATH="$HOME/fftw-arm64/include" \
-            FFTW=Zeus.Dsp/runtimes/linux-arm64/native/libfftw3f.so.3 \
+            FFTW="$PWD/Zeus.Dsp/runtimes/linux-arm64/native/libfftw3f.so.3" \
             NM=aarch64-linux-gnu-nm \
             bash native/wspr/build.sh libzeus_wspr.so
           mv native/wspr/libzeus_wspr.so Zeus.Dsp/runtimes/linux-arm64/native/libzeus_wspr.so

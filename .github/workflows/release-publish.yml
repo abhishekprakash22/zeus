@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Make an existing draft release public. It builds nothing.
+#
+# That is the point. If publishing rebuilt the artifacts, what reaches
+# operators would be a different set of bytes from the one that was reviewed,
+# and the review would mean nothing. This flips exactly the draft that
+# release-draft.yml assembled, assets untouched.
+
+name: release-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of the draft release to publish (e.g. v1.87)."
+        required: true
+        type: string
+      latest:
+        description: "Mark it as the latest release."
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse anything that is not a draft with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          view=$(gh release view "${{ inputs.tag }}" \
+                   --repo "${{ github.repository }}" \
+                   --json isDraft,assets 2>/dev/null) || {
+            echo "No release exists for ${{ inputs.tag }}. Run release-draft first." >&2
+            exit 1
+          }
+
+          if [ "$(echo "$view" | jq -r .isDraft)" != "true" ]; then
+            echo "${{ inputs.tag }} is already public. Nothing to do." >&2
+            exit 1
+          fi
+
+          # A draft with no assets means a platform build failed and the
+          # release was never actually assembled; publishing it would offer
+          # operators a download page with nothing on it.
+          n=$(echo "$view" | jq '.assets | length')
+          if [ "$n" -eq 0 ]; then
+            echo "Draft ${{ inputs.tag }} has no assets — did every platform build succeed?" >&2
+            exit 1
+          fi
+          echo "Draft ${{ inputs.tag }} carries $n asset(s)."
+          echo "$view" | jq -r '.assets[].name' | sed 's/^/  /'
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "${{ inputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --draft=false \
+            --latest=${{ inputs.latest }}
+          echo "Published ${{ inputs.tag }}." >> "$GITHUB_STEP_SUMMARY"

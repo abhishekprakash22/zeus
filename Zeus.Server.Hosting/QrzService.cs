@@ -45,6 +45,7 @@
 
 using System.Xml.Linq;
 using Zeus.Contracts;
+using Zeus.Server.Hosting;
 
 namespace Zeus.Server;
 
@@ -52,7 +53,11 @@ public sealed class QrzService
 {
     private const string QrzXmlApiUrl = "https://xmldata.qrz.com/xml/current/";
     private const string QrzLogbookApiUrl = "https://logbook.qrz.com/api";
-    private const string Agent = "Zeus";
+    // QRZ's XML API wants the name and version of the calling software. The
+    // hyphenated User-Agent spelling is used rather than "ANAN Core 0.10.9":
+    // this goes in a URL query value, and a token with no space is what every
+    // other client sends there.
+    private static string Agent => SoftwareIdentity.UserAgent;
     private const string ServiceName = "qrz";
     private const string ApiKeyServiceName = "qrz-apikey";
     private static readonly XNamespace Ns = "http://xmldata.qrz.com";
@@ -351,7 +356,7 @@ public sealed class QrzService
         if (_sessionKey != null && _sessionExpiry > DateTime.UtcNow) return _sessionKey;
         if (_username == null || _password == null) return null;
 
-        var url = $"{QrzXmlApiUrl}?username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}&agent={Agent}";
+        var url = $"{QrzXmlApiUrl}?username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}&agent={Uri.EscapeDataString(Agent)}";
         var xml = await _http.GetStringAsync(url, ct);
         var doc = XDocument.Parse(xml);
         var session = doc.Descendants(Ns + "Session").FirstOrDefault()

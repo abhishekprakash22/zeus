@@ -29,7 +29,6 @@
 //   those on connect). Cleared on disconnect. Plus the last qsy_request sent
 //   to us, which the panel shows until dismissed or five minutes old.
 
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -381,14 +380,7 @@ public sealed class FreeDvReporterService : IHostedService, IDisposable
         return JsonSerializer.Serialize(auth);
     }
 
-    private static string SoftwareVersion()
-    {
-        var v = typeof(FreeDvReporterService).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
-        int plus = v.IndexOf('+');
-        if (plus >= 0) v = v[..plus];
-        return v.Length == 0 ? "ANAN Core" : $"ANAN Core {v}";
-    }
+    private static string SoftwareVersion() => SoftwareIdentity.NameWithVersion;
 
     private static string OsName() =>
         RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "macOS"

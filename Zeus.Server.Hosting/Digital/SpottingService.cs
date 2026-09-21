@@ -25,7 +25,6 @@
 // the decode's audio offset, WSPR spots come out of the decoder already
 // absolute. The radio is never touched — this is egress only.
 
-using System.Reflection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -230,12 +229,5 @@ public sealed class SpottingService : IHostedService, IDisposable
     }
 
     /// <summary>How this station identifies itself to both networks.</summary>
-    internal static string SoftwareVersion()
-    {
-        var v = typeof(SpottingService).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
-        int plus = v.IndexOf('+');
-        if (plus >= 0) v = v[..plus];
-        return v.Length == 0 ? "ANAN Core" : $"ANAN Core {v}";
-    }
+    internal static string SoftwareVersion() => SoftwareIdentity.NameWithVersion;
 }

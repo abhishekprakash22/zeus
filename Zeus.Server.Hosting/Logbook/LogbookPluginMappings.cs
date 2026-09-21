@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Zeus.Contracts;
 using Zeus.Plugins.Contracts.Extensions;
+using Zeus.Server.Hosting;
 
 namespace Zeus.Server;
 
@@ -192,13 +193,18 @@ internal static class LogbookPluginMappings
         Modes: [],
         RecentQsos: []);
 
+    /// <summary>One ADIF header field. The length prefix counts bytes, so it is computed.</summary>
+    private static string AdifHeaderField(string name, string value) =>
+        $"<{name}:{Encoding.UTF8.GetByteCount(value)}>{value}";
+
     public static string EmptyAdifExport()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("ADIF Export from Zeus");
+        sb.AppendLine($"ADIF Export from {SoftwareIdentity.Name}");
         sb.AppendLine("<ADIF_VER:5>3.1.4");
-        sb.AppendLine("<PROGRAMID:4>Zeus");
-        sb.AppendLine("<PROGRAMVERSION:5>1.0.0");
+        sb.AppendLine(AdifHeaderField("PROGRAMID", SoftwareIdentity.Name));
+        if (SoftwareIdentity.Version.Length > 0)
+            sb.AppendLine(AdifHeaderField("PROGRAMVERSION", SoftwareIdentity.Version));
         sb.AppendLine("<EOH>");
         sb.AppendLine();
         return sb.ToString();

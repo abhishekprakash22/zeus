@@ -12,6 +12,7 @@ using System.Globalization;
 using System.Security;
 using System.Text;
 using Zeus.Contracts;
+using Zeus.Server.Hosting;
 
 namespace Zeus.Server.Wsjtx;
 
@@ -48,7 +49,7 @@ public static class N1mmContactInfoEncoder
         var sb = new StringBuilder(1024);
         sb.Append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n");
         sb.Append("<contactinfo>");
-        Tag(sb, "app", "Zeus");
+        Tag(sb, "app", SoftwareIdentity.Name);
         Tag(sb, "contestname", "");
         Tag(sb, "contestnr", "1");
         Tag(sb, "timestamp", entry.QsoDateTimeUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
@@ -90,7 +91,7 @@ public static class N1mmContactInfoEncoder
         Tag(sb, "IsOriginal", "True");
         Tag(sb, "NetBiosName", "");
         Tag(sb, "IsRunQSO", "0");
-        Tag(sb, "StationName", "Zeus");
+        Tag(sb, "StationName", SoftwareIdentity.Name);
         Tag(sb, "ID", Guid.NewGuid().ToString("N"));
         Tag(sb, "IsClaimedQso", "1");
         Tag(sb, "oldtimestamp", "");

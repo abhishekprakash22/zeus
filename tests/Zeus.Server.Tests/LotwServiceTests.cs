@@ -91,7 +91,7 @@ public sealed class LotwServiceTests
         {
             Assert.Equal(HttpMethod.Post, req.Method);
             Assert.Equal("https://logbook.qrz.com/api", req.RequestUri!.ToString());
-            Assert.Contains("Zeus/", req.Headers.UserAgent.ToString(), StringComparison.Ordinal);
+            Assert.Contains("ANAN-Core/", req.Headers.UserAgent.ToString(), StringComparison.Ordinal);
             var body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             Assert.Contains("ACTION=FETCH", body, StringComparison.Ordinal);
             Assert.Contains("STATUS%3ACONFIRMED", body, StringComparison.Ordinal);

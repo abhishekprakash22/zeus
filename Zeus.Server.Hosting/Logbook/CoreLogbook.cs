@@ -11,6 +11,7 @@ using System.Text;
 using LiteDB;
 using Microsoft.Extensions.Logging;
 using Zeus.Plugins.Contracts.Extensions;
+using Zeus.Server.Hosting;
 
 namespace Zeus.Server;
 
@@ -444,9 +445,10 @@ public sealed class CoreLogbook : ILogbookPluginV2, IDisposable
     internal static string BuildAdif(IReadOnlyList<CoreLogbookDocument> rows)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("ADIF Export from Zeus");
+        sb.AppendLine($"ADIF Export from {SoftwareIdentity.Name}");
         Field(sb, "ADIF_VER", "3.1.4");
-        Field(sb, "PROGRAMID", "Zeus");
+        Field(sb, "PROGRAMID", SoftwareIdentity.Name);
+        Field(sb, "PROGRAMVERSION", SoftwareIdentity.Version);
         Field(sb, "CREATED_TIMESTAMP", DateTime.UtcNow.ToString("yyyyMMdd HHmmss", CultureInfo.InvariantCulture));
         sb.AppendLine();
         sb.AppendLine("<EOH>");

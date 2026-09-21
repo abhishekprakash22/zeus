@@ -12,6 +12,7 @@ using System.Text;
 using LiteDB;
 using Zeus.Contracts;
 using Zeus.Plugins.Contracts.Extensions;
+using Zeus.Server.Hosting;
 
 namespace Zeus.Server;
 
@@ -479,7 +480,7 @@ public sealed class LotwService
             {
                 Content = content,
             };
-            req.Headers.UserAgent.ParseAdd(ZeusUserAgent());
+            req.Headers.UserAgent.ParseAdd(ReportingUserAgent());
 
             using var res = await _http.SendAsync(req, ct).ConfigureAwait(false);
             res.EnsureSuccessStatusCode();
@@ -790,14 +791,9 @@ public sealed class LotwService
         return trimmed.Length <= 1200 ? trimmed : trimmed[^1200..];
     }
 
-    private static string ZeusUserAgent()
+    private static string ReportingUserAgent()
     {
-        var version = typeof(ZeusEndpoints).Assembly
-            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
-            .FirstOrDefault()?.InformationalVersion;
-        version = string.IsNullOrWhiteSpace(version) ? "1.0" : version.Split('+')[0];
-        var agent = $"Zeus/{version}";
+        var agent = SoftwareIdentity.UserAgent;
         return agent.Length <= 128 ? agent : agent[..128];
     }
 

@@ -590,9 +590,14 @@ jobs:
         if: matrix.arch == 'arm64'
         run: |
           set -eux
-          # No arm64 fftw3f headers on the runner: link straight against the
-          # cross-built .so already staged for this RID (build.sh FFTW=).
+          # Two different needs, and the first one was missed: the COMPILE
+          # needs fftw3.h, which this leg never installs system-wide (there is
+          # no libfftw3-dev here, only the cross toolchain), so point CPATH at
+          # the headers the arm64 FFTW cross-build already installed. The LINK
+          # then goes straight against the cross-built .so staged for this RID,
+          # so the SONAME matches what ships.
           CC=aarch64-linux-gnu-gcc \
+            CPATH="$HOME/fftw-arm64/include" \
             FFTW=Zeus.Dsp/runtimes/linux-arm64/native/libfftw3f.so.3 \
             NM=aarch64-linux-gnu-nm \
             bash native/wspr/build.sh libzeus_wspr.so

@@ -1,74 +1,68 @@
-# Contributing to Zeus
+# Contributing to ANAN Core
 
-Welcome — and thanks for thinking about contributing. Zeus is built by hams,
-for hams, in our spare time. We move at a measured pace and we like the code
-to be honest about what it does. If you're here to scratch a real itch on
-your own rig, you're in the right place.
+Welcome — and thanks for thinking about contributing. ANAN Core is built by
+hams, for hams. We move at a measured pace and we like the code to be honest
+about what it does. If you're here to scratch a real itch on your own rig,
+you're in the right place.
 
 Before you write any code, please skim this whole page. It's short. Most of
-what's here is the actual mental model the maintainers use day-to-day, not
-ceremonial gates.
+what's here is the actual mental model used day-to-day, not ceremonial gates.
 
 ---
 
-## What Zeus is, in one paragraph
+## What ANAN Core is, in one paragraph
 
-Zeus is a cross-platform, web-frontend HPSDR client for original-protocol
-(Protocol 1) and Protocol-2 radios — Hermes, Mercury/Penelope/Metis,
-ANAN-class boards, Hermes-Lite 2, and the OrionMkII / Saturn family. The
-backend is .NET 10 (`Zeus.Server*`), the frontend is Vite + React
-(`zeus-web/`), and the DSP engine is WDSP, loaded via P/Invoke. **Thetis is
-the sole authoritative reference for protocol and DSP behaviour** — when
-Zeus and Thetis disagree, Thetis is right by default unless there's a
-documented reason otherwise (see `docs/lessons/`).
+ANAN Core is Apache Labs' station software for the ANAN G2 family, built
+specifically for the **ANAN G2 Ultra** — its Raspberry Pi 5, 8-inch
+1280×800 front panel, dual phase-coherent ADCs, and Protocol-2 / Saturn
+architecture are the reference platform for every feature and every fix.
+The backend is .NET (`Zeus.Server*` / `OpenhpsdrZeus`), the frontend is
+Vite + React (`zeus-web/`), and the DSP engine is WDSP, loaded via
+P/Invoke. **Thetis is the authoritative reference for protocol and DSP
+behaviour** — when this code and Thetis disagree, Thetis is right by
+default unless there's a documented reason otherwise (see `docs/lessons/`).
+
+Other OpenHPSDR radios (Hermes-Lite 2, Protocol-1 boards, earlier ANANs)
+generally keep working, but the G2 Ultra is where this project is aimed,
+tuned, and bench-tested.
 
 ---
 
 ## Before you start
 
-Three things to know before you write a line of code:
+1. **Open an issue first** for anything bigger than a typo. The issue is
+   where we agree on the *what* and the *shape*; the PR is where we agree
+   on the *details*. Drive-by feature PRs without prior discussion get
+   sent back through the tracker.
 
-1. **Open an issue first** for anything bigger than a typo. Drive-by PRs that
-   add features without prior discussion get sent back through the issue
-   tracker. The issue is where we agree on the *what* and the *shape*; the
-   PR is where we agree on the *details*. Saves everyone time.
+2. **Read [`CLAUDE.md`](CLAUDE.md)** at the repo root. It's nominally for
+   AI coding agents, but it's the same standards every human contributor
+   follows too.
 
-2. **Read [`CLAUDE.md`](CLAUDE.md)** at the repo root. It's nominally for AI
-   coding agents, but it's the same standards every human contributor follows
-   too. The red-light / green-light list there is the most important thing on
-   this page.
-
-3. **Don't touch the recently-shipped audio dropout fix or the PureSignal
-   path** without explicit approval. See [§ Hot paths](#hot-paths) below for
-   the specific files. Both took significant on-air investigation to land
-   correctly and we don't want regression-roulette.
+3. **Don't touch the hot paths** (below) without explicit approval in an
+   issue — even for what looks like unrelated cleanup.
 
 ---
 
 ## Setting up
 
-The repo's README has full details; the short version:
-
 ```bash
-# Clone WITH submodules — the DeepCW model (zeus-web/external/deepcw-engine)
-# and the VST3 SDK (native/zeus-vst-bridge/third_party/vst3sdk) live in
-# submodules, and the web build fails without the DeepCW model present.
-git clone --recurse-submodules https://github.com/Kb2uka/openhpsdr-zeus.git
+# Clone WITH submodules — the DeepCW model
+# (zeus-web/external/deepcw-engine) lives in a submodule and the web
+# build fails without it.
+git clone --recurse-submodules https://github.com/abhishekprakash22/zeus.git
 # Already cloned without it? Run:
 git submodule update --init --recursive
 
 # Backend (listens on :6060). OpenhpsdrZeus is the executable host;
-# Zeus.Server.Hosting next to it is a class library — don't pass it to dotnet run.
+# Zeus.Server.Hosting next to it is a class library — don't pass it to
+# dotnet run.
 dotnet run --project OpenhpsdrZeus
 
 # Frontend (Vite dev server on :5173, proxies /api and /ws to :6060;
 # `vite build` writes the production bundle into Zeus.Server.Hosting/wwwroot)
 npm --prefix zeus-web run dev
 ```
-
-Or use the bundled skill if you're working in Claude Code: `/run` brings up
-both in one shot. `/run fresh` runs the backend against a throw-away
-`zeus-prefs.db` so testing doesn't pollute your real settings.
 
 The native WDSP library is rebuilt by CI on tagged releases; for local dev
 the binaries in `Zeus.Dsp/runtimes/<rid>/native/` are good enough. See
@@ -78,21 +72,18 @@ the binaries in `Zeus.Dsp/runtimes/<rid>/native/` are good enough. See
 
 ## The contribution flow
 
-For external contributors (anyone without write access to this repo):
-
-1. **Fork** `Kb2uka/openhpsdr-zeus` to your own GitHub account.
-2. **Branch** from `develop` on your fork. Name it something descriptive:
-   `your-handle/cw-apf-filter`, `your-handle/fix-zoom-overflow`, etc.
-3. **Build clean** before opening the PR — `dotnet build Zeus.slnx` must be
-   0 warnings, 0 errors. Tests should pass: `dotnet test Zeus.slnx`.
-4. **Open the PR against `develop`** on `Kb2uka/openhpsdr-zeus`. Never `main`.
-5. **Wait for review.** KB2UKA reviews backend wiring and most code; @brianbruff
-   reviews UI/UX/defaults. Reviews are usually within a day, sometimes same day.
+1. **Fork** `abhishekprakash22/zeus` to your own GitHub account.
+2. **Branch** from `freedv-in-core` on your fork. Name it something
+   descriptive: `your-handle/cw-apf-filter`, `your-handle/fix-zoom-overflow`.
+3. **Build clean** before opening the PR:
+   - `dotnet build Zeus.slnx` → 0 warnings, 0 errors; `dotnet test Zeus.slnx`.
+   - `npm --prefix zeus-web run build` must succeed for any frontend change.
+   - A small set of pre-existing frontend test failures in the `setZoom`
+     family is known; anything *else* failing is on your change.
+4. **Open the PR against `freedv-in-core`** on `abhishekprakash22/zeus`.
+5. **Wait for review.** Apache Labs reviews all code; reviews are usually
+   within a day or two.
 6. **Don't merge your own PR.** Reviewer merges after approval.
-
-You don't need collaborator status on this repo to contribute — the fork + PR
-pattern is standard and gives you everything you need. GitHub auto-lists you
-under Contributors once anything merges.
 
 ---
 
@@ -100,218 +91,114 @@ under Contributors once anything merges.
 
 | Branch | What it is | When you push to it |
 |---|---|---|
-| `develop` | Integration branch. Everything new lands here via PR. Stays green and shippable. | Always, via PR |
-| `main` | Release branch. Only updated by periodic `develop → main` merges by the maintainers. | Never, as a contributor |
-| `vX.Y.Z` tags | What end-users actually run. Triggered by maintainers from `main`. | Never |
+| `freedv-in-core` | Default branch **and** release branch. Everything lands here via PR. Stays green and shippable. | Always, via PR |
+| `wdsp-2.1.0*` | Historical work branches for the WDSP 2.10 port. | Never |
+| `main` | Historical; not part of the release flow. | Never |
+| `v1.NN` tags | What end-users actually run, built by CI. | Never |
 
-**Always target `develop` with your PR.** `main` is the release-merge gate;
-contributors don't touch it directly.
-
----
-
-## Red-light vs green-light
-
-Adapted from `CLAUDE.md`. **Red-light** items need maintainer approval *before*
-you implement them — not after. If you're not sure which side something falls
-on, ask in the issue.
-
-### Green-light (implement and PR with confidence)
-
-- **Bug fixes with a clear root cause** — null refs, missing guards, off-by-one,
-  persistence/wiring bugs where the fix is obvious from the symptom.
-- **Build / CI fixes** — missing NuGet refs, csproj typos, dotnet version bumps,
-  workflow YAML breakage, Vite / npm config fixes.
-- **Protocol / WDSP compliance fixes** — where Zeus's behaviour diverges from
-  Thetis and Thetis source confirms Zeus is wrong. *Exception:* if the fix
-  changes a default an operator will feel (TX power cap, filter bandwidth,
-  AGC curve, meter scaling), that becomes red-light.
-- **Docs and lessons updates** — additions to `docs/lessons/`, `docs/rca/`,
-  `CHANGELOG.md`, this file. README *additions* are fine; restructuring is
-  red-light.
-- **New backend wiring for an issue-approved feature** — WDSP P/Invoke stubs,
-  `RadioService` methods, command handlers, hosted services.
-
-### Red-light (open an issue, get sign-off first)
-
-- **Visual design** — colours, fonts, layout, spacing, typography. The Zeus
-  aesthetic is faithful to the Hermes-Lite 2 hardware front panel and is
-  actively maintained by @brianbruff. Use existing CSS token variables in
-  `zeus-web/src/styles/tokens.css`; never raw hex.
-- **UX behaviour** — what a click/drag/scroll does, keyboard shortcuts,
-  panadapter/waterfall axis direction, VFO tuning feel.
-- **Architecture** — new threads, new dependencies, new NuGet/npm packages,
-  changes to `Zeus.Contracts` (wire format), signal-routing restructures.
-- **Default values** — anything an operator notices on first connect: TX power,
-  filter widths, AGC defaults, meter calibration, default band/mode, palette.
-  One person hitting a bug isn't proof the default is wrong for everyone.
-- **Feature scope creep** — if the issue says "fix meter," fix the meter. Don't
-  add a new meter or refactor the meter pipeline along the way.
-
-If you're certain about the right answer for a red-light item, write your case
-in the issue and let the maintainer decide. We're reasonable; the gate is
-about coordinating, not about saying no.
+**Always target `freedv-in-core` with your PR.**
 
 ---
 
 ## Hot paths
 
-Two regions of the codebase have shipped fixes that took significant
-investigation to land correctly. **Do not modify these files without explicit
-approval in an issue** — even for what looks like unrelated cleanup:
+Regions of the codebase where shipped behaviour took significant on-air
+investigation to land correctly. **Do not modify these without explicit
+approval in an issue:**
 
-- **Frontend audio scheduling**: `zeus-web/src/audio/audio-client.ts`,
-  `zeus-web/src/audio/frame.ts`. Touches the Web Audio path; recent fix
-  (PR #304) addressed OBS-streaming dropouts.
+- **PureSignal pipeline** — `Zeus.Dsp/Wdsp/WdspDspEngine.cs` (PS-related
+  methods), `Zeus.Server.Hosting/PsAutoAttenuateService.cs`, and the PS
+  paths in `Zeus.Server.Hosting/DspPipelineService.cs`. PureSignal
+  calibration semantics are frozen; changes need a documented plan and
+  maintainer sign-off.
+- **The updater / release contract** — release tags are two-part `v1.NN`
+  and compare numerically; the shipped AppImage filename pattern
+  (`OpenhpsdrZeus-*`) is a self-updater path contract. Don't rename
+  artifacts or restructure `RepoUpdateService` version handling without
+  an issue.
+- **Remote access authentication** — the SPAKE2+ password model in
+  `Remote/` is deny-by-default by design. Security-relevant; see
+  `SECURITY.md` for reporting rather than public issues.
 
-- **PureSignal pipeline**: `Zeus.Dsp/Wdsp/WdspDspEngine.cs` (PS-related
-  methods), `Zeus.Server.Hosting/PsAutoAttenuateService.cs`,
-  `Zeus.Server.Hosting/DspPipelineService.cs` (PS knob-apply paths and the
-  MOX guard). Three regressions were fixed across PR #292, #293; we are not
-  litigating any of them again without strong evidence and a documented plan.
-
-- **Backend send queue**: `Zeus.Server.Hosting/StreamingHub.cs` — the
-  per-client bounded channel + drop-counter probe. Don't change the queue
-  semantics or the drop attribution without an issue.
-
-If your feature genuinely needs to touch one of these, open an issue describing
-why and we'll figure out the right path together.
-
-There are also load-bearing invariants in `docs/lessons/` (HL2 WDSP init,
-drive-byte quantisation, etc.) — read the relevant lesson before touching
-any DSP, protocol, or layout code that those lessons cover.
+Load-bearing invariants also live in `docs/lessons/` — read the relevant
+lesson before touching DSP, protocol, or layout code it covers.
 
 ---
 
 ## Code expectations
 
-- **One feature per PR.** Smaller PRs land faster and are easier to revert if
-  something turns out wrong. Don't bundle "fix the meter + refactor the panel
-  + add a new mode" into one diff.
-- **Match existing patterns.** Grep for a recent similar feature and follow
-  its wiring shape. Don't introduce a new abstraction for something that fits
-  the existing one.
+- **One feature per PR.** Smaller PRs land faster and revert cleaner.
+- **Match existing patterns.** Grep for a recent similar feature and
+  follow its wiring shape.
 - **Don't add features, refactoring, or abstractions beyond what the task
-  requires.** A bug fix doesn't need surrounding cleanup; a one-shot
-  operation doesn't need a helper.
-- **Don't add error handling, fallbacks, or validation for scenarios that
-  can't happen.** Trust internal code. Validate at system boundaries (user
-  input, external APIs).
-- **Default to no comments.** Code with well-named identifiers is
-  self-explanatory. Add a comment only when the *why* is non-obvious — a
-  hidden constraint, a subtle invariant, a workaround for a specific bug.
-- **No `// removed code` comments, no backwards-compatibility shims** for
-  things that aren't a problem yet. If something's unused, delete it.
+  requires.** A bug fix doesn't need surrounding cleanup.
+- **Validate at system boundaries** (user input, external APIs); trust
+  internal code.
+- **Default to no comments.** Add one only when the *why* is non-obvious.
+- **No backwards-compatibility shims** for things that aren't a problem
+  yet. If something's unused, delete it.
 
 ---
 
 ## Commit messages
 
-- **Conventional prefixes** preferred (`feat:`, `fix:`, `docs:`, `chore:`,
-  `refactor:`, `test:`) but not strictly enforced — match the style of recent
-  `git log` output.
-- **Subject line under 72 chars.** Body wrapped at ~80.
-- **Never mention Anthropic, Claude, or any AI assistant** in commit messages.
-  This is a hard rule (see CLAUDE.md). Tell the *story* of the change, not the
-  *tools* you used to make it.
-- **Reference the issue** if there is one: `fix(...): description (#NNN)`.
-- **No `--no-verify`, no skipping hooks.** If a hook fails, fix the underlying
-  issue.
-
----
-
-## Tests
-
-- Build clean: `dotnet build Zeus.slnx` → 0 warnings, 0 errors.
-- Run tests: `dotnet test Zeus.slnx`. Anything failing is on your change
-  — fix it before PR. The native VST3 bridge tests under
-  `Zeus.Plugins.Host.Tests/VstBridgeNativeRealTests.cs` skip with a
-  friendly message if the bridge dylib isn't built locally (see
-  `native/zeus-vst-bridge/README.md`); that's expected and not a
-  failure.
-- **Add tests for new behaviour** where it's reasonable to do so. The bar
-  isn't every method; the bar is "if this regresses, would someone notice?"
-  Persistence stores, protocol parsers, calibration math — yes. UI shape — no
-  (covered by on-air operator testing).
-
----
-
-## Reviews and merging
-
-- **KB2UKA** (Doug, repo owner) reviews most code, backend wiring, build /
-  CI, docs, and refactors.
-- **@brianbruff** (Brian, project founder) reviews UI/UX, visual design,
-  operator-felt defaults, architecture-level decisions.
-
-Both reviewers may request changes or ask for clarifications. We try to be
-helpful in review; if a piece of feedback isn't clear, ask.
-
-Squash-vs-merge: the repo uses **merge commits** for PRs (preserves
-contribution history clearly). Don't worry about squashing your own commits
-unless asked.
-
----
-
-## Releases and issue hygiene
-
-- Releases happen periodically when develop has accumulated enough stuff
-  worth shipping. They go: bump version → PR `develop → main` → merge → tag
-  `vX.Y.Z` on main → push tag (CI builds release artifacts and creates the
-  GitHub Release page).
-- **Issues stay open after the fix-PR merges to `develop`.** They close when
-  the release-merge ships the fix in a tagged version. This way the issue
-  tracker reflects what's actually shipping to end users, not what's queued.
-
-So if your PR fixes #N, your PR will land but #N will stay open until the
-next release. We'll close it in a sweep then.
+- Subject line under 72 chars; body wrapped at ~80.
+- Tell the *story* of the change, not the tools you used to make it.
+  **Never mention Anthropic, Claude, or any AI assistant** in commit
+  messages (see CLAUDE.md — hard rule).
+- Reference the issue if there is one: `fix(...): description (#NNN)`.
+- No `--no-verify`, no skipping hooks.
 
 ---
 
 ## On-air testing
 
 Some bugs only show up on real hardware. If your contribution is in the
-TX/RX/DSP/PA path, it's *strongly* preferred that you (or a maintainer) can
-verify the change on a real radio before merge. Mentioning your test rig in
-the PR description — "verified on ANAN-G2 + RF2K-S amp" or "couldn't bench
-test, please verify on HL2 before merge" — saves a review round trip.
-
-Pure backend wiring, build fixes, docs, refactors etc. don't need this.
+TX/RX/DSP/PA path, it's *strongly* preferred that you (or the maintainer)
+can verify the change on a real radio before merge — the reference rig is
+an ANAN G2 Ultra. Mention your test rig in the PR description; "couldn't
+bench test, please verify on the G2 before merge" saves a review round
+trip. Pure backend wiring, build fixes, and docs don't need this.
 
 ---
 
-## Where to get help
+## Releases
 
-- **Filed an issue but stuck**: re-comment on the issue with what's blocked.
-- **Mid-PR and stuck**: comment on the PR with what's going wrong. Tag the
-  reviewer if a few days have passed silently.
-- **General architectural question before writing code**: open a `question`
-  issue or comment on the closest existing one. We'd rather you ask than
-  spend a weekend on the wrong approach.
-
-You can also `@kb2uka-agent` in any issue comment or PR review for a
-personal-coding-bot opinion (it's a real automated agent run, not a search
-shortcut — small CPU cost for non-trivial questions).
+Releases are maintainer-run: a two-part `v1.NN` tag on `freedv-in-core`
+triggers CI, which assembles a draft GitHub Release (arm64 AppImages +
+updater manifest); the draft is reviewed and then published via the
+`release-publish` workflow. A tag is spent the moment CI has built it — a
+corrected commit always gets a new number.
 
 ---
 
 ## Code of conduct
 
-Be kind, be specific, assume good faith. Most contributors here are doing
-this in their off hours after a day job; nobody owes anybody an instant
-response. We expect technical disagreement; we don't expect personal sharpness.
+Be kind, be specific, assume good faith. We expect technical
+disagreement; we don't expect personal sharpness. The maintainer reserves
+the right to ask for changes or close PRs that don't fit the project's
+direction; that's stewardship, not personal.
 
-Brian and Doug reserve the right to ask for changes or close PRs that don't
-fit the project's direction; this isn't personal, it's stewardship.
+---
+
+## Heritage
+
+ANAN Core is Apache Labs' independently maintained derivative of an
+earlier GPL-licensed version of OpenHPSDR Zeus, created by Brian Keating
+(EI6LF), Douglas J. Cerrato (KB2UKA), Christian Suarez (N9WAR), and Ramón
+Martínez (EA5IUE). See `ATTRIBUTIONS.md` for the full provenance
+statement. ANAN Core is separate from the current ZeusSDR project.
 
 ---
 
 ## License
 
 By contributing you agree your contributions are licensed under **GNU GPL
-v2 or later**, the same as the rest of Zeus. See [LICENSE](LICENSE) for the
-full text.
+v2 or later**, the same as the rest of the tree. See [LICENSE](LICENSE)
+for the full text.
 
 ---
 
 73 and welcome aboard.
 
-— Doug (KB2UKA), Brian (EI6LF), and Christian (N9WAR)
+— Abhi Prakash, Apache Labs

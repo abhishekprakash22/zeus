@@ -49,6 +49,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # See Directory.Build.props: a release build must say so explicitly.
+  # Workflow-level so every job inherits it, including jobs added later.
+  ZEUS_RELEASE_BUILD: "true"
+
 jobs:
   # v1.85 shipped a libzeus_ft8 older than the measured-SNR fix and v1.86 a
   # libzeus_wspr older than the stack-overflow fix, both down this path. The

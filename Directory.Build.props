@@ -10,7 +10,15 @@
     <!-- Otherwise, fall back to the in-development VersionPrefix below.    -->
     <!-- Bump this when a release branch opens — current target: v0.10.6.   -->
     <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.10.9</VersionPrefix>
-    <VersionSuffix Condition="'$(VersionSuffix)' == '' AND '$(GITHUB_REF_TYPE)' != 'tag'">dev</VersionSuffix>
+    <!-- A release build is one that says so. GITHUB_REF_TYPE alone is not
+         enough: it describes the event that TRIGGERED the workflow, not the ref
+         that was checked out. The draft flow (release-draft -> workflow_call)
+         is dispatched from a branch, so GITHUB_REF_TYPE is 'branch' even while
+         building a tag — and every binary it produced stamped itself X.Y-dev.
+         X.Y-dev sorts below X.Y, so a radio that installed the release read
+         its own version as older than Latest and offered the same update
+         forever. Release workflows set ZEUS_RELEASE_BUILD=true explicitly. -->
+    <VersionSuffix Condition="'$(VersionSuffix)' == '' AND '$(GITHUB_REF_TYPE)' != 'tag' AND '$(ZEUS_RELEASE_BUILD)' != 'true'">dev</VersionSuffix>
     <Version Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</Version>
     <Version Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</Version>
     <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>

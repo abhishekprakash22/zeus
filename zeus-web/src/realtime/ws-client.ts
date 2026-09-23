@@ -341,7 +341,13 @@ export function sendAudioStreamRequest(enable: boolean): void {
   }
 }
 
+// What the last display-stream request asked for, so a focus change can
+// re-send the same level with the new focus byte — on whichever transport is
+// live. null until the first request has been sent.
+let lastDisplayRequestEnable: boolean | null = null;
+
 export function sendDisplayStreamRequest(enable: boolean): void {
+  lastDisplayRequestEnable = enable;
   // 4-byte frame: [0x22][level][u8-capable][focusedRx]. byte[2]=1 tells the
   // server this bundle can decode u8-quantized bins (4x smaller display
   // stream). byte[3] is the receiver the operator is looking at, so the
@@ -366,6 +372,24 @@ export function sendDisplayStreamRequest(enable: boolean): void {
   } catch (err) {
     warnOnce('ws-display-stream-request', 'display stream request send failed', err);
   }
+}
+
+// Focus rides in byte[3] of the display request; re-send on every focus
+// change so the server re-paces the moment the operator switches panes.
+// Registered ONCE at module level, not inside startRealtime: remote mode
+// never calls startRealtime (RemoteGate owns that transport) and sends its
+// display request directly, so a subscription living in startRealtime
+// never ran remotely — the server's focus stayed at 0, RX1 was always the
+// 'focused' one, and RX2 was paced whichever pane the operator was on.
+{
+  let lastFocus = useConnectionStore.getState().focusedRxIndex;
+  useConnectionStore.subscribe((st) => {
+    if (st.focusedRxIndex === lastFocus) return;
+    lastFocus = st.focusedRxIndex;
+    if (lastDisplayRequestEnable !== null) {
+      sendDisplayStreamRequest(lastDisplayRequestEnable);
+    }
+  });
 }
 
 function isDocumentVisible(): boolean {
@@ -942,14 +966,7 @@ export function startRealtime(path = '/ws'): () => void {
   };
   const unsubscribeFrameConsumerPresence =
     subscribeFrameConsumerPresence(syncDisplayStreamRequest);
-  // Focus is carried in the display-stream request (byte[3]); re-send it
-  // whenever the operator changes pane so the server re-paces immediately.
-  let lastFocus = useConnectionStore.getState().focusedRxIndex;
-  const unsubscribeFocus = useConnectionStore.subscribe((st) => {
-    if (st.focusedRxIndex === lastFocus) return;
-    lastFocus = st.focusedRxIndex;
-    syncDisplayStreamRequest();
-  });
+
   const onVisibilityChange = () => syncDisplayStreamRequest();
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -1010,7 +1027,6 @@ export function startRealtime(path = '/ws'): () => void {
     stopped = true;
     if (timer != null) clearTimeout(timer);
     unsubscribeFrameConsumerPresence();
-    unsubscribeFocus();
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     }

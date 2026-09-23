@@ -5059,6 +5059,44 @@ public class DspPipelineService : BackgroundService,
     private static bool IsReceiverMuted(StateDto s, int rxIndex) =>
         s.Receivers is { } rs && rxIndex >= 0 && rxIndex < rs.Count && rs[rxIndex].Muted;
 
+    /// <summary>
+    /// The S-meter calibration for one receiver, antenna-referenced. One rule
+    /// for every receiver, so RX1 and the secondaries read the same thing on
+    /// the same signal:
+    ///
+    ///   board offset            — WDSP dBFS to dBm for this board
+    /// + attenuator              — the meter taps at the ADC; add the step
+    ///                             attenuation back so the reading is at the
+    ///                             antenna. The attenuator we track belongs to
+    ///                             the PRIMARY receiver's ADC; a receiver on
+    ///                             another ADC gets no term, because we do not
+    ///                             know that ADC's attenuator (upstream makes
+    ///                             the same choice)
+    /// + transverter correction  — 0: no transverter support in this tree yet
+    /// + operator S-meter offset — 0: no such setting in this tree yet
+    ///
+    /// Callers that feed the Auto-AGC servo must NOT use this: the servo's
+    /// constants are tuned against the ADC-referenced floor and the AGC acts
+    /// on the ADC-referenced signal, so it keeps the board-only offset.
+    /// Engaging the attenuator would otherwise move the servo's target by
+    /// the same amount. See RxMeterCalOffsetForServoDb.
+    /// </summary>
+    private double RxMeterCalOffsetDb(StateDto s, int rxIndex) =>
+        RxMeterCalOffsetForServoDb() + RxAttenuatorMeterOffsetDb(s, rxIndex);
+
+    /// <summary>The attenuator term alone, for a receiver: the tracked step
+    /// attenuation when the receiver shares the primary's ADC, else 0.
+    /// Static and internal so the rule is unit-testable.</summary>
+    internal static double RxAttenuatorMeterOffsetDb(StateDto s, int rxIndex) =>
+        ReceiverAdcSource(s, rxIndex) == ReceiverAdcSource(s, 0)
+            ? Math.Clamp(s.AttenDb + s.AttOffsetDb, 0, 31)
+            : 0.0;
+
+    /// <summary>Board offset only: the ADC-referenced calibration the Auto-AGC
+    /// servo is tuned against. Displayed meters add the attenuator on top.</summary>
+    private double RxMeterCalOffsetForServoDb() =>
+        RadioCalibrations.RxMeterOffsetDb(_radio.EffectiveBoardKind, _radio.EffectiveOrionMkIIVariant);
+
     private static byte ReceiverAdcSource(StateDto s, int rxIndex) =>
         s.Receivers is { } rs && rxIndex >= 0 && rxIndex < rs.Count ? rs[rxIndex].AdcSource : (byte)0;
 
@@ -7735,9 +7773,13 @@ public class DspPipelineService : BackgroundService,
             // The real RX meter rides the sidecar display frames and lands via
             // PublishProtocol3RxMeters below.
             _rxMeterTickMod = 0;
-            double rxCalOffsetDb = RadioCalibrations.RxMeterOffsetDb(
-                _radio.EffectiveBoardKind,
-                _radio.EffectiveOrionMkIIVariant);
+            // Two calibrations on purpose. The servo is tuned against the
+            // ADC-referenced floor; the meters people read are antenna-
+            // referenced, which adds the step attenuation back. Before this
+            // every S-meter on the radio read low by however much attenuator
+            // was in — on RX1 as much as on the secondaries.
+            double rxCalOffsetDb = RxMeterCalOffsetForServoDb();
+            double rxMeterCalDb = RxMeterCalOffsetDb(state, 0);
 
             // Prefer WDSP's S-meter when it's ticking. In this
             // integration the meter tap reads -400 ("didn't run") — needs
@@ -7746,9 +7788,11 @@ public class DspPipelineService : BackgroundService,
             // gives a "proof of life" meter that moves with band activity.
             double rawDbm = engine.GetRxaSignalDbm(channel);
             double dbm;
+            double dbmMeter;   // what is broadcast: antenna-referenced
             if (double.IsFinite(rawDbm) && rawDbm > -399.0)
             {
                 dbm = ApplyRxMeterCalibration(rawDbm, rxCalOffsetDb);
+                dbmMeter = ApplyRxMeterCalibration(rawDbm, rxMeterCalDb);
             }
             else
             {
@@ -7757,10 +7801,12 @@ public class DspPipelineService : BackgroundService,
                 // band noise near S2/S3 instead of pinning at S0.
                 double rms = double.IsFinite(rxAudioRmsForMeter) ? rxAudioRmsForMeter : 0.0;
                 dbm = AudioRmsToFallbackDbm(rms);
+                dbmMeter = dbm;   // proof-of-life path carries no real calibration
             }
             if (!double.IsFinite(dbm)) dbm = -160.0;
-            _hub.Broadcast(new RxMeterFrame((float)dbm));
-            RxMeterUpdated?.Invoke(channel, dbm);
+            if (!double.IsFinite(dbmMeter)) dbmMeter = -160.0;
+            _hub.Broadcast(new RxMeterFrame((float)dbmMeter));
+            RxMeterUpdated?.Invoke(channel, dbmMeter);
 
             // Additive 0x19 broadcast (RxMetersV2Frame). Carries the full
             // set of WDSP RXA stage readings so the configurable Meters
@@ -7768,7 +7814,7 @@ public class DspPipelineService : BackgroundService,
             // 0x14 ignore this frame. Same 5 Hz cadence as 0x14 above.
             //
             var rx = engine.GetRxStageMeters(channel);
-            var v2 = BuildRxMetersV2(rx, rxCalOffsetDb);
+            var v2 = BuildRxMetersV2(rx, rxMeterCalDb);
             // Feed Auto-AGC a real spectrum-derived noise floor when one is
             // available (#806); NaN falls the loop back to the S-meter `dbm`.
             // Only pay for the snapshot copy + percentile sort when Auto-AGC is
@@ -7808,7 +7854,7 @@ public class DspPipelineService : BackgroundService,
                 int secChan = Volatile.Read(ref _secondaryRx[ri].ChannelId);
                 if (secChan < 0) continue;
                 var secStage = engine.GetRxStageMeters(secChan);
-                var secV2 = BuildRxMetersV2(secStage, rxCalOffsetDb);
+                var secV2 = BuildRxMetersV2(secStage, RxMeterCalOffsetDb(state, ri));
                 _hub.Broadcast(RxMetersRxFrame.From((byte)ri, secV2));
             }
             RxMetersV2Updated?.Invoke(channel, v2);
@@ -7845,28 +7891,30 @@ public class DspPipelineService : BackgroundService,
         double adcHeadroomDb)
     {
         if (!_radio.IsProtocol3Active) return;
-        double rxCalOffsetDb = RadioCalibrations.RxMeterOffsetDb(
-            _radio.EffectiveBoardKind,
-            _radio.EffectiveOrionMkIIVariant);
+        // Same split as the WDSP path: servo on the ADC-referenced value,
+        // broadcast meters antenna-referenced (attenuator added back).
+        double rxCalOffsetDb = RxMeterCalOffsetForServoDb();
         double dbm = ApplyRxMeterCalibration(dbfsRaw, rxCalOffsetDb);
         if (!double.IsFinite(dbm)) dbm = -160.0;
+        double dbmMeter = ApplyRxMeterCalibration(dbfsRaw, RxMeterCalOffsetDb(_radio.Snapshot(), 0));
+        if (!double.IsFinite(dbmMeter)) dbmMeter = -160.0;
         float adcPk = (float)(double.IsFinite(adcHeadroomDb) ? -adcHeadroomDb : -200.0);
         float agc = (float)(double.IsFinite(agcGainDb) ? agcGainDb : 0.0);
         // Post-AGC envelope estimate: signal + inserted AGC gain. n9dsp does
         // not export a discrete envelope tap yet; this keeps the Meters Panel
         // fields plausible until one lands.
-        float env = (float)Math.Min(dbm + agc, 0.0);
+        float env = (float)Math.Min(dbmMeter + agc, 0.0);
         var v2 = new RxMetersV2Frame(
-            SignalPk: (float)dbm,
-            SignalAv: (float)dbm,
+            SignalPk: (float)dbmMeter,
+            SignalAv: (float)dbmMeter,
             AdcPk: adcPk,
             AdcAv: adcPk,
             AgcGain: agc,
             AgcEnvPk: env,
             AgcEnvAv: env);
 
-        _hub.Broadcast(new RxMeterFrame((float)dbm));
-        RxMeterUpdated?.Invoke(channel, dbm);
+        _hub.Broadcast(new RxMeterFrame((float)dbmMeter));
+        RxMeterUpdated?.Invoke(channel, dbmMeter);
         _radio.HandleRxMetersForAutoAgc(dbm, double.NaN, v2.AdcPk, v2.AgcGain, Environment.TickCount64);
         lock (_rxMeterDiagLock)
         {

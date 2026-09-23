@@ -353,6 +353,63 @@ public class RxMetersBroadcastTests
         Assert.Equal(0, hub.ClientCount);
     }
 
+    // ---- Attenuator term of the per-receiver S-meter calibration ----------
+    //
+    // The meter taps at the ADC; the attenuator sits in front of it. Adding
+    // the attenuation back makes the reading antenna-referenced, which is
+    // what an S-meter means. Only for a receiver on the primary's ADC — that
+    // is the attenuator we track.
+
+    private static ReceiverDto Rx(int index, byte adc) => new(
+        Index: index, Enabled: true, AdcSource: adc,
+        VfoHz: 14_200_000, Mode: RxMode.USB,
+        FilterLowHz: 150, FilterHighHz: 2850, FilterPresetName: null,
+        AfGainDb: 0, SampleRateHz: 192_000, Muted: false);
+
+    [Fact]
+    public void AttenuatorTerm_AddsTrackedAttenuation_ForPrimary()
+    {
+        var s = DefaultState(attenDb: 10) with { AttOffsetDb = 4, Receivers = new[] { Rx(0, 0), Rx(1, 0) } };
+        Assert.Equal(14.0, DspPipelineService.RxAttenuatorMeterOffsetDb(s, 0));
+    }
+
+    [Fact]
+    public void AttenuatorTerm_SameForSecondary_OnSameAdc()
+    {
+        // RX2 on the primary's ADC sees the same attenuator, so the same term:
+        // the two receivers read the same on the same signal.
+        var s = DefaultState(attenDb: 10) with { AttOffsetDb = 4, Receivers = new[] { Rx(0, 0), Rx(1, 0) } };
+        Assert.Equal(
+            DspPipelineService.RxAttenuatorMeterOffsetDb(s, 0),
+            DspPipelineService.RxAttenuatorMeterOffsetDb(s, 1));
+    }
+
+    [Fact]
+    public void AttenuatorTerm_IsZero_ForSecondary_OnAnotherAdc()
+    {
+        // We do not know ADC1's attenuator, so we do not pretend to. This is
+        // the known gap: RX2 on ADC1 reads low by whatever ADC1 has in.
+        var s = DefaultState(attenDb: 10) with { Receivers = new[] { Rx(0, 0), Rx(1, 1) } };
+        Assert.Equal(0.0, DspPipelineService.RxAttenuatorMeterOffsetDb(s, 1));
+    }
+
+    [Fact]
+    public void AttenuatorTerm_ClampsTo31_AndNeverNegative()
+    {
+        var hi = DefaultState(attenDb: 31) with { AttOffsetDb = 10, Receivers = new[] { Rx(0, 0) } };
+        Assert.Equal(31.0, DspPipelineService.RxAttenuatorMeterOffsetDb(hi, 0));
+        var lo = DefaultState(attenDb: 0) with { AttOffsetDb = -5, Receivers = new[] { Rx(0, 0) } };
+        Assert.Equal(0.0, DspPipelineService.RxAttenuatorMeterOffsetDb(lo, 0));
+    }
+
+    [Fact]
+    public void AttenuatorTerm_IsZero_WithNoAttenuation()
+    {
+        var s = DefaultState(attenDb: 0) with { Receivers = new[] { Rx(0, 0), Rx(1, 0) } };
+        Assert.Equal(0.0, DspPipelineService.RxAttenuatorMeterOffsetDb(s, 0));
+        Assert.Equal(0.0, DspPipelineService.RxAttenuatorMeterOffsetDb(s, 1));
+    }
+
     private static StateDto DefaultState(
         bool preampOn = false,
         bool autoAttEnabled = true,

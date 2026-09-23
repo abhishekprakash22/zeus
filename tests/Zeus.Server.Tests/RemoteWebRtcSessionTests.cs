@@ -97,7 +97,6 @@ public sealed class RemoteWebRtcSessionTests
     }
 
     [Fact]
-    [Fact]
     public async Task U8Capability_AdvertisedBeforeUnlock_StillReachesTheSink()
     {
         // The sink is created post-unlock; the client's display request

@@ -1,6 +1,12 @@
 name: Build and Test
 
 on:
+  # freedv-in-core, this repository's default branch, is deliberately NOT
+  # here. Adding it turns every push and every PR red on the Lint frontend
+  # step: fourteen react-hooks/rules-of-hooks errors that predate any of this
+  # — a plain function named useBank that the rule takes for a hook. Until
+  # those are dealt with, switching the workflow on just trains people to
+  # ignore a red tick. Run it by hand from the Actions tab in the meantime.
   push:
     branches: [main, develop, experimental]
   pull_request:

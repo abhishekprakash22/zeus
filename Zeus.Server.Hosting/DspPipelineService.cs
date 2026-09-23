@@ -4405,7 +4405,6 @@ public class DspPipelineService : BackgroundService,
         if (s.RxFilterWindow != _appliedRxBandpassWindow)
         {
             engine.SetRxBandpassWindow(channel, s.RxFilterWindow);
-            if (rx2Channel >= 0) engine.SetRxBandpassWindow(rx2Channel, s.RxFilterWindow);
             _appliedRxBandpassWindow = s.RxFilterWindow;
         }
         if (s.TxFilterWindow != _appliedTxBandpassWindow)
@@ -4476,11 +4475,25 @@ public class DspPipelineService : BackgroundService,
             engine.SetTxLevelerMaxGain(levelerMax);
             _appliedTxLevelerMaxGainDb = levelerMax;
         }
+        // NOTE: the RX1 channel only. Secondaries get NR — and AGC, squelch,
+        // bandpass window, zoom — from ApplyStateToSecondaryRxChannel, which
+        // runs for every one of them via EnsureSecondaryRxChannel earlier in
+        // this same pass. RX2 used to be pushed a second time from here, by a
+        // hardcoded `if (rx2Channel >= 0)` line beneath each of those blocks.
+        //
+        // That double push is what produced the RX2 echo (field: NR on, echo;
+        // NR off, clean; RX1 unaffected at any setting). RX3+ never had it,
+        // because nothing here was hardcoded for them — which is also why the
+        // symptom looked receiver-specific rather than like a pattern.
+        //
+        // The guards here cache against _appliedNr and friends, so they fire
+        // only on change; the secondary path applies unconditionally per pass.
+        // The two were never coordinated, and the cached guard covered only
+        // the first of the two writes.
         var nr = NormalizeNrConfig(s.Nr ?? new NrConfig());
         if (!nr.Equals(_appliedNr))
         {
             engine.SetNoiseReduction(channel, nr);
-            if (rx2Channel >= 0) engine.SetNoiseReduction(rx2Channel, nr);
             _appliedNr = nr;
             ReportNnrRuntime(engine, channel);
         }
@@ -4499,14 +4512,12 @@ public class DspPipelineService : BackgroundService,
         if (!agc.Equals(_appliedAgc))
         {
             engine.SetAgc(channel, agc);
-            if (rx2Channel >= 0) engine.SetAgc(rx2Channel, agc);
             _appliedAgc = agc;
         }
         var squelch = s.Squelch ?? new SquelchConfig();
         if (!squelch.Equals(_appliedSquelch))
         {
             engine.SetSquelch(channel, squelch);
-            if (rx2Channel >= 0) engine.SetSquelch(rx2Channel, squelch);
             _appliedSquelch = squelch;
         }
         var txLeveling = freeDvMode

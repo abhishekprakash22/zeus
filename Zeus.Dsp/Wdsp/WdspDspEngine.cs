@@ -1294,6 +1294,18 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     {
         ArgumentNullException.ThrowIfNull(cfg);
         if (!_channels.TryGetValue(channelId, out var state)) return;
+        // Serialised against native lifecycle, as upstream does. The NR
+        // Set*Run calls are not plain flag flips: toggling a stage on has WDSP
+        // (re)allocate that stage's buffers and FFT plans, and FFTW plan
+        // creation is not thread-safe. Upstream holds the same lock here that
+        // it holds around OpenChannel and DestroyAnalyzer for that reason; the
+        // 2.10 port dropped it, leaving this the one native reconfigure that
+        // could run unserialised against a channel being opened or torn down.
+        RunNativeLifecycleCriticalSection(() => ApplyNoiseReductionLocked(channelId, cfg, state));
+    }
+
+    private void ApplyNoiseReductionLocked(int channelId, NrConfig cfg, ChannelState state)
+    {
 
         // Mutually-exclusive NR button. When switching to a mode, re-apply its
         // Thetis defaults before toggling Run=1 — matches Thetis setup.cs order

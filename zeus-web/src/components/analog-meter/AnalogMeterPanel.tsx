@@ -29,6 +29,7 @@ import { useRadioStore } from '../../state/radio-store';
 import { useTxStore } from '../../state/tx-store';
 import { preferredRxSignalDbm } from '../../dsp/rx-chain-health';
 import { useRxMetersStore } from '../../state/rx-meters-store';
+import { useConnectionStore } from '../../state/connection-store';
 import { AnalogMeterFace } from './AnalogMeterFace';
 import { AnalogMeterConfig } from './AnalogMeterConfig';
 import { AnalogMeterZeusOverlay } from './AnalogMeterZeusOverlay';
@@ -185,8 +186,25 @@ function ReadoutStrip({ enabled, values, showDbm, dbm, swrAlarm, activeScaleId }
   );
 }
 
+/** The FOCUSED receiver's meters. RX1 lives on the store's flat fields
+ *  (0x19); a secondary lives in byReceiver (0x27) once its first frame has
+ *  landed. Before that — or against a server that never sends 0x27 — a
+ *  secondary falls back to RX1's, which is what this card showed for every
+ *  receiver until now (field: card read S4 while the focused RX2 flag read
+ *  S7; the card was still on RX1). */
+function focusedRxMeters(rx: ReturnType<typeof useRxMetersStore.getState>, focusedRx: number) {
+  if (focusedRx > 0) {
+    const own = rx.byReceiver[focusedRx];
+    if (own) return own;
+  }
+  return rx;
+}
+
 function sampleRxDbm(): number {
-  const rx = useRxMetersStore.getState();
+  const rx = focusedRxMeters(
+    useRxMetersStore.getState(),
+    useConnectionStore.getState().focusedRxIndex,
+  );
   const tx = useTxStore.getState();
   return preferredRxSignalDbm({ ...rx, fallbackDbm: tx.rxDbm }).dbm ?? tx.rxDbm;
 }
@@ -420,16 +438,21 @@ export function AnalogMeterPanel({
   const { rxDbm: fallbackRxDbm, fwdWatts: rawFwdW, swr: rawSwr } = useTxStore(
     useShallow((s) => ({ rxDbm: s.rxDbm, fwdWatts: s.fwdWatts, swr: s.swr })),
   );
+  // The card follows the focused receiver, like the flag does.
+  const focusedRx = useConnectionStore((s) => s.focusedRxIndex);
   const rxMeters = useRxMetersStore(
-    useShallow((s) => ({
-      signalPk: s.signalPk,
-      signalAv: s.signalAv,
-      adcPk: s.adcPk,
-      adcAv: s.adcAv,
-      agcGain: s.agcGain,
-      agcEnvPk: s.agcEnvPk,
-      agcEnvAv: s.agcEnvAv,
-    })),
+    useShallow((s) => {
+      const m = focusedRxMeters(s, focusedRx);
+      return {
+        signalPk: m.signalPk,
+        signalAv: m.signalAv,
+        adcPk: m.adcPk,
+        adcAv: m.adcAv,
+        agcGain: m.agcGain,
+        agcEnvPk: m.agcEnvPk,
+        agcEnvAv: m.agcEnvAv,
+      };
+    }),
   );
   const rawRxDbm =
     preferredRxSignalDbm({ ...rxMeters, fallbackDbm: fallbackRxDbm }).dbm ??

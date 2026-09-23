@@ -97,6 +97,47 @@ public sealed class RemoteWebRtcSessionTests
     }
 
     [Fact]
+    [Fact]
+    public async Task U8Capability_AdvertisedBeforeUnlock_StillReachesTheSink()
+    {
+        // The sink is created post-unlock; the client's display request
+        // normally arrives before that. The capability must survive the gap.
+        // Field: every remote session ran float32 (2.6x the bytes) because the
+        // flag was written onto a sink that did not exist yet.
+        var hub = new Zeus.Server.StreamingHub(NullLogger<Zeus.Server.StreamingHub>.Instance);
+        var server = new RemoteWebRtcSession(RegisterVerifier(Password), NullLogger.Instance, hub: hub);
+        await using var client = new ProverClient(Password);
+
+        var answer = await server.CreateAnswerAsync(await client.CreateOfferAsync());
+        await client.AcceptAnswerAsync(answer);
+        await client.Unlocked.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(server.IsUnlocked);
+
+        // Advertise u8 (byte[2] = 1). Whether this lands before or after the
+        // sink attaches on a given run must not matter — that is the point.
+        client.SendControlBinary(new byte[] { 0x22, 0x01, 0x01 });
+        await WaitForAsync(() => hub.DisplayStreamRequested, TimeSpan.FromSeconds(5));
+
+        const ushort width = 8;
+        var pan = new float[width];
+        var wf = new float[width];
+        for (int i = 0; i < width; i++) { pan[i] = -100f + i; wf[i] = -110f + i; }
+        var frame = new Zeus.Contracts.DisplayFrame(
+            Seq: 7, TsUnixMs: 0, RxId: 0,
+            BodyFlags: Zeus.Contracts.DisplayBodyFlags.PanValid | Zeus.Contracts.DisplayBodyFlags.WfValid,
+            Width: width, CenterHz: 14_200_000, HzPerPixel: 1f, PanDb: pan, WfDb: wf);
+
+        var received = await BroadcastUntilReceived(client, () => hub.Broadcast(frame));
+        Assert.NotEmpty(received);
+        // A u8 frame is strictly smaller than the float32 one and carries the
+        // BinsU8 body flag; a float32 frame would be TotalByteLength.
+        Assert.Equal(frame.U8TotalByteLength, received.Length);
+        Assert.NotEqual(frame.TotalByteLength, received.Length);
+        var decoded = Zeus.Contracts.DisplayFrame.Deserialize(received);
+        Assert.True((decoded.BodyFlags & Zeus.Contracts.DisplayBodyFlags.BinsU8) != 0);
+    }
+
+    [Fact]
     public async Task DisplayRequest_OpensGate_AndDisplayFrameReachesRemotePeer()
     {
         var hub = new Zeus.Server.StreamingHub(NullLogger<Zeus.Server.StreamingHub>.Instance);

@@ -122,6 +122,15 @@ public sealed class RemoteWebRtcSession
     private const byte MsgTypeAudioStreamRequest = 0x21;
     private const byte MsgTypeDisplayStreamRequest = 0x22;
     private bool _wantsDisplay;
+    // The u8-bins capability the client advertised in its display-stream
+    // request, remembered on the SESSION. The sink it applies to is only
+    // created post-unlock, and the client's request normally arrives before
+    // that — so writing the flag straight onto _sink lost it whenever the
+    // sink did not exist yet, and every such session ran float32 display
+    // frames for its whole life: 2.6x the bytes of u8. Field: 2.1 Mbit/s per
+    // receiver remotely, the pre-u8 number, after u8 had been verified at
+    // ~0.8. The sink now inherits this at creation.
+    private bool _wantsU8Bins;
     private bool _wantsAudio;
 
     // Named HttpClient used for the loopback REST tunnel (see ZeusHost.cs).
@@ -793,17 +802,15 @@ public sealed class RemoteWebRtcSession
                 return;
             }
             case MsgTypeDisplayStreamRequest:
-                if (enable == _wantsDisplay)
-                {
-                    // Level unchanged, but a capability re-advertisement can
-                    // still arrive — keep the sink's flag current.
-                    if (_sink is not null)
-                        _sink.WantsU8Bins = enable && data.Length > 2 && data[2] != 0;
-                    return;
-                }
+                // Remember the capability regardless of whether the sink
+                // exists yet; apply it to the sink if it does, and the sink
+                // picks it up at creation if it does not (see the unlock
+                // path). Without the session-level copy the flag was lost
+                // whenever the request beat the sink — the usual order.
+                _wantsU8Bins = enable && data.Length > 2 && data[2] != 0;
+                if (_sink is not null) _sink.WantsU8Bins = _wantsU8Bins;
+                if (enable == _wantsDisplay) return;   // level unchanged
                 _wantsDisplay = enable;
-                if (_sink is not null)
-                    _sink.WantsU8Bins = enable && data.Length > 2 && data[2] != 0;
                 _hub.AdjustDisplayRequests(enable ? 1 : -1);
                 break;
             case MsgTypeAudioStreamRequest:
@@ -1260,8 +1267,14 @@ public sealed class RemoteWebRtcSession
                         // (gated again by TrySendFrame). Only happens post-unlock.
                         if (_hub is not null)
                         {
-                            _sink = new RemoteFrameSink(TrySendFrame);
+                            _sink = new RemoteFrameSink(TrySendFrame)
+                            {
+                                // Inherit what the client advertised before
+                                // the sink existed (see _wantsU8Bins).
+                                WantsU8Bins = _wantsU8Bins,
+                            };
                             _hub.AttachSink(_sinkId, _sink);
+                            _log.LogInformation("rtc.remote sink attached u8Bins={U8}", _wantsU8Bins);
                         }
 
                         // TX lease watchdog runs for the life of the unlocked

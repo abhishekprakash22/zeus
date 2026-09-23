@@ -549,7 +549,14 @@ export function Panadapter3D({
       )}
       <FreqAxis receiver={receiver} stitched={stitched} />
       {widebandDisplay && <WidebandViewportControls containerRef={containerRef} receiver={receiver} />}
-      {rxIndex === 0 && !widebandDisplay && <DbScale />}
+      {/* dB scale + level drag — the same rule as the 2D pane: RX1 always;
+          a STANDALONE secondary pane (the G2 layout's RX2, neither stitched
+          nor multiRx) is its own display and gets its own scale. Field: RX2
+          had no level control in 3D while 2D had one. Bound to the receiver
+          so RX2's drag sets RX2's window, not RX1's. */}
+      {(rxIndex === 0 || (!stitched && !multiRx)) && !widebandDisplay && (
+        <DbScale receiver={rxIndex === 1 ? 'B' : 'A'} />
+      )}
       {status === 'unsupported' && (
         <div
           role="status"

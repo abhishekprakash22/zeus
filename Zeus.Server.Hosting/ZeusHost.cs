@@ -1524,6 +1524,31 @@ public static class ZeusHost
                 ? Results.Ok(new { ok = true, status = f.Status() })
                 : Results.BadRequest(new { ok = false, error = refusal });
         });
+        // A gateware the operator built or downloaded themselves. The shelf is
+        // the convenience; this is the path anyone working on HL2 gateware
+        // actually needs, and without it the panel is read-only to them.
+        hl2G.MapPost("/flash-file", async (HttpRequest http, HermesLite2FlashService f) =>
+        {
+            if (!http.HasFormContentType)
+                return Results.BadRequest(new { ok = false, error = "expected a multipart form with a 'file' part" });
+            var form = await http.ReadFormAsync(http.HttpContext.RequestAborted);
+            var file = form.Files["file"];
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { ok = false, error = "no file received" });
+            // An .rbf for an HL2 is around 2 MB; the cap is generous enough to
+            // let an unusual build through and mean enough to stop a mistake.
+            if (file.Length > 16 * 1024 * 1024)
+                return Results.BadRequest(new { ok = false, error = $"{file.Length} bytes is too large for an HL2 .rbf" });
+
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms, http.HttpContext.RequestAborted);
+            var (ok, refusal) = await f.StartFromFileAsync(
+                ms.ToArray(), Path.GetFileName(file.FileName ?? "uploaded.rbf"),
+                http.HttpContext.RequestAborted);
+            return ok
+                ? Results.Ok(new { ok = true, status = f.Status() })
+                : Results.BadRequest(new { ok = false, error = refusal });
+        }).DisableAntiforgery();
 
                 // ---- XDMA register plane (Phase 2): status reads + gated writes ----
         app.MapGet("/api/xdma/status", (SaturnControl sc) => Results.Ok(sc.ReadStatus()));

@@ -6076,6 +6076,21 @@ export function compareHl2Image(url: string): Promise<Hl2CompareDto> {
   );
 }
 
+/** Write a gateware file the operator already has, rather than one off the
+ *  shelf. Multipart rather than JSON so a 2 MB .rbf does not go through a
+ *  base64 round-trip for no reason. */
+export function startHl2FlashFromFile(
+  file: File,
+): Promise<{ ok: boolean; error?: string; status?: Hl2FlashStatusDto }> {
+  const body = new FormData();
+  body.append('file', file, file.name);
+  return jsonFetch(
+    '/api/fpga/hl2/flash-file',
+    { method: 'POST', body },
+    (raw) => raw as { ok: boolean; error?: string; status?: Hl2FlashStatusDto },
+  );
+}
+
 export function startHl2Flash(
   url: string,
 ): Promise<{ ok: boolean; error?: string; status?: Hl2FlashStatusDto }> {

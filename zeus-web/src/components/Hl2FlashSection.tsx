@@ -19,16 +19,21 @@
 // that before they are anywhere near the button. So the check runs on its
 // own and the arm row only appears once it has come back clean.
 //
+// Two sources, and the local file is not the afterthought: anyone working on
+// HL2 gateware builds their own .rbf, and a panel that only offers the shelf
+// is read-only to them.
+//
 // Reuses the .fpga-* classes the Saturn section already defines: this is the
 // same kind of panel doing the same kind of thing, and it should not invent
 // a second look for it.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   compareHl2Image,
   fetchHl2FlashStatus,
   fetchHl2Images,
   startHl2Flash,
+  startHl2FlashFromFile,
   type Hl2CompareDto,
   type Hl2FlashStatusDto,
   type Hl2ImageDto,
@@ -49,6 +54,8 @@ export function Hl2FlashSection() {
   const [err, setErr] = useState('');
   const [cmp, setCmp] = useState<Hl2CompareDto | null>(null);
   const [checking, setChecking] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
     void fetchHl2FlashStatus().then(setStatus).catch(() => undefined);
@@ -88,7 +95,7 @@ export function Hl2FlashSection() {
   const fire = () => {
     setConfirm('');
     setErr('');
-    void startHl2Flash(chosen)
+    void (file ? startHl2FlashFromFile(file) : startHl2Flash(chosen))
       .then((r) => {
         if (!r.ok) setErr(r.error ?? 'refused');
         refresh();
@@ -96,9 +103,13 @@ export function Hl2FlashSection() {
       .catch((e) => setErr((e as Error)?.message ?? 'request failed'));
   };
 
+  // Either source will do: the shelf is the convenience, a local file is what
+  // anyone working on gateware actually needs.
+  const source = file !== null || chosen !== '';
+
   // The arm row appears only behind a clean check, so the refusals are read
   // before the button exists rather than after it is pressed.
-  const armed = cmp?.ok === true;
+  const armed = source && cmp?.ok === true;
 
   return (
     <div className="fpga-flash">
@@ -106,8 +117,9 @@ export function Hl2FlashSection() {
       <div className="fpga-note">
         Updates a Hermes-Lite 2 over Ethernet, writing the application image in slot2. The factory
         image in slot1 is never written — if an update fails, the HL2 falls back to it at power-up
-        and you can simply try again. The radio must be disconnected: it cannot be streaming while
-        its gateware is rewritten.
+        and you can simply try again. Pick a build from the shelf or your own .rbf from disk.
+        <b> Disconnect the radio first</b> — an HL2 does not answer discovery while it is
+        streaming, and its gateware cannot be rewritten mid-stream.
       </div>
 
       {!busy && (
@@ -128,6 +140,8 @@ export function Hl2FlashSection() {
                       checked={chosen === img.url}
                       onChange={() => {
                         setChosen(img.url);
+                        setFile(null);
+                        if (fileInput.current) fileInput.current.value = '';
                         setConfirm('');
                         setCmp(null);
                       }}
@@ -139,14 +153,34 @@ export function Hl2FlashSection() {
             </>
           )}
 
-          {chosen && (
+          <div className="fpga-cmp-row">
+            <label className="cwdec-btn" style={{ cursor: 'pointer' }}>
+              CHOOSE .rbf FROM DISK
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".rbf"
+                hidden
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0] ?? null;
+                  setFile(f);
+                  setChosen('');
+                  setConfirm('');
+                  setCmp(null);
+                }}
+              />
+            </label>
+            {file && <span className="fpga-note">{file.name}</span>}
+          </div>
+
+          {source && (
             <div className="fpga-cmp-row">
               <button
                 type="button"
                 className="cwdec-btn"
                 disabled={checking}
                 title="Find the HL2, read what it runs, and test this image against it — writes nothing"
-                onClick={() => check(chosen)}
+                onClick={() => check(file ? `file:///${file.name}` : chosen)}
               >
                 {checking ? 'CHECKING…' : 'CHECK THIS RADIO'}
               </button>

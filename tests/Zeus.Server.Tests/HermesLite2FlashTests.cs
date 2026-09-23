@@ -139,4 +139,46 @@ public sealed class HermesLite2FlashTests
     {
         Assert.NotNull(HermesLite2FlashService.RefusalFor(null, "hl2b5up_main.rbf"));
     }
+
+    [Fact]
+    public void NothingDiscoveredWhileConnectedSaysWhy()
+    {
+        // The state every operator is actually in when they open the panel:
+        // Zeus is streaming from the radio, so the radio does not answer
+        // discovery. "Not found" would send them hunting for a network fault
+        // that is not there.
+        var refusal = HermesLite2FlashService.RefusalFor(null, "hl2b5up_main.rbf", connected: true);
+
+        Assert.NotNull(refusal);
+        Assert.Contains("disconnect", refusal, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AnUnconventionalFileNameSkipsTheRevisionCheck()
+    {
+        // A gateware you built yourself is not obliged to be called
+        // hl2b5up_anything. hermeslite.py makes the same check optional
+        // (filename_checks), and refusing here would block the one case where
+        // a local file is the whole point.
+        Assert.Null(HermesLite2FlashService.RefusalFor(Radio(boardId: 5), "my_own_build.rbf"));
+        Assert.False(HermesLite2FlashService.LooksConventional("my_own_build.rbf"));
+    }
+
+    [Fact]
+    public void AConventionalNameIsStillHeldToItsClaim()
+    {
+        // Waiving the check for unnamed files must not waive it for a file
+        // that says which board it is for and says the wrong one.
+        Assert.True(HermesLite2FlashService.LooksConventional("hl2b4up_main.rbf"));
+        Assert.NotNull(HermesLite2FlashService.RefusalFor(Radio(boardId: 5), "hl2b4up_main.rbf"));
+    }
+
+    [Fact]
+    public void TheSevenPointZeroFloorIsNeverWaivedByFileName()
+    {
+        // The revision check is a convenience; this one keeps the board
+        // alive. An unconventional name must not slip past it.
+        Assert.NotNull(HermesLite2FlashService.RefusalFor(
+            Radio(codeVersion: V69), "my_own_build.rbf"));
+    }
 }

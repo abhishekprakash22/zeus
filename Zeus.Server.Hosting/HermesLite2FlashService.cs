@@ -69,6 +69,7 @@ public sealed class HermesLite2FlashService
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(10);
 
     private readonly TxService _tx;
+    private readonly RadioService? _radio;
     private readonly IRadioDiscovery _discovery;
     private readonly IHttpClientFactory _http;
     private readonly ILogger<HermesLite2FlashService> _log;
@@ -81,9 +82,11 @@ public sealed class HermesLite2FlashService
 
     public HermesLite2FlashService(
         TxService tx, IRadioDiscovery discovery,
-        IHttpClientFactory http, ILogger<HermesLite2FlashService> log)
+        IHttpClientFactory http, ILogger<HermesLite2FlashService> log,
+        RadioService? radio = null)
     {
         _tx = tx;
+        _radio = radio;
         _discovery = discovery;
         _http = http;
         _log = log;
@@ -116,10 +119,17 @@ public sealed class HermesLite2FlashService
 
     /// <summary>Everything that would make a write unsafe, in one place, so
     /// it can be tested without a radio and reported without starting a job.</summary>
-    internal static string? RefusalFor(DiscoveredRadio? radio, string fileName)
+    internal static string? RefusalFor(DiscoveredRadio? radio, string fileName, bool connected = false)
     {
         if (radio is null)
-            return "no Hermes-Lite 2 answered discovery";
+            return connected
+                // The state every operator is in when they open this panel.
+                // An HL2 will not answer discovery while Zeus is streaming
+                // from it, so "not found" here almost always means "found,
+                // and busy being your radio".
+                ? "Zeus is connected to a radio — disconnect it first. An HL2 does not answer " +
+                  "discovery while it is streaming, and its gateware cannot be rewritten mid-stream."
+                : "no Hermes-Lite 2 answered discovery — check it is powered and on this network";
         if (radio.Board != HpsdrBoardKind.HermesLite2)
             return $"the radio that answered is a {radio.Board}, not a Hermes-Lite 2";
         if (radio.Details.Busy)
@@ -137,12 +147,30 @@ public sealed class HermesLite2FlashService
         var boardId = BoardIdOf(radio);
         if (boardId < 0)
             return "discovery reply too short to read the board id";
-        if (fileName.Length > 0 && !fileName.Contains($"hl2b{boardId}", StringComparison.OrdinalIgnoreCase))
+
+        // Only enforced on a name that claims to be a conventional image.
+        // hermeslite.py does the same thing with its filename_checks flag,
+        // which update_gateware_github passes as False — a gateware you built
+        // yourself is not obliged to be called hl2b5up_anything, and refusing
+        // it would block the one case where a local file is the whole point.
+        //
+        // This is a convenience guard, not the one keeping the board alive.
+        // A wrong-revision image in slot2 simply fails to load and the factory
+        // image in slot1 runs instead; the check that prevents a brick is the
+        // 7.0 floor above, and that one is never waived.
+        if (LooksConventional(fileName) &&
+            !fileName.Contains($"hl2b{boardId}", StringComparison.OrdinalIgnoreCase))
             return $"this board reports id {boardId}, so it needs an hl2b{boardId} image — " +
-                   $"'{fileName}' is for a different board revision";
+                   $"'{fileName}' is named for a different board revision";
 
         return null;
     }
+
+    /// <summary>True for a name that follows the shelf convention, so the
+    /// board-revision check has something to check. A file called
+    /// "my_build.rbf" makes no claim and gets none.</summary>
+    internal static bool LooksConventional(string fileName) =>
+        fileName.Contains("hl2b", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>What a write would do, without doing it: which board answered,
     /// what it runs, and whether the chosen image is allowed to touch it.</summary>
@@ -150,7 +178,7 @@ public sealed class HermesLite2FlashService
     {
         var radio = await FindAsync(ct).ConfigureAwait(false);
         var name = FileNameOf(url);
-        var refusal = RefusalFor(radio, name);
+        var refusal = RefusalFor(radio, name, _radio?.IsConnected == true);
         if (radio is null) return new { ok = false, error = refusal };
 
         return new
@@ -178,28 +206,68 @@ public sealed class HermesLite2FlashService
         if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             return (false, "gateware URL must be https");
 
-        lock (_lock)
-        {
-            if (_phase is not ("idle" or "done" or "error"))
-                return (false, "a gateware update is already running");
-        }
+        // Claimed before the discovery await, which is a wide enough window
+        // for a second request to slip in, and released if a guard refuses.
+        var claimed = Claim(url);
+        if (claimed is not null) return (false, claimed);
 
         var radio = await FindAsync(ct).ConfigureAwait(false);
-        var refusal = RefusalFor(radio, FileNameOf(url));
-        if (refusal is not null) return (false, refusal);
-
-        lock (_lock)
-        {
-            // Re-checked under the lock: the discovery await above is a wide
-            // enough window for a second request to have claimed the job.
-            if (_phase is not ("idle" or "done" or "error"))
-                return (false, "a gateware update is already running");
-            _phase = "downloading"; _progress = 0; _detail = url; _error = null;
-        }
+        var refusal = RefusalFor(radio, FileNameOf(url), _radio?.IsConnected == true);
+        if (refusal is not null) { Release(); return (false, refusal); }
 
         var ip = radio!.Ip;
-        _ = Task.Run(() => RunJob(url, ip), CancellationToken.None);
+        _ = Task.Run(() => RunJob(Download, FileNameOf(url), ip), CancellationToken.None);
         return (true, null);
+
+        async Task<byte[]> Download()
+        {
+            using var client = _http.CreateClient();
+            client.Timeout = TimeSpan.FromMinutes(5);
+            return await client.GetByteArrayAsync(url).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Write a gateware image the operator already has. The shelf path is a
+    /// convenience; this is the one that matters to anyone who builds their
+    /// own, and refusing it would make the panel useless to them.
+    /// The image is validated exactly as a downloaded one is.
+    /// </summary>
+    public async Task<(bool Ok, string? Refusal)> StartFromFileAsync(
+        byte[] image, string fileName, CancellationToken ct)
+    {
+        if (_tx.MoxOwner is not null)
+            return (false, "TX is keyed — unkey before updating gateware");
+        try { ValidateRbf(image); }
+        catch (Exception ex) { return (false, ex.Message); }
+
+        var claimed = Claim(fileName);
+        if (claimed is not null) return (false, claimed);
+
+        var radio = await FindAsync(ct).ConfigureAwait(false);
+        var refusal = RefusalFor(radio, fileName, _radio?.IsConnected == true);
+        if (refusal is not null) { Release(); return (false, refusal); }
+
+        var ip = radio!.Ip;
+        _ = Task.Run(() => RunJob(() => Task.FromResult(image), fileName, ip), CancellationToken.None);
+        return (true, null);
+    }
+
+    /// <summary>Take the single job slot, or say who has it.</summary>
+    private string? Claim(string detail)
+    {
+        lock (_lock)
+        {
+            if (_phase is not ("idle" or "done" or "error"))
+                return "a gateware update is already running";
+            _phase = "downloading"; _progress = 0; _detail = detail; _error = null;
+            return null;
+        }
+    }
+
+    private void Release()
+    {
+        lock (_lock) { if (_phase == "downloading") { _phase = "idle"; _detail = ""; } }
     }
 
     private async Task<DiscoveredRadio?> FindAsync(CancellationToken ct)
@@ -218,22 +286,17 @@ public sealed class HermesLite2FlashService
         return slash >= 0 ? cut[(slash + 1)..] : cut;
     }
 
-    private async Task RunJob(string url, IPAddress ip)
+    private async Task RunJob(Func<Task<byte[]>> fetch, string label, IPAddress ip)
     {
         try
         {
-            byte[] image;
-            using (var client = _http.CreateClient())
-            {
-                client.Timeout = TimeSpan.FromMinutes(5);
-                image = await client.GetByteArrayAsync(url).ConfigureAwait(false);
-            }
+            var image = await fetch().ConfigureAwait(false);
             ValidateRbf(image);
 
             var blocks = (image.Length + BlockBytes - 1) / BlockBytes;
             _log.LogWarning(
-                "hl2.gateware: writing slot2 on {Ip} — {Bytes} bytes, {Blocks} blocks, from {Url}",
-                ip, image.Length, blocks, url);
+                "hl2.gateware: writing slot2 on {Ip} — {Bytes} bytes, {Blocks} blocks, from {Source}",
+                ip, image.Length, blocks, label);
 
             using var udp = new UdpClient();
             udp.Client.ReceiveTimeout = (int)StepTimeout.TotalMilliseconds;
@@ -291,7 +354,7 @@ public sealed class HermesLite2FlashService
     private static void ValidateRbf(byte[] image)
     {
         if (image.Length < RbfPadBytes + RbfMagic.Length)
-            throw new InvalidOperationException("the downloaded file is too small to be an .rbf");
+            throw new InvalidOperationException("this file is too small to be an .rbf");
         for (int i = 0; i < RbfPadBytes; i++)
             if (image[i] != 0xFF)
                 throw new InvalidOperationException(

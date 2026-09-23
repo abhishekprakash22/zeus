@@ -15,6 +15,7 @@
 // in issue #241 — layout switching now lives entirely in the LeftLayoutBar.
 
 import { BackgroundSettingsPanel } from './BackgroundSettingsPanel';
+import { PalettePicker } from './PalettePicker';
 import { DisplayPerformancePanel } from './DisplayPerformancePanel';
 import { PanadapterOverlaySettingsPanel } from './PanadapterOverlaySettingsPanel';
 import { SpectrumScaleSettingsPanel } from './SpectrumScaleSettingsPanel';
@@ -26,6 +27,7 @@ import { G2LayoutSection } from './g2/G2LayoutSection';
 export function DisplayPanel() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <PalettePicker />
       <ThemeSettingsPanel />
       <BackgroundSettingsPanel />
       <TraceColorPanel />

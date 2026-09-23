@@ -19,7 +19,7 @@ const HISTORY_ROWS = 512;
 const MAX_TEXTURE_COLUMNS = 1024;
 const MESH_COLUMNS = 640;
 const VISIBLE_ROWS = 160;
-const UNIFORM_FLOATS = 28;
+const UNIFORM_FLOATS = 32;
 const LARGE_CENTER_SHIFT_HZ = 25_000_000;
 
 export type PanSurfaceRowDomain = 'rx' | 'pop' | 'tx';
@@ -29,7 +29,21 @@ export type PanSurfaceDbWindows = {
   rxDbMax: number;
   txDbMin: number;
   txDbMax: number;
+  // Colour aperture — the WATERFALL's dB window. Height uses the pan window
+  // above; colour uses this one, through the same LUT the waterfall samples,
+  // so a signal is the same colour on the surface as in the waterfall below
+  // it. Keeping these two mappings separate is the whole lesson of the three
+  // reverted 3D rounds: colour derived from the height window can never
+  // match a waterfall that has its own. Optional for older callers — falls
+  // back to the rx window.
+  colorDbMin?: number;
+  colorDbMax?: number;
 };
+
+/** Ridge lines over the curtains: off (default — the Aether/Zeus look, solid
+ *  colour with no lines), signals-only (a ribbon only where a column stands
+ *  above the noise), or all. */
+export type PanSurfaceRidgeMode = 'off' | 'signals' | 'all';
 
 export type PanSurfaceRenderer = {
   pushRow: (
@@ -50,6 +64,9 @@ export type PanSurfaceRenderer = {
   setTraceColor: (r: number, g: number, b: number) => void;
   setReliefDepth: (depth: number) => void;
   setPopGlow: (intensity: number) => void;
+  setRidgeMode: (mode: PanSurfaceRidgeMode) => void;
+  /** Depth haze 0..1: how strongly old rows fade toward the background. */
+  setHaze: (haze: number) => void;
   clearHistory: () => void;
   debugState: () => {
     texWidth: number;
@@ -145,14 +162,37 @@ export function panSurfaceSourceUForTest(
 }
 
 const SHADER = /* wgsl */ `
+// 3D panadapter — curtain model.
+//
+// Each history row is drawn as a row of filled CURTAINS: one quad per mesh
+// column from the row's baseline up to its ridge, coloured as a vertical
+// gradient through the palette LUT (0.6x colour strength at the baseline,
+// full strength at the ridge). The noise floor is therefore a solid coloured
+// surface and a tall signal climbs through the palette up its own height.
+// No lighting, no alpha surface, no lines unless asked for.
+//
+// Two dB mappings from the same sample, on purpose:
+//   height  <- pan window (rxDbMin..rxDbMax, or the tx/pop window for those rows)
+//   colour  <- colour aperture (p7.xy) = the WATERFALL's window, same LUT
+// so the surface and the waterfall agree by construction.
+//
+// Rows are sampled at INTEGER age only — both corners of a quad belong to one
+// retained row. Interpolating between rows morphs one FFT into the next and
+// makes every peak bounce as history scrolls; the scroll reads as motion of
+// whole rows instead, which is what it is.
+//
+// X is frequency-linear at every depth. Perspective narrowing looks dramatic
+// but breaks registration with the waterfall directly below; depth is carried
+// by Y, row spacing and haze.
 struct Uniforms {
   p0 : vec4<f32>, // writeRow, historyRows, texW, validRows
   p1 : vec4<f32>, // rxDbMin, rxDbMax, meshCols, drawRows
   p2 : vec4<f32>, // viewCenterOffsetHz, viewSpanHz, frontY, backY
-  p3 : vec4<f32>, // reserved, heightGain, zCurve, reliefDepth
+  p3 : vec4<f32>, // haze, heightGain, zCurve, reliefDepth
   p4 : vec4<f32>, // traceColor.rgb, popGlow
-  p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, _
+  p5 : vec4<f32>, // canvasW, canvasH, lineAlpha, ridgeMode (0 off, 1 signals, 2 all)
   p6 : vec4<f32>, // txDbMin, txDbMax, popDbMin, popDbMax
+  p7 : vec4<f32>, // colorDbMin, colorDbMax, ridgeGateLo, ridgeGateHi
 };
 @group(0) @binding(0) var<uniform> u : Uniforms;
 @group(0) @binding(1) var historyTex : texture_2d<f32>;
@@ -160,120 +200,115 @@ struct Uniforms {
 @group(0) @binding(3) var lutSampler : sampler;
 @group(0) @binding(4) var<storage, read> rowGeom : array<vec4<f32>>;
 
+const BG : vec3<f32> = vec3<f32>(0.043, 0.055, 0.075);
+
 fn ringRow(age : f32) -> i32 {
   let h = u.p0.y;
   let r = ((u.p0.x - age) % h + h) % h;
   return i32(r);
 }
 
-fn rawLevel(freqU : f32, age : f32) -> f32 {
-  if (age < 0.0 || age > u.p0.w - 1.0) { return 0.0; }
+// Raw dBm at (freqU, integer age). .y = 1 when the row covers that frequency.
+fn rawDb(freqU : f32, age : f32) -> vec2<f32> {
+  if (age < 0.0 || age > u.p0.w - 1.0) { return vec2<f32>(-999.0, 0.0); }
   let row = ringRow(age);
   let g = rowGeom[row];
-  if (g.y <= 0.0) { return 0.0; }
+  if (g.y <= 0.0) { return vec2<f32>(-999.0, 0.0); }
   let texW = u.p0.z;
   let rowSpanHz = g.y * texW;
   let srcX = 0.5 + (u.p2.x - g.x) / rowSpanHz + (freqU - 0.5) * (u.p2.y / rowSpanHz);
-  if (srcX < 0.0 || srcX > 1.0) { return 0.0; }
+  if (srcX < 0.0 || srcX > 1.0) { return vec2<f32>(-999.0, 0.0); }
+  // Texel CENTRE, nearest — never blend two columns of one row either.
   let texX = clamp(i32(round(srcX * (texW - 1.0))), 0, i32(texW) - 1);
-  let db = textureLoad(historyTex, vec2<i32>(texX, row), 0).r;
-  var dbMin = u.p1.x;
-  var dbMax = u.p1.y;
-  if (g.z > 1.5) {
-    dbMin = u.p6.x;
-    dbMax = u.p6.y;
-  } else if (g.z > 0.5) {
-    dbMin = u.p6.z;
-    dbMax = u.p6.w;
-  }
-  return clamp((db - dbMin) / max(0.0001, dbMax - dbMin), 0.0, 1.0);
+  return vec2<f32>(textureLoad(historyTex, vec2<i32>(texX, row), 0).r, 1.0);
 }
 
 fn rowDomain(age : f32) -> f32 {
   if (age < 0.0 || age > u.p0.w - 1.0) { return 0.0; }
-  let row = ringRow(age);
-  return rowGeom[row].z;
+  return rowGeom[ringRow(age)].z;
 }
 
-struct Sample {
-  level : f32,
-  light : f32,
-  crest : f32,
-};
-
-fn sampleSurface(freqU : f32, age : f32) -> Sample {
-  let level = rawLevel(freqU, age);
-  let dx = 1.0 / max(8.0, u.p1.z);
-  let lx = rawLevel(freqU - dx, age);
-  let rx = rawLevel(freqU + dx, age);
-  let newer = rawLevel(freqU, max(0.0, age - 1.0));
-  let older = rawLevel(freqU, age + 1.0);
-  let normal = normalize(vec3<f32>((lx - rx) * 7.5, 1.0, (newer - older) * 4.5));
-  let lightDir = normalize(vec3<f32>(-0.55, 0.82, -0.42));
-  let lambert = clamp(dot(normal, lightDir) * 0.5 + 0.5, 0.0, 1.0);
-  let cross = (lx + rx + newer + older) * 0.25;
-  var s : Sample;
-  s.level = level;
-  s.light = mix(0.52, 1.48, pow(lambert, mix(1.1, 1.85, u.p3.w)));
-  s.crest = max(0.0, level - cross);
-  return s;
+// Height mapping: the pan window for RX rows, tx/pop windows for those rows.
+fn heightLevel(db : f32, domain : f32) -> f32 {
+  var dbMin = u.p1.x;
+  var dbMax = u.p1.y;
+  if (domain > 1.5) { dbMin = u.p6.x; dbMax = u.p6.y; }
+  else if (domain > 0.5) { dbMin = u.p6.z; dbMax = u.p6.w; }
+  return clamp((db - dbMin) / max(0.0001, dbMax - dbMin), 0.0, 1.0);
 }
 
-fn project(freqU : f32, age : f32, level : f32) -> vec4<f32> {
-  let drawRows = max(1.0, u.p1.w);
-  let depth = clamp(age / max(1.0, drawRows - 1.0), 0.0, 1.0);
+// Colour mapping: the waterfall's window, independent of height.
+fn colorStrength(db : f32) -> f32 {
+  return clamp((db - u.p7.x) / max(0.0001, u.p7.y - u.p7.x), 0.0, 1.0);
+}
+
+fn baselineY(depth : f32) -> f32 {
   let curveDepth = pow(depth, 0.82);
-  // X is deliberately frequency-linear at every depth. Perspective width
-  // compression looks dramatic, but it makes older rows drift inward and breaks
-  // registration with the waterfall below. Depth comes from Y, relief, haze,
-  // and ridge lighting; frequency stays exact for RX and TX rows.
-  let x = (freqU - 0.5) * 2.0;
-  let baseY = mix(u.p2.z, u.p2.w, curveDepth);
-  let gain = u.p3.y * mix(1.0, 0.55, curveDepth);
-  let y = baseY + pow(level, u.p3.z) * gain;
-  return vec4<f32>(x, y, depth * 0.55, 1.0);
+  return mix(u.p2.z, u.p2.w, curveDepth);
+}
+
+fn ridgeY(depth : f32, level : f32) -> f32 {
+  let curveDepth = pow(depth, 0.82);
+  let gain = u.p3.y * mix(1.0, 0.55, curveDepth);   // far ridges shorter
+  return baselineY(depth) + pow(level, u.p3.z) * gain;
 }
 
 struct VsOut {
   @builtin(position) clip : vec4<f32>,
-  @location(0) level : f32,
-  @location(1) depth : f32,
-  @location(2) light : f32,
-  @location(3) crest : f32,
-  @location(4) domain : f32,
+  @location(0) lut : f32,       // palette coordinate (gradient inside the curtain)
+  @location(1) depth : f32,     // 0 front .. 1 back
+  @location(2) domain : f32,
+  @location(3) strength : f32,  // colour strength at the ridge (for gates)
+  @location(4) covered : f32,
 };
 
+// One quad per (row, mesh column): baseline edge and ridge edge of the SAME
+// integer-age row.
 @vertex
-fn vsFill(@builtin(vertex_index) vi : u32) -> VsOut {
+fn vsCurtain(@builtin(vertex_index) vi : u32) -> VsOut {
   let segs = max(1u, u32(u.p1.z) - 1u);
   let cell = vi / 6u;
   let tri = vi % 6u;
-  let band = cell / segs;
-  let seg = cell - band * segs;
+  let row = cell / segs;
+  let seg = cell - row * segs;
   var corners = array<vec2<f32>, 6>(
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(1.0, 0.0),
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(1.0, 0.0),
-    vec2<f32>(1.0, 1.0)
+    vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
+    vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0)
   );
   let c = corners[tri];
   let freqU = (f32(seg) + c.x) / f32(segs);
-  let backAge = u.p1.w - 1.0 - f32(band);
-  let frontAge = backAge - 1.0;
-  let age = mix(backAge, frontAge, c.y);
-  let s = sampleSurface(freqU, age);
+  let drawRows = max(1.0, u.p1.w);
+  let age = drawRows - 1.0 - f32(row);            // row 0 = oldest = drawn first (painter's order)
+  let depth = clamp(age / max(1.0, drawRows - 1.0), 0.0, 1.0);
+  let d = rawDb(freqU, age);
+  let domain = rowDomain(age);
+  let level = select(0.0, heightLevel(d.x, domain), d.y > 0.5);
+  let strength = select(0.0, colorStrength(d.x), d.y > 0.5);
+  let x = (freqU - 0.5) * 2.0;
+  let y = select(baselineY(depth), ridgeY(depth, level), c.y > 0.5);
   var out : VsOut;
-  out.clip = project(freqU, age, s.level);
-  out.level = s.level;
-  out.depth = clamp(age / max(1.0, u.p1.w - 1.0), 0.0, 1.0);
-  out.light = s.light;
-  out.crest = s.crest;
-  out.domain = rowDomain(age);
+  out.clip = vec4<f32>(x, y, depth * 0.55, 1.0);
+  out.lut = strength * mix(0.6, 1.0, c.y);        // gradient: dimmer at the base, full at the ridge
+  out.depth = depth;
+  out.domain = domain;
+  out.strength = strength;
+  out.covered = d.y;
   return out;
 }
 
+@fragment
+fn fsCurtain(in : VsOut) -> @location(0) vec4<f32> {
+  if (in.covered < 0.5) { discard; }
+  var col = textureSample(lutTex, lutSampler, vec2<f32>(clamp(in.lut, 0.0, 1.0), 0.5)).rgb;
+  // TX rows keep their warm tint so a transmission reads as one in the history.
+  let txRow = smoothstep(1.5, 2.0, in.domain);
+  col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.strength));
+  // Haze: old rows fade toward the background.
+  col = mix(col, BG, clamp(in.depth * u.p3.x, 0.0, 1.0));
+  return vec4<f32>(col, 1.0);                       // opaque; painter's order does the rest
+}
+
+// Ridge ribbon (optional). Line-list along each row's ridge.
 @vertex
 fn vsLine(@builtin(vertex_index) vi : u32) -> VsOut {
   let segs = max(1u, u32(u.p1.z) - 1u);
@@ -282,40 +317,34 @@ fn vsLine(@builtin(vertex_index) vi : u32) -> VsOut {
   let row = pair / segs;
   let seg = pair - row * segs;
   let freqU = (f32(seg) + f32(end)) / f32(segs);
-  let age = u.p1.w - 1.0 - f32(row);
-  let s = sampleSurface(freqU, age);
+  let drawRows = max(1.0, u.p1.w);
+  let age = drawRows - 1.0 - f32(row);
+  let depth = clamp(age / max(1.0, drawRows - 1.0), 0.0, 1.0);
+  let d = rawDb(freqU, age);
+  let domain = rowDomain(age);
+  let level = select(0.0, heightLevel(d.x, domain), d.y > 0.5);
+  let strength = select(0.0, colorStrength(d.x), d.y > 0.5);
   var out : VsOut;
-  out.clip = project(freqU, age, s.level);
-  out.level = s.level;
-  out.depth = clamp(age / max(1.0, u.p1.w - 1.0), 0.0, 1.0);
-  out.light = s.light;
-  out.crest = s.crest;
-  out.domain = rowDomain(age);
+  out.clip = vec4<f32>((freqU - 0.5) * 2.0, ridgeY(depth, level), depth * 0.55 - 0.001, 1.0);
+  out.lut = strength;
+  out.depth = depth;
+  out.domain = domain;
+  out.strength = strength;
+  out.covered = d.y;
   return out;
 }
 
 @fragment
-fn fsFill(in : VsOut) -> @location(0) vec4<f32> {
-  let lvl = clamp(in.level * 0.98 + in.crest * 0.55 * u.p4.w, 0.0, 1.0);
-  var col = textureSample(lutTex, lutSampler, vec2<f32>(lvl, 0.5)).rgb * in.light;
-  let txRow = smoothstep(1.5, 2.0, in.domain);
-  col = mix(col, col * vec3<f32>(1.22, 0.78, 0.70) + vec3<f32>(0.12, 0.02, 0.01), txRow * smoothstep(0.10, 0.85, in.level));
-  let horizon = vec3<f32>(0.015, 0.045, 0.09);
-  col = mix(col, horizon, in.depth * 0.42);
-  let glow = smoothstep(0.42, 0.95, in.level) * (0.18 + u.p4.w * 0.28) + in.crest * u.p4.w * 0.75;
-  col += vec3<f32>(0.35, 0.68, 1.0) * glow * (1.0 - in.depth * 0.45);
-  let alpha = mix(0.58, 0.93, smoothstep(0.04, 0.82, in.level)) * (1.0 - in.depth * 0.28);
-  return vec4<f32>(min(col, vec3<f32>(1.0)), alpha);
-}
-
-@fragment
 fn fsLine(in : VsOut) -> @location(0) vec4<f32> {
-  let whiteLift = smoothstep(0.74, 1.0, in.level) * 0.55;
+  if (in.covered < 0.5) { discard; }
   let txRow = smoothstep(1.5, 2.0, in.domain);
   let trace = mix(u.p4.rgb, vec3<f32>(1.0, 0.22, 0.16), txRow);
-  let col = mix(trace, vec3<f32>(1.0), whiteLift);
-  let alpha = (0.10 + smoothstep(0.02, 0.90, in.level) * 0.88) * (1.0 - in.depth * 0.32) * u.p5.z;
-  return vec4<f32>(col, alpha);
+  let col = mix(trace, vec3<f32>(1.0), smoothstep(0.74, 1.0, in.strength) * 0.55);
+  // ridgeMode 1: only where the column stands above the noise (gate on
+  // colour strength between p7.z and p7.w). ridgeMode 2: everywhere.
+  let gate = select(1.0, smoothstep(u.p7.z, u.p7.w, in.strength), u.p5.w < 1.5);
+  let alpha = (0.10 + smoothstep(0.02, 0.90, in.strength) * 0.88) * (1.0 - in.depth * 0.32) * u.p5.z * gate;
+  return vec4<f32>(col * alpha, alpha);
 }
 `;
 
@@ -355,8 +384,8 @@ export function createPanSurfaceRenderer(
 
   const fillPipeline = device.createRenderPipeline({
     layout: pipelineLayout,
-    vertex: { module, entryPoint: 'vsFill' },
-    fragment: { module, entryPoint: 'fsFill', targets: [{ format, blend }] },
+    vertex: { module, entryPoint: 'vsCurtain' },
+    fragment: { module, entryPoint: 'fsCurtain', targets: [{ format, blend }] },
     primitive: { topology: 'triangle-list' },
   });
   const linePipeline = device.createRenderPipeline({
@@ -395,6 +424,8 @@ export function createPanSurfaceRenderer(
   let canvasH = 1;
   let reliefDepth = 0.74;
   let popGlow = 0;
+  let ridgeMode = 0;      // 0 off, 1 signals, 2 all
+  let haze = 0.45;
   let traceR = 1;
   let traceG = 0.62;
   let traceB = 0.16;
@@ -475,7 +506,7 @@ export function createPanSurfaceRenderer(
     uniformData[9] = viewSpanHz;
     uniformData[10] = frontY;
     uniformData[11] = backY;
-    uniformData[12] = 0;
+    uniformData[12] = haze;
     uniformData[13] = heightGain;
     uniformData[14] = 0.66;
     uniformData[15] = reliefDepth;
@@ -486,11 +517,20 @@ export function createPanSurfaceRenderer(
     uniformData[20] = canvasW;
     uniformData[21] = canvasH;
     uniformData[22] = 0.86;
-    uniformData[23] = 0;
+    uniformData[23] = ridgeMode;
     uniformData[24] = windows.txDbMin;
     uniformData[25] = windows.txDbMax;
     uniformData[26] = 0;
     uniformData[27] = 1;
+    // Colour aperture: the waterfall's window when the caller supplies it,
+    // else the rx window (older callers, and the fallback keeps colour and
+    // height on one mapping rather than on none).
+    uniformData[28] = windows.colorDbMin ?? windows.rxDbMin;
+    uniformData[29] = windows.colorDbMax ?? windows.rxDbMax;
+    // Signals-only ridge gate, in colour-strength units: from ~floor+4 dB to
+    // ~floor+14 dB over a typical 60 dB waterfall window.
+    uniformData[30] = 0.08;
+    uniformData[31] = 0.24;
     device.queue.writeBuffer(uniformBuffer, 0, gpuSrc(uniformData));
   };
 
@@ -576,12 +616,12 @@ export function createPanSurfaceRenderer(
         ],
       });
       pass.setBindGroup(0, bindGroup);
-      if (drawRows >= 2) {
-        pass.setPipeline(fillPipeline);
-        pass.draw((drawRows - 1) * (meshCols - 1) * 6);
+      pass.setPipeline(fillPipeline);
+      pass.draw(drawRows * (meshCols - 1) * 6);
+      if (ridgeMode > 0) {
+        pass.setPipeline(linePipeline);
+        pass.draw(drawRows * (meshCols - 1) * 2);
       }
-      pass.setPipeline(linePipeline);
-      pass.draw(drawRows * (meshCols - 1) * 2);
       pass.end();
       device.queue.submit([encoder.finish()]);
     },
@@ -605,6 +645,12 @@ export function createPanSurfaceRenderer(
     },
     setPopGlow(intensity) {
       popGlow = Number.isFinite(intensity) ? Math.max(0, Math.min(1, intensity)) : 0;
+    },
+    setRidgeMode(mode) {
+      ridgeMode = mode === 'all' ? 2 : mode === 'signals' ? 1 : 0;
+    },
+    setHaze(h) {
+      haze = Number.isFinite(h) ? Math.max(0, Math.min(1, h)) : 0.45;
     },
     clearHistory() {
       if (texWidth <= 0) return;

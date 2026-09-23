@@ -44,6 +44,7 @@
 // License for details.
 
 import { StrictMode } from 'react';
+import { Pan3dHarness } from './dev/Pan3dHarness';
 import * as React from 'react';
 import * as ReactJsxRuntime from 'react/jsx-runtime';
 import { createRoot } from 'react-dom/client';
@@ -146,10 +147,16 @@ try {
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('root element missing');
 
+// Dev harness for the 3D panadapter: ?pan3dharness=1 renders the real WebGPU
+// renderer against a canned band with every tuning value on a slider. See
+// src/dev/Pan3dHarness.tsx. Never reachable by accident — it is a query
+// parameter, not a route — and it never talks to a radio.
+const harness = new URLSearchParams(window.location.search).has('pan3dharness');
+
 createRoot(rootEl).render(
   <StrictMode>
     <AppErrorBoundary>
-      <App />
+      {harness ? <Pan3dHarness /> : <App />}
     </AppErrorBoundary>
   </StrictMode>,
 );

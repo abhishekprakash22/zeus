@@ -59,7 +59,7 @@
 // the 256-entry linear resample is visually indistinguishable from the
 // continuous form for our use case.
 
-export type ColormapId = 'blue' | 'inferno' | 'viridis';
+export type ColormapId = 'blue' | 'inferno' | 'viridis' | 'amber';
 export type RenderColormapId = ColormapId | 'pop';
 
 export type ColormapSpec = {
@@ -71,6 +71,7 @@ export const COLORMAPS: readonly ColormapSpec[] = [
   { id: 'blue', label: 'Blue' },
   { id: 'inferno', label: 'Inferno' },
   { id: 'viridis', label: 'Viridis' },
+  { id: 'amber', label: 'Amber' },
 ];
 
 type Anchor = [number, [number, number, number]];
@@ -113,6 +114,20 @@ const VIRIDIS_ANCHORS: Anchor[] = [
   [0.65, [33, 144, 141]],
   [0.85, [94, 201, 98]],
   [1.0, [253, 231, 37]],
+];
+
+// Amber: the one palette that is ours rather than a matplotlib import. ANAN
+// Core's accent (#f0b33a) is the mid-tone: black → deep brown → amber → pale
+// gold → white. Same stretched low end as the others so the noise floor stays
+// dark; monotonic brightness so it reads at a glance.
+const AMBER_ANCHORS: Anchor[] = [
+  [0.0, [0, 0, 0]],
+  [0.40, [0, 0, 0]],
+  [0.52, [48, 24, 4]],
+  [0.64, [140, 70, 10]],
+  [0.76, [240, 179, 58]],
+  [0.88, [255, 225, 140]],
+  [1.0, [255, 255, 255]],
 ];
 
 // Pop palette: a clean MONOTONIC-brightness ramp (black → blue → white), not a
@@ -176,7 +191,9 @@ export function lutFor(id: RenderColormapId): Uint8Array {
       ? INFERNO_ANCHORS
       : id === 'viridis'
         ? VIRIDIS_ANCHORS
-        : BLUE_ANCHORS;
+        : id === 'amber'
+          ? AMBER_ANCHORS
+          : BLUE_ANCHORS;
   const lut = buildLut(anchors);
   CACHE[id] = lut;
   return lut;

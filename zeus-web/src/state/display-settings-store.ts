@@ -117,6 +117,9 @@ const RX2_STORAGE_KEY = 'zeus.display.rx2DbRange';
 const WF_STORAGE_KEY = 'zeus.display.wfDbRange';
 const WF_TX_STORAGE_KEY = 'zeus.display.wfTxDbRange';
 const WF_SCROLL_SPEED_STORAGE_KEY = 'zeus.display.wfScrollSpeed';
+// Palette + 3D ridge-line choice. The palette was never persisted before —
+// it reset to Blue on every reload — which made choosing one feel pointless.
+const PALETTE_STORAGE_KEY = 'zeus.display.palette';
 const BAND_OVERLAY_STORAGE_KEY = 'zeus.display.bandOverlay';
 const BAND_EDGE_ALERT_STORAGE_KEY = 'zeus.display.bandEdgeAlert';
 const CHAT_ROSTER_OVERLAY_STORAGE_KEY = 'zeus.display.chatRosterOverlay';
@@ -357,6 +360,32 @@ function writeSavedTxRange(txDbMin: number, txDbMax: number): void {
   }
 }
 
+type RidgeLines = 'off' | 'signals' | 'all';
+function readSavedPalette(): { colormap: ColormapId; pan3dRidgeLines: RidgeLines } {
+  const fallback = { colormap: 'blue' as ColormapId, pan3dRidgeLines: 'off' as RidgeLines };
+  try {
+    if (typeof localStorage === 'undefined') return fallback;
+    const raw = localStorage.getItem(PALETTE_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<{ colormap: string; pan3dRidgeLines: string }>;
+    const cm = parsed.colormap;
+    const rl = parsed.pan3dRidgeLines;
+    return {
+      colormap: cm === 'inferno' || cm === 'viridis' || cm === 'amber' ? cm : 'blue',
+      pan3dRidgeLines: rl === 'signals' || rl === 'all' ? rl : 'off',
+    };
+  } catch {
+    return fallback;
+  }
+}
+function writeSavedPalette(v: { colormap: ColormapId; pan3dRidgeLines: RidgeLines }): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(PALETTE_STORAGE_KEY, JSON.stringify(v));
+  } catch {
+    /* storage unavailable — the choice still applies for this session */
+  }
+}
+
 function readSavedWfRange(): { wfDbMin: number; wfDbMax: number } {
   try {
     if (typeof localStorage === 'undefined') return { wfDbMin: FIXED_DB_MIN, wfDbMax: FIXED_DB_MAX };
@@ -572,6 +601,10 @@ export type DisplaySettingsState = {
   displayDecimation: number;
   waterfallUpdatePeriod: number;
   colormap: ColormapId;
+  // 3D panadapter ridge lines over the curtains. 'off' is the solid-colour
+  // look; 'signals' draws a ribbon only where a column stands above the
+  // noise; 'all' draws every row's ridge.
+  pan3dRidgeLines: 'off' | 'signals' | 'all';
   waterfallScrollSpeed: number;
   // Panadapter background overlay mode + (optional) user image. See the
   // PanBackgroundMode and BackgroundImageFit types above. Persisted on the
@@ -613,6 +646,7 @@ export type DisplaySettingsState = {
   setRxTraceColor: (v: string) => Promise<void>;
   setAutoRange: (v: boolean) => void;
   setColormap: (id: ColormapId) => void;
+  setPan3dRidgeLines: (mode: 'off' | 'signals' | 'all') => void;
   setWaterfallScrollSpeed: (value: number) => void;
   setDbRange: (dbMin: number, dbMax: number) => void;
   setTxDbRange: (txDbMin: number, txDbMax: number) => void;
@@ -708,6 +742,7 @@ function sanitizeTxWfRange(
   return next;
 }
 
+const initialPalette = readSavedPalette();
 const initialRange = readSavedRange();
 const initialTxRange = readSavedTxRange();
 const initialWfRange = readSavedWfRange();
@@ -756,7 +791,8 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
   displayMaxFrameRateHz: DEFAULT_DISPLAY_MAX_FRAME_RATE_HZ,
   displayDecimation: DEFAULT_DISPLAY_DECIMATION,
   waterfallUpdatePeriod: DEFAULT_WATERFALL_UPDATE_PERIOD,
-  colormap: 'blue',
+  colormap: initialPalette.colormap,
+  pan3dRidgeLines: initialPalette.pan3dRidgeLines,
   waterfallScrollSpeed: initialWaterfallScrollSpeed,
   // Defaults until the server-side fetch lands (see hydrateFromServer at the
   // bottom of this file). The operator briefly sees a plain panadapter on
@@ -875,7 +911,14 @@ export const useDisplaySettingsStore = create<DisplaySettingsState>((set, get) =
       set({ autoRange: false, dbMin: saved.dbMin, dbMax: saved.dbMax });
     }
   },
-  setColormap: (colormap) => set({ colormap }),
+  setColormap: (colormap) => {
+    set({ colormap });
+    writeSavedPalette({ colormap, pan3dRidgeLines: get().pan3dRidgeLines });
+  },
+  setPan3dRidgeLines: (pan3dRidgeLines) => {
+    set({ pan3dRidgeLines });
+    writeSavedPalette({ colormap: get().colormap, pan3dRidgeLines });
+  },
   setWaterfallScrollSpeed: (value) => {
     const next = normalizeWaterfallScrollSpeed(value);
     set({ waterfallScrollSpeed: next });

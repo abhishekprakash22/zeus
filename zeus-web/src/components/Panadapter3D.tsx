@@ -221,6 +221,7 @@ export function Panadapter3D({
       setRendererPalette(popOn ? 'pop' : s.colormap);
       renderer.setReliefDepth(Math.max(0, Math.min(1, pop.waterfallReliefDepth / 100)));
       renderer.setPopGlow(popOn ? Math.max(0, Math.min(1, pop.popRenderIntensity / 100)) : 0.18);
+      renderer.setRidgeMode(s.pan3dRidgeLines);
 
       const ownFrameHzPerPixel = selectDisplaySlice(useDisplayStore.getState(), receiver).hzPerPixel;
       const viewHzPerPixel =
@@ -238,6 +239,11 @@ export function Panadapter3D({
         rxDbMax: s.dbMax,
         txDbMin: s.txDbMin,
         txDbMax: s.txDbMax,
+        // Colour comes from the WATERFALL's window, so the surface and the
+        // waterfall below it agree on every signal's colour. Height still
+        // uses the pan window above. Pop mode already normalises to 0..1.
+        colorDbMin: popOn ? 0 : s.wfDbMin,
+        colorDbMax: popOn ? 1 : s.wfDbMax,
       });
     };
 

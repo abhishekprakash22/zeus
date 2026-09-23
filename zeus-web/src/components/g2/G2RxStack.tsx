@@ -288,10 +288,21 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   // span just reads the noise floor (field-falsified), the passband peak is
   // what an S-meter means.
   const realPk = useRxMetersStore((s) => s.signalPk);
-  const estDbm = useDisplayStore((st) =>
-    rxIndex === 0 ? null : sliceTunePeakDbm(st, receiver, vfoHz),
+  // Secondaries now have a real meter stream too (0x3D, per receiver). It
+  // is WDSP's own calibrated passband peak — the same quantity RX1 shows —
+  // so the two receivers finally read the same thing on the same signal.
+  // The pan-bin estimate stays as the fallback for the moment before the
+  // first frame lands, and for an older server that never sends 0x3D.
+  const secPk = useRxMetersStore((s) =>
+    rxIndex === 0 ? undefined : s.byReceiver[rxIndex]?.signalPk,
   );
-  const barDbm = rxIndex === 0 ? (Number.isFinite(realPk) ? realPk : null) : estDbm;
+  const estDbm = useDisplayStore((st) =>
+    rxIndex === 0 || Number.isFinite(secPk) ? null : sliceTunePeakDbm(st, receiver, vfoHz),
+  );
+  const barDbm =
+    rxIndex === 0
+      ? (Number.isFinite(realPk) ? realPk : null)
+      : (Number.isFinite(secPk) ? (secPk as number) : estDbm);
   // Peak hold for the flag S-bar: hold the max 1.5 s, then let it fall.
   const peakRef = useRef<{ dbm: number; at: number }>({ dbm: -Infinity, at: 0 });
   if (barDbm != null && Number.isFinite(barDbm)) {

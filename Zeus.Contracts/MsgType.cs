@@ -267,6 +267,17 @@ public enum MsgType : byte
     // reuses the poll's exact apply path. See StatePushFrame.cs.
     StatePush = 0x3C,
 
+    // Per-receiver RX meters (RxMetersRxFrame): [type][rxIndex:u8][7 × f32 LE]
+    // = 30 bytes, the 0x19 payload prefixed with which receiver it belongs to.
+    // 0x19 is RX1 only and always was; secondaries had no meter stream at
+    // all, so the client estimated RX2's S-meter from its pan bins — the
+    // tallest ~3 Hz FFT bin near the tune line, which is a different quantity
+    // from RX1's calibrated passband power and read 10-15 dB below it on the
+    // same signal. Emitted for every enabled secondary at the 0x19 cadence;
+    // purely additive, older clients ignore it. Not emitted for RX1, whose
+    // meters continue on 0x19 unchanged.
+    RxMetersRx = 0x3D,
+
     // 0x38 / 0x39 / 0x3A are RESERVED — Zeus Digital plugin era; never reuse.
     // The built-in FT8/FT4/WSPR suite broadcast Ft8Decode (0x38), WsprSpot
     // (0x39) and Ft8TxStatus (0x3A) JSON-envelope frames on these bytes until

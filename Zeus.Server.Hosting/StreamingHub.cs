@@ -621,6 +621,22 @@ public sealed class StreamingHub
         }
     }
 
+    /// <summary>Per-receiver RX meters (0x3D). Same shape as the 0x19 path;
+    /// one frame per enabled secondary per meter tick.</summary>
+    public void Broadcast(in RxMetersRxFrame frame)
+    {
+        if (_clients.IsEmpty) return;
+
+        int total = RxMetersRxFrame.ByteLength;
+        var payload = new byte[total];
+        var writer = new FixedBufferWriter(payload, total);
+        frame.Serialize(writer);
+        foreach (var client in _clients.Values)
+        {
+            if (!client.TryEnqueue(payload)) System.Threading.Interlocked.Increment(ref _dropsMeter);
+        }
+    }
+
     public void Broadcast(in PaTempFrame frame)
     {
         if (_clients.IsEmpty) return;

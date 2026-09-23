@@ -7794,6 +7794,23 @@ public class DspPipelineService : BackgroundService,
                 _diagRxMeters = v2;
             }
             _hub.Broadcast(v2);
+
+            // Per-receiver meters for every enabled secondary (0x3D). RX1's
+            // stay on 0x19. Until now no secondary had a meter stream at all,
+            // so the client estimated RX2's S-meter from its pan bins — the
+            // tallest ~3 Hz bin near the tune line, a different quantity from
+            // RX1's calibrated passband power and 10-15 dB below it on the
+            // same SSB signal. Same engine read, same calibration, same
+            // cadence: the two receivers now report the same thing.
+            for (int ri = 1; ri < MaxReceivers; ri++)
+            {
+                if (!SecondaryReceiverEnabled(ri, state)) continue;
+                int secChan = Volatile.Read(ref _secondaryRx[ri].ChannelId);
+                if (secChan < 0) continue;
+                var secStage = engine.GetRxStageMeters(secChan);
+                var secV2 = BuildRxMetersV2(secStage, rxCalOffsetDb);
+                _hub.Broadcast(RxMetersRxFrame.From((byte)ri, secV2));
+            }
             RxMetersV2Updated?.Invoke(channel, v2);
         }
         return true;

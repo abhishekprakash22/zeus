@@ -102,6 +102,12 @@ const RX_METER_BYTES = 1 + 4;
 export const MSG_TYPE_RX_METERS_V2 = 0x19;
 const RX_METERS_V2_BYTES = 1 + 4 * 7;
 
+// Per-receiver RX meters (RxMetersRxFrame): the 0x19 payload with a receiver
+// index byte in front — [type][rxIndex:u8][7 × f32 LE] = 30 B. One per
+// enabled secondary per meter tick. 0x19 remains RX1's.
+export const MSG_TYPE_RX_METERS_RX = 0x3d;
+const RX_METERS_RX_BYTES = 1 + 1 + 4 * 7;
+
 // Alert frame: 1 type byte + 1 kind byte + UTF-8 message (variable length).
 // Server emits when SWR > 2.5 sustained ≥500 ms (PRD FR-6). Kind 0 = SWR trip.
 export const MSG_TYPE_ALERT = 0x13;
@@ -735,6 +741,26 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
         agcGain: dv.getFloat32(17, true),
         agcEnvPk: dv.getFloat32(21, true),
         agcEnvAv: dv.getFloat32(25, true),
+      });
+      return;
+    }
+    if (peekType === MSG_TYPE_RX_METERS_RX) {
+      if (ev.data.byteLength < RX_METERS_RX_BYTES) {
+        warnOnce(
+          'ws-rx-meters-rx-short',
+          `rx meters rx frame too short: ${ev.data.byteLength}`,
+        );
+        return;
+      }
+      const dv = new DataView(ev.data);
+      useRxMetersStore.getState().setReceiverMeters(dv.getUint8(1), {
+        signalPk: dv.getFloat32(2, true),
+        signalAv: dv.getFloat32(6, true),
+        adcPk: dv.getFloat32(10, true),
+        adcAv: dv.getFloat32(14, true),
+        agcGain: dv.getFloat32(18, true),
+        agcEnvPk: dv.getFloat32(22, true),
+        agcEnvAv: dv.getFloat32(26, true),
       });
       return;
     }

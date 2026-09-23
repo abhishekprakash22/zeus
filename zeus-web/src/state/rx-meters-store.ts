@@ -37,6 +37,13 @@ export interface RxMeters {
 
 export interface RxMetersState extends RxMeters {
   setMeters: (m: RxMeters) => void;
+  /** Secondary receivers' meters, keyed by receiver index (1 = RX2), from
+   *  RxMetersRxFrame (0x3D). RX1 stays on the flat fields above (0x19).
+   *  Absent for a receiver until its first frame lands — readers fall back
+   *  to their previous estimate, which also covers an older server that
+   *  never sends 0x3D. */
+  byReceiver: Record<number, RxMeters>;
+  setReceiverMeters: (rxIndex: number, m: RxMeters) => void;
 }
 
 export const useRxMetersStore = create<RxMetersState>((set) => ({
@@ -49,6 +56,22 @@ export const useRxMetersStore = create<RxMetersState>((set) => ({
   agcGain: 0,
   agcEnvPk: -Infinity,
   agcEnvAv: -Infinity,
+  byReceiver: {},
+  setReceiverMeters: (rxIndex, m) =>
+    set((st) => ({
+      byReceiver: {
+        ...st.byReceiver,
+        [rxIndex]: {
+          signalPk: finiteDb(m.signalPk),
+          signalAv: finiteDb(m.signalAv),
+          adcPk: finiteDb(m.adcPk),
+          adcAv: finiteDb(m.adcAv),
+          agcGain: finiteOrZero(m.agcGain),
+          agcEnvPk: finiteDb(m.agcEnvPk),
+          agcEnvAv: finiteDb(m.agcEnvAv),
+        },
+      },
+    })),
   setMeters: (m) =>
     set({
       signalPk: finiteDb(m.signalPk),

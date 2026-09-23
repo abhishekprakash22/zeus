@@ -307,6 +307,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         public long DiagWorkerMaxTicks;    // max single-frame processing ticks
         public long DiagAudioOverrun;      // PushAudio writes that overwrote an unread sample (ring full → discontinuity)
         public long DiagLastLogTicks;      // Stopwatch timestamp of last 1 Hz emit
+        public DateTime LastMeterLogUtc;   // wdsp.rx.meter throttle, per channel
         // Latched once per ~1 s by EmitRxDiag; read lock-free by the diagnostics
         // provider via SnapshotRxChannels. Immutable record behind a volatile
         // reference → no torn reads, no lock on the snapshot path.
@@ -1989,7 +1990,6 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     // Returns a large negative (~−200) before any frame has been exchanged.
     private const int RxaMeterSAv = 1;
 
-    private DateTime _lastRxMeterLogUtc;
     public double GetRxaSignalDbm(int channelId)
     {
         if (!_channels.ContainsKey(channelId)) return -200.0;
@@ -2012,17 +2012,23 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         // sAv is -400 but agcAv/agcGain are real, the chain is alive through
         // AGC and the dead zone is between adcmeter and smeter (xbpsnbain or
         // xnbp). Conversely, if all are -400, xrxa itself is not running.
+        // Throttled PER CHANNEL and tagged with the channel, so two receivers
+        // each get their own line every second. With one shared timestamp
+        // only whichever channel polled first after the interval was logged,
+        // untagged — useless for comparing RX1 against RX2, which is exactly
+        // the question a 12 dB S-meter disagreement between them asks.
         var now = DateTime.UtcNow;
-        if (now - _lastRxMeterLogUtc >= TimeSpan.FromSeconds(1))
+        if (_channels.TryGetValue(channelId, out var st)
+            && now - st.LastMeterLogUtc >= TimeSpan.FromSeconds(1))
         {
-            _lastRxMeterLogUtc = now;
+            st.LastMeterLogUtc = now;
             // Indices per WDSP RXA.h:47-57 enum rxaMeterType.
             double adcAv = NativeMethods.GetRXAMeter(channelId, 3);   // RXA_ADC_AV
             double agcGain = NativeMethods.GetRXAMeter(channelId, 4); // RXA_AGC_GAIN
             double agcAv = NativeMethods.GetRXAMeter(channelId, 6);   // RXA_AGC_AV
             _log.LogInformation(
-                "wdsp.rx.meter sAv={SAv:F1} adcAv={AdcAv:F1} agcGain={AgcGain:F1} agcAv={AgcAv:F1}",
-                sAv, adcAv, agcGain, agcAv);
+                "wdsp.rx.meter ch={Ch} sAv={SAv:F1} adcAv={AdcAv:F1} agcGain={AgcGain:F1} agcAv={AgcAv:F1}",
+                channelId, sAv, adcAv, agcGain, agcAv);
         }
         return sAv;
     }

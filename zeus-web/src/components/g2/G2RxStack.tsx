@@ -246,6 +246,15 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
   const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // Live value for the AGC-T slider while it is being dragged.
+  //
+  // The input is bound to the store, and the store only moves when the write
+  // round-trips. So the thumb could not follow the finger: the radio responded
+  // (the audio level changed) while the control sat on its old number, which
+  // reads as a broken slider even though the write worked. Hold the dragged
+  // value locally and let the store take over once it agrees, so the thumb
+  // tracks the finger and still cannot drift away from what the radio has.
+  const [agcDrag, setAgcDrag] = useState<number | null>(null);
   // Dead-zone dismiss (field request): while the popover is open, a click
   // anywhere that is NOT an interactive control — the VFO box's dead space,
   // the popover's own padding, the rest of the screen — closes it. Clicks
@@ -556,7 +565,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 min={30}
                 max={90}
                 step={1}
-                value={agcTopDb}
+                value={agcDrag ?? agcTopDb}
                 // Never disabled: a manual drag IS the disarm (#733 — the server
                 // clears auto on any manual AGC-T set). Locking the slider
                 // while auto was armed left no way out once the AUTO button
@@ -564,10 +573,19 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 style={{ flex: 1, minWidth: 0, width: '100%' }}
                 onChange={(e) => {
                   const db = Number(e.target.value);
-                  void setReceiver(rxIndex, { agcTopDb: db }).then(applyState).catch(() => {});
+                  setAgcDrag(db);
+                  void setReceiver(rxIndex, { agcTopDb: db })
+                    .then((st) => {
+                      applyState(st);
+                      // Release the local value only once the store carries
+                      // this write, so the thumb never snaps back to a stale
+                      // number mid-drag; a later drag simply replaces it.
+                      setAgcDrag((cur) => (cur === db ? null : cur));
+                    })
+                    .catch(() => setAgcDrag(null));
                 }}
               />
-              <span style={popVal}>{Math.round(agcTopDb + agcOffsetDb)}{autoAgcEnabled ? ' · auto' : ''}</span>
+              <span style={popVal}>{Math.round((agcDrag ?? agcTopDb) + agcOffsetDb)}{autoAgcEnabled ? ' · auto' : ''}</span>
             </label>
             <label style={popRow}>
               <span style={popLabel}>MIC</span>
@@ -860,10 +878,25 @@ const paneWaterfall: CSSProperties = {
 
 
 
+// Opens to the RIGHT of the flag, not below it.
+//
+// In flow (marginTop + width:100%) the panel grew the flag downward, so on a
+// split screen RX1's controls ran into the RX2 pane and were cut off, and RX2 —
+// with the shortest pane of all and the dock beneath it — never had the room
+// at all. Height is the scarce axis here; width is not. Anchored beside the
+// flag it needs no vertical room, and both receivers get the same panel.
+//
+// maxHeight keeps it inside the pane if the list ever outgrows a short one,
+// and the flag is already position:absolute so it anchors this directly.
 const popover: CSSProperties = {
-  marginTop: 6,
+  position: 'absolute',
+  top: 0,
+  left: '100%',
+  marginLeft: 8,
   padding: 8,
-  width: '100%',
+  width: 232,
+  maxHeight: 'calc(100cqh - 16px)',
+  overflowY: 'auto',
   boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
@@ -871,6 +904,7 @@ const popover: CSSProperties = {
   borderRadius: 8,
   border: '1px solid var(--line, #263041)',
   background: 'rgba(10, 14, 20, 0.96)',
+  boxShadow: '0 6px 20px rgba(0, 0, 0, 0.45)',
 };
 
 const popRow: CSSProperties = {

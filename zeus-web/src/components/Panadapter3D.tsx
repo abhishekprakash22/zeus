@@ -17,6 +17,7 @@ import { createPanSurfaceRenderer, type PanSurfaceRenderer, type PanSurfaceRowDo
 import { cancelDrawBusFrame, requestDrawBusFrame } from '../realtime/draw-bus';
 import { registerFrameConsumer, selectDisplaySlice, useDisplayStore } from '../state/display-store';
 import { useDisplaySettingsStore, shouldTxAutoRange } from '../state/display-settings-store';
+import { effectiveRxWfWindow } from '../state/rx-db-window-store';
 import { useConnectionStore } from '../state/connection-store';
 import { enhanceInto, useSignalEnhanceStore } from '../dsp/signal-estimator';
 import { normalizeStitchedBins, stitchFloorShiftDb } from '../dsp/stitch-normalizer';
@@ -197,13 +198,28 @@ export function Panadapter3D({
       if (shouldClear) renderer.clearHistory();
     };
 
-    const pushFrame = (panDb: Float32Array, centerHz: bigint, hzPerPixel: number) => {
+    const pushFrame = (
+      panDb: Float32Array,
+      centerHz: bigint,
+      hzPerPixel: number,
+      wfDb: Float32Array | null,
+    ) => {
       if (!renderer) return;
       ensureDomain();
       const dom = domainNow();
       const rowDomain: PanSurfaceRowDomain = dom === 'tx-db' ? 'tx' : dom === 'pop' ? 'pop' : 'rx';
       lastRawPan = panDb;
-      renderer.pushRow(buildRow(panDb), Number(centerHz), hzPerPixel, rowDomain);
+      // Height from the pan bins; colour from the WATERFALL's bins — the very
+      // array the waterfall below draws, so the two agree on every signal's
+      // colour. In pop mode the pan bins are floor-normalised by buildRow and
+      // the waterfall is too, so colour follows the height row there.
+      renderer.pushRow(
+        buildRow(panDb),
+        Number(centerHz),
+        hzPerPixel,
+        rowDomain,
+        dom === 'pop' ? null : wfDb,
+      );
     };
 
     const draw = () => {
@@ -222,6 +238,7 @@ export function Panadapter3D({
       renderer.setReliefDepth(Math.max(0, Math.min(1, pop.waterfallReliefDepth / 100)));
       renderer.setPopGlow(popOn ? Math.max(0, Math.min(1, pop.popRenderIntensity / 100)) : 0.18);
       renderer.setRidgeMode(s.pan3dRidgeLines);
+      renderer.setViewAngle(s.pan3dViewAngle);
 
       const ownFrameHzPerPixel = selectDisplaySlice(useDisplayStore.getState(), receiver).hzPerPixel;
       const viewHzPerPixel =
@@ -242,8 +259,12 @@ export function Panadapter3D({
         // Colour comes from the WATERFALL's window, so the surface and the
         // waterfall below it agree on every signal's colour. Height still
         // uses the pan window above. Pop mode already normalises to 0..1.
-        colorDbMin: popOn ? 0 : s.wfDbMin,
-        colorDbMax: popOn ? 1 : s.wfDbMax,
+        // Same function the waterfall itself calls: per-receiver override or
+        // the global window with this receiver's floor-normalisation offset.
+        // Passing the raw setting put the surface on a different window from
+        // the waterfall beneath it (field: blue floor over a black one).
+        colorDbMin: popOn ? 0 : keyed ? s.wfTxDbMin : effectiveRxWfWindow(rxIndex).wfDbMin,
+        colorDbMax: popOn ? 1 : keyed ? s.wfTxDbMax : effectiveRxWfWindow(rxIndex).wfDbMax,
       });
     };
 
@@ -330,7 +351,7 @@ export function Panadapter3D({
 
       const slice0 = selectDisplaySlice(useDisplayStore.getState(), receiver);
       if (slice0.panValid && slice0.panDb) {
-        pushFrame(slice0.panDb, slice0.centerHz, slice0.hzPerPixel);
+        pushFrame(slice0.panDb, slice0.centerHz, slice0.hzPerPixel, slice0.wfValid && slice0.wfDb ? slice0.wfDb : null);
         lastSeqDrawn = slice0.lastSeq;
       }
       requestRedraw();
@@ -370,7 +391,12 @@ export function Panadapter3D({
         }
 
         if (slice.panValid && slice.panDb) {
-          pushFrame(slice.panDb, slice.centerHz, slice.hzPerPixel);
+          pushFrame(
+            slice.panDb,
+            slice.centerHz,
+            slice.hzPerPixel,
+            slice.wfValid && slice.wfDb ? slice.wfDb : null,
+          );
           if (rxIndex === 0) {
             const tx = useTxStore.getState();
             const ds = useDisplaySettingsStore.getState();
@@ -417,7 +443,7 @@ export function Panadapter3D({
         (shouldClear || prevDomain === nextDomain);
       if (shouldReplayLastFrame && lastRawPan) {
         const slice = selectDisplaySlice(useDisplayStore.getState(), receiver);
-        pushFrame(lastRawPan, slice.centerHz, slice.hzPerPixel);
+        pushFrame(lastRawPan, slice.centerHz, slice.hzPerPixel, slice.wfValid && slice.wfDb ? slice.wfDb : null);
       }
       requestRedraw();
     };

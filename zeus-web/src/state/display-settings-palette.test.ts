@@ -13,8 +13,9 @@ describe('palette persistence', () => {
     const mod = await import('./display-settings-store');
     mod.useDisplaySettingsStore.getState().setColormap('amber');
     mod.useDisplaySettingsStore.getState().setPan3dRidgeLines('signals');
+    mod.useDisplaySettingsStore.getState().setPan3dViewAngle(0.8);
     const raw = JSON.parse(localStorage.getItem('zeus.display.palette') ?? '{}');
-    expect(raw).toEqual({ colormap: 'amber', pan3dRidgeLines: 'signals' });
+    expect(raw).toEqual({ colormap: 'amber', pan3dRidgeLines: 'signals', pan3dViewAngle: 0.8 });
   });
 
   it('ignores an unknown palette id in storage', async () => {
@@ -24,5 +25,7 @@ describe('palette persistence', () => {
     const st = mod.useDisplaySettingsStore.getState();
     expect(['blue', 'inferno', 'viridis', 'amber']).toContain(st.colormap);
     expect(['off', 'signals', 'all']).toContain(st.pan3dRidgeLines);
+    expect(st.pan3dViewAngle).toBeGreaterThanOrEqual(0);
+    expect(st.pan3dViewAngle).toBeLessThanOrEqual(1);
   });
 });

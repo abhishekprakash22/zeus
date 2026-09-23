@@ -39,7 +39,7 @@ function makeRow(t: number, seed: { v: number }): Float32Array {
 
 type Knobs = {
   panMin: number; panMax: number; wfMin: number; wfMax: number;
-  haze: number; relief: number; ridge: PanSurfaceRidgeMode; colormap: ColormapId; running: boolean;
+  haze: number; relief: number; angle: number; ridge: PanSurfaceRidgeMode; colormap: ColormapId; running: boolean;
 };
 
 export function Pan3dHarness() {
@@ -49,7 +49,7 @@ export function Pan3dHarness() {
   const [fps, setFps] = useState(0);
   const [k, setK] = useState<Knobs>({
     panMin: -130, panMax: -60, wfMin: -122, wfMax: -82,
-    haze: 0.45, relief: 0.74, ridge: 'off', colormap: 'blue', running: true,
+    haze: 0.45, relief: 0.74, angle: 0.55, ridge: 'off', colormap: 'blue', running: true,
   });
   const kRef = useRef(k);
   kRef.current = k;
@@ -85,6 +85,7 @@ export function Pan3dHarness() {
         r.setRidgeMode(kk.ridge);
         r.setHaze(kk.haze);
         r.setReliefDepth(kk.relief);
+        r.setViewAngle(kk.angle);
         r.draw(kk.panMin, kk.panMax, CENTER_HZ, HZ_PER_PX, {
           rxDbMin: kk.panMin, rxDbMax: kk.panMax, txDbMin: kk.panMin, txDbMax: kk.panMax,
           colorDbMin: kk.wfMin, colorDbMax: kk.wfMax,
@@ -142,6 +143,7 @@ export function Pan3dHarness() {
         {num('wfMax', -160, -40, 1)}
         {num('haze', 0, 1, 0.01)}
         {num('relief', 0, 1, 0.01)}
+        {num('angle', 0, 1, 0.01)}
         <label style={row}><span style={lab}>ridge</span>
           <select value={k.ridge} onChange={(e) => setK({ ...k, ridge: e.target.value as PanSurfaceRidgeMode })}>
             <option value="off">off</option><option value="signals">signals</option><option value="all">all</option>

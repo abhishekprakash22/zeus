@@ -135,6 +135,8 @@ export function PalettePicker({ compact = false }: { compact?: boolean }) {
   const setColormap = useDisplaySettingsStore((s) => s.setColormap);
   const ridge = useDisplaySettingsStore((s) => s.pan3dRidgeLines);
   const setRidge = useDisplaySettingsStore((s) => s.setPan3dRidgeLines);
+  const angle = useDisplaySettingsStore((s) => s.pan3dViewAngle);
+  const setAngle = useDisplaySettingsStore((s) => s.setPan3dViewAngle);
   return (
     <div style={{ ...wrap, ...(compact ? { gap: 6 } : null) }}>
       <span style={label}>PALETTE</span>
@@ -154,6 +156,12 @@ export function PalettePicker({ compact = false }: { compact?: boolean }) {
           <option value="signals">Signals only</option>
           <option value="all">All rows</option>
         </select>
+      </label>
+      <label style={ridgeRow} title="3D view angle: flat and top-down at the left, low camera with towering peaks at the right.">
+        <span style={label}>3D VIEW ANGLE</span>
+        <input type="range" min={0} max={1} step={0.01} value={angle}
+          onChange={(e) => setAngle(Number(e.target.value))} style={{ flex: 1, maxWidth: 220 }} />
+        <span style={{ ...label, width: 36, textAlign: 'right' }}>{Math.round(angle * 100)}%</span>
       </label>
     </div>
   );

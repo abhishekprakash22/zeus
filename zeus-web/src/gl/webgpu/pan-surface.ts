@@ -51,6 +51,12 @@ export type PanSurfaceRenderer = {
     centerHz: number,
     hzPerPixel: number,
     domain?: PanSurfaceRowDomain,
+    // The WATERFALL's bins for the same frame, when the caller has them.
+    // Height comes from rowDb (the pan bins); colour comes from this row,
+    // so the surface is coloured from exactly what the waterfall draws —
+    // its detector, its averaging — not from a different array that merely
+    // shares a window. Absent, colour falls back to rowDb.
+    colorRowDb?: Float32Array | null,
   ) => void;
   draw: (
     dbMin: number,
@@ -65,6 +71,9 @@ export type PanSurfaceRenderer = {
   setReliefDepth: (depth: number) => void;
   setPopGlow: (intensity: number) => void;
   setRidgeMode: (mode: PanSurfaceRidgeMode) => void;
+  /** View angle 0..1: 0 is flat/top-down (rows spread up the screen, short
+   *  peaks); 1 is a low camera (rows compressed, peaks tower). */
+  setViewAngle: (angle: number) => void;
   /** Depth haze 0..1: how strongly old rows fade toward the background. */
   setHaze: (haze: number) => void;
   clearHistory: () => void;
@@ -208,19 +217,21 @@ fn ringRow(age : f32) -> i32 {
   return i32(r);
 }
 
-// Raw dBm at (freqU, integer age). .y = 1 when the row covers that frequency.
-fn rawDb(freqU : f32, age : f32) -> vec2<f32> {
-  if (age < 0.0 || age > u.p0.w - 1.0) { return vec2<f32>(-999.0, 0.0); }
+// Raw dBm at (freqU, integer age): .x = height dB (pan bins), .y = colour dB
+// (waterfall bins), .z = 1 when the row covers that frequency.
+fn rawDb(freqU : f32, age : f32) -> vec3<f32> {
+  if (age < 0.0 || age > u.p0.w - 1.0) { return vec3<f32>(-999.0, -999.0, 0.0); }
   let row = ringRow(age);
   let g = rowGeom[row];
-  if (g.y <= 0.0) { return vec2<f32>(-999.0, 0.0); }
+  if (g.y <= 0.0) { return vec3<f32>(-999.0, -999.0, 0.0); }
   let texW = u.p0.z;
   let rowSpanHz = g.y * texW;
   let srcX = 0.5 + (u.p2.x - g.x) / rowSpanHz + (freqU - 0.5) * (u.p2.y / rowSpanHz);
-  if (srcX < 0.0 || srcX > 1.0) { return vec2<f32>(-999.0, 0.0); }
+  if (srcX < 0.0 || srcX > 1.0) { return vec3<f32>(-999.0, -999.0, 0.0); }
   // Texel CENTRE, nearest — never blend two columns of one row either.
   let texX = clamp(i32(round(srcX * (texW - 1.0))), 0, i32(texW) - 1);
-  return vec2<f32>(textureLoad(historyTex, vec2<i32>(texX, row), 0).r, 1.0);
+  let t = textureLoad(historyTex, vec2<i32>(texX, row), 0);
+  return vec3<f32>(t.r, t.g, 1.0);
 }
 
 fn rowDomain(age : f32) -> f32 {
@@ -282,8 +293,8 @@ fn vsCurtain(@builtin(vertex_index) vi : u32) -> VsOut {
   let depth = clamp(age / max(1.0, drawRows - 1.0), 0.0, 1.0);
   let d = rawDb(freqU, age);
   let domain = rowDomain(age);
-  let level = select(0.0, heightLevel(d.x, domain), d.y > 0.5);
-  let strength = select(0.0, colorStrength(d.x), d.y > 0.5);
+  let level = select(0.0, heightLevel(d.x, domain), d.z > 0.5);
+  let strength = select(0.0, colorStrength(d.y), d.z > 0.5);
   let x = (freqU - 0.5) * 2.0;
   let y = select(baselineY(depth), ridgeY(depth, level), c.y > 0.5);
   var out : VsOut;
@@ -292,7 +303,7 @@ fn vsCurtain(@builtin(vertex_index) vi : u32) -> VsOut {
   out.depth = depth;
   out.domain = domain;
   out.strength = strength;
-  out.covered = d.y;
+  out.covered = d.z;
   return out;
 }
 
@@ -322,15 +333,15 @@ fn vsLine(@builtin(vertex_index) vi : u32) -> VsOut {
   let depth = clamp(age / max(1.0, drawRows - 1.0), 0.0, 1.0);
   let d = rawDb(freqU, age);
   let domain = rowDomain(age);
-  let level = select(0.0, heightLevel(d.x, domain), d.y > 0.5);
-  let strength = select(0.0, colorStrength(d.x), d.y > 0.5);
+  let level = select(0.0, heightLevel(d.x, domain), d.z > 0.5);
+  let strength = select(0.0, colorStrength(d.y), d.z > 0.5);
   var out : VsOut;
   out.clip = vec4<f32>((freqU - 0.5) * 2.0, ridgeY(depth, level), depth * 0.55 - 0.001, 1.0);
   out.lut = strength;
   out.depth = depth;
   out.domain = domain;
   out.strength = strength;
-  out.covered = d.y;
+  out.covered = d.z;
   return out;
 }
 
@@ -426,6 +437,7 @@ export function createPanSurfaceRenderer(
   let popGlow = 0;
   let ridgeMode = 0;      // 0 off, 1 signals, 2 all
   let haze = 0.45;
+  let viewAngle = 0.55;   // 0 flat .. 1 low camera
   let traceR = 1;
   let traceG = 0.62;
   let traceB = 0.16;
@@ -434,6 +446,8 @@ export function createPanSurfaceRenderer(
   let anchorHzPerPixel = 0;
   let anchorSourceWidth = 0;
   let uploadScratch = new Float32Array(MAX_TEXTURE_COLUMNS);
+  let colorScratch = new Float32Array(MAX_TEXTURE_COLUMNS);
+  let uploadInterleaved = new Float32Array(MAX_TEXTURE_COLUMNS * 2);
   let historyTexture: GPUTexture | null = null;
   let bindGroup: GPUBindGroup | null = null;
 
@@ -455,7 +469,7 @@ export function createPanSurfaceRenderer(
     historyTexture?.destroy();
     historyTexture = device.createTexture({
       size: [width, HISTORY_ROWS, 1],
-      format: 'r32float',
+      format: 'rg32float',   // R = height dB (pan bins), G = colour dB (waterfall bins)
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
     device.queue.writeBuffer(rowGeomBuffer, 0, gpuSrc(rowGeomZero));
@@ -491,8 +505,15 @@ export function createPanSurfaceRenderer(
     // waterfall below — the same instant, one directly above the other. The
     // old -0.88 left a band under the surface that read as a wall.
     const frontY = -1.0;
-    const backY = Math.max(-0.08, Math.min(0.34, -0.02 + usableHeight / 900));
-    const heightGain = Math.max(0.30, Math.min(0.76, 0.42 + usableHeight / 1000)) * (0.72 + reliefDepth * 0.48);
+    // View angle. A flat view spreads the rows far up the screen (large backY)
+    // with short ridges; a low camera compresses the depth and lets the peaks
+    // tower. One knob trades the two, so the operator can make peaks
+    // pronounced without losing the front row's contact with the divider.
+    const backYFlat = Math.max(-0.08, Math.min(0.40, 0.02 + usableHeight / 900));
+    const backYLow = Math.max(-0.40, Math.min(0.05, -0.30 + usableHeight / 2400));
+    const backY = backYFlat + (backYLow - backYFlat) * viewAngle;
+    const baseGain = Math.max(0.30, Math.min(0.76, 0.42 + usableHeight / 1000)) * (0.72 + reliefDepth * 0.48);
+    const heightGain = baseGain * (0.75 + 1.15 * viewAngle);
 
     uniformData[0] = writeRow;
     uniformData[1] = HISTORY_ROWS;
@@ -535,7 +556,7 @@ export function createPanSurfaceRenderer(
   };
 
   return {
-    pushRow(rowDb, centerHz, hzPerPixel, domain = 'rx') {
+    pushRow(rowDb, centerHz, hzPerPixel, domain = 'rx', colorRowDb = null) {
       if (rowDb.length === 0) return;
       const targetWidth = chooseTextureWidth(rowDb.length);
       if (texWidth !== targetWidth) allocHistory(targetWidth);
@@ -553,7 +574,19 @@ export function createPanSurfaceRenderer(
       }
 
       if (uploadScratch.length !== targetWidth) uploadScratch = new Float32Array(targetWidth);
-      const uploadRow = resamplePeakPreserving(rowDb, uploadScratch);
+      const heightRow = resamplePeakPreserving(rowDb, uploadScratch);
+      // Colour channel: the waterfall's bins when supplied, else the height
+      // row. Resampled the same way so column i is column i in both.
+      let colorRow: Float32Array = heightRow;
+      if (colorRowDb && colorRowDb.length > 0) {
+        if (colorScratch.length !== targetWidth) colorScratch = new Float32Array(targetWidth);
+        colorRow = resamplePeakPreserving(colorRowDb, colorScratch);
+      }
+      if (uploadInterleaved.length !== targetWidth * 2) uploadInterleaved = new Float32Array(targetWidth * 2);
+      for (let i = 0; i < targetWidth; i++) {
+        uploadInterleaved[i * 2] = heightRow[i]!;
+        uploadInterleaved[i * 2 + 1] = colorRow[i]!;
+      }
       const rowHzPerPixel =
         Number.isFinite(hzPerPixel) && hzPerPixel > 0
           ? (rowDb.length * hzPerPixel) / targetWidth
@@ -565,8 +598,8 @@ export function createPanSurfaceRenderer(
       writeRow = (writeRow + 1) % HISTORY_ROWS;
       device.queue.writeTexture(
         { texture: historyTexture, origin: { x: 0, y: writeRow, z: 0 } },
-        gpuSrc(uploadRow),
-        { bytesPerRow: targetWidth * 4, rowsPerImage: 1 },
+        gpuSrc(uploadInterleaved),
+        { bytesPerRow: targetWidth * 8, rowsPerImage: 1 },
         { width: targetWidth, height: 1, depthOrArrayLayers: 1 },
       );
       rowGeomScratch[0] =
@@ -651,6 +684,9 @@ export function createPanSurfaceRenderer(
     },
     setHaze(h) {
       haze = Number.isFinite(h) ? Math.max(0, Math.min(1, h)) : 0.45;
+    },
+    setViewAngle(a) {
+      viewAngle = Number.isFinite(a) ? Math.max(0, Math.min(1, a)) : 0.55;
     },
     clearHistory() {
       if (texWidth <= 0) return;

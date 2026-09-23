@@ -1470,21 +1470,50 @@ public static class ZeusHost
             c.DefaultRequestHeaders.UserAgent.ParseAdd("openhpsdr-zeus");
             var release = (await c.GetStringAsync($"{Raw}stable/latest", ctx.RequestAborted)).Trim();
             if (release.Length == 0) return Results.Problem("could not read stable/latest");
-            var json = await c.GetStringAsync($"{Api}/{release}", ctx.RequestAborted);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var list = doc.RootElement.EnumerateArray()
-                .Where(e => e.GetProperty("type").GetString() == "dir")
-                .Select(e => e.GetProperty("name").GetString() ?? "")
-                .Where(n => n.Length > 0)
-                .Select(n => new
+            // Each image lives in a directory named after itself:
+            // <release>/hl2b5up_main/hl2b5up_main.rbf. The release also has a
+            // "variants" directory that is NOT an image — it is another level
+            // of the same shape, and it is where every board other than b5
+            // has its build (hl2b2_main, hl2b3to4_main, the ak4951 revisions).
+            // Listing only the top level offered a variants.rbf that 404s and
+            // hid the images an older board actually needs.
+            async Task<string[]> DirsIn(string path)
+            {
+                var body = await c.GetStringAsync($"{Api}/{path}", ctx.RequestAborted);
+                using var d = System.Text.Json.JsonDocument.Parse(body);
+                return d.RootElement.EnumerateArray()
+                    .Where(e => e.GetProperty("type").GetString() == "dir")
+                    .Select(e => e.GetProperty("name").GetString() ?? "")
+                    .Where(n => n.Length > 0)
+                    .ToArray();
+            }
+
+            var images = new List<object>();
+            foreach (var top in await DirsIn(release))
+            {
+                if (top == "variants")
                 {
-                    name = $"{n}.rbf",
-                    variant = n,
-                    release,
-                    url = $"{Raw}stable/{release}/{n}/{n}.rbf",
-                })
-                .ToArray();
-            return Results.Ok(new { release, images = list });
+                    foreach (var v in await DirsIn($"{release}/variants"))
+                        images.Add(new
+                        {
+                            name = $"{v}.rbf",
+                            variant = v,
+                            release,
+                            url = $"{Raw}stable/{release}/variants/{v}/{v}.rbf",
+                        });
+                }
+                else
+                {
+                    images.Add(new
+                    {
+                        name = $"{top}.rbf",
+                        variant = top,
+                        release,
+                        url = $"{Raw}stable/{release}/{top}/{top}.rbf",
+                    });
+                }
+            }
+            return Results.Ok(new { release, images });
         });
         hl2G.MapPost("/compare", async (FpgaFlashRequest req, HermesLite2FlashService f, HttpContext ctx) =>
             Results.Ok(await f.CompareAsync(req.Url ?? "", ctx.RequestAborted)));

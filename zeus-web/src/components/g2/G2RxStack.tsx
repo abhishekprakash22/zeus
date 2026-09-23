@@ -288,11 +288,11 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   // span just reads the noise floor (field-falsified), the passband peak is
   // what an S-meter means.
   const realPk = useRxMetersStore((s) => s.signalPk);
-  // Secondaries now have a real meter stream too (0x3D, per receiver). It
+  // Secondaries now have a real meter stream too (0x27, per receiver). It
   // is WDSP's own calibrated passband peak — the same quantity RX1 shows —
   // so the two receivers finally read the same thing on the same signal.
   // The pan-bin estimate stays as the fallback for the moment before the
-  // first frame lands, and for an older server that never sends 0x3D.
+  // first frame lands, and for an older server that never sends 0x27.
   const secPk = useRxMetersStore((s) =>
     rxIndex === 0 ? undefined : s.byReceiver[rxIndex]?.signalPk,
   );

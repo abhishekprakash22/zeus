@@ -7795,7 +7795,7 @@ public class DspPipelineService : BackgroundService,
             }
             _hub.Broadcast(v2);
 
-            // Per-receiver meters for every enabled secondary (0x3D). RX1's
+            // Per-receiver meters for every enabled secondary (0x27). RX1's
             // stay on 0x19. Until now no secondary had a meter stream at all,
             // so the client estimated RX2's S-meter from its pan bins — the
             // tallest ~3 Hz bin near the tune line, a different quantity from

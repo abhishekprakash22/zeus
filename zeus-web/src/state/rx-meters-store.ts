@@ -38,10 +38,10 @@ export interface RxMeters {
 export interface RxMetersState extends RxMeters {
   setMeters: (m: RxMeters) => void;
   /** Secondary receivers' meters, keyed by receiver index (1 = RX2), from
-   *  RxMetersRxFrame (0x3D). RX1 stays on the flat fields above (0x19).
+   *  RxMetersRxFrame (0x27). RX1 stays on the flat fields above (0x19).
    *  Absent for a receiver until its first frame lands — readers fall back
    *  to their previous estimate, which also covers an older server that
-   *  never sends 0x3D. */
+   *  never sends 0x27. */
   byReceiver: Record<number, RxMeters>;
   setReceiverMeters: (rxIndex: number, m: RxMeters) => void;
 }

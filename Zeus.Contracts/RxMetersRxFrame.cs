@@ -11,7 +11,7 @@ using System.Buffers.Binary;
 namespace Zeus.Contracts;
 
 /// <summary>
-/// Per-receiver RX meters (MsgType 0x3D). The <see cref="RxMetersV2Frame"/>
+/// Per-receiver RX meters (MsgType 0x27). The <see cref="RxMetersV2Frame"/>
 /// payload with a receiver index in front of it, so a secondary receiver's
 /// S-meter can come from WDSP's own calibrated meter rather than from an
 /// estimate off the panadapter bins. Same field meanings and the same

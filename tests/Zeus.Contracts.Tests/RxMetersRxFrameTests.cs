@@ -38,7 +38,7 @@ public class RxMetersRxFrameTests
     {
         // The whole point of the frame: same numbers as 0x19 for the same
         // receiver, one byte further along. A client that already decodes
-        // 0x19 decodes 0x3D by adding 1 to every offset.
+        // 0x19 decodes 0x27 by adding 1 to every offset.
         var v2 = new RxMetersV2Frame(-70f, -75f, -10f, -15f, 30f, -55f, -58f);
         var rx = RxMetersRxFrame.From(2, v2);
 
@@ -65,9 +65,10 @@ public class RxMetersRxFrameTests
     public void TypeByte_IsUnused_ByAnyOtherMessage()
     {
         // 0x38-0x3A are reserved, 0x3B/0x3C are taken, 0x40 is the remote
-        // tunnel's digital-event byte. 0x3D must stay unique.
-        Assert.Equal(0x3D, (int)MsgType.RxMetersRx);
+        // tunnel's digital-event byte. 0x27 is upstream's byte for this frame
+        // and must stay unique here too.
+        Assert.Equal(0x27, (int)MsgType.RxMetersRx);
         var all = Enum.GetValues<MsgType>().Select(m => (byte)m).ToList();
-        Assert.Equal(1, all.Count(b => b == 0x3D));
+        Assert.Equal(1, all.Count(b => b == 0x27));
     }
 }

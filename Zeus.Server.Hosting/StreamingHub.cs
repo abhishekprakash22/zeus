@@ -621,7 +621,7 @@ public sealed class StreamingHub
         }
     }
 
-    /// <summary>Per-receiver RX meters (0x3D). Same shape as the 0x19 path;
+    /// <summary>Per-receiver RX meters (0x27). Same shape as the 0x19 path;
     /// one frame per enabled secondary per meter tick.</summary>
     public void Broadcast(in RxMetersRxFrame frame)
     {

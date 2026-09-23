@@ -752,6 +752,42 @@ public class DspPipelineService : BackgroundService,
         // every time: a fixed-delay echo on every secondary, gone the moment
         // NR is off, absent on the primary. See ApplyStateToSecondaryRxChannel.
         public NrConfig? AppliedNr;
+        // The rest of the per-secondary "last pushed" set, mirroring upstream.
+        // Every push in ApplyStateToSecondaryRxChannel is change-guarded
+        // against these so a state event that changed nothing for this
+        // receiver pushes nothing to its channel. Some of these pushes are
+        // not free: SetAgc re-runs the AGC's calc and disturbs its hang and
+        // decay state, SetFilter rebuilds the bandpass, SetMode tears down and
+        // rebuilds a chain. Pushed unconditionally on every OnRadioStateChanged
+        // — as they were — that is an RX2 that never settles the way RX1 does.
+        public RxMode? AppliedMode;
+        public int AppliedFilterLowHz = int.MinValue;
+        public int AppliedFilterHighHz = int.MinValue;
+        public long AppliedVfoHz = long.MinValue;
+        public int AppliedCtunShiftHz = int.MinValue;
+        public AgcConfig? AppliedAgc;
+        public SquelchConfig? AppliedSquelch;
+        public BandpassWindow? AppliedBandpassWindow;
+        public int AppliedZoom = int.MinValue;
+
+        /// <summary>Forget everything last pushed. Called on every close path
+        /// so a reopened channel is pushed afresh rather than skipping pushes
+        /// it never received.</summary>
+        public void ResetApplied()
+        {
+            AppliedNr = null;
+            AppliedMode = null;
+            AppliedFilterLowHz = int.MinValue;
+            AppliedFilterHighHz = int.MinValue;
+            AppliedVfoHz = long.MinValue;
+            AppliedCtunShiftHz = int.MinValue;
+            AppliedAgc = null;
+            AppliedSquelch = null;
+            AppliedBandpassWindow = null;
+            AppliedZoom = int.MinValue;
+            AppliedAfGainDb = double.NaN;
+            AppliedAgcCeilingDb = double.NaN;
+        }
         public readonly float[] PanBuf = new float[Width];
         // Per-receiver decimation scratch. Secondary display frames MUST NOT
         // decimate into the shared _panDecimatedBuf/_wfDecimatedBuf: FrameBins
@@ -5093,7 +5129,7 @@ public class DspPipelineService : BackgroundService,
     {
         if (chan < 0) return;
         Volatile.Write(ref _secondaryRx[rxIndex].ChannelId, -1);
-        _secondaryRx[rxIndex].AppliedNr = null;   // a reopened channel starts NR-less
+        _secondaryRx[rxIndex].ResetApplied();   // a reopened channel is pushed afresh
         // NaN = "no value applied yet" — a future reopen snaps to the
         // operator's target instead of slewing from this stale value.
         _secondaryRx[rxIndex].AppliedAfGainDb = double.NaN;
@@ -5220,15 +5256,28 @@ public class DspPipelineService : BackgroundService,
         // FreeDV on a secondary RX follows the same band-convention sideband as the
         // primary (LSB < 10 MHz, USB ≥); other modes pass through unchanged.
         var secEngineMode = RadioService.EffectiveEngineMode(mode, vfoHz);
-        engine.SetMode(channelId, secEngineMode);
+        if (rx.AppliedMode != secEngineMode)
+        {
+            engine.SetMode(channelId, secEngineMode);
+            rx.AppliedMode = secEngineMode;
+        }
         if (mode == RxMode.FreeDv)
         {
             int loAbs = Math.Min(Math.Abs(filterLow), Math.Abs(filterHigh));
             int hiAbs = Math.Max(Math.Abs(filterLow), Math.Abs(filterHigh));
             (filterLow, filterHigh) = RadioService.SignedFilterForMode(secEngineMode, loAbs, hiAbs);
         }
-        engine.SetFilter(channelId, filterLow, filterHigh);
-        engine.SetVfoHz(channelId, vfoHz);
+        if (rx.AppliedFilterLowHz != filterLow || rx.AppliedFilterHighHz != filterHigh)
+        {
+            engine.SetFilter(channelId, filterLow, filterHigh);
+            rx.AppliedFilterLowHz = filterLow;
+            rx.AppliedFilterHighHz = filterHigh;
+        }
+        if (rx.AppliedVfoHz != vfoHz)
+        {
+            engine.SetVfoHz(channelId, vfoHz);
+            rx.AppliedVfoHz = vfoHz;
+        }
         UpdateRxLo(rxIndex, s);
         // P2 true-DDC: the secondary's hardware DDC sits at rx.LoHz, so the WDSP
         // shift roams the dial within that window — EffectiveLoHz(vfo) − rx.LoHz.
@@ -5241,7 +5290,11 @@ public class DspPipelineService : BackgroundService,
             vfoHz,
             rx.LoHz,
             protocol2: _p2Client is not null);
-        engine.SetCtunShift(channelId, shiftHz);
+        if (rx.AppliedCtunShiftHz != shiftHz)
+        {
+            engine.SetCtunShift(channelId, shiftHz);
+            rx.AppliedCtunShiftHz = shiftHz;
+        }
         // AGC-T fanout uses the per-tick slewed ceiling computed in the
         // main OnRadioStateChanged block, not the raw target — so RX2..N
         // see the same rate-capped dB as RX1 (no extra fan-out wiring
@@ -5263,8 +5316,11 @@ public class DspPipelineService : BackgroundService,
         double afNext = double.IsNaN(rx.AppliedAfGainDb)
             ? afGainDb
             : StepTowardCappedDb(rx.AppliedAfGainDb, afGainDb, AfGainSlewMaxDbPerTick);
-        engine.SetRxAfGainDb(channelId, afNext);
-        rx.AppliedAfGainDb = afNext;
+        if (rx.AppliedAfGainDb != afNext)
+        {
+            engine.SetRxAfGainDb(channelId, afNext);
+            rx.AppliedAfGainDb = afNext;
+        }
         // Only when it changed for THIS channel. Pushing the same config again
         // is not free (see AppliedNr above); the primary has had this guard
         // since the beginning and the secondaries never did.
@@ -5273,11 +5329,28 @@ public class DspPipelineService : BackgroundService,
             engine.SetNoiseReduction(channelId, nr);
             rx.AppliedNr = nr;
         }
-        engine.SetAgc(channelId, agc);
-        engine.SetSquelch(channelId, squelch);
-        engine.SetRxBandpassWindow(channelId, s.RxFilterWindow);
+        if (rx.AppliedAgc != agc)
+        {
+            engine.SetAgc(channelId, agc);
+            rx.AppliedAgc = agc;
+        }
+        if (rx.AppliedSquelch != squelch)
+        {
+            engine.SetSquelch(channelId, squelch);
+            rx.AppliedSquelch = squelch;
+        }
+        if (rx.AppliedBandpassWindow != s.RxFilterWindow)
+        {
+            engine.SetRxBandpassWindow(channelId, s.RxFilterWindow);
+            rx.AppliedBandpassWindow = s.RxFilterWindow;
+        }
         // RX2 (rxIndex 1) seeds its OWN zoom; RX3+ still follow the global one.
-        engine.SetZoom(channelId, rxIndex == 1 ? s.Rx2ZoomLevel : s.ZoomLevel);
+        int zoom = rxIndex == 1 ? s.Rx2ZoomLevel : s.ZoomLevel;
+        if (rx.AppliedZoom != zoom)
+        {
+            engine.SetZoom(channelId, zoom);
+            rx.AppliedZoom = zoom;
+        }
     }
 
     // iter5 (task #4): the four channel pumps that used to live here
@@ -5842,7 +5915,7 @@ public class DspPipelineService : BackgroundService,
                 int sc = Volatile.Read(ref _secondaryRx[i].ChannelId);
                 if (sc < 0) continue;
                 Volatile.Write(ref _secondaryRx[i].ChannelId, -1);
-                _secondaryRx[i].AppliedNr = null;   // reopen must re-push NR
+                _secondaryRx[i].ResetApplied();   // reopen must re-push everything
                 try { engine.CloseChannel(sc); } catch { /* best-effort */ }
             }
             engine.CloseChannel(oldChannel);

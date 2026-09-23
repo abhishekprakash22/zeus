@@ -793,6 +793,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnXdmaProbe>();
         builder.Services.AddSingleton<GpioPaddleKeyer>();
         builder.Services.AddSingleton<SaturnFlashService>();
+        builder.Services.AddSingleton<HermesLite2FlashService>();
         builder.Services.AddSingleton<SaturnControl>();
         builder.Services.AddSingleton<SaturnRxStream>();
         builder.Services.AddSingleton<P2AppSupervisor>();
@@ -1447,6 +1448,53 @@ public static class ZeusHost
             f.Start(req.Url ?? "", out var refusal)
                 ? Results.Ok(new { ok = true, status = f.Status() })
                 : Results.BadRequest(new { ok = false, error = refusal }));
+
+        // ---- Hermes-Lite 2 gateware update (slot2 only; slot1 untouched) ----
+        //
+        // A separate group rather than dispatch-by-board inside the one
+        // above. The two engines have opposite preconditions — the Saturn
+        // needs a local PCIe device, the HL2 needs a radio that is NOT
+        // connected — so they are never both viable, and guessing which one
+        // an operator meant is not a thing to be clever about when the
+        // answer writes firmware.
+        var hl2G = app.MapGroup("/api/fpga/hl2");
+        hl2G.MapGet("/flash", (HermesLite2FlashService f) => Results.Ok(f.Status()));
+        hl2G.MapGet("/images", async (IHttpClientFactory hf, HttpContext ctx) =>
+        {
+            // softerhardware/Hermes-Lite2 keeps bitfiles under
+            // gateware/bitfiles/stable/<release>/<variant>/<variant>.rbf, with
+            // stable/latest naming the current release.
+            const string Raw = "https://github.com/softerhardware/Hermes-Lite2/raw/master/gateware/bitfiles/";
+            const string Api = "https://api.github.com/repos/softerhardware/Hermes-Lite2/contents/gateware/bitfiles/stable";
+            using var c = hf.CreateClient();
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("openhpsdr-zeus");
+            var release = (await c.GetStringAsync($"{Raw}stable/latest", ctx.RequestAborted)).Trim();
+            if (release.Length == 0) return Results.Problem("could not read stable/latest");
+            var json = await c.GetStringAsync($"{Api}/{release}", ctx.RequestAborted);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var list = doc.RootElement.EnumerateArray()
+                .Where(e => e.GetProperty("type").GetString() == "dir")
+                .Select(e => e.GetProperty("name").GetString() ?? "")
+                .Where(n => n.Length > 0)
+                .Select(n => new
+                {
+                    name = $"{n}.rbf",
+                    variant = n,
+                    release,
+                    url = $"{Raw}stable/{release}/{n}/{n}.rbf",
+                })
+                .ToArray();
+            return Results.Ok(new { release, images = list });
+        });
+        hl2G.MapPost("/compare", async (FpgaFlashRequest req, HermesLite2FlashService f, HttpContext ctx) =>
+            Results.Ok(await f.CompareAsync(req.Url ?? "", ctx.RequestAborted)));
+        hl2G.MapPost("/flash", async (FpgaFlashRequest req, HermesLite2FlashService f, HttpContext ctx) =>
+        {
+            var (ok, refusal) = await f.StartAsync(req.Url ?? "", ctx.RequestAborted);
+            return ok
+                ? Results.Ok(new { ok = true, status = f.Status() })
+                : Results.BadRequest(new { ok = false, error = refusal });
+        });
 
                 // ---- XDMA register plane (Phase 2): status reads + gated writes ----
         app.MapGet("/api/xdma/status", (SaturnControl sc) => Results.Ok(sc.ReadStatus()));

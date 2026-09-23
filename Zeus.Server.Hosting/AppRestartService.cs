@@ -59,8 +59,20 @@ public sealed class AppRestartService
 
     public void RequestRestart()
     {
-        var exe = Environment.ProcessPath
-            ?? throw new InvalidOperationException("Environment.ProcessPath is null; cannot relaunch.");
+        // Inside an AppImage, Environment.ProcessPath is the binary INSIDE the
+        // FUSE mount (/tmp/.mount_xxxx/usr/bin/OpenhpsdrZeus), not the
+        // .AppImage file. The relauncher waits for this process to exit, and
+        // exiting tears that mount down — so the relaunch raced the unmount.
+        // Win it and you start the OLD binary from a mount about to vanish
+        // (after an update, the wrong version); lose it and nothing starts.
+        // Field: 'sometimes it does not restart'. AppImage exports the file's
+        // path as $APPIMAGE; after an update that is the NEW file. Use it.
+        var exe = Environment.GetEnvironmentVariable("APPIMAGE");
+        if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe))
+        {
+            exe = Environment.ProcessPath
+                ?? throw new InvalidOperationException("Environment.ProcessPath is null; cannot relaunch.");
+        }
         var pid = Environment.ProcessId;
 
         // Original args minus the executable path at [0], so the relaunch keeps
@@ -120,20 +132,39 @@ public sealed class AppRestartService
             };
         }
 
-        // POSIX: wait for the PID to die, then relaunch in the background.
+        // POSIX: wait for the PID to die, then relaunch. Detached on purpose:
+        // the shell ignores HUP, runs in its own session, and has no inherited
+        // stdio, so the dying parent's teardown cannot take it with it.
+        // 'exec' at the end so the relaunched app is not a grandchild of a
+        // sleep loop. A 20 s cap on the wait: if the old process is somehow
+        // still alive by then, relaunching alongside it is wrong (two servers
+        // on one port), so give up and let the operator start it by hand.
         var shArgs = new StringBuilder();
-        shArgs.Append("while kill -0 ").Append(pid).Append(" 2>/dev/null; do sleep 0.5; done; ");
+        shArgs.Append("trap '' HUP; n=0; while kill -0 ").Append(pid)
+              .Append(" 2>/dev/null; do sleep 0.5; n=$((n+1)); [ $n -ge 40 ] && exit 1; done; ");
+        shArgs.Append("exec ");
         shArgs.Append('"').Append(exe).Append('"');
         foreach (var a in args)
         {
             shArgs.Append(" \"").Append(a).Append('"');
         }
-        shArgs.Append(" &");
 
-        return new ProcessStartInfo("/bin/sh", "-c \"" + shArgs.ToString().Replace("\"", "\\\"") + "\"")
+        var psi = new ProcessStartInfo("/usr/bin/setsid")
         {
             CreateNoWindow = true,
             UseShellExecute = false,
         };
+        psi.ArgumentList.Add("/bin/sh");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(shArgs.ToString());
+        if (!File.Exists("/usr/bin/setsid"))
+        {
+            // No setsid (unusual on Linux, common on macOS): plain sh, still
+            // HUP-immune via the trap.
+            psi = new ProcessStartInfo("/bin/sh") { CreateNoWindow = true, UseShellExecute = false };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(shArgs.ToString());
+        }
+        return psi;
     }
 }

@@ -152,6 +152,13 @@ echo "Staged LICENSE and ATTRIBUTIONS.md into AppDir wwwroot."
 # AppDir below is copied from this one, so it inherits the helper automatically.
 cp "${SCRIPT_DIR}/linux-zeus-preflight.sh" "${APPDIR}/usr/bin/zeus-preflight.sh"
 chmod +x "${APPDIR}/usr/bin/zeus-preflight.sh"
+# Launch splash (see installers/linux/zeus-splash.py): a small window AppRun
+# shows from the first moment so a 20 s start at boot or after an update is
+# not 20 s of empty desktop. Pure stdlib Python; AppRun skips it when
+# python3/tkinter or a display is absent, so it can never block a launch.
+cp "${SCRIPT_DIR}/linux/zeus-splash.py" "${APPDIR}/usr/bin/zeus-splash.py"
+chmod +x "${APPDIR}/usr/bin/zeus-splash.py"
+test -f "${APPDIR}/usr/bin/zeus-splash.py" || { echo "splash not staged" >&2; exit 1; }
 
 # Icon — top-level zeus.png is what AppImageLauncher / file managers show.
 if [ -f "${ICON_SOURCE}" ]; then
@@ -194,6 +201,14 @@ cd "${HERE}/usr/bin"
 # workarounds are exported automatically before Photino starts.
 # shellcheck source=/dev/null
 . "./zeus-preflight.sh"
+# Launch splash. Backgrounded and fully detached from our stdio; it closes
+# itself when :6060 answers, and says so if we die or stall. Only when a
+# display and tkinter exist — never a reason for the launch to fail.
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -z "${ZEUS_NO_SPLASH:-}" ] \
+   && command -v python3 >/dev/null 2>&1 \
+   && python3 -c 'import tkinter' >/dev/null 2>&1; then
+    python3 ./zeus-splash.py </dev/null >/dev/null 2>&1 &
+fi
 if ! zeus_browser_forced && zeus_native_window_viable && zeus_ensure_webkit; then
     zeus_export_webview_render_workarounds
     exec ./OpenhpsdrZeus --desktop "$@"

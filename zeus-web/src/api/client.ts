@@ -6253,24 +6253,19 @@ export function setReceiver(
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      // No pick list. Twice now a field was added to the request type, the
+      // server and every reader, and then silently dropped HERE because this
+      // body enumerated fields by hand: first agcTopDb/autoAgcEnabled (the
+      // popover's AGC controls were dead on the wire while curl worked),
+      // then nr (RX2's NR key sent a body with no nr, so RX2 could never
+      // leave RX1's setting). The request type is the contract; send it.
+      // The one field that needs translating is mode, which serialises as
+      // its numeric ordinal on the write path (the server has no
+      // JsonStringEnumConverter) — same encoding setMode uses. undefined
+      // fields are dropped by JSON.stringify, so an absent key stays absent.
       body: JSON.stringify({
-        enabled: req.enabled,
-        vfoHz: req.vfoHz,
-        adcSource: req.adcSource,
-        // RxMode serialises as its numeric ordinal on the write path (the
-        // server has no JsonStringEnumConverter) — same encoding setMode uses.
+        ...req,
         mode: req.mode !== undefined ? MODE_ORDER.indexOf(req.mode) : undefined,
-        filterLowHz: req.filterLowHz,
-        filterHighHz: req.filterHighHz,
-        afGainDb: req.afGainDb,
-        filterPresetName: req.filterPresetName,
-        // These two were declared in the type above and documented as
-        // routing — but never made it into this pick list, so every AGC
-        // write through setReceiver silently sent nothing: the popover's
-        // AUTO AGC button and AGC-T slider (and RX2 AGC-T) were dead on
-        // the wire while a direct curl worked. They ride now.
-        agcTopDb: req.agcTopDb,
-        autoAgcEnabled: req.autoAgcEnabled,
       }),
       signal,
     },

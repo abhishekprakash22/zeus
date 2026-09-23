@@ -112,6 +112,7 @@ import {
   setNr,
   setPreamp,
   setRadioLo,
+  setReceiver,
   setReceiverLo,
   setSampleRate,
   setTun,
@@ -588,6 +589,38 @@ describe('POST helpers', () => {
     const body = JSON.parse((init?.body ?? '') as string);
     expect(body).toEqual({ hz: 14_204_301 });
     expect(Number.isInteger(body.hz)).toBe(true);
+  });
+
+  it('setReceiver sends EVERY field it is given — no pick list to forget one', async () => {
+    // Twice a field was added to the request type and every reader and then
+    // silently dropped on the wire by a hand-written body: agcTopDb /
+    // autoAgcEnabled first, then nr. This pins the rule that what goes in
+    // comes out, so a third field cannot fail the same way.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(okState));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const nr = { nrMode: 'Emnr', anfEnabled: false, snbEnabled: true } as never;
+    await setReceiver(1, {
+      agcTopDb: 72,
+      autoAgcEnabled: false,
+      nr,
+      afGainDb: -6,
+      mode: 'LSB',
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/receivers/1');
+    const body = JSON.parse((init?.body ?? '') as string);
+    expect(body.agcTopDb).toBe(72);
+    expect(body.autoAgcEnabled).toBe(false);
+    expect(body.nr).toEqual(nr);
+    expect(body.afGainDb).toBe(-6);
+    // mode is the one translated field: numeric ordinal on the write path.
+    expect(typeof body.mode).toBe('number');
+    // and a field NOT given is absent, not null — the server treats absent
+    // as 'leave it alone'.
+    expect('vfoHz' in body).toBe(false);
   });
 
   it('setReceiverLo(index<=0) delegates to /api/radio/lo, still rounding', async () => {

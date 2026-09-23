@@ -342,15 +342,19 @@ export function sendAudioStreamRequest(enable: boolean): void {
 }
 
 export function sendDisplayStreamRequest(enable: boolean): void {
-  // 3-byte frame: [0x22][level][u8-capable]. byte[2]=1 tells the server this
-  // bundle can decode u8-quantized bins (4x smaller display stream). Older
-  // servers ignore the extra byte; older bundles never send it and keep
-  // getting float32 — the capability is strictly additive both ways.
-  const buf = new ArrayBuffer(3);
+  // 4-byte frame: [0x22][level][u8-capable][focusedRx]. byte[2]=1 tells the
+  // server this bundle can decode u8-quantized bins (4x smaller display
+  // stream). byte[3] is the receiver the operator is looking at, so the
+  // remote pacer can run the OTHER receivers' displays at a lower rate —
+  // the pane you are not watching does not need 20 fps. Older servers
+  // ignore the extra bytes; older bundles never send them — both
+  // capabilities are strictly additive both ways.
+  const buf = new ArrayBuffer(4);
   const view = new DataView(buf);
   view.setUint8(0, MSG_TYPE_DISPLAY_STREAM_REQUEST);
   view.setUint8(1, displayStreamRequestLevel(enable));
   view.setUint8(2, enable ? 1 : 0);
+  view.setUint8(3, Math.max(0, Math.min(255, useConnectionStore.getState().focusedRxIndex)));
   if (controlSender) {
     controlSender(buf);
     return;
@@ -938,6 +942,14 @@ export function startRealtime(path = '/ws'): () => void {
   };
   const unsubscribeFrameConsumerPresence =
     subscribeFrameConsumerPresence(syncDisplayStreamRequest);
+  // Focus is carried in the display-stream request (byte[3]); re-send it
+  // whenever the operator changes pane so the server re-paces immediately.
+  let lastFocus = useConnectionStore.getState().focusedRxIndex;
+  const unsubscribeFocus = useConnectionStore.subscribe((st) => {
+    if (st.focusedRxIndex === lastFocus) return;
+    lastFocus = st.focusedRxIndex;
+    syncDisplayStreamRequest();
+  });
   const onVisibilityChange = () => syncDisplayStreamRequest();
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -998,6 +1010,7 @@ export function startRealtime(path = '/ws'): () => void {
     stopped = true;
     if (timer != null) clearTimeout(timer);
     unsubscribeFrameConsumerPresence();
+    unsubscribeFocus();
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     }

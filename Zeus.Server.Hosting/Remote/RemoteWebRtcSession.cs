@@ -131,6 +131,12 @@ public sealed class RemoteWebRtcSession
     // receiver remotely, the pre-u8 number, after u8 had been verified at
     // ~0.8. The sink now inherits this at creation.
     private bool _wantsU8Bins;
+    // The receiver the operator is looking at, from byte[3] of the display
+    // stream request (0 when an older bundle sends the 3-byte form). The
+    // other receivers' display frames are paced at UnfocusedDisplayGapMs —
+    // the pane you are not watching does not need 20 fps, and with two
+    // receivers up that is roughly a third of the remote display bytes.
+    private int _focusedRx;
     private bool _wantsAudio;
 
     // Named HttpClient used for the loopback REST tunnel (see ZeusHost.cs).
@@ -639,7 +645,15 @@ public sealed class RemoteWebRtcSession
                 ? frame[Zeus.Contracts.WireFormat.HeaderSize]
                 : 0;
             if (rx >= _lastDisplaySendMs.Length) rx = _lastDisplaySendMs.Length - 1;
-            if (now - _lastDisplaySendMs[rx] < effectiveGap)
+            // A receiver the operator is not looking at gets a longer gap.
+            // The focused one keeps the full congestion-managed rate; the
+            // shared envelope still applies to both, so a choked channel
+            // slows everything and a quiet one only ever restores the
+            // focused receiver to 20 fps.
+            long rxGap = rx == Volatile.Read(ref _focusedRx)
+                ? effectiveGap
+                : Math.Max(effectiveGap, UnfocusedDisplayGapMs);
+            if (now - _lastDisplaySendMs[rx] < rxGap)
                 return true; // paced out — a fresher frame for this receiver is right behind
             _lastDisplaySendMs[rx] = now;
         }
@@ -661,6 +675,10 @@ public sealed class RemoteWebRtcSession
     /// plenty for a remote panadapter) and under buffer pressure (~7 fps).</summary>
     private const long NormalDisplayGapMs = 50;
     private const long SlowDisplayGapMs = 150;
+    /// <summary>Gap for receivers the operator is NOT focused on: 10 fps.
+    /// Enough to see activity on the other pane; a third of the bytes of the
+    /// focused receiver's 20 fps.</summary>
+    private const long UnfocusedDisplayGapMs = 100;
     /// <summary>Adaptive pace ceiling (4 fps) and the quiet time required
     /// before the gap walks back toward 20 fps (piece 3 AIMD).</summary>
     private const long MaxDisplayGapMs = 250;
@@ -809,6 +827,7 @@ public sealed class RemoteWebRtcSession
                 // whenever the request beat the sink — the usual order.
                 _wantsU8Bins = enable && data.Length > 2 && data[2] != 0;
                 if (_sink is not null) _sink.WantsU8Bins = _wantsU8Bins;
+                if (data.Length > 3) Volatile.Write(ref _focusedRx, data[3]);
                 if (enable == _wantsDisplay) return;   // level unchanged
                 _wantsDisplay = enable;
                 _hub.AdjustDisplayRequests(enable ? 1 : -1);

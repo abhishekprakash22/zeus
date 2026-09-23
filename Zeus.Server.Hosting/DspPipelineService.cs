@@ -74,6 +74,12 @@ public class DspPipelineService : BackgroundService,
     private const int MaxSecondaryAudioBacklogTicks = 6;
     private const int TargetSecondaryAudioBacklogTicks = 2;
     private const int MaxSecondaryAudioDiscardTicks = 32;
+    // Delay before the one-off post-open re-push of a secondary's config.
+    // Long enough that the channel worker is unquestionably running and any
+    // first-push-into-a-cold-channel loss has already happened; short enough
+    // that an operator does not hear the wrong mode for long. WDSP channel
+    // bring-up is tens of ms; the worker fade-in is under 100 ms.
+    private const int SecondaryOpenResyncDelayMs = 400;
     private const float DisplayInvalidBinDb = -200f;
     private static readonly TimeSpan TickPeriod = TimeSpan.FromMilliseconds(1000.0 / 30.0);
 
@@ -769,6 +775,11 @@ public class DspPipelineService : BackgroundService,
         public SquelchConfig? AppliedSquelch;
         public BandpassWindow? AppliedBandpassWindow;
         public int AppliedZoom = int.MinValue;
+
+        // Deadline (Environment.TickCount64 ms) for a one-off full re-push of
+        // this receiver's configuration after its channel opened, or -1 when
+        // none is pending. See EnsureSecondaryRxChannel and the DSP tick.
+        public long ResyncAtMs = -1;
 
         /// <summary>Forget everything last pushed. Called on every close path
         /// so a reopened channel is pushed afresh rather than skipping pushes
@@ -5148,6 +5159,17 @@ public class DspPipelineService : BackgroundService,
         {
             ApplyStateToSecondaryRxChannel(engine, rxIndex, opened, s);
             Volatile.Write(ref rx.ChannelId, opened);
+            // One deliberate full re-push shortly after open. Field: with two
+            // receivers up at start, RX2's audio was wrong for its mode (LSB
+            // sounded wrong until the mode was toggled away and back). The
+            // very first push into a just-opened WDSP channel does not always
+            // take — the channel is still coming up around it — and until the
+            // change guards landed that was silently healed by the next state
+            // event re-pushing everything. The guards were right (that
+            // re-push every event was the RX2 echo); this restores the heal
+            // ONCE, on purpose, at a moment the channel is certainly running,
+            // rather than by accident on every event forever.
+            rx.ResyncAtMs = Environment.TickCount64 + SecondaryOpenResyncDelayMs;
             _log.LogInformation(
                 "dsp.pipeline rx{Rx} opened channel={Channel} rate={Rate} vfoHz={VfoHz}",
                 rxIndex + 1,
@@ -5168,6 +5190,7 @@ public class DspPipelineService : BackgroundService,
         if (chan < 0) return;
         Volatile.Write(ref _secondaryRx[rxIndex].ChannelId, -1);
         _secondaryRx[rxIndex].ResetApplied();   // a reopened channel is pushed afresh
+        _secondaryRx[rxIndex].ResyncAtMs = -1;
         // NaN = "no value applied yet" — a future reopen snaps to the
         // operator's target instead of slewing from this stale value.
         _secondaryRx[rxIndex].AppliedAfGainDb = double.NaN;
@@ -5958,6 +5981,7 @@ public class DspPipelineService : BackgroundService,
                 if (sc < 0) continue;
                 Volatile.Write(ref _secondaryRx[i].ChannelId, -1);
                 _secondaryRx[i].ResetApplied();   // reopen must re-push everything
+                _secondaryRx[i].ResyncAtMs = -1;
                 try { engine.CloseChannel(sc); } catch { /* best-effort */ }
             }
             engine.CloseChannel(oldChannel);
@@ -7245,6 +7269,17 @@ public class DspPipelineService : BackgroundService,
                 var rx = _secondaryRx[ri];
                 int secChan = Volatile.Read(ref rx.ChannelId);
                 if (!SecondaryReceiverEnabled(ri, state) || secChan < 0) continue;
+
+                // Post-open re-push (see EnsureSecondaryRxChannel). Forget what
+                // was pushed into the cold channel and push the current state
+                // again, once. The guards then hold from here on.
+                if (rx.ResyncAtMs >= 0 && Environment.TickCount64 >= rx.ResyncAtMs)
+                {
+                    rx.ResyncAtMs = -1;
+                    rx.ResetApplied();
+                    ApplyStateToSecondaryRxChannel(engine, ri, secChan, state);
+                    _log.LogInformation("dsp.pipeline rx{Rx} post-open resync pushed", ri + 1);
+                }
                 anySecondary = true;
 
                 bool secPan = engine.TryGetDisplayPixels(secChan, DisplayPixout.Panadapter, rx.PanBuf);

@@ -230,6 +230,15 @@ public interface IDspEngine : IDisposable
     void SetRxAnalyzerFftSize(int fftSize);
     int ReadAudio(int channelId, Span<float> output);
 
+    /// <summary>
+    /// Samples currently buffered in this channel's audio ring, or 0 when the
+    /// engine does not track it. Lets a caller see that a receiver has fallen
+    /// behind the audio clock-master and catch it up, instead of discovering it
+    /// only when the ring saturates. Default returns 0 — an engine that does
+    /// not implement it simply never reports a backlog.
+    /// </summary>
+    int AudioBufferedSamples(int channelId) => 0;
+
     bool TryGetDisplayPixels(int channelId, DisplayPixout which, Span<float> dbOut);
 
     /// <summary>TX panadapter / waterfall pixels in dBm, sourced from a

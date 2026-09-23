@@ -1829,6 +1829,12 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         public const double NbDefaultThresholdScaled = 3.3;
     }
 
+    public int AudioBufferedSamples(int channelId)
+    {
+        if (!_channels.TryGetValue(channelId, out var state)) return 0;
+        lock (state.AudioGate) return state.AudioCount;
+    }
+
     public int ReadAudio(int channelId, Span<float> output)
     {
         if (!_channels.TryGetValue(channelId, out var state))

@@ -65,6 +65,15 @@ public class DspPipelineService : BackgroundService,
     private const int OfflinePreviewTxOutputRateHz = 192_000;
     public const int AudioOutputRateHz = 48_000;
     private const int AudioDrainCapacity = 2048;
+
+    // Secondary-receiver audio backlog policy. A secondary is read at the RX1
+    // tick rate, so "ticks" here means multiples of one tick's worth of audio.
+    // Allow a few ticks of slack for ordinary jitter; when it is exceeded, cut
+    // back to a small steady cushion rather than to zero, so a receiver sitting
+    // just over the line does not resync every tick.
+    private const int MaxSecondaryAudioBacklogTicks = 6;
+    private const int TargetSecondaryAudioBacklogTicks = 2;
+    private const int MaxSecondaryAudioDiscardTicks = 32;
     private const float DisplayInvalidBinDb = -200f;
     private static readonly TimeSpan TickPeriod = TimeSpan.FromMilliseconds(1000.0 / 30.0);
 
@@ -1259,6 +1268,11 @@ public class DspPipelineService : BackgroundService,
     // sentinel); a near-dead span gives a meaningless floor.
     private const int AutoAgcFloorMinValidBins = 64;
     private readonly float[] _diagWfSnapshot = new float[Width];
+    /// <summary>Times a secondary receiver's audio backlog was cut back to the
+    /// cushion. Steady zero after start-up is healthy; a rising count means a
+    /// secondary is running fast against the RX1 audio clock and is worth
+    /// looking at rather than silently absorbing.</summary>
+    private long _secondaryAudioResyncs;
     private long _diagWfSnapshotMs;
     private long _diagDisplayFrameMs;
     private uint _diagDisplaySeq;
@@ -7246,6 +7260,46 @@ public class DspPipelineService : BackgroundService,
             // tick, so no secondary audio is dropped. With RX1 silent
             // (audioSampleCount==0) read nothing this tick.
             int want = Math.Min(audioSampleCount, sec.AudioBuf.Length);
+
+            // Bound the secondary's buffered latency, the way the Kiwi slice
+            // below already bounds its own drift.
+            //
+            // Reading at most `want` per tick is right for the SINK rate, but it
+            // leaves the remainder buffered with nothing to bring it back. The
+            // per-tick counts jitter independently, so a secondary that runs a
+            // hair fast accumulates: the ring is one second deep
+            // (AudioRingCapacity == OutputRate), it fills, drop-oldest pins it
+            // there, and RX2 then plays permanently ~1 s behind RX1. Two
+            // receivers on the same signal make that a continuous echo that
+            // never settles, because a full drop-oldest ring stays full (field
+            // report: approx one second, persistent).
+            //
+            // So when the backlog exceeds the allowance, discard whole ticks'
+            // worth until it is back inside it. Discarding costs a brief glitch
+            // once; leaving it costs a second of latency forever. The sink is
+            // still fed exactly `want`, so this cannot reintroduce the
+            // over-feeding that caused the dual-RX clicking (#787).
+            int buffered = want > 0 ? engine.AudioBufferedSamples(secChan) : 0;
+            if (buffered > want * MaxSecondaryAudioBacklogTicks)
+            {
+                int excess = buffered - want * TargetSecondaryAudioBacklogTicks;
+                // Bounded catch-up per tick: a big backlog resolves over a few
+                // ticks rather than spinning here inside the audio path.
+                int maxDiscard = want * MaxSecondaryAudioDiscardTicks;
+                if (excess > maxDiscard) excess = maxDiscard;
+                while (excess > 0)
+                {
+                    int chunk = Math.Min(excess, sec.AudioBuf.Length);
+                    int got = engine.ReadAudio(secChan, sec.AudioBuf.AsSpan(0, chunk));
+                    if (got <= 0) break;
+                    excess -= got;
+                }
+                _secondaryAudioResyncs++;
+                _log.LogDebug(
+                    "wdsp.rx{Rx} audio backlog {Buffered} samples (> {Limit}) — cut back to the cushion; resyncs={Count}",
+                    ri + 1, buffered, want * MaxSecondaryAudioBacklogTicks, _secondaryAudioResyncs);
+            }
+
             int n = want > 0 ? engine.ReadAudio(secChan, sec.AudioBuf.AsSpan(0, want)) : 0;
             // A muted secondary is still drained above (so its ring can't back up)
             // but excluded from the mix entirely — it must neither add signal nor

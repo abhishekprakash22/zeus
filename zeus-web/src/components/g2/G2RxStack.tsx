@@ -54,17 +54,6 @@ import { useToolbarFavoritesStore } from '../../state/toolbar-favorites-store';
 
 const RATIO_H = 10;
 
-/** dBm estimate for the FOCUSED receiver from its display slice — the
- *  analog meter's G2 signal source, so the needle follows the active pane.
- *  Called from the meter's rAF loop; getState() keeps it subscription-free. */
-function sampleFocusedRxDbm(): number | null {
-  const conn = useConnectionStore.getState();
-  // RX1 focused: return null so the meter uses its real calibrated stream.
-  if (conn.focusedRxIndex !== 1) return null;
-  const vfo = getReceiverVfoHz(conn, 'B');
-  return sliceTunePeakDbm(useDisplayStore.getState(), 'B', vfo);
-}
-
 /** Peak calibrated dBm within ±3 kHz of the tune line in a receiver's
  *  display slice — the display-derived stand-in for a real S reading on
  *  receivers the meter stream doesn't cover. */
@@ -168,7 +157,14 @@ export function G2RxStack() {
           initial={{ x: -312, y: 8, w: 300, h: 170 }}
           onClose={() => hideCard('smeter')}
         >
-          <AnalogMeterPanel sampleDbmOverride={sampleFocusedRxDbm} />
+          {/* No sampleDbmOverride any more. That override fed the needle a
+              pan-bin ESTIMATE for RX2 — the only option before a real
+              secondary meter existed — and it took precedence over the
+              panel's own sampling, so when the panel learnt to follow the
+              focused receiver's real 0x27 meter, this card kept showing the
+              estimate. The panel follows focus itself now; the card just
+              hosts it. */}
+          <AnalogMeterPanel />
         </G2Card>
       ) : null}
       {!hiddenCards.includes('filter-a') ? (

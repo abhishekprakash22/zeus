@@ -2512,6 +2512,17 @@ function normalizeReceiver(raw: unknown, fallbackIndex: number): ReceiverDto {
     afGainDb: typeof r.afGainDb === 'number' ? r.afGainDb : 0,
     sampleRateHz: typeof r.sampleRateHz === 'number' ? r.sampleRateHz : 0,
     muted: typeof r.muted === 'boolean' ? r.muted : false,
+    // Per-receiver AGC-T. These were added to the wire DTO with the
+    // per-receiver AGC work but never copied here, so every secondary came
+    // through with them undefined and getReceiverAgcTopDb fell back to RX1's
+    // value. The RX2 AGC-T slider therefore snapped back to RX1's number on
+    // every release — the radio had applied the write (audio changed), the
+    // server reported it, and the client discarded it on the way in.
+    // Left undefined when absent, so the readers' RX1 fallback still covers
+    // an older server that pre-dates the fields.
+    ...(typeof r.agcTopDb === 'number' ? { agcTopDb: r.agcTopDb } : {}),
+    ...(typeof r.agcOffsetDb === 'number' ? { agcOffsetDb: r.agcOffsetDb } : {}),
+    ...(typeof r.autoAgcEnabled === 'boolean' ? { autoAgcEnabled: r.autoAgcEnabled } : {}),
   };
 }
 

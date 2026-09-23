@@ -1147,12 +1147,20 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     public void SetAgcThresh(int channelId, double threshDbm)
     {
         if (!_channels.TryGetValue(channelId, out var state)) return;
-        // WDSP converts the dBm threshold using the channel's FFT size + sample
-        // rate (RxaInSize matches the analyzer config set in OpenChannel).
-        NativeMethods.SetRXAAGCThresh(channelId, threshDbm, RxaInSize, state.SampleRateHz);
+        // WDSP converts the dBm threshold to internal units using the FFT size
+        // the ANALYZER is running, not the channel's DSP buffer size. Those are
+        // different numbers here: RxaInSize is 1024 while the analyzer defaults
+        // to 16384 and is settable at runtime via SetRxAnalyzerFftSize. Passing
+        // the buffer size put the conversion out by 10*log10(16384/1024) ≈ 12 dB
+        // and, worse, left it fixed — change the analyzer FFT size and the
+        // threshold silently stopped meaning what it said, which is what a
+        // control that "does nothing" usually is. Upstream passes the analyzer
+        // size; so do we now.
+        int fftSize = _rxAnalyzerFftSize > 0 ? _rxAnalyzerFftSize : AnalyzerFftSize;
+        NativeMethods.SetRXAAGCThresh(channelId, threshDbm, fftSize, state.SampleRateHz);
         _log.LogInformation(
             "wdsp.setAgcThresh channel={Id} threshDbm={Thresh:F1} size={Size} rate={Rate}",
-            channelId, threshDbm, RxaInSize, state.SampleRateHz);
+            channelId, threshDbm, fftSize, state.SampleRateHz);
     }
 
     public double GetAgcTop(int channelId)

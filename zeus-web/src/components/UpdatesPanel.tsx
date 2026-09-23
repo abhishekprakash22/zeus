@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { FpgaFlashSection } from './FpgaFlashSection';
+import { Hl2FlashSection } from './Hl2FlashSection';
 import { isRemoteMode } from '../remote/remote-client';
 import { P2AppUpdateSection } from './P2AppUpdateSection';
 import {
@@ -375,6 +376,7 @@ export function UpdatesPanel() {
 
       <P2AppUpdateSection />
       <FpgaFlashSection />
+      <Hl2FlashSection />
     </div>
   );
 }

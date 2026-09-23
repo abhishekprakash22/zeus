@@ -793,6 +793,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<SaturnXdmaProbe>();
         builder.Services.AddSingleton<GpioPaddleKeyer>();
         builder.Services.AddSingleton<SaturnFlashService>();
+        builder.Services.AddSingleton<HermesLite2FlashService>();
         builder.Services.AddSingleton<SaturnControl>();
         builder.Services.AddSingleton<SaturnRxStream>();
         builder.Services.AddSingleton<P2AppSupervisor>();
@@ -1447,6 +1448,107 @@ public static class ZeusHost
             f.Start(req.Url ?? "", out var refusal)
                 ? Results.Ok(new { ok = true, status = f.Status() })
                 : Results.BadRequest(new { ok = false, error = refusal }));
+
+        // ---- Hermes-Lite 2 gateware update (slot2 only; slot1 untouched) ----
+        //
+        // A separate group rather than dispatch-by-board inside the one
+        // above. The two engines have opposite preconditions — the Saturn
+        // needs a local PCIe device, the HL2 needs a radio that is NOT
+        // connected — so they are never both viable, and guessing which one
+        // an operator meant is not a thing to be clever about when the
+        // answer writes firmware.
+        var hl2G = app.MapGroup("/api/fpga/hl2");
+        hl2G.MapGet("/flash", (HermesLite2FlashService f) => Results.Ok(f.Status()));
+        hl2G.MapGet("/images", async (IHttpClientFactory hf, HttpContext ctx) =>
+        {
+            // softerhardware/Hermes-Lite2 keeps bitfiles under
+            // gateware/bitfiles/stable/<release>/<variant>/<variant>.rbf, with
+            // stable/latest naming the current release.
+            const string Raw = "https://github.com/softerhardware/Hermes-Lite2/raw/master/gateware/bitfiles/";
+            const string Api = "https://api.github.com/repos/softerhardware/Hermes-Lite2/contents/gateware/bitfiles/stable";
+            using var c = hf.CreateClient();
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("openhpsdr-zeus");
+            var release = (await c.GetStringAsync($"{Raw}stable/latest", ctx.RequestAborted)).Trim();
+            if (release.Length == 0) return Results.Problem("could not read stable/latest");
+            // Each image lives in a directory named after itself:
+            // <release>/hl2b5up_main/hl2b5up_main.rbf. The release also has a
+            // "variants" directory that is NOT an image — it is another level
+            // of the same shape, and it is where every board other than b5
+            // has its build (hl2b2_main, hl2b3to4_main, the ak4951 revisions).
+            // Listing only the top level offered a variants.rbf that 404s and
+            // hid the images an older board actually needs.
+            async Task<string[]> DirsIn(string path)
+            {
+                var body = await c.GetStringAsync($"{Api}/{path}", ctx.RequestAborted);
+                using var d = System.Text.Json.JsonDocument.Parse(body);
+                return d.RootElement.EnumerateArray()
+                    .Where(e => e.GetProperty("type").GetString() == "dir")
+                    .Select(e => e.GetProperty("name").GetString() ?? "")
+                    .Where(n => n.Length > 0)
+                    .ToArray();
+            }
+
+            var images = new List<object>();
+            foreach (var top in await DirsIn(release))
+            {
+                if (top == "variants")
+                {
+                    foreach (var v in await DirsIn($"{release}/variants"))
+                        images.Add(new
+                        {
+                            name = $"{v}.rbf",
+                            variant = v,
+                            release,
+                            url = $"{Raw}stable/{release}/variants/{v}/{v}.rbf",
+                        });
+                }
+                else
+                {
+                    images.Add(new
+                    {
+                        name = $"{top}.rbf",
+                        variant = top,
+                        release,
+                        url = $"{Raw}stable/{release}/{top}/{top}.rbf",
+                    });
+                }
+            }
+            return Results.Ok(new { release, images });
+        });
+        hl2G.MapPost("/compare", async (FpgaFlashRequest req, HermesLite2FlashService f, HttpContext ctx) =>
+            Results.Ok(await f.CompareAsync(req.Url ?? "", ctx.RequestAborted)));
+        hl2G.MapPost("/flash", async (FpgaFlashRequest req, HermesLite2FlashService f, HttpContext ctx) =>
+        {
+            var (ok, refusal) = await f.StartAsync(req.Url ?? "", ctx.RequestAborted);
+            return ok
+                ? Results.Ok(new { ok = true, status = f.Status() })
+                : Results.BadRequest(new { ok = false, error = refusal });
+        });
+        // A gateware the operator built or downloaded themselves. The shelf is
+        // the convenience; this is the path anyone working on HL2 gateware
+        // actually needs, and without it the panel is read-only to them.
+        hl2G.MapPost("/flash-file", async (HttpRequest http, HermesLite2FlashService f) =>
+        {
+            if (!http.HasFormContentType)
+                return Results.BadRequest(new { ok = false, error = "expected a multipart form with a 'file' part" });
+            var form = await http.ReadFormAsync(http.HttpContext.RequestAborted);
+            var file = form.Files["file"];
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { ok = false, error = "no file received" });
+            // An .rbf for an HL2 is around 2 MB; the cap is generous enough to
+            // let an unusual build through and mean enough to stop a mistake.
+            if (file.Length > 16 * 1024 * 1024)
+                return Results.BadRequest(new { ok = false, error = $"{file.Length} bytes is too large for an HL2 .rbf" });
+
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms, http.HttpContext.RequestAborted);
+            var (ok, refusal) = await f.StartFromFileAsync(
+                ms.ToArray(), Path.GetFileName(file.FileName ?? "uploaded.rbf"),
+                http.HttpContext.RequestAborted);
+            return ok
+                ? Results.Ok(new { ok = true, status = f.Status() })
+                : Results.BadRequest(new { ok = false, error = refusal });
+        }).DisableAntiforgery();
 
                 // ---- XDMA register plane (Phase 2): status reads + gated writes ----
         app.MapGet("/api/xdma/status", (SaturnControl sc) => Results.Ok(sc.ReadStatus()));

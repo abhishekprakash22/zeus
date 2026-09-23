@@ -6016,6 +6016,95 @@ export function startFpgaFlash(
   );
 }
 
+// ---- Hermes-Lite 2 gateware (Ethernet; slot2 only) -----------------------
+//
+// A separate set from the Saturn calls above rather than one with a board
+// switch: the two have opposite preconditions — the Saturn needs a local
+// PCIe device, the HL2 needs a radio that is NOT connected — so they are
+// never both live, and a wrong guess writes firmware to the wrong engine.
+
+export interface Hl2FlashStatusDto {
+  phase: string;
+  progress: number;
+  detail: string;
+  error: string | null;
+  transport: string;
+  slot: string;
+}
+
+export interface Hl2ImageDto {
+  name: string;
+  variant: string;
+  release: string;
+  url: string;
+}
+
+export interface Hl2ImageShelfDto {
+  release: string;
+  images: Hl2ImageDto[];
+}
+
+/** What a write would do, without doing it: which board answered, what it
+ *  runs, and whether this image is allowed anywhere near it. */
+export interface Hl2CompareDto {
+  ok: boolean;
+  error?: string | null;
+  ip?: string;
+  boardId?: number;
+  runningGateware?: string;
+  busy?: boolean;
+  image?: string;
+}
+
+export function fetchHl2FlashStatus(signal?: AbortSignal): Promise<Hl2FlashStatusDto> {
+  return jsonFetch('/api/fpga/hl2/flash', { signal }, (raw) => raw as Hl2FlashStatusDto);
+}
+
+export function fetchHl2Images(signal?: AbortSignal): Promise<Hl2ImageShelfDto> {
+  return jsonFetch('/api/fpga/hl2/images', { signal }, (raw) => raw as Hl2ImageShelfDto);
+}
+
+export function compareHl2Image(url: string): Promise<Hl2CompareDto> {
+  return jsonFetch(
+    '/api/fpga/hl2/compare',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    },
+    (raw) => raw as Hl2CompareDto,
+  );
+}
+
+/** Write a gateware file the operator already has, rather than one off the
+ *  shelf. Multipart rather than JSON so a 2 MB .rbf does not go through a
+ *  base64 round-trip for no reason. */
+export function startHl2FlashFromFile(
+  file: File,
+): Promise<{ ok: boolean; error?: string; status?: Hl2FlashStatusDto }> {
+  const body = new FormData();
+  body.append('file', file, file.name);
+  return jsonFetch(
+    '/api/fpga/hl2/flash-file',
+    { method: 'POST', body },
+    (raw) => raw as { ok: boolean; error?: string; status?: Hl2FlashStatusDto },
+  );
+}
+
+export function startHl2Flash(
+  url: string,
+): Promise<{ ok: boolean; error?: string; status?: Hl2FlashStatusDto }> {
+  return jsonFetch(
+    '/api/fpga/hl2/flash',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    },
+    (raw) => raw as { ok: boolean; error?: string; status?: Hl2FlashStatusDto },
+  );
+}
+
 // ---- Recorder ------------------------------------------------------------
 export interface RecorderStatusDto {
   recording: boolean;

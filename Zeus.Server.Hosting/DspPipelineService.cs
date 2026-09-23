@@ -742,6 +742,16 @@ public class DspPipelineService : BackgroundService,
         // bandwidth. Server-side only — not in StateDto. See UpdateRxLo.
         public long LoHz;
         public bool LoInit;
+        // NR config last pushed to THIS channel, or null when nothing has been
+        // (fresh open, or closed). The primary applies NR only on change; the
+        // secondaries applied it on EVERY OnRadioStateChanged, and
+        // SetNoiseReduction is not idempotent — each call re-runs the stage's
+        // calc/flush and resets its overlap-add buffers. Reset a running
+        // overlap-add stage many times a second (Auto-AGC-T's servo alone
+        // mutates state continuously) and it re-emits its overlap history
+        // every time: a fixed-delay echo on every secondary, gone the moment
+        // NR is off, absent on the primary. See ApplyStateToSecondaryRxChannel.
+        public NrConfig? AppliedNr;
         public readonly float[] PanBuf = new float[Width];
         // Per-receiver decimation scratch. Secondary display frames MUST NOT
         // decimate into the shared _panDecimatedBuf/_wfDecimatedBuf: FrameBins
@@ -5083,6 +5093,7 @@ public class DspPipelineService : BackgroundService,
     {
         if (chan < 0) return;
         Volatile.Write(ref _secondaryRx[rxIndex].ChannelId, -1);
+        _secondaryRx[rxIndex].AppliedNr = null;   // a reopened channel starts NR-less
         // NaN = "no value applied yet" — a future reopen snaps to the
         // operator's target instead of slewing from this stale value.
         _secondaryRx[rxIndex].AppliedAfGainDb = double.NaN;
@@ -5254,7 +5265,14 @@ public class DspPipelineService : BackgroundService,
             : StepTowardCappedDb(rx.AppliedAfGainDb, afGainDb, AfGainSlewMaxDbPerTick);
         engine.SetRxAfGainDb(channelId, afNext);
         rx.AppliedAfGainDb = afNext;
-        engine.SetNoiseReduction(channelId, nr);
+        // Only when it changed for THIS channel. Pushing the same config again
+        // is not free (see AppliedNr above); the primary has had this guard
+        // since the beginning and the secondaries never did.
+        if (rx.AppliedNr is null || !nr.Equals(rx.AppliedNr))
+        {
+            engine.SetNoiseReduction(channelId, nr);
+            rx.AppliedNr = nr;
+        }
         engine.SetAgc(channelId, agc);
         engine.SetSquelch(channelId, squelch);
         engine.SetRxBandpassWindow(channelId, s.RxFilterWindow);
@@ -5824,6 +5842,7 @@ public class DspPipelineService : BackgroundService,
                 int sc = Volatile.Read(ref _secondaryRx[i].ChannelId);
                 if (sc < 0) continue;
                 Volatile.Write(ref _secondaryRx[i].ChannelId, -1);
+                _secondaryRx[i].AppliedNr = null;   // reopen must re-push NR
                 try { engine.CloseChannel(sc); } catch { /* best-effort */ }
             }
             engine.CloseChannel(oldChannel);

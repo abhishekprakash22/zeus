@@ -133,6 +133,14 @@ export function getReceiverAgcTopDb(state: ConnState, key: ReceiverKey): number 
   return receiverEntry(state, idx)?.agcTopDb ?? state.agcTopDb;
 }
 
+/** This receiver's NR, falling back to RX1's when it has not been set
+ *  independently (null/absent on the wire = "follows RX1"). */
+export function getReceiverNr(state: ConnState, key: ReceiverKey): ConnState['nr'] {
+  const idx = rxIndexOf(key);
+  if (idx === 0) return state.nr;
+  return receiverEntry(state, idx)?.nr ?? state.nr;
+}
+
 export function getReceiverAgcOffsetDb(state: ConnState, key: ReceiverKey): number {
   const idx = rxIndexOf(key);
   if (idx === 0) return state.agcOffsetDb;

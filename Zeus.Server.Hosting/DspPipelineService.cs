@@ -5287,7 +5287,11 @@ public class DspPipelineService : BackgroundService,
     private void ApplyStateToSecondaryRxChannel(IDspEngine engine, int rxIndex, int channelId, StateDto s)
     {
         var rx = _secondaryRx[rxIndex];
-        var nr = NormalizeNrConfig(s.Nr ?? new NrConfig());
+        // This receiver's own NR when it has one; RX1's when it does not.
+        // Null is the pre-feature contract — every receiver followed RX1 —
+        // so a receiver nobody has set independently keeps behaving that way.
+        var ownNr = s.Receivers is { } rsNr && rxIndex < rsNr.Count ? rsNr[rxIndex].Nr : null;
+        var nr = NormalizeNrConfig(ownNr ?? s.Nr ?? new NrConfig());
         var agc = s.Agc ?? new AgcConfig(AgcMode.Med);
         var squelch = s.Squelch ?? new SquelchConfig();
         var (mode, vfoHz, filterLow, filterHigh, afGainDb) = SecondaryRxParams(s, rxIndex);

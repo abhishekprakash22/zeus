@@ -1032,7 +1032,14 @@ public sealed record ReceiverDto(
     // pre-per-receiver wire frames deserialize unchanged.
     double AgcTopDb = 90.0,
     double AgcOffsetDb = 0.0,
-    bool AutoAgcEnabled = false);
+    bool AutoAgcEnabled = false,
+    // ---- Per-receiver noise reduction ----
+    // Null means "not set independently — follow RX1", which is what every
+    // receiver did before this field existed, so old state frames and old
+    // persisted state behave exactly as they always have. Once an operator
+    // sets a receiver's NR the value lives here and no longer tracks RX1.
+    // Index 0 mirrors the flat StateDto.Nr; RX2+ are authoritative here.
+    NrConfig? Nr = null);
 
 public sealed record StateDto(
     ConnectionStatus Status,
@@ -1608,7 +1615,10 @@ public sealed record ReceiverSetRequest(
     // Per-receiver AGC-T baseline (30..90) and Auto-AGC-T arm. Setting the
     // baseline disarms Auto for that receiver (same rule as /api/agcGain on RX1).
     double? AgcTopDb = null,
-    bool? AutoAgcEnabled = null);
+    bool? AutoAgcEnabled = null,
+    // Per-receiver NR. Index 0 routes to the flat /api/rx/nr path; RX2+ set
+    // their own. Null leaves it untouched.
+    NrConfig? Nr = null);
 
 /// <summary>Body of <c>POST /api/kiwi</c> — configure the KiwiSDR slice
 /// receiver. Every field is optional; only supplied fields change.

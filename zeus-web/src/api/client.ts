@@ -539,6 +539,10 @@ export type ReceiverDto = {
   agcTopDb?: number;
   agcOffsetDb?: number;
   autoAgcEnabled?: boolean;
+  // Per-receiver NR. Absent/undefined = "follows RX1" (the pre-feature
+  // behaviour and what an older server sends). Readers fall back to the
+  // flat RX1 nr. Index 0 mirrors the flat field.
+  nr?: NrConfigDto;
 };
 
 // Mirrors Zeus.Contracts.KiwiConfigDto — status of the KiwiSDR slice receiver.
@@ -2523,6 +2527,10 @@ function normalizeReceiver(raw: unknown, fallbackIndex: number): ReceiverDto {
     ...(typeof r.agcTopDb === 'number' ? { agcTopDb: r.agcTopDb } : {}),
     ...(typeof r.agcOffsetDb === 'number' ? { agcOffsetDb: r.agcOffsetDb } : {}),
     ...(typeof r.autoAgcEnabled === 'boolean' ? { autoAgcEnabled: r.autoAgcEnabled } : {}),
+    // Per-receiver NR — carried when present, absent otherwise, same rule as
+    // the AGC fields above (and the same lesson: a per-receiver field that is
+    // not copied here reads as RX1's everywhere).
+    ...(r.nr != null && typeof r.nr === 'object' ? { nr: normalizeNr(r.nr) } : {}),
   };
 }
 
@@ -6228,6 +6236,8 @@ export function setReceiver(
     // setters server-side; setting the baseline disarms that receiver's Auto).
     agcTopDb?: number;
     autoAgcEnabled?: boolean;
+    // Per-receiver NR (index 0 routes to the flat setter server-side).
+    nr?: NrConfigDto;
   },
   signal?: AbortSignal,
 ): Promise<RadioStateDto> {

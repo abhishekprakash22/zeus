@@ -1865,7 +1865,8 @@ public static class ZeusEndpoints
                 afGainDb: req.AfGainDb,
                 filterPresetName: req.FilterPresetName,
                 agcTopDb: req.AgcTopDb,
-                autoAgcEnabled: req.AutoAgcEnabled));
+                autoAgcEnabled: req.AutoAgcEnabled,
+                nr: req.Nr));
         });
 
         // Per-RX audio mute (RX1=0, RX2=1, RX3+=2..). Mirrors Thetis chkMUT /

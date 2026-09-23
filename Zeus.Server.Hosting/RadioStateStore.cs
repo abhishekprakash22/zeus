@@ -220,6 +220,11 @@ public sealed class RadioStateEntry
     // live servo offset is never persisted — it re-seeds from the band floor.
     public double Rx2AgcTopDb { get; set; } = 90.0;
     public bool Rx2AutoAgcEnabled { get; set; }
+    // RX2's own NR, as JSON, or null when it follows RX1 (the pre-feature
+    // behaviour). JSON rather than a nested record: NrConfig is a positional
+    // record and the mapper wants a parameterless shape; a string round-trips
+    // every field without a mapper contract.
+    public string? Rx2NrJson { get; set; }
     public TxVfo TxVfo { get; set; } = TxVfo.A;
     // CTUN (click-tune / centred-tuning) toggle. See StateDto.CtunEnabled.
     // Persisted so the operator's preference survives a restart.

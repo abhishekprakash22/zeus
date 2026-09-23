@@ -43,6 +43,7 @@ import {
   getReceiverFilterLowHz,
   getReceiverFilterHighHz,
   getReceiverAgcTopDb,
+  getReceiverNr,
   getReceiverAgcOffsetDb,
   getReceiverAutoAgcEnabled,
   rxIndexOf,
@@ -242,7 +243,8 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   // rx2Channel alike), so the chips read the same on both flags — that is
   // the truth of the pipeline, not a display shortcut. If per-receiver DSP
   // configs ever land server-side, these chips are already per-flag.
-  const nrCfg = useConnectionStore((s) => s.nr);
+  // This pane's own NR (falls back to RX1's until set independently).
+  const nrCfg = useConnectionStore((s) => getReceiverNr(s, receiver));
   const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
   const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
   const [popoverOpen, setPopoverOpen] = useState(false);

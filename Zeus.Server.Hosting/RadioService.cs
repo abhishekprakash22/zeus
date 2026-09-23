@@ -198,6 +198,7 @@ public sealed class RadioService : IDisposable
         public byte AdcSource;   // 0 = ADC0 (same antenna as RX1) by default
         public bool Muted;       // per-RX audio mute (RXOutputGain=0 equivalent)
         public double AgcTopDb = DefaultAgcTopDb;   // manual AGC-T baseline (no Auto servo on RX3+)
+        public NrConfig? Nr;                          // own NR, or null = follow RX1
     }
     private readonly ExtraReceiver[] _extraReceivers = CreateExtraReceivers();
     private static ExtraReceiver[] CreateExtraReceivers()
@@ -673,6 +674,7 @@ public sealed class RadioService : IDisposable
         // offset always starts at 0 — it is a control-loop accumulator that
         // re-seeds from RX2's band floor, exactly as RX1's does.
         double hydAgcTopB = Math.Clamp(rsSnap?.Rx2AgcTopDb ?? DefaultAgcTopDb, MinAgcTopDb, MaxAgcTopDb);
+        NrConfig? hydNrB = DeserializeNrOrNull(rsSnap?.Rx2NrJson);
         bool hydAutoAgcB = rsSnap?.Rx2AutoAgcEnabled ?? false;
 
         _state = new(
@@ -796,7 +798,8 @@ public sealed class RadioService : IDisposable
                     FilterLowHz: hydFilterLowB, FilterHighHz: hydFilterHighB,
                     FilterPresetName: hydPresetB, AfGainDb: hydAfGainB,
                     SampleRateHz: _state.SampleRate, Muted: _state.Rx2Muted,
-                    AgcTopDb: hydAgcTopB, AgcOffsetDb: 0.0, AutoAgcEnabled: hydAutoAgcB),
+                    AgcTopDb: hydAgcTopB, AgcOffsetDb: 0.0, AutoAgcEnabled: hydAutoAgcB,
+                    Nr: hydNrB),
             },
         };
 
@@ -1406,7 +1409,8 @@ public sealed class RadioService : IDisposable
         double? afGainDb = null,
         string? filterPresetName = null,
         double? agcTopDb = null,
-        bool? autoAgcEnabled = null)
+        bool? autoAgcEnabled = null,
+        NrConfig? nr = null)
     {
         // RX1 (0) and RX2 (1) live on the flat StateDto fields, but the uniform
         // numeric model means /api/receivers/{index} must drive every receiver.
@@ -1448,6 +1452,10 @@ public sealed class RadioService : IDisposable
             {
                 if (index == 1) SetRx2AutoAgc(auto); else SetAutoAgc(auto);
             }
+            if (nr is not null)
+            {
+                if (index == 1) SetRx2Nr(nr); else SetNr(nr);
+            }
             return Snapshot();
         }
         if (index < 2 || index >= _extraReceivers.Length)
@@ -1465,6 +1473,7 @@ public sealed class RadioService : IDisposable
             if (filterHighHz is int fh) e.FilterHighHz = fh;
             if (filterPresetName is string fp) e.FilterPresetName = fp;
             if (afGainDb is double af) e.AfGainDb = Math.Clamp(af, -50.0, 20.0);
+            if (nr is not null) e.Nr = NormalizeNrConfig(nr);
             // RX3+ carry a manual AGC-T baseline only (no Auto servo — they have
             // no meter stream); the DSP applies it to that DDC's channel.
             if (agcTopDb is double top) e.AgcTopDb = Math.Clamp(top, MinAgcTopDb, MaxAgcTopDb);
@@ -2842,6 +2851,28 @@ public sealed class RadioService : IDisposable
     /// <see cref="SetAgcTop"/>. Grabbing it takes manual control of RX2: Auto
     /// is disarmed and its offset zeroed so the effective ceiling equals the
     /// slider exactly (issue #733's rule, applied per receiver).</summary>
+    private static readonly System.Text.Json.JsonSerializerOptions NrJson = new()
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
+    private static string? SerializeNrOrNull(NrConfig? nr) =>
+        nr is null ? null : System.Text.Json.JsonSerializer.Serialize(nr, NrJson);
+    private static NrConfig? DeserializeNrOrNull(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<NrConfig>(json, NrJson); }
+        catch { return null; }   // a corrupt entry falls back to "follow RX1", never to a crash
+    }
+
+    /// <summary>RX2's NR, set independently of RX1 from here on. Persisted
+    /// with the RX2 block. Pass null to make RX2 follow RX1 again.</summary>
+    public StateDto SetRx2Nr(NrConfig? cfg)
+    {
+        var normalized = cfg is null ? null : NormalizeNrConfig(cfg);
+        Mutate(s => WithRx2(s, r => r with { Nr = normalized }));
+        return Snapshot();
+    }
+
     public StateDto SetRx2AgcTop(double topDb)
     {
         double clamped = Math.Clamp(topDb, MinAgcTopDb, MaxAgcTopDb);
@@ -4628,7 +4659,8 @@ public sealed class RadioService : IDisposable
                 FilterPresetName: s.FilterPresetName,
                 AfGainDb: s.RxAfGainDb, SampleRateHz: s.SampleRate,
                 Muted: s.Rx1Muted,
-                AgcTopDb: s.AgcTopDb, AgcOffsetDb: s.AgcOffsetDb, AutoAgcEnabled: s.AutoAgcEnabled),
+                AgcTopDb: s.AgcTopDb, AgcOffsetDb: s.AgcOffsetDb, AutoAgcEnabled: s.AutoAgcEnabled,
+                Nr: s.Nr),
             // index 1 = RX2: its VFO / mode / filter / AF gain are authoritative
             // in the array itself (the flat VFO-B fields are gone). Carry the
             // existing tuning forward and overlay the flat RX2 control fields
@@ -4657,7 +4689,7 @@ public sealed class RadioService : IDisposable
                 FilterLowHz: e.FilterLowHz, FilterHighHz: e.FilterHighHz,
                 FilterPresetName: e.FilterPresetName,
                 AfGainDb: e.AfGainDb, SampleRateHz: s.SampleRate,
-                Muted: e.Muted, AgcTopDb: e.AgcTopDb));
+                Muted: e.Muted, AgcTopDb: e.AgcTopDb, Nr: e.Nr));
         }
         // Non-hardware KiwiSDR slice (reserved index KiwiReceiverIndex). Appended
         // out of the contiguous DDC run — it is a remote receiver, not a DDC, so
@@ -4748,6 +4780,7 @@ public sealed class RadioService : IDisposable
                 Rx2AfGainDb = rx2Snap.AfGainDb,
                 Rx2AgcTopDb = rx2Snap.AgcTopDb,
                 Rx2AutoAgcEnabled = rx2Snap.AutoAgcEnabled,
+                Rx2NrJson = SerializeNrOrNull(rx2Snap.Nr),
                 TxVfo = snap.TxVfo,
                 CtunEnabled = snap.CtunEnabled,
                 Notches = notches.Select(n => new RadioStateNotchEntry

@@ -17,13 +17,17 @@
 // at a glance from across the shack.
 
 import { useCallback, useRef } from 'react';
-import { setNr } from '../api/client';
+import { setNr, setReceiver } from '../api/client';
 import { useConnectionStore } from '../state/connection-store';
+import { getReceiverNr } from '../state/receiver-state';
 import { NR_KEY_LABEL, nextNrMode, nrModeTitle } from './nr-cycle';
 
 export function NrKeyButton() {
   const connected = useConnectionStore((s) => s.status === 'Connected');
-  const nr = useConnectionStore((s) => s.nr);
+  // NR is per receiver: the key acts on the FOCUSED pane, the way AGC-T and
+  // AF already do. RX1 keeps the flat /api/rx/nr path; RX2+ set their own.
+  const focusedRx = useConnectionStore((s) => s.focusedRxIndex);
+  const nr = useConnectionStore((s) => getReceiverNr(s, focusedRx));
   const applyState = useConnectionStore((s) => s.applyState);
   const nr3Available = useConnectionStore((s) => s.wdspNr3RnnrAvailable);
   const nr3ModelName = useConnectionStore((s) => s.nr3ModelName);
@@ -36,14 +40,19 @@ export function NrKeyButton() {
     inflight.current?.abort();
     const ac = new AbortController();
     inflight.current = ac;
-    setNr({ ...nr, nrMode: next }, ac.signal)
+    const nextCfg = { ...nr, nrMode: next };
+    const call =
+      focusedRx === 0
+        ? setNr(nextCfg, ac.signal)
+        : setReceiver(focusedRx, { nr: nextCfg }, ac.signal);
+    call
       .then((s) => {
         if (!ac.signal.aborted) applyState(s);
       })
       .catch(() => {
         /* the next state poll reconciles */
       });
-  }, [connected, nr, nr3Available, nr3ModelName, nnrAvailable, applyState]);
+  }, [connected, focusedRx, nr, nr3Available, nr3ModelName, nnrAvailable, applyState]);
 
   const mode = nr?.nrMode ?? 'Off';
   const on = mode !== 'Off';

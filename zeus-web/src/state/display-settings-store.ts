@@ -373,7 +373,7 @@ function readSavedPalette(): SavedPalette {
     const rl = parsed.pan3dRidgeLines;
     const va = parsed.pan3dViewAngle;
     return {
-      colormap: cm === 'inferno' || cm === 'viridis' || cm === 'amber' ? cm : 'blue',
+      colormap: cm === 'inferno' || cm === 'viridis' || cm === 'amber' || cm === 'grey' || cm === 'rainbow' ? cm : 'blue',
       pan3dRidgeLines: rl === 'signals' || rl === 'all' ? rl : 'off',
       pan3dViewAngle: typeof va === 'number' && Number.isFinite(va) ? Math.max(0, Math.min(1, va)) : 0.55,
     };

@@ -59,7 +59,7 @@
 // the 256-entry linear resample is visually indistinguishable from the
 // continuous form for our use case.
 
-export type ColormapId = 'blue' | 'inferno' | 'viridis' | 'amber';
+export type ColormapId = 'blue' | 'inferno' | 'viridis' | 'amber' | 'grey' | 'rainbow';
 export type RenderColormapId = ColormapId | 'pop';
 
 export type ColormapSpec = {
@@ -72,6 +72,8 @@ export const COLORMAPS: readonly ColormapSpec[] = [
   { id: 'inferno', label: 'Inferno' },
   { id: 'viridis', label: 'Viridis' },
   { id: 'amber', label: 'Amber' },
+  { id: 'grey', label: 'Greyscale' },
+  { id: 'rainbow', label: 'Rainbow' },
 ];
 
 type Anchor = [number, [number, number, number]];
@@ -127,6 +129,35 @@ const AMBER_ANCHORS: Anchor[] = [
   [0.64, [140, 70, 10]],
   [0.76, [240, 179, 58]],
   [0.88, [255, 225, 140]],
+  [1.0, [255, 255, 255]],
+];
+
+// Greyscale: black floor through mid-grey to white at the peaks. Monotonic
+// brightness, so strength reads directly with no hue telling the operator
+// what to think — and the kindest palette for colour-vision deficiency. Same
+// stretched dark low end as the others so the noise floor stays dark.
+const GREY_ANCHORS: Anchor[] = [
+  [0.0, [0, 0, 0]],
+  [0.36, [8, 8, 10]],
+  [0.52, [64, 66, 72]],
+  [0.70, [135, 138, 145]],
+  [0.86, [205, 208, 214]],
+  [1.0, [255, 255, 255]],
+];
+
+// Rainbow: the classic SDR look, and BRIGHT by request. The floor is not
+// dark — it sits at a strong blue from the first usable step — then bright
+// blue, green, yellow, orange, red, white at the very top. Strength reads as
+// hue at a glance. The loudest palette here; chosen with that understood.
+const RAINBOW_ANCHORS: Anchor[] = [
+  [0.0, [0, 0, 40]],
+  [0.30, [0, 20, 160]],
+  [0.44, [0, 90, 255]],
+  [0.56, [0, 190, 255]],
+  [0.66, [0, 230, 120]],
+  [0.76, [255, 235, 0]],
+  [0.86, [255, 140, 0]],
+  [0.94, [255, 30, 0]],
   [1.0, [255, 255, 255]],
 ];
 
@@ -193,7 +224,11 @@ export function lutFor(id: RenderColormapId): Uint8Array {
         ? VIRIDIS_ANCHORS
         : id === 'amber'
           ? AMBER_ANCHORS
-          : BLUE_ANCHORS;
+          : id === 'grey'
+            ? GREY_ANCHORS
+            : id === 'rainbow'
+              ? RAINBOW_ANCHORS
+              : BLUE_ANCHORS;
   const lut = buildLut(anchors);
   CACHE[id] = lut;
   return lut;

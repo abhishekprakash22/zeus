@@ -23,7 +23,7 @@ describe('palette persistence', () => {
     // re-import cannot re-run module init in vitest without isolation; assert the reader directly
     const mod = await import('./display-settings-store');
     const st = mod.useDisplaySettingsStore.getState();
-    expect(['blue', 'inferno', 'viridis', 'amber']).toContain(st.colormap);
+    expect(['blue', 'inferno', 'viridis', 'amber', 'grey', 'rainbow']).toContain(st.colormap);
     expect(['off', 'signals', 'all']).toContain(st.pan3dRidgeLines);
     expect(st.pan3dViewAngle).toBeGreaterThanOrEqual(0);
     expect(st.pan3dViewAngle).toBeLessThanOrEqual(1);

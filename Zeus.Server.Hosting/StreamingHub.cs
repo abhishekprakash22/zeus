@@ -159,6 +159,7 @@ public sealed class StreamingHub
     // this once per tick to skip WDSP analyzer reads and frame serialisation
     // for control-only clients.
     private int _displayStreamRequests;
+    private int _localDisplayStreamRequests;   // subset from loopback clients
     private int _preferredDisplayStreamRequests;
 
     /// <summary>
@@ -216,6 +217,7 @@ public sealed class StreamingHub
         connectedClients = ClientCount,
         audioSubscribers = Volatile.Read(ref _audioStreamRequests),
         displaySubscribers = Volatile.Read(ref _displayStreamRequests),
+        localDisplaySubscribers = Volatile.Read(ref _localDisplayStreamRequests),
         preferredDisplaySubscribers = Volatile.Read(ref _preferredDisplayStreamRequests),
         drops = new
         {
@@ -314,10 +316,17 @@ public sealed class StreamingHub
     /// </summary>
     public event Action<ReadOnlyMemory<byte>>? MicPcmReceived;
 
-    public async Task AttachClientAsync(WebSocket ws, CancellationToken ct)
+    public Task AttachClientAsync(WebSocket ws, CancellationToken ct) => AttachClientAsync(ws, isLocal: false, ct);
+
+    /// <param name="isLocal">True when the socket came from the loopback
+    /// interface — the radio's own console, not a LAN browser or a remote
+    /// session. The launch splash waits for a LOCAL display subscriber; a
+    /// remote client re-subscribing the moment the server is up must not
+    /// dismiss it (field: splash vanished after 1 s with a laptop connected).</param>
+    public async Task AttachClientAsync(WebSocket ws, bool isLocal, CancellationToken ct)
     {
         var id = Guid.NewGuid();
-        var session = new ClientSession(id, ws, _log, this);
+        var session = new ClientSession(id, ws, _log, this, isLocal);
         _clients[id] = session;
         _log.LogInformation("ws.client.connected id={Id} total={Count}", id, _clients.Count);
 
@@ -992,9 +1001,10 @@ public sealed class StreamingHub
                 SingleWriter = false,
             });
 
-        public ClientSession(Guid id, WebSocket ws, ILogger log, StreamingHub hub)
+        private readonly bool _isLocal;
+        public ClientSession(Guid id, WebSocket ws, ILogger log, StreamingHub hub, bool isLocal = false)
         {
-            Id = id; _ws = ws; _log = log; _hub = hub;
+            Id = id; _ws = ws; _log = log; _hub = hub; _isLocal = isLocal;
         }
 
         // Returns true if the frame was enqueued. False = the bounded queue's
@@ -1099,7 +1109,10 @@ public sealed class StreamingHub
             int prev = Interlocked.Exchange(ref _wantsDisplay, next);
             int prevPreferred = Interlocked.Exchange(ref _prefersDisplay, nextPreferred);
             if (prev != next)
+            {
                 Interlocked.Add(ref _hub._displayStreamRequests, next - prev);
+                if (_isLocal) Interlocked.Add(ref _hub._localDisplayStreamRequests, next - prev);
+            }
             if (prevPreferred != nextPreferred)
                 Interlocked.Add(ref _hub._preferredDisplayStreamRequests, nextPreferred - prevPreferred);
         }

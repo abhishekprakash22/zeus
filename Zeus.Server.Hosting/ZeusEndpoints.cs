@@ -108,6 +108,14 @@ public static class ZeusEndpoints
         app.MapGet("/api/diagnostics/symptoms",
             (DiagnosticReportBuilder diag) => Results.Ok(diag.Symptoms()));
 
+        // Streaming-hub snapshot: connected clients, display/audio subscriber
+        // counts (total and LOCAL — loopback clients, i.e. the radio's own
+        // console), drop counters. Read-only. The launch splash polls this to
+        // learn when the console has actually come up: localDisplaySubscribers
+        // goes to 1 when the kiosk has loaded and asked for the panadapter.
+        app.MapGet("/api/diagnostics/streaming",
+            (StreamingHub hub) => Results.Ok(hub.DiagnosticsSnapshot()));
+
         app.MapPost("/api/diagnostics/report",
             (DiagnosticRequest req, DiagnosticReportBuilder diag) =>
             {
@@ -4953,7 +4961,12 @@ public static class ZeusEndpoints
                 return;
             }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await hub.AttachClientAsync(ws, ctx.RequestAborted);
+            // Loopback = the radio's own console (the kiosk WebView, or a
+            // browser on the Pi). LAN browsers and remote sessions are not.
+            var ip = ctx.Connection.RemoteIpAddress;
+            bool isLocal = ip is not null && (System.Net.IPAddress.IsLoopback(ip)
+                || (ip.IsIPv4MappedToIPv6 && System.Net.IPAddress.IsLoopback(ip.MapToIPv4())));
+            await hub.AttachClientAsync(ws, isLocal, ctx.RequestAborted);
         });
 
         // -- Remote-access QR (Server menu: scan → open remote client) --------

@@ -75,9 +75,52 @@ public sealed class SstvTests
         var r = Decode(mode, img, offsetHz: 120, clockScale: 1.003, noise: noise);
 
         Assert.Equal(SstvEndReason.Complete, r.Reason);
-        Assert.Equal(120, r.Image.OffsetHz, 0);
+        // Within 5 Hz: one luma step is 800/255 ≈ 3 Hz, and at this SNR the
+        // leader's median sits a couple of Hz toward the demodulator's centre.
+        Assert.InRange(r.Image.OffsetHz, 115, 125);
         Assert.Equal(0.003, r.Image.ClockError, 3);
         Assert.InRange(MeanAbsError(mode, img, r.Image.Rgb), 0, 18);
+    }
+
+    // Weak-signal floor (zeus-rhtp.6). Gaussian noise, SNR measured in a
+    // 2.5 kHz bandwidth. Before the contrast sync search and the median VIS
+    // read, 8 dB lost most pictures and 6 dB started almost none; now both
+    // start AND complete. Fixed seeds keep CI deterministic.
+    [Theory]
+    [InlineData("Martin 1", 6.0)]
+    [InlineData("Scottie 1", 6.0)]
+    [InlineData("PD 120", 6.0)]
+    [InlineData("Robot 36", 6.0)]
+    public void WeakSignal_StartsAndCompletes(string name, double snrDb)
+    {
+        var mode = SstvModes.ByName(name)!;
+        for (int seed = 0; seed < 2; seed++)
+        {
+            var audio = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f, 25, 1.0005);
+            var buf = new float[Rate + audio.Length + Rate];
+            audio.CopyTo(buf, Rate);
+            AddGaussian(buf, snrDb, seed);
+            var dec = new SstvDecoder();
+            SstvImage? done = null;
+            dec.ImageEnded += (i, why) => { if (why == SstvEndReason.Complete) done = i; };
+            for (int i = 0; i < buf.Length; i += 600)
+                dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+            Assert.NotNull(done);
+            Assert.Same(mode, done!.Mode);
+        }
+    }
+
+    [Fact]
+    public void GaussianNoise_ThreeMinutes_NoFalseStart()
+    {
+        var dec = new SstvDecoder();
+        int started = 0;
+        dec.ImageStarted += _ => started++;
+        var buf = new float[180 * Rate];
+        AddGaussian(buf, 0, 9, std: 0.3);
+        for (int i = 0; i < buf.Length; i += 600)
+            dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+        Assert.Equal(0, started);
     }
 
     [Fact]
@@ -287,6 +330,19 @@ public sealed class SstvTests
             dec.Process(audio.AsSpan(i, Math.Min(4096, audio.Length - i)));
         Assert.NotNull(done);
         return new Result(done!, reason);
+    }
+
+    /// <summary>Gaussian noise for a 0.5-amplitude signal at <paramref name="snrDb"/>
+    /// in 2.5 kHz (or a fixed <paramref name="std"/>).</summary>
+    private static void AddGaussian(float[] buf, double snrDb, int seed, double? std = null)
+    {
+        double sd = std ?? Math.Sqrt(0.125 / Math.Pow(10, snrDb / 10) * (Rate / 2.0 / 2500.0));
+        var rng = new Random(seed);
+        for (int i = 0; i < buf.Length; i++)
+        {
+            double u1 = 1 - rng.NextDouble(), u2 = rng.NextDouble();
+            buf[i] += (float)(sd * Math.Sqrt(-2 * Math.Log(u1)) * Math.Cos(2 * Math.PI * u2));
+        }
     }
 
     /// <summary>Lead/trail silence, then uniform noise over everything.</summary>

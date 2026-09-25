@@ -50,7 +50,7 @@ public sealed class SstvDecoder
     private const int BinHistory = 128;
     private const int LeaderBins = 24;
     private const double MaxOffsetHz = 250;
-    private const double ToneTolHz = 80;
+    private const double CoarseTolHz = 150;
 
     // Sync tracking.
     private const double SyncTolHz = 150;          // pulse MEAN vs 1200 Hz
@@ -150,14 +150,30 @@ public sealed class SstvDecoder
 
     private float Bin(long k) => _bins[k % BinHistory];
 
+    /// <summary>
+    /// VIS hunt, run on every 10 ms bin. A cheap COARSE gate on the bins (a
+    /// leader-like stretch near 1900 Hz, start/stop-bit bins near 1200 Hz)
+    /// admits candidates to the FINE read on the track itself: each bit is the
+    /// MEDIAN of its central 20 ms (the FM demodulator's noise clicks are
+    /// outliers a mean can't shrug off), the bit grid is aligned to the
+    /// sample, and the tuning offset is re-measured on the 1900 Hz leader
+    /// right before the start bit. Parity and a known mode code reject what
+    /// noise or picture content could still slip through.
+    ///
+    /// While a picture that has proved itself real is being received the
+    /// fine read runs STRICT, so picture content can't interrupt it; an idle
+    /// decoder (or one inside a likely false start) listens leniently.
+    /// </summary>
     private void TryVis()
     {
-        long c = _binCount - 2;                   // centre bin of the stop bit
+        // Centre bin of the stop bit, taken 40 ms back so the fine read's
+        // ±15 ms alignment search has the whole stop bit in hand.
+        long c = _binCount - 4;
         long leaderEnd = c - 31;
         long leaderStart = leaderEnd - LeaderBins + 1;
         if (leaderStart < 0 || _binCount - leaderStart > BinHistory) return;
 
-        // Leader: median must sit near 1900, nearly every bin close to it.
+        // Coarse leader: median near 1900 Hz, most bins close to it.
         Span<float> lead = stackalloc float[LeaderBins];
         for (int i = 0; i < LeaderBins; i++) lead[i] = Bin(leaderStart + i);
         lead.Sort();
@@ -165,55 +181,87 @@ public sealed class SstvDecoder
         double offset = median - SstvModes.LeaderHz;
         if (Math.Abs(offset) > MaxOffsetHz) return;
         int good = 0;
-        for (int i = 0; i < LeaderBins; i++) if (Math.Abs(lead[i] - median) < ToneTolHz) good++;
-        if (good < LeaderBins - 4) return;
+        for (int i = 0; i < LeaderBins; i++) if (Math.Abs(lead[i] - median) < CoarseTolHz) good++;
+        if (good < LeaderBins * 6 / 10) return;
 
-        // Ten 30 ms bits, read at their centre bins.
-        double BitHz(int j) => Bin(c - 3 * (9 - j)) - offset;
-        if (Math.Abs(BitHz(0) - SstvModes.SyncHz) > ToneTolHz) return;   // start
-        if (Math.Abs(BitHz(9) - SstvModes.SyncHz) > ToneTolHz) return;   // stop
-        int code = 0, ones = 0;
-        for (int j = 1; j <= 8; j++)
-        {
-            double hz = BitHz(j);
-            bool one;
-            if (Math.Abs(hz - SstvModes.VisOneHz) < ToneTolHz) one = true;
-            else if (Math.Abs(hz - SstvModes.VisZeroHz) < ToneTolHz) one = false;
-            else return;
-            if (one) { ones++; if (j <= 7) code |= 1 << (j - 1); }
-        }
-        if ((ones & 1) != 0) return;                                    // even parity
-        var mode = SstvModes.ByVis(code);
-        if (mode is null) return;
+        // Coarse start / stop bits.
+        if (Math.Abs(Bin(c - 27) - offset - SstvModes.SyncHz) > CoarseTolHz + 50) return;
+        if (Math.Abs(Bin(c) - offset - SstvModes.SyncHz) > CoarseTolHz + 50) return;
 
-        // Refine the start-bit edge (1900 → 1200) to the sample, then the
-        // picture starts exactly ten bits later.
-        long startBin = c - 27;
-        long est = startBin * BinSamples + BinSamples / 2 - (long)(15 * SamplesPerMs);
-        long edge = RefineFallingEdge(est, (long)(12 * SamplesPerMs), (long)(5 * SamplesPerMs));
-        long visEnd = edge + (long)Math.Round(10 * SstvEncoder.VisBitMs * SamplesPerMs);
+        bool strict = _img is not null && _img.Syncs.Count >= FalseStartMinSyncs;
+        long est = (c - 27) * BinSamples + BinSamples / 2 - (long)(15 * SamplesPerMs);
+        if (ReadVis(est, offset, strict) is not { } vis) return;
 
         // Don't re-detect this same header on the next bins.
         _visHoldUntilBin = _binCount + 60;
 
         if (_img is not null) Finish(SstvEndReason.Interrupted);
-        Begin(mode, visEnd, offset);
+        Begin(vis.Mode, vis.VisEnd, vis.Offset);
     }
 
-    /// <summary>Sample index in [est−span, est+span] maximising
-    /// mean(before) − mean(after) over <paramref name="w"/> samples.</summary>
-    private long RefineFallingEdge(long est, long span, long w)
+    /// <summary>Fine VIS read around the estimated start-bit edge
+    /// <paramref name="est"/> (±15 ms). Null unless it is a valid header.</summary>
+    private (SstvMode Mode, long VisEnd, double Offset)? ReadVis(long est, double coarseOffset, bool strict)
     {
-        long best = est;
+        int bit = (int)(SstvEncoder.VisBitMs * SamplesPerMs);         // 360
+        int core = (int)(20 * SamplesPerMs), margin = (bit - core) / 2;
+        int reach = (int)(15 * SamplesPerMs), step = (int)(0.5 * SamplesPerMs);
+        int leadLen = (int)(200 * SamplesPerMs), leadGap = (int)(10 * SamplesPerMs);
+        if (est - reach - leadGap - leadLen < _track.Base
+            || est + reach + 9 * bit + margin + core > _track.End) return null;
+
+        Span<double> d = stackalloc double[10], bestD = stackalloc double[10];
         double bestScore = double.MinValue;
-        long lo = Math.Max(_track.Base + w, est - span);
-        long hi = Math.Min(_n - w, est + span);
-        for (long t = lo; t <= hi; t++)
+        long bestS = est;
+        for (long S = est - reach; S <= est + reach; S += step)
         {
-            double score = _track.Mean(t - w, t) - _track.Mean(t, t + w);
-            if (score > bestScore) { bestScore = score; best = t; }
+            // Distance of each bit from the 1200 Hz decision line.
+            for (int j = 0; j < 10; j++)
+                d[j] = Median(S + j * bit + margin, core) - coarseOffset - SstvModes.SyncHz;
+            // Start and stop (both 1200 Hz) should agree and sit near the
+            // line; data bits well off their midpoint.
+            double mid = 0.5 * (d[0] + d[9]);
+            double score = -Math.Abs(d[0] - d[9]) - 0.5 * Math.Abs(mid);
+            for (int j = 1; j <= 8; j++) score += Math.Min(Math.Abs(d[j] - mid), 100);
+            if (score > bestScore) { bestScore = score; bestS = S; d.CopyTo(bestD); }
         }
-        return best;
+
+        // Tuning offset from the leader right before the start bit.
+        double offset = Median(bestS - leadGap - leadLen, leadLen) - SstvModes.LeaderHz;
+        if (Math.Abs(offset) > MaxOffsetHz || Math.Abs(offset - coarseOffset) > 80) return null;
+        for (int j = 0; j < 10; j++) bestD[j] += coarseOffset - offset;
+
+        // Decide each data bit against the start/stop bits' own reading: they
+        // ARE 1200 Hz, so the low-SNR pull of the median moves the reference
+        // and the data bits together.
+        double endTol = strict ? 60 : 120, minData = strict ? 50 : 15;
+        double refHz = 0.5 * (bestD[0] + bestD[9]);
+        if (Math.Abs(refHz) > endTol || Math.Abs(bestD[0] - bestD[9]) > endTol) return null;
+        int code = 0, ones = 0;
+        for (int j = 1; j <= 8; j++)
+        {
+            double v = bestD[j] - refHz;
+            if (Math.Abs(v) < minData || Math.Abs(v) > 250) return null;
+            if (v < 0) { ones++; if (j <= 7) code |= 1 << (j - 1); }        // 1100 Hz = 1
+        }
+        if ((ones & 1) != 0) return null;                                    // even parity
+        var mode = SstvModes.ByVis(code);
+        if (mode is null) return null;
+        return (mode, bestS + 10 * bit, offset);
+    }
+
+    private float[] _medianScratch = new float[4096];
+
+    /// <summary>Median of the track over [start, start+count), click-clamped.
+    /// At low SNR the FM demodulator's noise drags it toward the band centre;
+    /// ReadVis cancels that by deciding against the start/stop bits.</summary>
+    private double Median(long start, int count)
+    {
+        if (_medianScratch.Length < count) _medianScratch = new float[count];
+        var span = _medianScratch.AsSpan(0, count);
+        for (int i = 0; i < count; i++) span[i] = Math.Clamp(_track[start + i], 900f, 2600f);
+        span.Sort();
+        return count % 2 == 1 ? span[count / 2] : 0.5 * (span[count / 2 - 1] + span[count / 2]);
     }
 
     // ---- FSK ID -------------------------------------------------------------

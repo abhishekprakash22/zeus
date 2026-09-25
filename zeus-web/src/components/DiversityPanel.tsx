@@ -214,11 +214,17 @@ export function DiversityPanel() {
   // RX1 on ADC0 is one antenna added to itself. The label used to say 'SRC'
   // with no ADC shown (field: 'why RX2 and RX3, not RX1 and RX2?'); now it
   // says what it does and marks a same-ADC choice.
-  const adcOf = useConnectionStore((s) => (rx: number): number | null => {
-    const e = s.receivers.find((r) => r.index === rx);
+  // Select the ARRAY (a stable reference between state changes) and derive
+  // from it. The first version selected a function — a new one every
+  // render, which Zustand sees as a changed value, which re-renders, which
+  // makes a new function… straight into React's update-depth limit and the
+  // error boundary (field: 'clicking Diversity causes a rendering problem').
+  const receivers = useConnectionStore((s) => s.receivers);
+  const adcOf = (rx: number): number | null => {
+    const e = receivers.find((r) => r.index === rx);
     return e ? e.adcSource : null;
-  });
-  const rx1Adc = useConnectionStore((s) => s.receivers.find((r) => r.index === 0)?.adcSource ?? 0);
+  };
+  const rx1Adc = receivers.find((r) => r.index === 0)?.adcSource ?? 0;
   const dial = useConnectionStore((s) =>
     s.vfoHz > 0 ? (s.vfoHz / 1e6).toFixed(3) : '—',
   );

@@ -1011,7 +1011,13 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         bool changed = Interlocked.Exchange(ref _diversitySourceEnabled, on ? 1 : 0) != (on ? 1 : 0);
         bool adcChanged = Interlocked.Exchange(ref _diversitySourceAdcSource, adcSource) != adcSource;
         changed |= on && adcChanged;
-        if (changed && _running) SendCmdRx();
+        if (changed && _rxTask is not null)
+        {
+            // Same re-send pair as SetRx2Enabled: the receive-specific packet
+            // reconfigures DDC0/1, and the high-priority packet re-asserts run.
+            SendCmdRx();
+            SendCmdHighPriority(run: true);
+        }
     }
 
     /// <summary>True when DDC0/DDC1 are the diversity pair: enabled, a second

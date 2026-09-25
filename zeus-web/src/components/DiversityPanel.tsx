@@ -209,6 +209,16 @@ export function DiversityPanel() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // Which ADC each receiver sits on. Diversity combines the SOURCE into RX1,
+  // and that is only meaningful across two ADCs — RX2 on ADC0 combined with
+  // RX1 on ADC0 is one antenna added to itself. The label used to say 'SRC'
+  // with no ADC shown (field: 'why RX2 and RX3, not RX1 and RX2?'); now it
+  // says what it does and marks a same-ADC choice.
+  const adcOf = useConnectionStore((s) => (rx: number): number | null => {
+    const e = s.receivers.find((r) => r.index === rx);
+    return e ? e.adcSource : null;
+  });
+  const rx1Adc = useConnectionStore((s) => s.receivers.find((r) => r.index === 0)?.adcSource ?? 0);
   const dial = useConnectionStore((s) =>
     s.vfoHz > 0 ? (s.vfoHz / 1e6).toFixed(3) : '—',
   );
@@ -244,17 +254,30 @@ export function DiversityPanel() {
         >
           {st.enabled ? 'ENABLED' : 'OFF'}
         </button>
-        <span className="diversity-src">
-          SRC
-          {[1, 2].map((rx) => (
-            <button
-              key={rx}
-              className={`ps-pill sm ${st.sourceRx === rx ? 'on' : ''}`}
-              onClick={() => st.setSourceRx(rx)}
-            >
-              RX{rx + 1}
-            </button>
-          ))}
+        <span className="diversity-src" title="Diversity combines the chosen receiver's stream into RX1. It only does anything when that receiver is on the OTHER ADC.">
+          COMBINE RX1 WITH
+          {[1, 2].map((rx) => {
+            const adc = adcOf(rx);
+            const sameAdc = adc !== null && adc === rx1Adc;
+            return (
+              <button
+                key={rx}
+                className={`ps-pill sm ${st.sourceRx === rx ? 'on' : ''} ${sameAdc ? 'dim' : ''}`}
+                onClick={() => st.setSourceRx(rx)}
+                title={
+                  sameAdc
+                    ? `RX${rx + 1} is on ADC${adc}, the same ADC as RX1 — no diversity gain; move it to the other ADC`
+                    : adc === null
+                      ? `RX${rx + 1}`
+                      : `RX${rx + 1} on ADC${adc}`
+                }
+              >
+                RX{rx + 1}
+                {adc !== null ? <small className="adc-tag"> ADC{adc}</small> : null}
+                {sameAdc ? <small className="adc-warn"> ⚠</small> : null}
+              </button>
+            );
+          })}
         </span>
         <span className="diversity-spacer" />
         <button

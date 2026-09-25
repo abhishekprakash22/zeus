@@ -1729,6 +1729,9 @@
   border-color: #ffb13c; color: #fff; }
 .diversity-src { display: inline-flex; align-items: center; gap: 4px;
   font: 600 9px var(--font-mono, monospace); color: var(--fg-2, #7d8694); }
+.diversity-src .ps-pill.dim { opacity: 0.55; }
+.diversity-src .adc-tag { font-size: 9px; letter-spacing: 0.04em; opacity: 0.7; }
+.diversity-src .adc-warn { color: #f0b33a; }
 .diversity-spacer { flex: 1; }
 .diversity-pad { flex: 1; min-height: 120px; width: 100%; touch-action: none;
   cursor: crosshair; }

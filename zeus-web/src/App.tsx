@@ -524,6 +524,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Never on a remote client. An update installs on the RADIO and restarts
+    // it; a remote operator who taps the prompt either downloads an installer
+    // to their own laptop (useless) or, worse, triggers an install-and-restart
+    // on a radio they are not standing next to, and loses the session mid-way.
+    // The force-update gate already skipped remote; this ordinary prompt did
+    // not (field: 'clicking it in remote mode will cause issues'). Settings ->
+    // Updates still shows the version remotely, with no install button.
+    if (remoteMode) return;
     const ctrl = new AbortController();
     fetchUpdateStatus(true, ctrl.signal)
       .then((next) => {
@@ -539,7 +547,7 @@ export default function App() {
         /* Settings -> Updates exposes manual retry and detailed errors. */
       });
     return () => ctrl.abort();
-  }, []);
+  }, [remoteMode]);
 
   useEffect(() => {
     // Remote (WebRTC) mode sources frames over the broker, not the local
@@ -1776,7 +1784,8 @@ export default function App() {
       />
       <PluginUpdatePrompt
         updates={
-          !startupUpdateVisible && !pluginUpdateDismissed ? pluginUpdates : []
+          // Plugins install on the radio too; a remote client never prompts.
+          !remoteMode && !startupUpdateVisible && !pluginUpdateDismissed ? pluginUpdates : []
         }
         onDismiss={dismissPluginUpdates}
         onOpenPlugins={() => {

@@ -110,6 +110,76 @@ public sealed class SstvTests
         }
     }
 
+    // Tuned in mid-picture (or the VIS lost to a fade): no header, only the
+    // sync train. The decoder must recognise the mode from pulse length and
+    // line period and start there; the rows it paints are the sender's rows
+    // from the cut onward. Robot 36 is cut on an ODD line to prove it finds
+    // line parity from the separator tone.
+    [Theory]
+    [InlineData("Martin 1", 40)]
+    [InlineData("Scottie 1", 40)]
+    [InlineData("PD 120", 30)]
+    [InlineData("Robot 36", 41)]
+    [InlineData("Robot 72", 20)]
+    [InlineData("Martin 2", 100)]
+    public void TunedInMidPicture_StartsFromTheSyncTrain(string name, int fromRow)
+    {
+        var mode = SstvModes.ByName(name)!;
+        var card = TestCard(mode);
+        var audio = SstvEncoder.Encode(mode, card, Rate, 0.5f, 20);
+        double lineMs = mode.LineMs;
+        double cutMs = SstvEncoder.VisMs + mode.LeadInMs + (fromRow / mode.RowsPerLine) * lineMs
+                       + (mode == SstvModes.R36 && fromRow % 2 == 1 ? 150 : 0) + 37;   // mid-line
+        var tail = audio.AsSpan((int)(cutMs * Rate / 1000)).ToArray();
+        // Trailing silence long enough for the decoder to call the picture
+        // lost once the sender stops (25 whole lines without sync, plus slack).
+        var buf = Pad(tail, 0.5, 30 * lineMs / 1000.0, 0.02f);
+
+        var dec = new SstvDecoder();
+        SstvImage? got = null;
+        dec.ImageEnded += (i, why) => { if (why != SstvEndReason.FalseStart) got = i; };
+        for (int i = 0; i < buf.Length; i += 600)
+            dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+
+        Assert.NotNull(got);
+        Assert.True(got!.ViaSync);
+        Assert.Same(mode, got.Mode);
+
+        // Decoded row r is source row k + r for some small k (where the train
+        // was anchored); find k and check the overlap looks right.
+        int rows = Math.Min(got.RowsDone, mode.Height - fromRow - 2 * mode.RowsPerLine) - 4;
+        Assert.True(rows > mode.Height / 4, $"only {got.RowsDone} rows");
+        double best = double.MaxValue;
+        for (int k = fromRow; k <= fromRow + 4 * mode.RowsPerLine; k++)
+        {
+            if (k + rows > mode.Height) break;
+            double err = 0; long n = 0;
+            int mx = mode.Width * 3 / 100 + 1;
+            for (int r = 0; r < rows; r++)
+            for (int x = mx; x < mode.Width - mx; x++)
+            for (int c = 0; c < 3; c++)
+            {
+                err += Math.Abs(card[((k + r) * mode.Width + x) * 3 + c] - got.Rgb[(r * mode.Width + x) * 3 + c]);
+                n++;
+            }
+            best = Math.Min(best, err / n);
+        }
+        Assert.InRange(best, 0, 12);
+    }
+
+    [Fact]
+    public void Noise_FromTheVeryFirstSample_NeverReadsBeforeTheTrack()
+    {
+        // Regression: the sync-train pulse hunt's moving average started at
+        // zero, "saw" a pulse at sample 0 and read the track before its start.
+        var buf = new float[5 * Rate];
+        AddGaussian(buf, 0, 4, std: 0.3);
+        var dec = new SstvDecoder();
+        for (int i = 0; i < buf.Length; i += 600)
+            dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+        dec.Process(buf);                                   // and one big block
+    }
+
     [Fact]
     public void GaussianNoise_ThreeMinutes_NoFalseStart()
     {

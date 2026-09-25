@@ -5902,6 +5902,9 @@ export interface SstvImageMeta {
   shiftPx: number;
   /** Sender's callsign from the FSK ID, when one followed the picture. */
   callsign: string | null;
+  /** Started from the sync train without a VIS header (tuned in mid-picture,
+   *  or the VIS lost to a fade). */
+  viaSync: boolean;
 }
 
 export interface SstvStatusDto {

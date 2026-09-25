@@ -35,7 +35,7 @@ function meta(id: number, rowsDone = 0): SstvImageMeta {
   return {
     id, mode: 'Martin 1', width: 2, height: 2, rowsDone, offsetHz: 0, clockErrorPpm: 0,
     dialHz: 14_230_000, sideBand: 'USB', startedUnixMs: 0, endedUnixMs: null, endReason: null,
-    key: null, adjustable: true, slantPpm: 0, shiftPx: 0, callsign: null,
+    key: null, adjustable: true, slantPpm: 0, shiftPx: 0, callsign: null, viaSync: false,
   };
 }
 

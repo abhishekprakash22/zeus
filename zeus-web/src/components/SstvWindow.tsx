@@ -40,7 +40,7 @@ function utcDate(ms: number): string {
 }
 
 function describe(m: SstvImageMeta, live: boolean): string {
-  const parts = [m.mode];
+  const parts = [m.viaSync ? `${m.mode} (no VIS)` : m.mode];
   if (m.callsign) parts.push(`de ${m.callsign}`);
   parts.push(`${m.rowsDone}/${m.height}`);
   if (Math.abs(m.offsetHz) >= 1)

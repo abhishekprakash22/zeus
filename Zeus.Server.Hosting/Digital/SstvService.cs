@@ -37,7 +37,8 @@ public sealed record SstvImageMeta(
     int Id, string Mode, int Width, int Height, int RowsDone,
     double OffsetHz, double ClockErrorPpm, long DialHz, string SideBand,
     long StartedUnixMs, long? EndedUnixMs, string? EndReason,
-    string? Key, bool Adjustable, double SlantPpm, double ShiftPx, string? Callsign);
+    string? Key, bool Adjustable, double SlantPpm, double ShiftPx, string? Callsign,
+    bool ViaSync);
 
 public sealed record SstvModeInfo(string Name, int Width, int Height, double DurationMs);
 
@@ -104,6 +105,7 @@ public sealed class SstvService : IHostedService, IDisposable
         public long? EndedUnixMs;
         public string? EndReason;
         public string? Callsign;
+        public bool ViaSync;
 
         public void Absorb(SstvImage img)
         {
@@ -117,6 +119,7 @@ public sealed class SstvService : IHostedService, IDisposable
             SlantPpm = img.SlantPpm;
             ShiftPx = img.ShiftPx;
             EndReason = img.EndReason?.ToString();
+            ViaSync = img.ViaSync;
         }
     }
 
@@ -435,7 +438,7 @@ public sealed class SstvService : IHostedService, IDisposable
                         SlantPpm = m.SlantPpm, ShiftPx = m.ShiftPx,
                         DialHz = m.DialHz, SideBand = m.SideBand,
                         StartedUnixMs = m.StartedUnixMs, EndedUnixMs = m.EndedUnixMs,
-                        EndReason = m.EndReason, Callsign = m.Callsign,
+                        EndReason = m.EndReason, Callsign = m.Callsign, ViaSync = m.ViaSync,
                     });
             _log.LogInformation("sstv: gallery {Dir} ({N} picture(s))", _gallery.Dir, stored.Count);
         }
@@ -466,7 +469,7 @@ public sealed class SstvService : IHostedService, IDisposable
             meta = new SstvStoredMeta(
                 e.Key, e.Mode, e.Width, e.Height, e.RowsDone, e.OffsetHz, e.ClockErrorPpm,
                 e.DialHz, e.SideBand, e.StartedUnixMs, e.EndedUnixMs, e.EndReason,
-                e.SlantPpm, e.ShiftPx, e.Callsign);
+                e.SlantPpm, e.ShiftPx, e.Callsign, e.ViaSync);
             rgb = e.Image.Rgb;
         }
         try
@@ -498,5 +501,5 @@ public sealed class SstvService : IHostedService, IDisposable
     private static SstvImageMeta Meta(Entry e) => new(
         e.Id, e.Mode, e.Width, e.Height, e.RowsDone, e.OffsetHz, e.ClockErrorPpm,
         e.DialHz, e.SideBand, e.StartedUnixMs, e.EndedUnixMs, e.EndReason,
-        e.Key, e.Image?.Recording is not null, e.SlantPpm, e.ShiftPx, e.Callsign);
+        e.Key, e.Image?.Recording is not null, e.SlantPpm, e.ShiftPx, e.Callsign, e.ViaSync);
 }

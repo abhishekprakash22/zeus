@@ -36,7 +36,9 @@ public sealed record SstvStoredMeta(
     string? EndReason,
     double SlantPpm,
     double ShiftPx,
-    string? Callsign);
+    string? Callsign,
+    /// <summary>Started from the sync train, without a VIS (older sidecars: false).</summary>
+    bool ViaSync = false);
 
 public sealed class SstvGallery
 {

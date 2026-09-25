@@ -16,7 +16,7 @@ const META: SstvImageMeta = {
   id: 4, mode: 'Martin 1', width: 320, height: 256, rowsDone: 256, offsetHz: 12,
   clockErrorPpm: 150, dialHz: 14_230_000, sideBand: 'USB',
   startedUnixMs: Date.UTC(2026, 8, 25, 18, 30, 0), endedUnixMs: null, endReason: 'Complete',
-  key: 'k', adjustable: false, slantPpm: 0, shiftPx: 0, callsign: 'EA4ABC',
+  key: 'k', adjustable: false, slantPpm: 0, shiftPx: 0, callsign: 'EA4ABC', viaSync: false,
 };
 
 describe('SstvWindow log row', () => {

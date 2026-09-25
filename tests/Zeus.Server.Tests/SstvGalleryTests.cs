@@ -68,6 +68,21 @@ public sealed class SstvGalleryTests : IDisposable
         key, "Martin 1", 2, 2, 2, 0, 0, 14_230_000, "USB", started, started + 1000,
         "Complete", 0, 0, "EA4ABC");
 
+    [Fact]
+    public void Gallery_ReadsSidecarsWrittenBeforeViaSyncExisted()
+    {
+        Directory.CreateDirectory(_dir);
+        var key = SstvGallery.MakeKey(1_700_000_000_000, 14_230_000, "Martin 1");
+        File.WriteAllBytes(Path.Combine(_dir, key + ".png"), PngWriter.EncodeRgb(new byte[12], 2, 2));
+        File.WriteAllText(Path.Combine(_dir, key + ".json"), $$"""
+            {"key":"{{key}}","mode":"Martin 1","width":2,"height":2,"rowsDone":2,"offsetHz":0,
+             "clockErrorPpm":0,"dialHz":14230000,"sideBand":"USB","startedUnixMs":1700000000000,
+             "endedUnixMs":null,"endReason":"Complete","slantPpm":0,"shiftPx":0,"callsign":null}
+            """);
+        var m = Assert.Single(new SstvGallery(_dir).LoadIndex(10));
+        Assert.False(m.ViaSync);
+    }
+
     // ---- a PNG reader just capable enough to check what we write -----------
 
     private static (int W, int H, byte[] Rgb, Dictionary<string, string> Text) DecodePng(byte[] png)

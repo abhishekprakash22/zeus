@@ -55,6 +55,9 @@ public sealed class SstvDecoder
     // Sync tracking.
     private const double SyncTolHz = 150;          // pulse MEAN vs 1200 Hz
     private const double MinSyncContrastHz = 250;  // (before − pulse) + (after − pulse)
+    private const int SettledSyncs = 8;            // fit trusted from here on…
+    private const double SettledTolMs = 2.0;       // …so syncs must land within this of it
+    private const double SettledHzTol = 60;        // …and sound like the syncs before them
     private const double FitOutlierMs = 1.5;
     private const double MaxClockError = 0.02;
     private const int FalseStartLines = 12;
@@ -62,7 +65,18 @@ public sealed class SstvDecoder
     private const int LostAfterLines = 25;
 
     // Idle history kept for the VIS edge refinement and the FSK-ID scan.
-    private const int IdleKeepSamples = 6 * SampleRate;
+    // (12 s: also the look-back a sync-train start can anchor to.)
+    private const int IdleKeepSamples = 12 * SampleRate;
+
+    // Sync-train start (no VIS): pulses found on a 2 ms moving average of
+    // the track while idle; a mode is recognised when enough of them sit at
+    // multiples of its line period.
+    private const int PulseAvg = 24;                 // 2 ms
+    private const double PulseBelowHz = 1350;        // between sync 1200 and black 1500
+    private const int MaxPulses = 64;
+    private const int TrainMinPulses = 5;
+    private const int TrainMaxLines = 16;
+    private const double TrainMinCoverage = 0.6;
 
     // FSK ID (MMSSTV format, also QSSTV/YONIQ): after the picture, 1500 Hz
     // 300 ms, 2100 Hz 100 ms guard, a 1900 Hz start bit, then 6-bit chars LSB
@@ -86,9 +100,22 @@ public sealed class SstvDecoder
 
     private Image? _img;
 
+    // Sync-train hunt state (idle only).
+    private readonly float[] _pAvgRing = new float[PulseAvg];
+    private int _pAvgPos;
+    private double _pAvgSum;
+    private bool _inPulse;
+    private long _pulseStart;
+    private readonly long[] _pStart = new long[MaxPulses];
+    private readonly int[] _pLen = new int[MaxPulses];
+    private readonly float[] _pHz = new float[MaxPulses];
+    private int _pCount;                               // total pulses recorded
+
     // FSK-ID scan armed by a completed picture.
     private SstvImage? _fskFor;
     private long _fskFrom, _fskScanAt;
+
+    public SstvDecoder() => ClearPulses();
 
     /// <summary>The picture being received, or null while hunting for VIS.</summary>
     public SstvImage? Current => _img?.Public;
@@ -111,6 +138,7 @@ public sealed class SstvDecoder
         _binCount = 0; _binAcc = 0; _binFill = 0; _visHoldUntilBin = 0;
         _img = null;
         _fskFor = null;
+        ClearPulses();
     }
 
     /// <summary>End the picture in progress (if any) as <see cref="SstvEndReason.Stopped"/>.</summary>
@@ -127,7 +155,10 @@ public sealed class SstvDecoder
             _track.Append(f);
             _n++;
 
-            _binAcc += Math.Clamp(f, 900f, 2600f);
+            float fc = Math.Clamp(f, 900f, 2600f);
+            if (_img is null) HuntPulse(fc);
+
+            _binAcc += fc;
             if (++_binFill == BinSamples)
             {
                 _bins[_binCount % BinHistory] = (float)(_binAcc / BinSamples);
@@ -335,14 +366,135 @@ public sealed class SstvDecoder
 
     // ---- picture ------------------------------------------------------------
 
-    private void Begin(SstvMode mode, long visEnd, double offset)
+    private void Begin(SstvMode mode, long visEnd, double offset, bool viaSync = false)
     {
         if (_fskFor is not null) ScanFskId();       // before the trim discards it
         _track.TrimBefore(visEnd - (long)(50 * SamplesPerMs));
+        ClearPulses();
         var img = new Image(mode, visEnd, offset);
+        img.Public.ViaSync = viaSync;
         _img = img;
         ImageStarted?.Invoke(img.Public);
     }
+
+    // ---- sync-train start (no VIS) -------------------------------------------
+    //
+    // A picture whose VIS was lost to a fade — or one tuned into halfway — is
+    // still a train of sync pulses at the mode's line period. Recognise the
+    // train and start there, the way MMSSTV's sync auto-start does; the
+    // picture then fills from the top with whatever arrives. Pulse length
+    // (4.9 / 9 / 20 ms) and period separate the modes; a coverage floor
+    // stops Robot 36 (a pulse every 150 ms) claiming a Robot 72 train (every
+    // 300 ms) and vice versa.
+
+    /// <summary>Forget the pulse history and restart the moving average at a
+    /// neutral mid-band value — a zero-filled average reads as "below 1350 Hz"
+    /// and would open a phantom pulse before the start of the track.</summary>
+    private void ClearPulses()
+    {
+        _pCount = 0;
+        _inPulse = false;
+        Array.Fill(_pAvgRing, (float)SstvModes.LeaderHz);
+        _pAvgSum = SstvModes.LeaderHz * PulseAvg;
+        _pAvgPos = 0;
+    }
+
+    /// <summary>Per-sample, idle only: track runs of the 2 ms moving average
+    /// below 1350 Hz and record each as a pulse.</summary>
+    private void HuntPulse(float fc)
+    {
+        _pAvgSum += fc - _pAvgRing[_pAvgPos];
+        _pAvgRing[_pAvgPos] = fc;
+        if (++_pAvgPos == PulseAvg) _pAvgPos = 0;
+        double avg = _pAvgSum / PulseAvg;
+        // The average lags by half its window: edges are placed PulseAvg/2 back.
+        if (!_inPulse)
+        {
+            if (avg < PulseBelowHz)
+            {
+                _inPulse = true;
+                _pulseStart = _n - PulseAvg / 2;
+            }
+            return;
+        }
+        if (avg < PulseBelowHz) return;
+        _inPulse = false;
+        int len = (int)(_n - PulseAvg / 2 - _pulseStart);
+        if (len < 3 * SamplesPerMs || len > 25 * SamplesPerMs) return;
+        if (_pulseStart + len / 4 < _track.Base) return;       // history already trimmed
+        int k = _pCount % MaxPulses;
+        // Tone from the pulse's central half only — the averaged run's edges
+        // are smeared into the porch and would bias the offset upward.
+        _pStart[k] = _pulseStart; _pLen[k] = len;
+        _pHz[k] = (float)Median(_pulseStart + len / 4, Math.Max(1, len / 2));
+        _pCount++;
+        TrySyncTrain();
+    }
+
+    private void TrySyncTrain()
+    {
+        int last = (_pCount - 1) % MaxPulses;
+        long pk = _pStart[last];
+        int lenK = _pLen[last];
+        int avail = Math.Min(_pCount, MaxPulses);
+
+        SstvMode? bestMode = null;
+        int bestCount = 0;
+        long bestAnchor = 0;
+        Span<bool> seen = stackalloc bool[TrainMaxLines + 1];
+        foreach (var m in SstvModes.All)
+        {
+            double period = TrainPeriodMs(m) * SamplesPerMs, syncLen = m.SyncMs * SamplesPerMs;
+            if (Math.Abs(lenK - syncLen) > 0.35 * syncLen + SamplesPerMs) continue;
+            seen.Clear();
+            int count = 1, maxN = 0;
+            long anchor = pk;
+            for (int i = 1; i < avail; i++)
+            {
+                int j = (_pCount - 1 - i) % MaxPulses;
+                if (Math.Abs(_pLen[j] - syncLen) > 0.35 * syncLen + SamplesPerMs) continue;
+                long delta = pk - _pStart[j];
+                int n = (int)Math.Round(delta / period);
+                if (n < 1 || n > TrainMaxLines || seen[n]) continue;
+                if (Math.Abs(delta - n * period) > 0.005 * delta + 1.5 * SamplesPerMs) continue;
+                seen[n] = true;
+                count++;
+                maxN = Math.Max(maxN, n);
+                anchor = Math.Min(anchor, _pStart[j]);
+            }
+            if (count < TrainMinPulses || count < TrainMinCoverage * (maxN + 1)) continue;
+            if (count > bestCount) { bestCount = count; bestMode = m; bestAnchor = anchor; }
+        }
+        if (bestMode is null || bestAnchor - 50 * SamplesPerMs < _track.Base) return;
+
+        // Offset from the pulses themselves (median of their mean tone).
+        Span<float> hz = stackalloc float[avail];
+        for (int i = 0; i < avail; i++) hz[i] = _pHz[i];
+        hz.Sort();
+        double offset = Math.Clamp(hz[avail / 2] - SstvModes.SyncHz, -MaxOffsetHz, MaxOffsetHz);
+
+        long anchorSync = bestAnchor;
+        if (bestMode == SstvModes.R36 && IsRobot36OddLine(anchorSync, offset))
+            anchorSync += (long)(150 * SamplesPerMs);         // start on an even (R-Y) line
+
+        // Place "VIS end" so line 0's sync lands on the anchor pulse.
+        long visEnd = anchorSync - (long)Math.Round((bestMode.LeadInMs + bestMode.SyncOffsetMs) * SamplesPerMs);
+        Begin(bestMode, visEnd, offset, viaSync: true);
+    }
+
+    /// <summary>Robot 36 carries R-Y on even lines behind a 1500 Hz separator
+    /// and B-Y on odd ones behind 2300 Hz; read the separator after this sync.</summary>
+    private bool IsRobot36OddLine(long syncStart, double offset)
+    {
+        long sep = syncStart + (long)((9 + 3 + 88 + 0.75) * SamplesPerMs);
+        int len = (int)(3 * SamplesPerMs);
+        if (sep < _track.Base || sep + len > _track.End) return false;
+        return Median(sep, len) - offset > SstvModes.LeaderHz;      // 2300 vs 1500, split at 1900
+    }
+
+    /// <summary>Spacing between consecutive sync pulses (Robot 36: two per
+    /// modelled double line).</summary>
+    private static double TrainPeriodMs(SstvMode m) => m == SstvModes.R36 ? m.LineMs / 2 : m.LineMs;
 
     private void Advance()
     {
@@ -355,8 +507,20 @@ public sealed class SstvDecoder
             double lineEnd = img.LineStart(n) + img.Mode.LineMs * img.MsToSamples;
             if (Math.Max(predicted + win + img.SyncLen, lineEnd) + 2 > _n) return;  // need more audio
 
-            if (FindSync(_track, img, predicted, win) is double ts)
+            // Once the line fit has settled, a pulse must also land where the
+            // fit says: noise after the sender stops can still produce the
+            // odd pulse-shaped stretch somewhere in the ±win window, and each
+            // one would push "last sync" on and keep a dead picture alive.
+            // Its tone must also match the pulses already accepted (their
+            // median — at low SNR the demodulator pulls every pulse's mean up
+            // by the same amount, so a fixed band would be too loose there
+            // and too tight elsewhere).
+            if (FindSync(_track, img, predicted, win) is var (ts, pulseHz)
+                && (img.Syncs.Count < SettledSyncs
+                    || (Math.Abs(ts - predicted) <= SettledTolMs * SamplesPerMs
+                        && Math.Abs(pulseHz - img.SyncHzMedian()) <= SettledHzTol)))
             {
+                img.AddSyncHz(pulseHz);
                 img.Syncs.Add((n, ts));
                 img.LastSyncLine = n;
                 img.Refit();
@@ -390,7 +554,7 @@ public sealed class SstvDecoder
     /// Means over the pulse and a ≤3 ms window each side average the FM
     /// demodulator's noise and clicks down, where the old per-sample ±110 Hz
     /// count collapsed below ~10 dB SNR and lost the picture.</summary>
-    private static double? FindSync(Track track, Image img, double predicted, double win)
+    private static (double T, double Hz)? FindSync(Track track, Image img, double predicted, double win)
     {
         int len = (int)Math.Round(img.SyncLen);
         int side = Math.Min(len, (int)(3 * SamplesPerMs));
@@ -419,6 +583,7 @@ public sealed class SstvDecoder
             if (score > bestScore) { bestScore = score; bestT = t; }
         }
         if (bestT < 0 || bestScore < MinSyncContrastHz) return null;
+        double pulseHz = Mean(bestT, len);
 
         // The contrast peak is biased by whatever picture sits beside the
         // pulse (brighter content pulls it that way), and a bias that changes
@@ -436,7 +601,7 @@ public sealed class SstvDecoder
             double wt = Math.Clamp((SstvModes.SyncHz + 250 - f) / 200.0, 0, 1);
             sw += wt; st += wt * (t + 0.5);
         }
-        return sw > 0 ? st / sw - len / 2.0 : bestT;
+        return (sw > 0 ? st / sw - len / 2.0 : bestT, pulseHz);
     }
 
     private static void RenderLine(Track track, Image img, int n)
@@ -515,6 +680,7 @@ public sealed class SstvDecoder
             }
         }
         img.Public.EndReason = reason;
+        ClearPulses();
         if (_fskFor is null) _track.TrimBefore(_n - IdleKeepSamples);
         ImageEnded?.Invoke(img.Public, reason);
     }
@@ -563,8 +729,12 @@ public sealed class SstvDecoder
             double predicted = img.SyncAt(n);
             double lineEnd = img.LineStart(n) + m.LineMs * img.MsToSamples;
             if (Math.Max(predicted + img.SyncWindow + img.SyncLen, lineEnd) + 2 > track.End) break;
-            if (FindSync(track, img, predicted, img.SyncWindow) is double ts)
+            if (FindSync(track, img, predicted, img.SyncWindow) is var (ts, pulseHz)
+                && (img.Syncs.Count < SettledSyncs
+                    || (Math.Abs(ts - predicted) <= SettledTolMs * SamplesPerMs
+                        && Math.Abs(pulseHz - img.SyncHzMedian()) <= SettledHzTol)))
             {
+                img.AddSyncHz(pulseHz);
                 img.Syncs.Add((n, ts));
                 img.LastSyncLine = n;
                 img.Refit();
@@ -593,6 +763,21 @@ public sealed class SstvDecoder
         public readonly double SyncWindow;
         public readonly byte[] Scratch;
         public readonly List<(int Line, double T)> Syncs = new();
+        private readonly float[] _syncHz = new float[32];
+        private int _syncHzCount;
+
+        public void AddSyncHz(double hz) => _syncHz[_syncHzCount++ % _syncHz.Length] = (float)hz;
+
+        /// <summary>Median tone of the recent accepted sync pulses.</summary>
+        public double SyncHzMedian()
+        {
+            int n = Math.Min(_syncHzCount, _syncHz.Length);
+            if (n == 0) return SstvModes.SyncHz;
+            Span<float> tmp = stackalloc float[n];
+            _syncHz.AsSpan(0, n).CopyTo(tmp);
+            tmp.Sort();
+            return tmp[n / 2];
+        }
         public int NextLine;
         public int LastSyncLine = -1;
         public double A, B;
@@ -768,6 +953,9 @@ public sealed class SstvImage
     /// <summary>Sender clock error from the final sync fit (0.001 = +0.1 %).</summary>
     public double ClockError { get; internal set; }
     public SstvEndReason? EndReason { get; internal set; }
+    /// <summary>Started from a train of sync pulses, without a VIS header
+    /// (tuned in mid-picture, or the VIS lost to a fade).</summary>
+    public bool ViaSync { get; internal set; }
     /// <summary>Manual slant correction (ppm) applied on top of the fit.</summary>
     public double SlantPpm { get; internal set; }
     /// <summary>Manual horizontal shift (pixels; + moves the picture right).</summary>

@@ -97,6 +97,22 @@ jobs:
           npm ci
           npm run build
 
+      # The operator's manual PDF. Field (v1.108, Windows 11): About -> User
+      # Manual returned 'page can't be found'. Only the Linux AppImage job
+      # ever built the PDF; Windows and macOS shipped without it, so every
+      # non-Linux operator has had a dead link since the manual moved into
+      # wwwroot. Same build as Linux — build.mjs finds Chrome/Edge on the
+      # runner — staged into wwwroot AFTER the frontend build (which empties
+      # wwwroot) and BEFORE publish (whose content glob picks it up).
+      - name: Build operator's manual PDF
+        env:
+          MANUAL_CHROME_EXTRA_FLAGS: "--no-sandbox --disable-dev-shm-usage"
+        run: |
+          node docs/manual/build.mjs
+          test -s docs/manual/build/Zeus-Operator-Manual.pdf
+          cp docs/manual/build/Zeus-Operator-Manual.pdf Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
+          ls -la Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
+
       - name: Publish (osx-arm64, self-contained)
         run: |
           dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj \
@@ -114,7 +130,10 @@ jobs:
           ./installers/create-macos-app.sh "${{ steps.version.outputs.version }}" arm64
 
       - name: Build .pkg installer
-        run: ./installers/create-macos-pkg.sh "${{ steps.version.outputs.version }}" arm64
+        run: |
+          f="OpenhpsdrZeus/bin/Release/net10.0/osx-arm64/publish/wwwroot/Zeus-Operator-Manual.pdf"
+          test -s "$f" || { echo "manual PDF missing from publish payload: $f" >&2; exit 1; }
+          ./installers/create-macos-pkg.sh "${{ steps.version.outputs.version }}" arm64
 
       - name: Attach installer to the release
         uses: softprops/action-gh-release@v2

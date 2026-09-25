@@ -95,6 +95,23 @@ jobs:
           npm ci
           npm run build
 
+      # The operator's manual PDF. Field (v1.108, Windows 11): About -> User
+      # Manual returned 'page can't be found'. Only the Linux AppImage job
+      # ever built the PDF; Windows and macOS shipped without it, so every
+      # non-Linux operator has had a dead link since the manual moved into
+      # wwwroot. Same build as Linux — build.mjs finds Chrome/Edge on the
+      # runner — staged into wwwroot AFTER the frontend build (which empties
+      # wwwroot) and BEFORE publish (whose content glob picks it up).
+      - name: Build operator's manual PDF
+        shell: bash
+        env:
+          MANUAL_CHROME_EXTRA_FLAGS: "--no-sandbox --disable-dev-shm-usage"
+        run: |
+          node docs/manual/build.mjs
+          test -s docs/manual/build/Zeus-Operator-Manual.pdf
+          cp docs/manual/build/Zeus-Operator-Manual.pdf Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
+          ls -la Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
+
       - name: Publish (win-x64, self-contained)
         # EXACTLY the dev pipeline's flags (build-windows-dev.yml) — its
         # 'single binary' comment is loose prose; the publish is
@@ -111,6 +128,13 @@ jobs:
             -p:VersionPrefix=${{ steps.version.outputs.version }} \
             -p:DebugType=embedded \
             -p:DebugSymbols=false
+
+      - name: Verify the manual shipped
+        shell: bash
+        run: |
+          f="OpenhpsdrZeus/bin/Release/net10.0/win-x64/publish/wwwroot/Zeus-Operator-Manual.pdf"
+          test -s "$f" || { echo "manual PDF missing from publish payload: $f" >&2; exit 1; }
+          ls -la "$f"
 
       - name: Verify installer payload
         shell: pwsh

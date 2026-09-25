@@ -1338,13 +1338,6 @@ export default function App() {
       <DiversityWindow />
       <CwDecodeController />
       <CwDecodeWindow />
-
-      {/* Diversity pop-out — summoned by the transport DIV button; the
-          combiner itself is backend state, so closing the window never
-          disengages an active null. */}
-      <DiversityWindow />
-      <CwDecodeController />
-      <CwDecodeWindow />
       </div>
       </SpectrumWheelActionsContext.Provider>
       </WorkspaceContext.Provider>
@@ -1668,13 +1661,6 @@ export default function App() {
           (engaging the mode), always on top, draggable, not resizable. Renders
           null when no digital mode is engaged. */}
       <DigitalWindow />
-
-      {/* Diversity pop-out — summoned by the transport DIV button; the
-          combiner itself is backend state, so closing the window never
-          disengages an active null. */}
-      <DiversityWindow />
-      <CwDecodeController />
-      <CwDecodeWindow />
 
       {/* Diversity pop-out — summoned by the transport DIV button; the
           combiner itself is backend state, so closing the window never

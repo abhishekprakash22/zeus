@@ -15,6 +15,14 @@
 //            (plus ONE 9 ms "starting sync" right after the VIS header)
 //   PD       sync 20 | porch 2.08 | Y(even row) | Cr | Cb | Y(odd row)
 //            — one transmitted line carries TWO image rows.
+//   Robot 72 sync 9 | porch 3 | Y 138 | sep 4.5 (1500) | porch 1.5 (1900) |
+//            Cr 69 | sep 4.5 (2300) | porch 1.5 (1900) | Cb 69
+//   Robot 36 two 150 ms lines, each: sync 9 | porch 3 | Y 88 | sep 4.5 |
+//            porch 1.5 (1900) | chroma 44 — even lines carry Cr behind a
+//            1500 Hz separator, odd lines Cb behind 2300 Hz. Modelled as one
+//            300 ms "double line" (two rows, like PD) so the sync fit tracks
+//            the even-line pulse and each row pair gets both chroma scans.
+//            Chroma scans run at half the luma pixel time.
 
 namespace Zeus.Server.Hosting.Digital.Sstv;
 
@@ -24,8 +32,14 @@ public enum SstvColor { Rgb, YCrCb }
 public enum SstvChannel { R, G, B, Y0, Y1, Cr, Cb }
 
 /// <summary>One scan: <paramref name="StartMs"/> from the start of the
-/// transmitted line, lasting width × pixel time.</summary>
-public readonly record struct SstvScan(SstvChannel Channel, double StartMs);
+/// transmitted line, lasting width × pixel time. <paramref name="PixelMs"/>
+/// overrides the mode's pixel time (Robot chroma runs at half speed).</summary>
+public readonly record struct SstvScan(SstvChannel Channel, double StartMs, double PixelMs = 0);
+
+/// <summary>A fixed tone inside the line other than the sync pulse and black
+/// (Robot's 2300 Hz separator, its 1900 Hz porches, Robot 36's second sync).
+/// Anything a mode leaves unspecified is black (1500 Hz).</summary>
+public readonly record struct SstvTone(double StartMs, double DurMs, double Hz);
 
 public sealed record SstvMode(
     string Name,
@@ -41,12 +55,16 @@ public sealed record SstvMode(
     /// transmitted line 0 (Scottie's one-off starting sync).</summary>
     double LeadInMs,
     SstvColor Color,
-    SstvScan[] Scans)
+    SstvScan[] Scans,
+    SstvTone[]? Tones = null,
+    /// <summary>Image rows per transmitted line; 0 = by colour (YCrCb 2, RGB 1).</summary>
+    int Rows = 0)
 {
-    /// <summary>Image rows carried by one transmitted line (PD: 2).</summary>
-    public int RowsPerLine => Color == SstvColor.YCrCb ? 2 : 1;
+    /// <summary>Image rows carried by one transmitted line (PD, Robot 36: 2).</summary>
+    public int RowsPerLine => Rows > 0 ? Rows : Color == SstvColor.YCrCb ? 2 : 1;
     public int TxLines => Height / RowsPerLine;
-    public double ScanMs => Width * PixelMs;
+    public double PixelOf(SstvScan s) => s.PixelMs > 0 ? s.PixelMs : PixelMs;
+    public double ScanMsOf(SstvScan s) => Width * PixelOf(s);
     public double DurationMs => LeadInMs + TxLines * LineMs;
 }
 
@@ -85,6 +103,34 @@ public static class SstvModes
              new(SstvChannel.Cb, y0 + 2 * scan), new(SstvChannel.Y1, y0 + 3 * scan)]);
     }
 
+    private static SstvMode Robot36()
+    {
+        const double sync = 9, porch = 3, sep = 4.5, porch2 = 1.5, half = 150;
+        double y = 88.0 / 320, c = 44.0 / 320;
+        double y0 = sync + porch, cr = y0 + 88 + sep + porch2;
+        double y1 = half + y0, cb = y1 + 88 + sep + porch2;
+        return new SstvMode("Robot 36", 8, 320, 240, sync, y, 2 * half, 0, 0, SstvColor.YCrCb,
+            [new(SstvChannel.Y0, y0), new(SstvChannel.Cr, cr, c),
+             new(SstvChannel.Y1, y1), new(SstvChannel.Cb, cb, c)],
+            [new(y0 + 88, sep, SstvModes.BlackHz), new(y0 + 88 + sep, porch2, SstvModes.LeaderHz),
+             new(half, sync, SstvModes.SyncHz),
+             new(y1 + 88, sep, SstvModes.WhiteHz), new(y1 + 88 + sep, porch2, SstvModes.LeaderHz)],
+            Rows: 2);
+    }
+
+    private static SstvMode Robot72()
+    {
+        const double sync = 9, porch = 3, sep = 4.5, porch2 = 1.5;
+        double y = 138.0 / 320, c = 69.0 / 320;
+        double y0 = sync + porch, cr = y0 + 138 + sep + porch2, cb = cr + 69 + sep + porch2;
+        double line = cb + 69;
+        return new SstvMode("Robot 72", 12, 320, 240, sync, y, line, 0, 0, SstvColor.YCrCb,
+            [new(SstvChannel.Y0, y0), new(SstvChannel.Cr, cr, c), new(SstvChannel.Cb, cb, c)],
+            [new(y0 + 138, sep, SstvModes.BlackHz), new(y0 + 138 + sep, porch2, SstvModes.LeaderHz),
+             new(cr + 69, sep, SstvModes.WhiteHz), new(cr + 69 + sep, porch2, SstvModes.LeaderHz)],
+            Rows: 1);
+    }
+
     // ---- table --------------------------------------------------------------
 
     public static readonly SstvMode M1 = Martin("Martin 1", 44, 0.4576);
@@ -99,9 +145,11 @@ public static class SstvModes
     public static readonly SstvMode PD180 = Pd("PD 180", 96, 640, 496, 0.286);
     public static readonly SstvMode PD240 = Pd("PD 240", 97, 640, 496, 0.382);
     public static readonly SstvMode PD290 = Pd("PD 290", 94, 800, 616, 0.286);
+    public static readonly SstvMode R36 = Robot36();
+    public static readonly SstvMode R72 = Robot72();
 
     public static readonly IReadOnlyList<SstvMode> All =
-        [M1, M2, S1, S2, SDX, PD50, PD90, PD120, PD160, PD180, PD240, PD290];
+        [M1, M2, S1, S2, SDX, PD50, PD90, PD120, PD160, PD180, PD240, PD290, R36, R72];
 
     public static SstvMode? ByVis(int code)
     {

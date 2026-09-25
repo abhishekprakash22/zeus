@@ -121,47 +121,43 @@ public static class SstvEncoder
 
     private static void WriteLine(ref ToneWriter w, SstvMode mode, byte[][] planes, int line, double t0)
     {
-        double scanMs = mode.ScanMs;
-        // Gaps: sync pulse at SyncOffset, porch after it, separators elsewhere.
-        // Anything not covered by a scan is "gap": 1200 Hz inside the sync
-        // pulse, 1500 Hz (black) otherwise — the standard porch/separator tone.
-        double syncStart = mode.SyncOffsetMs, syncEnd = syncStart + mode.SyncMs;
-        double cursor = 0;
-        foreach (var scan in mode.Scans.OrderBy(s => s.StartMs))
+        // The line as ordered segments: the sync pulse, the mode's fixed tones
+        // and its scans. Whatever they leave uncovered is black (1500 Hz) —
+        // the standard porch/separator tone.
+        var segs = new List<(double Start, double End, double Hz, SstvScan? Scan)>
         {
-            FillGap(ref w, t0, cursor, scan.StartMs, syncStart, syncEnd);
-            byte[] plane = planes[(int)scan.Channel];
-            int rowBase = line * mode.Width;
-            for (int x = 0; x < mode.Width; x++)
-                w.ToneUntil(SstvModes.LumaToHz(plane[rowBase + x]),
-                    t0 + scan.StartMs + (x + 1) * mode.PixelMs);
-            cursor = scan.StartMs + scanMs;
-        }
-        FillGap(ref w, t0, cursor, mode.LineMs, syncStart, syncEnd);
-    }
+            (mode.SyncOffsetMs, mode.SyncOffsetMs + mode.SyncMs, SstvModes.SyncHz, null),
+        };
+        foreach (var t in mode.Tones ?? []) segs.Add((t.StartMs, t.StartMs + t.DurMs, t.Hz, null));
+        foreach (var s in mode.Scans) segs.Add((s.StartMs, s.StartMs + mode.ScanMsOf(s), 0, s));
+        segs.Sort((a, b) => a.Start.CompareTo(b.Start));
 
-    private static void FillGap(ref ToneWriter w, double t0, double from, double to,
-                                double syncStart, double syncEnd)
-    {
-        if (to <= from) return;
-        // Split [from,to) around the sync pulse.
-        double a = Math.Max(from, syncStart), b = Math.Min(to, syncEnd);
-        if (b > a)
+        int rowBase = line * mode.Width;
+        double cursor = 0;
+        foreach (var seg in segs)
         {
-            if (a > from) w.ToneUntil(SstvModes.BlackHz, t0 + a);
-            w.ToneUntil(SstvModes.SyncHz, t0 + b);
-            if (to > b) w.ToneUntil(SstvModes.BlackHz, t0 + to);
+            if (seg.Start > cursor) w.ToneUntil(SstvModes.BlackHz, t0 + seg.Start);
+            if (seg.Scan is { } scan)
+            {
+                byte[] plane = planes[(int)scan.Channel];
+                double px = mode.PixelOf(scan);
+                for (int x = 0; x < mode.Width; x++)
+                    w.ToneUntil(SstvModes.LumaToHz(plane[rowBase + x]), t0 + scan.StartMs + (x + 1) * px);
+            }
+            else
+            {
+                w.ToneUntil(seg.Hz, t0 + seg.End);
+            }
+            cursor = Math.Max(cursor, seg.End);
         }
-        else
-        {
-            w.ToneUntil(SstvModes.BlackHz, t0 + to);
-        }
+        if (mode.LineMs > cursor) w.ToneUntil(SstvModes.BlackHz, t0 + mode.LineMs);
     }
 
     /// <summary>
     /// Per-channel planes indexed by <see cref="SstvChannel"/>, each laid out
-    /// [txLine × width]. RGB modes: one row per line. PD: Y0/Y1 are the even
-    /// and odd rows; Cr/Cb the average of the pair (4:2:0 vertically).
+    /// [txLine × width]. RGB modes: one row per line. Two-row YCrCb (PD,
+    /// Robot 36): Y0/Y1 are the even and odd rows; Cr/Cb the average of the
+    /// pair (4:2:0 vertically). One-row YCrCb (Robot 72): Y0, Cr, Cb per row.
     /// </summary>
     private static byte[][] BuildPlanes(SstvMode mode, ReadOnlySpan<byte> rgb)
     {
@@ -178,6 +174,19 @@ public static class SstvEncoder
                 planes[(int)SstvChannel.R][o] = rgb[i];
                 planes[(int)SstvChannel.G][o] = rgb[i + 1];
                 planes[(int)SstvChannel.B][o] = rgb[i + 2];
+            }
+            return planes;
+        }
+
+        if (mode.RowsPerLine == 1)
+        {
+            for (int y = 0; y < lines; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 3, o = y * w + x;
+                SstvColorSpace.ToYCrCb(rgb[i], rgb[i + 1], rgb[i + 2],
+                    out planes[(int)SstvChannel.Y0][o], out planes[(int)SstvChannel.Cr][o],
+                    out planes[(int)SstvChannel.Cb][o]);
             }
             return planes;
         }

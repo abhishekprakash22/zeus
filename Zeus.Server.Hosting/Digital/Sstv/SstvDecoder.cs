@@ -361,13 +361,13 @@ public sealed class SstvDecoder
     {
         var m = img.Mode;
         double lineStart = img.LineStart(n);
-        double px = m.PixelMs * img.MsToSamples;
         int w = m.Width;
         Span<byte> scratch = img.Scratch;             // 4 planes × width (PD) / 3 (RGB)
 
         for (int s = 0; s < m.Scans.Length; s++)
         {
             double start = lineStart + m.Scans[s].StartMs * img.MsToSamples;
+            double px = m.PixelOf(m.Scans[s]) * img.MsToSamples;
             int plane = (int)m.Scans[s].Channel;
             for (int x = 0; x < w; x++)
             {
@@ -387,6 +387,14 @@ public sealed class SstvDecoder
                 rgb[row + 3 * x + 1] = scratch[(int)SstvChannel.G * w + x];
                 rgb[row + 3 * x + 2] = scratch[(int)SstvChannel.B * w + x];
             }
+        }
+        else if (m.RowsPerLine == 1)
+        {
+            int row = n * w * 3;
+            for (int x = 0; x < w; x++)
+                SstvColorSpace.ToRgb(scratch[(int)SstvChannel.Y0 * w + x],
+                    scratch[(int)SstvChannel.Cr * w + x], scratch[(int)SstvChannel.Cb * w + x],
+                    out rgb[row + 3 * x], out rgb[row + 3 * x + 1], out rgb[row + 3 * x + 2]);
         }
         else
         {
@@ -531,7 +539,7 @@ public sealed class SstvDecoder
             double pivot = A + B * mid;
             B *= 1 + SlantPpm * 1e-6;
             A = pivot - B * mid;
-            A -= ShiftPx * Mode.PixelMs * MsToSamples;
+            A -= ShiftPx * Mode.PixelOf(Mode.Scans[0]) * MsToSamples;
             Public.SlantPpm = SlantPpm;
             Public.ShiftPx = ShiftPx;
         }

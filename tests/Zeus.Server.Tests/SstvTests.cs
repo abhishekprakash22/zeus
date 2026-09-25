@@ -27,6 +27,8 @@ public sealed class SstvTests
     [InlineData("PD 180", 754.24)]
     [InlineData("PD 240", 1000.0)]
     [InlineData("PD 290", 937.28)]
+    [InlineData("Robot 36", 300.0)]   // two 150 ms lines, modelled as one
+    [InlineData("Robot 72", 300.0)]
     public void LineTimes_MatchPublishedSpec(string name, double lineMs)
     {
         var m = SstvModes.ByName(name);
@@ -63,6 +65,7 @@ public sealed class SstvTests
     [InlineData("Martin 1", 0.25f)]
     [InlineData("Scottie 1", 0.25f)]
     [InlineData("PD 120", 0.12f)]
+    [InlineData("Robot 36", 0.12f)]
     public void RoundTrip_SurvivesNoiseOffsetAndSlant(string name, float noise)
     {
         var mode = SstvModes.ByName(name)!;
@@ -118,6 +121,38 @@ public sealed class SstvTests
         for (int i = 0; i < audio.Length; i += 512)
             dec.Process(audio.AsSpan(i, Math.Min(512, audio.Length - i)));
         Assert.Equal(Enumerable.Range(0, mode.Height), rows);
+    }
+
+    [Fact]
+    public void Robot36_SeparatorsTellEvenFromOddLines()
+    {
+        // MMSSTV identifies Robot 36's chroma by the separator tone: 1500 Hz
+        // before R-Y (even lines), 2300 Hz before B-Y (odd lines), each
+        // followed by a 1900 Hz porch. A transmitter that gets this wrong
+        // sends pictures with swapped colours to half the world.
+        var mode = SstvModes.R36;
+        const int rate = 48_000;
+        var audio = SstvEncoder.Encode(mode, TestCard(mode), rate);
+
+        // Frequency of a segment from its zero crossings (interpolated), away
+        // from the edges — exact even for the 1.5 ms porches, which any
+        // filter-based demodulator would smear into their neighbours.
+        double Tone(double fromMs, double toMs)
+        {
+            int a = (int)((fromMs + 0.15) * rate / 1000), b = (int)((toMs - 0.15) * rate / 1000);
+            var xs = new List<double>();
+            for (int i = a; i < b; i++)
+                if (audio[i] <= 0 && audio[i + 1] > 0)
+                    xs.Add(i + audio[i] / (audio[i] - audio[i + 1]));
+            return rate * (xs.Count - 1) / (xs[^1] - xs[0]);
+        }
+
+        double l = SstvEncoder.VisMs + 10 * mode.LineMs;        // a double line well inside
+        Assert.InRange(Tone(l + 100, l + 104.5), 1495, 1505);   // even separator
+        Assert.InRange(Tone(l + 104.5, l + 106), 1890, 1910);   // porch
+        Assert.InRange(Tone(l + 150, l + 159), 1195, 1205);     // odd line's sync
+        Assert.InRange(Tone(l + 250, l + 254.5), 2295, 2305);   // odd separator
+        Assert.InRange(Tone(l + 254.5, l + 256), 1890, 1910);   // porch
     }
 
     // ---- re-render ----------------------------------------------------------

@@ -1940,3 +1940,28 @@
 .fpga-err { color: #ffb3b3; font-size: 12px; }
 .fpga-cmp-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   margin: 10px 0 2px; font-size: 12px; }
+
+
+/* ---- SSTV pop-out window (DiversityWindow sibling; reuses its header) ----
+   Token colours only; the picture itself is the only thing that isn't chrome. */
+.sstv-window { position: fixed; z-index: 420; background: var(--bg-1);
+  border: 1px solid var(--line-strong); border-radius: var(--r-md); overflow: hidden;
+  box-shadow: var(--panel-shadow); display: flex; flex-direction: column; }
+.sstv-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft); }
+.sstv-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font: 500 10.5px var(--font-mono, monospace); color: var(--fg-2); }
+.sstv-status.live { color: var(--accent); }
+.sstv-canvas-wrap { padding: 8px; background: var(--bg-inset); display: flex;
+  justify-content: center; }
+.sstv-canvas { width: 100%; height: auto; display: block; background: var(--bg-0); }
+.sstv-empty { width: 100%; aspect-ratio: 5 / 4; display: flex; align-items: center;
+  justify-content: center; color: var(--fg-3); font: 500 11px var(--font-mono, monospace); }
+.sstv-strip { display: flex; gap: 4px; padding: 6px 8px; overflow-x: auto;
+  border-top: 1px solid var(--line-soft); }
+.sstv-chip { flex: none; background: var(--bg-2); color: var(--fg-2);
+  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 2px 6px;
+  font: 500 10px var(--font-mono, monospace); cursor: pointer; }
+.sstv-chip:hover { color: var(--fg-0); }
+.sstv-chip.sel { border-color: var(--accent); color: var(--fg-0); }
+.sstv-chip.live { color: var(--accent); }

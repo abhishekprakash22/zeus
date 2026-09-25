@@ -36,6 +36,7 @@ import { useWsjtxStore } from './wsjtx-store';
 import { useFt8Store, type Ft8DecodeBatch } from './ft8-store';
 import { useWsprStore, type WsprSpotBatch } from './wspr-store';
 import { useCwSkimStore } from './cw-skim-store';
+import { useSstvStore, type SstvEvent } from './sstv-store';
 import { useFt8TxStore, type Ft8TxStatus } from './ft8-tx-store';
 
 interface DigitalPluginState {
@@ -168,6 +169,7 @@ function onEventsOpen(): void {
   void useFt8Store.getState().refreshStatus();
   void useWsprStore.getState().refreshStatus();
   void refreshTxStatus();
+  void useSstvStore.getState().refresh();
   pushAllConfig();
 }
 
@@ -212,6 +214,13 @@ function syncEventStream(): void {
           useCwSkimStore.getState().ingest(JSON.parse(json));
         } catch (err) {
           warnOnce('sse-cwskim-parse', 'cwskim event parse failed', err);
+        }
+      },
+      onSstv: (json) => {
+        try {
+          useSstvStore.getState().ingest(JSON.parse(json) as SstvEvent);
+        } catch (err) {
+          warnOnce('sse-sstv-parse', 'sstv event parse failed', err);
         }
       },
       onTxStatus: (json) => {

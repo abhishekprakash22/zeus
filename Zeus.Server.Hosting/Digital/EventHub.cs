@@ -10,6 +10,8 @@
 //     ft8decode   → Ft8DecodeBatch
 //     txstatus    → Ft8TxStatus
 //     wsprspot    → WSPR spot
+//     cwskim      → CW skimmer roster / text
+//     sstv        → SSTV picture start / rows / end (SstvService)
 //
 // The client re-hydrates (/ft8, /ft8/tx, /wspr) on EVERY open including
 // auto-reconnects, because SSE replays nothing across a gap. So this hub is
@@ -64,6 +66,7 @@ public sealed class EventHub
         try { WsprSpotted?.Invoke(batch); } catch { /* ditto */ }
     }
     public void PublishCwSkim(object payload) => Publish("cwskim", payload);
+    public void PublishSstv(object payload) => Publish("sstv", payload);
 
     private void Publish<T>(string eventName, T payload)
     {

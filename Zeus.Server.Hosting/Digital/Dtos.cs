@@ -82,6 +82,9 @@ public sealed record TxStageRequest
 /// <summary>POST /wspr/enable body.</summary>
 public sealed record CwSkimEnableRequest(int? Receiver);
 
+/// <summary>POST /sstv/enable body.</summary>
+public sealed record SstvEnableRequest(int? Receiver);
+
 public sealed record WsprEnableRequest
 {
     [JsonPropertyName("receiver")] public int? Receiver { get; init; }

@@ -5879,6 +5879,61 @@ export function postCwSkim(enabled: boolean, receiver = 0): Promise<unknown> {
   );
 }
 
+const SSTV_BASE = '/api/plugins/org.openhpsdr.digital/sstv';
+
+export interface SstvImageMeta {
+  id: number;
+  mode: string;
+  width: number;
+  height: number;
+  rowsDone: number;
+  offsetHz: number;
+  clockErrorPpm: number;
+  dialHz: number;
+  sideBand: string;
+  startedUnixMs: number;
+  endedUnixMs: number | null;
+  endReason: string | null;
+}
+
+export interface SstvStatusDto {
+  enabled: boolean;
+  receiver: number;
+  current: SstvImageMeta | null;
+  images: SstvImageMeta[];
+  modes: string[];
+}
+
+export interface SstvImageDto {
+  meta: SstvImageMeta;
+  /** base64 RGB, width × height × 3. */
+  rgb: string;
+}
+
+export function getSstvStatus(signal?: AbortSignal): Promise<SstvStatusDto> {
+  return jsonFetch(SSTV_BASE, { signal }, (raw) => raw as SstvStatusDto);
+}
+
+export function postSstvEnabled(enabled: boolean, receiver = 0): Promise<SstvStatusDto> {
+  return jsonFetch(
+    enabled ? `${SSTV_BASE}/enable` : `${SSTV_BASE}/disable`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enabled ? JSON.stringify({ receiver }) : '{}',
+    },
+    (raw) => raw as SstvStatusDto,
+  );
+}
+
+export function postSstvStop(): Promise<unknown> {
+  return jsonFetch(`${SSTV_BASE}/stop`, { method: 'POST' }, (raw) => raw);
+}
+
+export function getSstvImage(id: number, signal?: AbortSignal): Promise<SstvImageDto> {
+  return jsonFetch(`${SSTV_BASE}/image/${id}`, { signal }, (raw) => raw as SstvImageDto);
+}
+
 export interface UpdateApplyStatusDto {
   phase: 'idle' | 'downloading' | 'verifying' | 'swapping' | 'restarting' | 'failed' | 'unsupported';
   percent: number;

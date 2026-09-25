@@ -61,7 +61,7 @@ public sealed class WsprService : IHostedService, IDisposable
     private readonly object _rxLock = new();
     private readonly float[] _ring = new float[RingLen];
     private long _ringWrite;                       // total 12 kHz samples written
-    private readonly Decim4 _decim = new();
+    private readonly Decimator4 _decim = new();
     private volatile bool _enabled;
     private int _receiver;
     private double _dialFreqMhz = 14.0956;
@@ -517,56 +517,4 @@ public sealed class WsprService : IHostedService, IDisposable
             AudioHz = _audioHz,
             NativeAvailable = NativeAvailable,
         });
-
-    /// <summary>÷4 decimator, 48 → 12 kHz. Allocation-free; writes directly
-    /// into the caller's power-of-two ring at a running index.</summary>
-    private sealed class Decim4
-    {
-        private const int Taps = 48;
-        private readonly float[] _h = BuildTaps();
-        private readonly float[] _delay = new float[Taps];
-        private int _pos, _phase;
-
-        public int Process(ReadOnlySpan<float> in48k, float[] ring, long writeIndex, int ringLen)
-        {
-            int produced = 0;
-            for (int i = 0; i < in48k.Length; i++)
-            {
-                _delay[_pos] = in48k[i];
-                _pos = _pos + 1 == Taps ? 0 : _pos + 1;
-                if (++_phase == 4)
-                {
-                    _phase = 0;
-                    float acc = 0f;
-                    int idx = _pos;
-                    for (int t = Taps - 1; t >= 0; t--)
-                    {
-                        acc += _delay[idx] * _h[t];
-                        idx = idx + 1 == Taps ? 0 : idx + 1;
-                    }
-                    ring[(writeIndex + produced) & (ringLen - 1)] = acc;
-                    produced++;
-                }
-            }
-            return produced;
-        }
-
-        public void Reset() { Array.Clear(_delay); _pos = 0; _phase = 0; }
-
-        private static float[] BuildTaps()
-        {
-            var h = new double[Taps];
-            double fc = 5_000.0 / 48_000.0, sum = 0;
-            for (int i = 0; i < Taps; i++)
-            {
-                double m = i - (Taps - 1) / 2.0;
-                double sinc = m == 0 ? 2 * fc : Math.Sin(2 * Math.PI * fc * m) / (Math.PI * m);
-                double win = 0.54 - 0.46 * Math.Cos(2 * Math.PI * i / (Taps - 1));
-                h[i] = sinc * win; sum += h[i];
-            }
-            var f = new float[Taps];
-            for (int i = 0; i < Taps; i++) f[i] = (float)(h[i] / sum);
-            return f;
-        }
-    }
 }

@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
+// Copyright (C) 2025-2026 Brian Keating (EI6LF),
+//                         Douglas J. Cerrato (KB2UKA), and contributors.
+//
+// SSTV pop-out — DiversityWindow's sibling: fixed-size, draggable, always on
+// top. It is the SSTV mode: the SSTV button in the mode row (beside FT8/FT4/
+// WSPR, via enter-digital) opens it, and closing it exits the mode — decoder
+// off, prior sideband restored. The picture paints line by
+// line as SstvService decodes it; when it ends, the straightened
+// (slant-corrected) re-render replaces it. The chip strip flips between the
+// live picture and this session's received ones.
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSstvStore } from '../state/sstv-store';
+import { useLayoutStore } from '../state/layout-store';
+import type { SstvImageMeta } from '../api/client';
+
+const WIDTH = 420;
+
+function utcHm(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}z`;
+}
+
+function describe(m: SstvImageMeta, live: boolean): string {
+  const parts = [m.mode, `${m.rowsDone}/${m.height}`];
+  if (Math.abs(m.offsetHz) >= 1) parts.push(`${m.offsetHz > 0 ? '+' : ''}${Math.round(m.offsetHz)} Hz`);
+  if (!live && m.clockErrorPpm !== 0) parts.push(`${m.clockErrorPpm > 0 ? '+' : ''}${m.clockErrorPpm} ppm`);
+  if (m.dialHz > 0) parts.push(`${(m.dialHz / 1e6).toFixed(3)} ${m.sideBand}`);
+  if (!live && m.endReason && m.endReason !== 'Complete') parts.push(m.endReason);
+  return parts.join(' · ');
+}
+
+export function SstvWindow() {
+  const open = useSstvStore((s) => s.panelOpen);
+  const enabled = useSstvStore((s) => s.enabled);
+  const current = useSstvStore((s) => s.current);
+  const images = useSstvStore((s) => s.images);
+  const selectedId = useSstvStore((s) => s.selectedId);
+  const pixels = useSstvStore((s) => s.pixels);
+  const pixelsRev = useSstvStore((s) => s.pixelsRev);
+  const closeWorkspace = useSstvStore((s) => s.closeWorkspace);
+  const setEnabled = useSstvStore((s) => s.setEnabled);
+  const stopCurrent = useSstvStore((s) => s.stopCurrent);
+  const select = useSstvStore((s) => s.select);
+  const settingsViewOpen = useLayoutStore((s) => s.settingsViewOpen);
+  const [pos, setPos] = useState({ x: window.innerWidth - WIDTH - 24, y: 88 });
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const shownId = selectedId ?? current?.id ?? images[0]?.id ?? null;
+  const shownMeta =
+    shownId == null
+      ? null
+      : current?.id === shownId
+        ? current
+        : (images.find((i) => i.id === shownId) ?? null);
+  const shownPx = shownId == null ? undefined : pixels[shownId];
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c || !shownPx) return;
+    if (c.width !== shownPx.width || c.height !== shownPx.height) {
+      c.width = shownPx.width;
+      c.height = shownPx.height;
+    }
+    c.getContext('2d')?.putImageData(
+      new ImageData(shownPx.rgba, shownPx.width, shownPx.height),
+      0,
+      0,
+    );
+  }, [shownPx, pixelsRev, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      closeWorkspace();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, closeWorkspace]);
+
+  const drag = useRef<{ id: number; sx: number; sy: number; ox: number; oy: number } | null>(
+    null,
+  );
+  const onHeaderPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-no-drag]')) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      drag.current = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
+    },
+    [pos],
+  );
+  const onHeaderPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    const x = Math.min(window.innerWidth - 80, Math.max(-WIDTH + 80, d.ox + e.clientX - d.sx));
+    const y = Math.min(window.innerHeight - 40, Math.max(48, d.oy + e.clientY - d.sy));
+    setPos({ x, y });
+  }, []);
+  const onHeaderPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (drag.current?.id === e.pointerId) drag.current = null;
+  }, []);
+
+  if (!open || settingsViewOpen) return null;
+
+  const live = shownMeta != null && current?.id === shownMeta.id;
+  const status = shownMeta
+    ? describe(shownMeta, live)
+    : enabled
+      ? 'Listening for a VIS header…'
+      : 'Decoder off';
+
+  return (
+    <div
+      className="sstv-window"
+      style={{ left: pos.x, top: pos.y, width: WIDTH }}
+      role="dialog"
+      aria-label="SSTV receive"
+    >
+      <div
+        className="diversity-window-header"
+        onPointerDown={onHeaderPointerDown}
+        onPointerMove={onHeaderPointerMove}
+        onPointerUp={onHeaderPointerUp}
+      >
+        <span className={`dw-dot ${enabled ? 'on' : ''}`} />
+        <span className="dw-title">SSTV · RECEIVE</span>
+        <span className="dw-spacer" />
+        <button
+          type="button"
+          className="dw-close"
+          data-no-drag
+          onClick={() => closeWorkspace()}
+          aria-label="Exit SSTV"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="sstv-toolbar">
+        <button
+          type="button"
+          className={`btn sm ${enabled ? 'active' : ''}`}
+          onClick={() => void setEnabled(!enabled)}
+          title={enabled ? 'Stop listening for SSTV' : 'Listen for SSTV on RX1'}
+        >
+          {enabled ? 'RX ON' : 'RX OFF'}
+        </button>
+        <button
+          type="button"
+          className="btn sm"
+          disabled={current == null}
+          onClick={() => void stopCurrent()}
+          title="End the picture being received"
+        >
+          STOP
+        </button>
+        <span className={`sstv-status ${live ? 'live' : ''}`}>{status}</span>
+      </div>
+
+      <div className="sstv-canvas-wrap">
+        {shownPx ? (
+          <canvas
+            ref={canvasRef}
+            className="sstv-canvas"
+            style={{ aspectRatio: `${shownPx.width} / ${shownPx.height}` }}
+          />
+        ) : (
+          <div className="sstv-empty">No picture yet</div>
+        )}
+      </div>
+
+      {(current || images.length > 0) && (
+        <div className="sstv-strip">
+          {current && (
+            <button
+              type="button"
+              className={`sstv-chip live ${selectedId == null || selectedId === current.id ? 'sel' : ''}`}
+              onClick={() => select(null)}
+              title="Follow the picture being received"
+            >
+              LIVE
+            </button>
+          )}
+          {images.map((m) => (
+            <button
+              type="button"
+              key={m.id}
+              className={`sstv-chip ${shownId === m.id && !live ? 'sel' : ''}`}
+              onClick={() => select(m.id)}
+              title={describe(m, false)}
+            >
+              {m.mode} {utcHm(m.startedUnixMs)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

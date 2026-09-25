@@ -5,7 +5,7 @@
 //                         Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
-// Entry point for the Zeus-level digital modes (FT8/FT4/WSPR). They are NOT WDSP
+// Entry point for the Zeus-level digital modes (FT8/FT4/WSPR/SSTV). They are NOT WDSP
 // demod modes — selecting one opens its dedicated workspace and auto-configures
 // the radio. Shared by every mode picker (the Mode tile and the toolbar mode
 // favorites) so the digital modes are reachable wherever modes are selected.
@@ -20,8 +20,9 @@
 
 import { useFt8Store } from './ft8-store';
 import { useWsprStore } from './wspr-store';
+import { useSstvStore } from './sstv-store';
 
-export const DIGITAL_ENTRY_KEYS = ['FT8', 'FT4', 'WSPR'] as const;
+export const DIGITAL_ENTRY_KEYS = ['FT8', 'FT4', 'WSPR', 'SSTV'] as const;
 export type DigitalEntryKey = (typeof DIGITAL_ENTRY_KEYS)[number];
 
 export function isDigitalEntryKey(key: string): key is DigitalEntryKey {
@@ -63,6 +64,24 @@ export function enterDigital(target: DigitalEntryKey): void {
   if (!isDigitalEntryAvailable(target)) return;
   const ft8 = useFt8Store.getState();
   const wspr = useWsprStore.getState();
+  const sstv = useSstvStore.getState();
+  if (target === 'SSTV') {
+    // SSTV doesn't QSY, so leaving FT8/WSPR for it restores the operator's
+    // own config first (the DIGU dial is no place to hunt for pictures).
+    if (ft8.open) ft8.closeWorkspace();
+    if (wspr.open) wspr.closeWorkspace();
+    sstv.openWorkspace();
+    return;
+  }
+  if (sstv.panelOpen) {
+    // Switching SSTV → FT8/FT4/WSPR: SSTV's entry snapshot is the operator's
+    // real config; hand it on and let the digital mode's exit restore it.
+    const carried = sstv.priorRadio ?? undefined;
+    sstv.closeWorkspace({ restore: false });
+    if (target === 'WSPR') wspr.openWorkspace({ prior: carried });
+    else ft8.openWorkspace({ protocol: target, prior: carried });
+    return;
+  }
   if (target === 'WSPR') {
     if (ft8.open) {
       // Switching FT8/FT4 → WSPR: carry FT8's pre-digital snapshot forward and
@@ -96,6 +115,8 @@ export function exitDigital(): void {
   const wspr = useWsprStore.getState();
   if (ft8.open) ft8.closeWorkspace();
   if (wspr.open) wspr.closeWorkspace();
+  const sstv = useSstvStore.getState();
+  if (sstv.panelOpen) sstv.closeWorkspace();
 }
 
 /**
@@ -107,6 +128,7 @@ export function isDigitalEngaged(target: DigitalEntryKey): boolean {
   const ft8 = useFt8Store.getState();
   const wspr = useWsprStore.getState();
   if (target === 'WSPR') return wspr.open;
+  if (target === 'SSTV') return useSstvStore.getState().panelOpen;
   return ft8.open && ft8.protocol === target;
 }
 

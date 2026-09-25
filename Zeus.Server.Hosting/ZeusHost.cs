@@ -828,6 +828,11 @@ public static class ZeusHost
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.CwSkimmerService>());
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.WsprService>());
+        // SSTV in core — VIS-triggered analog picture decoder, pure managed.
+        // See Digital/SstvService.cs.
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.SstvService>();
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<Zeus.Server.Hosting.Digital.SstvService>());
         builder.Services.AddSingleton<ThemeSettingsStore>();
         builder.Services.AddSingleton<BottomPinStore>();
         builder.Services.AddSingleton<PanWfSplitStore>();

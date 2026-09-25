@@ -63,4 +63,11 @@ public readonly record struct IqFrame(
     // maps the wire DDC index to this so consumers route to the right DSP
     // channel without knowing per-board DDC numbering. Defaults to 0, so every
     // existing single-receiver path is unchanged.
-    int ReceiverIndex = 0);
+    int ReceiverIndex = 0,
+    // Diversity: when the radio is running the synchronised DDC0/DDC1 pair,
+    // this holds the ADC1 (source antenna) samples for the SAME sample
+    // indices as InterleavedSamples — same packet, same NCO, phase-locked in
+    // gateware. Empty otherwise. This is the only correct thing to combine
+    // against: a separate receiver's DDC has its own NCO phase and its own
+    // packet timing, and a null cannot be held against either.
+    ReadOnlyMemory<double> DiversitySourceSamples = default);

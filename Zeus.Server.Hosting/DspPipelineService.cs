@@ -1039,10 +1039,7 @@ public class DspPipelineService : BackgroundService,
     // queue), so the source buffer needs no lock. Diversity never engages on
     // Protocol 1 (single ADC) — only OnIqFrame (P2) stores source frames.
     private volatile bool _divEnabled;
-    private int _divSourceRx = 1;
     private double _divWeightI = 1.0, _divWeightQ;
-    private double[] _divSourceIq = [];
-    private int _divSourceLen;
     private double[] _divCombineBuf = [];
     // AGC mode + custom params latch (issue: DSP controls Thetis parity §4).
     // Same change-detect pattern as _appliedNr — SetAgc only fires when the
@@ -4311,6 +4308,16 @@ public class DspPipelineService : BackgroundService,
         var p2 = _p2Client;
         p2?.SetVfoAHz(s.RadioLoHz);
         p2?.SetReceiverAdcSources(ReceiverAdcSource(s, 0), ReceiverAdcSource(s, 1));
+        // Diversity = the gateware-synchronised DDC0/DDC1 pair, DDC1 on the
+        // second ADC. Only meaningful on a dual-ADC board; the P2 client also
+        // yields the pair to PureSignal while keyed. RX2 is NOT involved and
+        // stays an independent receiver on its own DDC.
+        {
+            var divCfg = s.Diversity ?? new DiversityConfig();
+            var caps = BoardCapabilitiesTable.For(_radio.EffectiveBoardKind, _radio.EffectiveOrionMkIIVariant);
+            bool divOn = divCfg.Enabled && caps.RxAdcCount > 1;
+            p2?.SetDiversitySourceEnabled(divOn, (byte)1);
+        }
         // RX2 (true second receiver): enable/disable its DDC and tune its NCO to
         // VFO B's effective LO so it demodulates its own band, independent of
         // RX1. SetRx2Enabled is idempotent (only re-sends on a real change);
@@ -6373,37 +6380,34 @@ public class DspPipelineService : BackgroundService,
         double theta = cfg.PhaseDeg * Math.PI / 180.0;
         _divWeightI = cfg.Gain * Math.Cos(theta);
         _divWeightQ = cfg.Gain * Math.Sin(theta);
-        _divSourceRx = cfg.SourceRx;
-        if (!cfg.Enabled) _divSourceLen = 0;
         _divEnabled = cfg.Enabled;
         _log.LogInformation(
             "dsp.diversity enabled={En} gain={G:F3} phaseDeg={P:F1} sourceRx={Src} weight=({I:F3},{Q:F3})",
             cfg.Enabled, cfg.Gain, cfg.PhaseDeg, cfg.SourceRx, _divWeightI, _divWeightQ);
     }
 
-    // Copy the latest source-antenna IQ for the next RX0 combine. A copy is
-    // required because the producer owns/returns the frame buffer right after
-    // OnIqFrame returns. Single-threaded with the RX0 frame, so no lock.
-    private void StoreDiversitySource(ReadOnlySpan<double> iq)
-    {
-        if (_divSourceIq.Length < iq.Length) _divSourceIq = new double[iq.Length];
-        iq.CopyTo(_divSourceIq);
-        _divSourceLen = iq.Length;
-    }
-
     // Feed RX0's WDSP channel, combining the stored source IQ when diversity is
     // active and a source frame is available; otherwise feed the raw RX0 stream
     // unchanged (the safe fallback — no source yet, or diversity off).
-    private void FeedRx0WithOptionalDiversity(IDspEngine engine, int channel, ReadOnlySpan<double> rx0)
+    // Feed RX0's WDSP channel. With diversity active the P2 client delivers
+    // the synchronised pair in ONE frame — RX0 samples and the ADC1 source
+    // samples for the same indices, phase-locked in gateware — and that is
+    // what gets combined. An earlier version stashed the LATEST frame of a
+    // separate receiver's DDC and added it to the NEXT RX0 frame: different
+    // NCO phase, different packet timing, up to a packet of offset. A null
+    // cannot be held against that, and it was not. Frames without paired
+    // samples (diversity off, PS keyed, P1, synthetic) feed through unchanged.
+    private void FeedRx0WithOptionalDiversity(IDspEngine engine, int channel, ReadOnlySpan<double> rx0,
+        ReadOnlySpan<double> pairedSource = default)
     {
-        if (!_divEnabled || _divSourceLen == 0)
+        if (!_divEnabled || pairedSource.Length != rx0.Length || rx0.Length == 0)
         {
             engine.FeedIq(channel, rx0);
             return;
         }
         if (_divCombineBuf.Length < rx0.Length) _divCombineBuf = new double[rx0.Length];
         var dest = _divCombineBuf.AsSpan(0, rx0.Length);
-        DiversityCombine(rx0, _divSourceIq.AsSpan(0, _divSourceLen), _divWeightI, _divWeightQ, dest);
+        DiversityCombine(rx0, pairedSource, _divWeightI, _divWeightQ, dest);
         engine.FeedIq(channel, dest);
     }
 
@@ -6548,16 +6552,12 @@ public class DspPipelineService : BackgroundService,
                         engine.FeedIq(secChan, frame.InterleavedSamples.Span);
                         rx.FedFrames++;
                     }
-                    // Diversity: stash this receiver's IQ when it's the configured
-                    // source antenna, so the next RX0 frame can combine against it.
-                    if (_divEnabled && ri == _divSourceRx)
-                        StoreDiversitySource(frame.InterleavedSamples.Span);
                 }
                 return;
             }
             int channel = Volatile.Read(ref _channelId);
             LogRxIqRms(0, frame.InterleavedSamples.Span, ref _rx1IqRmsLogMs);
-            FeedRx0WithOptionalDiversity(engine, channel, frame.InterleavedSamples.Span);
+            FeedRx0WithOptionalDiversity(engine, channel, frame.InterleavedSamples.Span, frame.DiversitySourceSamples.Span);
             RxIqAvailable?.Invoke(0, frame.SampleRateHz, frame.InterleavedSamples);
         }
         MaybeTickInline();

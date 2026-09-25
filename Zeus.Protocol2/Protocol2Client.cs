@@ -179,6 +179,12 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     // tags frames by receiver) and on the command threads, so kept as volatile-
     // accessed ints/uints. _rx2Enabled: 0 = off, 1 = on.
     private int _rx2Enabled;
+    // Diversity: run DDC0/DDC1 as a gateware-synchronised pair (byte 1363 =
+    // 0x02) with DDC1 sourcing the second antenna's ADC. The pair arrives
+    // interleaved on DDC0 — see HandleDdcPacket(paired). Ported from the
+    // upstream station engine; the design the P2 hardware intends.
+    private int _diversitySourceEnabled;
+    private int _diversitySourceAdcSource = 1;
     private uint _rx2FreqHz = 7_100_000;
     private int _rx1AdcSource;
     private int _rx2AdcSource;
@@ -997,6 +1003,42 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     /// Idempotent — a no-op when the state is unchanged so steady RX traffic
     /// doesn't reconfigure the DDCs every state push.
     /// </summary>
+    /// <summary>Enable/disable the synchronised diversity pair. Re-sends the
+    /// receive-specific packet on a real change so DDC0/1 are reconfigured
+    /// together. The pair yields to PureSignal while keyed (UsesDiversityPair).</summary>
+    public void SetDiversitySourceEnabled(bool on, byte adcSource)
+    {
+        bool changed = Interlocked.Exchange(ref _diversitySourceEnabled, on ? 1 : 0) != (on ? 1 : 0);
+        bool adcChanged = Interlocked.Exchange(ref _diversitySourceAdcSource, adcSource) != adcSource;
+        changed |= on && adcChanged;
+        if (changed && _running) SendCmdRx();
+    }
+
+    /// <summary>True when DDC0/DDC1 are the diversity pair: enabled, a second
+    /// ADC exists, this board keeps DDC0/1 free for a pair, and PureSignal
+    /// is not currently using them (PS armed AND keyed). While keyed with PS
+    /// the pair yields to feedback and returns on release.</summary>
+    internal static bool UsesDiversityPair(bool enabled, bool psEnabled, bool txKeyed,
+        HpsdrBoardKind board, byte numAdc = 2) =>
+        enabled && numAdc > 1 && ReservesPsFeedbackDdcs(board) && !(psEnabled && txKeyed);
+
+    private bool DiversityPairActive => UsesDiversityPair(
+        Volatile.Read(ref _diversitySourceEnabled) != 0, _psFeedbackEnabled,
+        _moxOn || _tuneActive, _boardKind, _numAdc);
+
+    // All supported dual-ADC P2 radios synchronise DDC0/1: byte 1363 bit 1
+    // makes DDC1 phase-lock to DDC0, and the radio then delivers ADC0 and ADC1
+    // samples interleaved in DDC0's packets. DDC1 is enabled by the sync, not
+    // as a separate stream.
+    internal static void ConfigureSynchronizedDiversityPair(byte[] packet, HpsdrBoardKind board,
+        ushort sampleRateKhz, byte sourceAdc)
+    {
+        packet[7] = (byte)((packet[7] | 0x01) & ~0x02 & ~(1 << RxBaseDdc(board)));
+        WriteDdcConfigBlock(packet, 0, 0, sampleRateKhz);
+        WriteDdcConfigBlock(packet, 1, sourceAdc, sampleRateKhz);
+        packet[1363] = 0x02;
+    }
+
     public void SetRx2Enabled(bool on)
     {
         int next = on ? 1 : 0;
@@ -2434,7 +2476,10 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         bool rx2Enabled = false,
         bool g2eFeedbackBurst = false,
         byte rx1AdcSource = 0,
-        byte? rx2AdcSource = null)
+        byte? rx2AdcSource = null,
+        bool diversitySourceEnabled = false,
+        bool txKeyed = false,
+        byte? diversitySourceAdcSource = null)
     {
         var p = new byte[BufLen];
         WriteBeU32(p, 0, seq);
@@ -2529,6 +2574,8 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
             WriteBeU16(p, off2 + 1, sampleRateKhz);
             p[off2 + 5] = 24;
         }
+        if (UsesDiversityPair(diversitySourceEnabled, psEnabled, txKeyed, boardKind, numAdc))
+            ConfigureSynchronizedDiversityPair(p, boardKind, sampleRateKhz, diversitySourceAdcSource ?? 1);
         return p;
     }
 
@@ -2564,7 +2611,10 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         bool psEnabled = false,
         HpsdrBoardKind boardKind = HpsdrBoardKind.OrionMkII,
         bool adcDitherEnabled = false,
-        bool adcRandomEnabled = false)
+        bool adcRandomEnabled = false,
+        bool diversitySourceEnabled = false,
+        bool txKeyed = false,
+        byte? diversitySourceAdcSource = null)
     {
         ArgumentNullException.ThrowIfNull(receivers);
         var p = new byte[BufLen];
@@ -2607,6 +2657,8 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         }
 
         p[7] = ddcEnable;
+        if (UsesDiversityPair(diversitySourceEnabled, psEnabled, txKeyed, boardKind, numAdc))
+            ConfigureSynchronizedDiversityPair(p, boardKind, receivers.Count > 0 ? receivers[0].SampleRateKhz : (ushort)48, diversitySourceAdcSource ?? 1);
         return p;
     }
 
@@ -2669,7 +2721,10 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
                 _psFeedbackEnabled,
                 _boardKind,
                 _adcDitherEnabled,
-                _adcRandomEnabled);
+                _adcRandomEnabled,
+                diversitySourceEnabled: Volatile.Read(ref _diversitySourceEnabled) != 0,
+                txKeyed: _moxOn || _tuneActive,
+                diversitySourceAdcSource: (byte)Volatile.Read(ref _diversitySourceAdcSource));
         }
         else
         {
@@ -2684,7 +2739,10 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
                 Volatile.Read(ref _rx2Enabled) != 0,
                 g2eFeedbackBurst,
                 (byte)Volatile.Read(ref _rx1AdcSource),
-                (byte)Volatile.Read(ref _rx2AdcSource));
+                (byte)Volatile.Read(ref _rx2AdcSource),
+                diversitySourceEnabled: Volatile.Read(ref _diversitySourceEnabled) != 0,
+                txKeyed: _moxOn || _tuneActive,
+                diversitySourceAdcSource: (byte)Volatile.Read(ref _diversitySourceAdcSource));
         }
         _sock!.SendTo(p, new IPEndPoint(_radioEndpoint!.Address, 1025));
     }
@@ -3926,7 +3984,20 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
                 if (srcPort >= RxDataPortBase && srcPort < RxDataPortBase + MaxRxDdc && n == BufLen)
                 {
                     int ddcIndex = srcPort - RxDataPortBase;
-                    if (RoutesDdc0ToPsFeedback(_psFeedbackEnabled, ddcIndex, _boardKind,
+                    // Diversity pair active: DDC0 carries ADC0+ADC1 interleaved
+                    // per sample (paired); DDC1's own stream and the normal
+                    // user-RX DDC are redundant while the pair runs — drop
+                    // them rather than feed RX1 twice.
+                    bool divPair = DiversityPairActive;
+                    if (divPair && (ddcIndex == 1 || ddcIndex == RxBaseDdc(_boardKind)))
+                    {
+                        // dropped: inside the pair, or redundant with it
+                    }
+                    else if (divPair && ddcIndex == 0)
+                    {
+                        HandleDdcPacket(buf, ddcIndex, paired: true);
+                    }
+                    else if (RoutesDdc0ToPsFeedback(_psFeedbackEnabled, ddcIndex, _boardKind,
                             txKeyed: _moxOn || _tuneActive,
                             timeMuxOnDdc0: TimeMuxesPsFeedbackOnDdc0(_boardKind)))
                     {
@@ -4076,7 +4147,7 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         handler(adcIndex, _widebandFrameSamples, WidebandAdcSampleRateHz);
     }
 
-    private void HandleDdcPacket(byte[] buf, int ddcIndex)
+    private void HandleDdcPacket(byte[] buf, int ddcIndex, bool paired = false)
     {
         var seq = BinaryPrimitives.ReadUInt32BigEndian(buf);
         if (ddcIndex == 0)
@@ -4090,8 +4161,9 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         }
 
         // 238 complex samples: I (int24 BE) + Q (int24 BE), starting at byte 16.
-        const int samplesPerPacket = DiscoverySamplesPerPacket;
-        int sampleDoubles = samplesPerPacket * 2;
+        // 238 complex words hold either one ADC or 119 simultaneous ADC pairs.
+        int samplesPerPacket = paired ? DiscoverySamplesPerPacket / 2 : DiscoverySamplesPerPacket;
+        int sampleDoubles = DiscoverySamplesPerPacket * 2;   // room for both halves when paired
         // Pool the IQ buffer when a synchronous sink is attached (the normal DSP
         // path): OnIqFrame copies the samples inline (engine.FeedIq) and the
         // RxIqAvailable contract requires subscribers to copy, so the array is
@@ -4110,13 +4182,24 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
         double scale = (1.0 / 8388608.0) * IqGainCorrection(_boardKind, _sampleRateKhz);
         for (int i = 0; i < samplesPerPacket; i++)
         {
-            int off = 16 + i * 6;
+            int off = 16 + i * (paired ? 12 : 6);
             int iRaw = (buf[off] << 16) | (buf[off + 1] << 8) | buf[off + 2];
             if ((iRaw & 0x800000) != 0) iRaw |= unchecked((int)0xFF000000);
             int qRaw = (buf[off + 3] << 16) | (buf[off + 4] << 8) | buf[off + 5];
             if ((qRaw & 0x800000) != 0) qRaw |= unchecked((int)0xFF000000);
             samples[i * 2] = iRaw * scale;
             samples[i * 2 + 1] = qRaw * scale;
+            if (paired)
+            {
+                // ADC1 (source antenna) sample for the SAME index, second 6 bytes.
+                int so = off + 6;
+                int si = (buf[so] << 16) | (buf[so + 1] << 8) | buf[so + 2];
+                if ((si & 0x800000) != 0) si |= unchecked((int)0xFF000000);
+                int sq = (buf[so + 3] << 16) | (buf[so + 4] << 8) | buf[so + 5];
+                if ((sq & 0x800000) != 0) sq |= unchecked((int)0xFF000000);
+                samples[samplesPerPacket * 2 + i * 2] = si * scale;
+                samples[samplesPerPacket * 2 + i * 2 + 1] = sq * scale;
+            }
         }
 
         // Map the incoming RX IQ stream to a logical receiver so the DSP can
@@ -4135,7 +4218,10 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
             SampleRateHz: _sampleRateKhz * 1000,
             Sequence: seq,
             TimestampNs: _stopwatch.ElapsedTicks * 1_000_000_000L / Stopwatch.Frequency,
-            ReceiverIndex: receiverIndex);
+            ReceiverIndex: paired ? 0 : receiverIndex,
+            DiversitySourceSamples: paired
+                ? new ReadOnlyMemory<double>(samples, samplesPerPacket * 2, samplesPerPacket * 2)
+                : default);
 
         Interlocked.Increment(ref _totalFrames);
         // iter5: prefer the synchronous sink (snapshotted above) — bypasses the

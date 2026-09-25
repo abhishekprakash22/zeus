@@ -35,17 +35,18 @@ describe('DiversityPanel', () => {
     await act(async () => {
       root.render(<DiversityPanel />);
     });
-    expect(container.textContent).toContain('COMBINE RX1 WITH');
+    // The partner is the ADC1 jack, not a receiver — the label says so.
+    expect(container.textContent).toContain('ADC0');
+    expect(container.textContent).toContain('RX2/EXT JACK');
     expect(container.textContent).toContain('ADC1');
   });
 
-  it('marks a source on RX1 ADC as no diversity gain', async () => {
+  it('does not offer a receiver selector — RX2 stays independent', async () => {
     useConnectionStore.setState({ receivers: [rx(0, 0), rx(1, 0)] } as never);
     await act(async () => {
       root.render(<DiversityPanel />);
     });
-    const dim = container.querySelector('.ps-pill.dim');
-    expect(dim).not.toBeNull();
-    expect(dim?.getAttribute('title')).toContain('same ADC as RX1');
+    expect(container.textContent).not.toContain('COMBINE RX1 WITH');
+    expect(container.querySelector('.ps-pill.dim')).toBeNull();
   });
 });

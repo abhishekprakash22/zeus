@@ -1732,6 +1732,7 @@
 .diversity-src .ps-pill.dim { opacity: 0.55; }
 .diversity-src .adc-tag { font-size: 9px; letter-spacing: 0.04em; opacity: 0.7; }
 .diversity-src .adc-warn { color: #f0b33a; }
+.diversity-src .adc-plus { color: #f0b33a; margin: 0 4px; font-weight: 700; }
 .diversity-spacer { flex: 1; }
 .diversity-pad { flex: 1; min-height: 120px; width: 100%; touch-action: none;
   cursor: crosshair; }

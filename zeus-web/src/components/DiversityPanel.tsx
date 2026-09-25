@@ -214,17 +214,6 @@ export function DiversityPanel() {
   // RX1 on ADC0 is one antenna added to itself. The label used to say 'SRC'
   // with no ADC shown (field: 'why RX2 and RX3, not RX1 and RX2?'); now it
   // says what it does and marks a same-ADC choice.
-  // Select the ARRAY (a stable reference between state changes) and derive
-  // from it. The first version selected a function — a new one every
-  // render, which Zustand sees as a changed value, which re-renders, which
-  // makes a new function… straight into React's update-depth limit and the
-  // error boundary (field: 'clicking Diversity causes a rendering problem').
-  const receivers = useConnectionStore((s) => s.receivers);
-  const adcOf = (rx: number): number | null => {
-    const e = receivers.find((r) => r.index === rx);
-    return e ? e.adcSource : null;
-  };
-  const rx1Adc = receivers.find((r) => r.index === 0)?.adcSource ?? 0;
   const dial = useConnectionStore((s) =>
     s.vfoHz > 0 ? (s.vfoHz / 1e6).toFixed(3) : '—',
   );
@@ -260,30 +249,11 @@ export function DiversityPanel() {
         >
           {st.enabled ? 'ENABLED' : 'OFF'}
         </button>
-        <span className="diversity-src" title="Diversity combines the chosen receiver's stream into RX1. It only does anything when that receiver is on the OTHER ADC.">
-          COMBINE RX1 WITH
-          {[1, 2].map((rx) => {
-            const adc = adcOf(rx);
-            const sameAdc = adc !== null && adc === rx1Adc;
-            return (
-              <button
-                key={rx}
-                className={`ps-pill sm ${st.sourceRx === rx ? 'on' : ''} ${sameAdc ? 'dim' : ''}`}
-                onClick={() => st.setSourceRx(rx)}
-                title={
-                  sameAdc
-                    ? `RX${rx + 1} is on ADC${adc}, the same ADC as RX1 — no diversity gain; move it to the other ADC`
-                    : adc === null
-                      ? `RX${rx + 1}`
-                      : `RX${rx + 1} on ADC${adc}`
-                }
-              >
-                RX{rx + 1}
-                {adc !== null ? <small className="adc-tag"> ADC{adc}</small> : null}
-                {sameAdc ? <small className="adc-warn"> ⚠</small> : null}
-              </button>
-            );
-          })}
+        <span
+          className="diversity-src"
+          title="Diversity on Protocol 2 is the gateware-synchronised DDC pair: ADC0 (the main antenna, RX1) and ADC1 (the RX2 / EXT jack), phase-locked in the FPGA and delivered sample-aligned. RX2 is not involved and stays an independent receiver."
+        >
+          RX1 · ADC0 <span className="adc-plus">+</span> RX2/EXT JACK · ADC1
         </span>
         <span className="diversity-spacer" />
         <button

@@ -53,7 +53,8 @@ public sealed class SstvDecoder
     private const double ToneTolHz = 80;
 
     // Sync tracking.
-    private const double SyncTolHz = 110;
+    private const double SyncTolHz = 150;          // pulse MEAN vs 1200 Hz
+    private const double MinSyncContrastHz = 250;  // (before − pulse) + (after − pulse)
     private const double FitOutlierMs = 1.5;
     private const double MaxClockError = 0.02;
     private const int FalseStartLines = 12;
@@ -333,32 +334,61 @@ public sealed class SstvDecoder
     }
 
     /// <summary>Best sync-pulse start within ±win of <paramref name="predicted"/>,
-    /// or null if nothing pulse-shaped is there.</summary>
+    /// or null if nothing pulse-shaped is there.
+    ///
+    /// Scored by CONTRAST, not by counting samples near 1200 Hz: a sync pulse
+    /// is a stretch whose mean frequency sits near 1200 Hz with brighter-than-
+    /// sync content on both sides (porch and picture never go below 1500 Hz).
+    /// Means over the pulse and a ≤3 ms window each side average the FM
+    /// demodulator's noise and clicks down, where the old per-sample ±110 Hz
+    /// count collapsed below ~10 dB SNR and lost the picture.</summary>
     private static double? FindSync(Track track, Image img, double predicted, double win)
     {
         int len = (int)Math.Round(img.SyncLen);
+        int side = Math.Min(len, (int)(3 * SamplesPerMs));
         // Never before the VIS stop-bit edge: Martin/PD line 0 starts with its
-        // sync pulse flush against the (also 1200 Hz) stop bit, and a window
-        // reaching back into it finds one long plateau instead of the pulse.
-        long lo = Math.Max(Math.Max(track.Base, img.VisEnd), (long)Math.Floor(predicted - win));
-        long hi = Math.Min(track.End - len, (long)Math.Ceiling(predicted + win));
+        // sync pulse flush against the (also 1200 Hz) stop bit.
+        long lo = Math.Max(Math.Max(track.Base + side, img.VisEnd), (long)Math.Floor(predicted - win));
+        long hi = Math.Min(track.End - len - side, (long)Math.Ceiling(predicted + win));
         if (hi <= lo) return null;
 
-        double target = SstvModes.SyncHz + img.Offset;
-        int score = 0;
-        for (long t = lo; t < lo + len; t++) if (IsSync(t)) score++;
-        int best = score; long first = lo, last = lo;
-        for (long t = lo + 1; t <= hi; t++)
-        {
-            if (IsSync(t - 1)) score--;
-            if (IsSync(t + len - 1)) score++;
-            if (score > best) { best = score; first = last = t; }
-            else if (score == best) last = t;
-        }
-        if (best < 0.5 * len) return null;
-        return (first + last) / 2.0;
+        // Prefix sums of the offset-corrected, click-clamped track over the
+        // whole search span, so every window mean is O(1).
+        long a0 = lo - side;
+        int n = (int)(hi + len + side - a0);
+        var ps = new double[n + 1];
+        for (int i = 0; i < n; i++)
+            ps[i + 1] = ps[i] + Math.Clamp(track[a0 + i] - img.Offset, 900.0, 2600.0);
+        double Mean(long start, int count) => (ps[start - a0 + count] - ps[start - a0]) / count;
 
-        bool IsSync(long t) => Math.Abs(track[t] - target) < SyncTolHz;
+        double bestScore = double.MinValue;
+        long bestT = -1;
+        for (long t = lo; t <= hi; t++)
+        {
+            double inside = Mean(t, len);
+            if (Math.Abs(inside - SstvModes.SyncHz) > SyncTolHz) continue;
+            double score = (Mean(t - side, side) - inside) + (Mean(t + len, side) - inside);
+            if (score > bestScore) { bestScore = score; bestT = t; }
+        }
+        if (bestT < 0 || bestScore < MinSyncContrastHz) return null;
+
+        // The contrast peak is biased by whatever picture sits beside the
+        // pulse (brighter content pulls it that way), and a bias that changes
+        // down the picture tilts the whole line fit. Locate precisely by the
+        // pulse's own centroid instead: each sample weighs by how sync-like
+        // it is (1 at ≤1250 Hz, 0 at ≥1450 Hz — porch and picture never go
+        // below 1500), over a window symmetric about the coarse centre and
+        // twice the pulse long, so picture content contributes nothing.
+        double c = bestT + len / 2.0;
+        long w0 = Math.Max(track.Base, (long)(c - len)), w1 = Math.Min(track.End - 1, (long)(c + len));
+        double sw = 0, st = 0;
+        for (long t = w0; t <= w1; t++)
+        {
+            double f = track[t] - img.Offset;
+            double wt = Math.Clamp((SstvModes.SyncHz + 250 - f) / 200.0, 0, 1);
+            sw += wt; st += wt * (t + 0.5);
+        }
+        return sw > 0 ? st / sw - len / 2.0 : bestT;
     }
 
     private static void RenderLine(Track track, Image img, int n)

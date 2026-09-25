@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SSTV_PRESETS, useSstvStore } from '../state/sstv-store';
+import { SstvSendPanel } from './SstvSendPanel';
 import { useLayoutStore } from '../state/layout-store';
 import { useConnectionStore } from '../state/connection-store';
 import { useLoggerStore } from '../state/logger-store';
@@ -42,8 +43,10 @@ function describe(m: SstvImageMeta, live: boolean): string {
   const parts = [m.mode];
   if (m.callsign) parts.push(`de ${m.callsign}`);
   parts.push(`${m.rowsDone}/${m.height}`);
-  if (Math.abs(m.offsetHz) >= 1) parts.push(`${m.offsetHz > 0 ? '+' : ''}${Math.round(m.offsetHz)} Hz`);
-  if (!live && m.clockErrorPpm !== 0) parts.push(`${m.clockErrorPpm > 0 ? '+' : ''}${m.clockErrorPpm} ppm`);
+  if (Math.abs(m.offsetHz) >= 1)
+    parts.push(`${m.offsetHz > 0 ? '+' : ''}${Math.round(m.offsetHz)} Hz`);
+  if (!live && m.clockErrorPpm !== 0)
+    parts.push(`${m.clockErrorPpm > 0 ? '+' : ''}${m.clockErrorPpm} ppm`);
   if (m.dialHz > 0) parts.push(`${(m.dialHz / 1e6).toFixed(3)} ${m.sideBand}`);
   if (!live) parts.push(`${utcDate(m.startedUnixMs)} ${utcHm(m.startedUnixMs)}`);
   if (!live && m.endReason && m.endReason !== 'Complete') parts.push(m.endReason);
@@ -56,6 +59,7 @@ function AdjustBar({ meta }: { meta: SstvImageMeta }) {
   const modes = useSstvStore((s) => s.modes);
   const adjust = useSstvStore((s) => s.adjust);
   const remove = useSstvStore((s) => s.remove);
+  const replyTo = useSstvStore((s) => s.replyTo);
   const [slant, setSlant] = useState(meta.slantPpm);
   const [shift, setShift] = useState(meta.shiftPx);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -133,7 +137,13 @@ function AdjustBar({ meta }: { meta: SstvImageMeta }) {
           className="sstv-select"
           value={meta.mode}
           disabled={disabled}
-          onChange={(e) => void adjust(meta.id, { mode: e.target.value, slantPpm: 0, shiftPx: 0 })}
+          onChange={(e) =>
+            void adjust(meta.id, {
+              mode: e.target.value,
+              slantPpm: 0,
+              shiftPx: 0,
+            })
+          }
           title="Decode the recording again as another mode"
         >
           {modes.map((m) => (
@@ -154,10 +164,22 @@ function AdjustBar({ meta }: { meta: SstvImageMeta }) {
         >
           RESET
         </button>
+        <button
+          type="button"
+          className="btn sm"
+          onClick={() => void replyTo(meta.id)}
+          title="Reply: send this picture back with your report"
+        >
+          REPLY
+        </button>
         <span className="sstv-spacer" />
         {confirmDelete ? (
           <>
-            <button type="button" className="btn sm sstv-danger" onClick={() => void remove(meta.id)}>
+            <button
+              type="button"
+              className="btn sm sstv-danger"
+              onClick={() => void remove(meta.id)}
+            >
               DELETE
             </button>
             <button type="button" className="btn sm" onClick={() => setConfirmDelete(false)}>
@@ -223,14 +245,26 @@ function LogRow({ meta }: { meta: SstvImageMeta }) {
           if (state !== 'busy') setState('idle');
         }}
       />
-      <input className="sstv-input sstv-rsv" value={sent} title="RSV sent" onChange={(e) => setSent(e.target.value)} />
-      <input className="sstv-input sstv-rsv" value={rcvd} title="RSV received" onChange={(e) => setRcvd(e.target.value)} />
+      <input
+        className="sstv-input sstv-rsv"
+        value={sent}
+        title="RSV sent"
+        onChange={(e) => setSent(e.target.value)}
+      />
+      <input
+        className="sstv-input sstv-rsv"
+        value={rcvd}
+        title="RSV received"
+        onChange={(e) => setRcvd(e.target.value)}
+      />
       <button
         type="button"
         className={`btn sm ${state === 'done' ? 'active' : ''}`}
         disabled={!canLog}
         onClick={() => void log()}
-        title={meta.dialHz > 0 ? 'Log this SSTV QSO' : 'No dial frequency recorded for this picture'}
+        title={
+          meta.dialHz > 0 ? 'Log this SSTV QSO' : 'No dial frequency recorded for this picture'
+        }
       >
         {state === 'done' ? 'LOGGED' : 'LOG'}
       </button>
@@ -258,6 +292,9 @@ export function SstvWindow() {
   const select = useSstvStore((s) => s.select);
   const ensurePixels = useSstvStore((s) => s.ensurePixels);
   const tuneTo = useSstvStore((s) => s.tuneTo);
+  const view = useSstvStore((s) => s.view);
+  const setView = useSstvStore((s) => s.setView);
+  const txBusy = useSstvStore((s) => s.tx?.transmitting === true);
   const vfoHz = useConnectionStore((s) => s.vfoHz);
   const settingsViewOpen = useLayoutStore((s) => s.settingsViewOpen);
   const [pos, setPos] = useState({ x: window.innerWidth - WIDTH - 24, y: 88 });
@@ -305,15 +342,25 @@ export function SstvWindow() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, closeWorkspace]);
 
-  const drag = useRef<{ id: number; sx: number; sy: number; ox: number; oy: number } | null>(
-    null,
-  );
+  const drag = useRef<{
+    id: number;
+    sx: number;
+    sy: number;
+    ox: number;
+    oy: number;
+  } | null>(null);
   const onHeaderPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
       if (target.closest('[data-no-drag]')) return;
       e.currentTarget.setPointerCapture(e.pointerId);
-      drag.current = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
+      drag.current = {
+        id: e.pointerId,
+        sx: e.clientX,
+        sy: e.clientY,
+        ox: pos.x,
+        oy: pos.y,
+      };
     },
     [pos],
   );
@@ -351,7 +398,7 @@ export function SstvWindow() {
         onPointerUp={onHeaderPointerUp}
       >
         <span className={`dw-dot ${enabled ? 'on' : ''}`} />
-        <span className="dw-title">SSTV · RECEIVE</span>
+        <span className="dw-title">{txBusy ? 'SSTV · TRANSMITTING' : 'SSTV'}</span>
         <span className="dw-spacer" />
         <button
           type="button"
@@ -365,6 +412,26 @@ export function SstvWindow() {
       </div>
 
       <div className="sstv-toolbar">
+        <div className="sstv-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'rx'}
+            className={`btn sm ${view === 'rx' ? 'active' : ''}`}
+            onClick={() => setView('rx')}
+          >
+            RX
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'tx'}
+            className={`btn sm ${view === 'tx' ? 'active' : ''} ${txBusy ? 'sstv-tx-live' : ''}`}
+            onClick={() => setView('tx')}
+          >
+            SEND
+          </button>
+        </div>
         <button
           type="button"
           className={`btn sm ${enabled ? 'active' : ''}`}
@@ -401,51 +468,57 @@ export function SstvWindow() {
         ))}
       </div>
 
-      <div className="sstv-canvas-wrap">
-        {shownPx ? (
-          <canvas
-            ref={canvasRef}
-            className="sstv-canvas"
-            style={{ aspectRatio: `${shownPx.width} / ${shownPx.height}` }}
-          />
-        ) : (
-          <div className="sstv-empty">No picture yet</div>
-        )}
-      </div>
-
-      {shownMeta && !live && (
+      {view === 'tx' ? (
+        <SstvSendPanel />
+      ) : (
         <>
-          <AdjustBar meta={shownMeta} />
-          <div className="sstv-adjust">
-            <LogRow meta={shownMeta} />
+          <div className="sstv-canvas-wrap">
+            {shownPx ? (
+              <canvas
+                ref={canvasRef}
+                className="sstv-canvas"
+                style={{ aspectRatio: `${shownPx.width} / ${shownPx.height}` }}
+              />
+            ) : (
+              <div className="sstv-empty">No picture yet</div>
+            )}
           </div>
-        </>
-      )}
 
-      {(current || images.length > 0) && (
-        <div className="sstv-strip" title={galleryDir ? `Saved in ${galleryDir}` : undefined}>
-          {current && (
-            <button
-              type="button"
-              className={`sstv-chip live ${selectedId == null || selectedId === current.id ? 'sel' : ''}`}
-              onClick={() => select(null)}
-              title="Follow the picture being received"
-            >
-              LIVE
-            </button>
+          {shownMeta && !live && (
+            <>
+              <AdjustBar meta={shownMeta} />
+              <div className="sstv-adjust">
+                <LogRow meta={shownMeta} />
+              </div>
+            </>
           )}
-          {images.map((m) => (
-            <button
-              type="button"
-              key={m.id}
-              className={`sstv-chip ${shownId === m.id && !live ? 'sel' : ''}`}
-              onClick={() => select(m.id)}
-              title={describe(m, false)}
-            >
-              {m.callsign ?? m.mode} {utcHm(m.startedUnixMs)}
-            </button>
-          ))}
-        </div>
+
+          {(current || images.length > 0) && (
+            <div className="sstv-strip" title={galleryDir ? `Saved in ${galleryDir}` : undefined}>
+              {current && (
+                <button
+                  type="button"
+                  className={`sstv-chip live ${selectedId == null || selectedId === current.id ? 'sel' : ''}`}
+                  onClick={() => select(null)}
+                  title="Follow the picture being received"
+                >
+                  LIVE
+                </button>
+              )}
+              {images.map((m) => (
+                <button
+                  type="button"
+                  key={m.id}
+                  className={`sstv-chip ${shownId === m.id && !live ? 'sel' : ''}`}
+                  onClick={() => select(m.id)}
+                  title={describe(m, false)}
+                >
+                  {m.callsign ?? m.mode} {utcHm(m.startedUnixMs)}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

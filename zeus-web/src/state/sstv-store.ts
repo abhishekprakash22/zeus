@@ -11,6 +11,7 @@
 //   kind:'discard' — a false start; drop it
 //   kind:'update'  — gallery edit (re-render, late FSK-ID callsign)
 //   kind:'removed' — deleted from the gallery
+//   kind:'tx'      — transmitter status (keyed, progress, why it stopped)
 // Pixels live here as RGBA buffers keyed by picture id (mutated in place;
 // `pixelsRev` bumps so the canvas redraws). Only the pictures actually shown
 // are fetched — the gallery can list hundreds. SSE replays nothing, so
@@ -21,7 +22,10 @@ import {
   deleteSstvImage,
   getSstvImage,
   getSstvStatus,
+  getSstvTx,
   postSstvAdjust,
+  postSstvTx,
+  postSstvTxHalt,
   postSstvEnabled,
   postSstvStop,
   setMode,
@@ -29,6 +33,8 @@ import {
   type RxMode,
   type SstvAdjust,
   type SstvImageMeta,
+  type SstvModeInfo,
+  type SstvTxStatus,
 } from '../api/client';
 import { useConnectionStore } from './connection-store';
 import { useTxStore } from './tx-store';
@@ -40,7 +46,8 @@ export type SstvEvent =
   | { kind: 'end'; image: SstvImageMeta }
   | { kind: 'update'; image: SstvImageMeta }
   | { kind: 'discard'; id: number }
-  | { kind: 'removed'; id: number };
+  | { kind: 'removed'; id: number }
+  | { kind: 'tx'; tx: SstvTxStatus };
 
 export interface SstvPixels {
   width: number;
@@ -70,7 +77,20 @@ export interface SstvState {
   /** Finished pictures (session + gallery on disk), newest first. */
   images: SstvImageMeta[];
   modes: string[];
+  modeInfos: SstvModeInfo[];
   galleryDir: string | null;
+  /** Which half of the window is showing. */
+  view: 'rx' | 'tx';
+  /** Transmitter status from the backend (null until first known). */
+  tx: SstvTxStatus | null;
+  /** Why the last SEND was refused, shown until the next attempt. */
+  txError: string | null;
+  /** Composer: the picture to send (before scaling/overlay), mode, texts. */
+  txSource: ImageBitmap | null;
+  txMode: string;
+  txTop: string;
+  txBottom: string;
+  txFsk: boolean;
   /** Picture on screen; null follows the live one (or the newest). */
   selectedId: number | null;
   pixels: Record<number, SstvPixels>;
@@ -85,6 +105,13 @@ export interface SstvState {
   adjust: (id: number, adj: SstvAdjust) => Promise<void>;
   remove: (id: number) => Promise<void>;
   tuneTo: (hz: number, mode: RxMode) => Promise<void>;
+  setView: (view: 'rx' | 'tx') => void;
+  setTxSource: (src: ImageBitmap | null) => void;
+  setTxOptions: (opts: Partial<Pick<SstvState, 'txMode' | 'txTop' | 'txBottom' | 'txFsk'>>) => void;
+  /** Quick reply: a received picture becomes the one to send. */
+  replyTo: (id: number) => Promise<void>;
+  send: (rgbBase64: string, fskId: string | null) => Promise<void>;
+  halt: () => Promise<void>;
   refresh: () => Promise<void>;
   ingest: (ev: SstvEvent) => void;
 }
@@ -184,7 +211,16 @@ export const useSstvStore = create<SstvState>((set, get) => {
     current: null,
     images: [],
     modes: [],
+    modeInfos: [],
     galleryDir: null,
+    view: 'rx',
+    tx: null,
+    txError: null,
+    txSource: null,
+    txMode: 'Martin 1',
+    txTop: '',
+    txBottom: '',
+    txFsk: true,
     selectedId: null,
     pixels: {},
     pixelsRev: 0,
@@ -207,6 +243,8 @@ export const useSstvStore = create<SstvState>((set, get) => {
     },
 
     closeWorkspace: (opts) => {
+      // Leaving SSTV never leaves a picture going out behind a closed window.
+      if (get().tx?.transmitting) void get().halt();
       const { priorRadio, forcedMode } = get();
       set({ panelOpen: false, priorRadio: null, forcedMode: null });
       void get().setEnabled(false);
@@ -280,14 +318,53 @@ export const useSstvStore = create<SstvState>((set, get) => {
       }
     },
 
+    setView: (view) => set({ view }),
+
+    setTxSource: (src) => set({ txSource: src }),
+
+    setTxOptions: (opts) => set(opts),
+
+    replyTo: async (id) => {
+      const px = get().pixels[id];
+      const meta = get().images.find((i) => i.id === id);
+      if (!px) return;
+      try {
+        const bmp = await createImageBitmap(new ImageData(px.rgba, px.width, px.height));
+        const rsv = meta?.callsign ? `${meta.callsign} UR 595` : 'UR 595';
+        set({ txSource: bmp, txBottom: rsv, view: 'tx', txError: null });
+      } catch {
+        /* no bitmap support — the operator can still load a file */
+      }
+    },
+
+    send: async (rgbBase64, fskId) => {
+      set({ txError: null });
+      try {
+        const tx = await postSstvTx({ mode: get().txMode, rgb: rgbBase64, fskId });
+        set({ tx });
+      } catch (err) {
+        set({ txError: err instanceof Error ? err.message : 'refused' });
+      }
+    },
+
+    halt: async () => {
+      try {
+        set({ tx: await postSstvTxHalt() });
+      } catch {
+        /* the 'tx' SSE frame reconciles */
+      }
+    },
+
     refresh: async () => {
       try {
-        const st = await getSstvStatus();
+        const [st, tx] = await Promise.all([getSstvStatus(), getSstvTx().catch(() => null)]);
         set((s) => ({
           enabled: st.enabled,
           current: st.current,
           images: st.images,
           modes: st.modes,
+          modeInfos: st.modeInfos ?? [],
+          tx: tx ?? s.tx,
           galleryDir: st.galleryDir,
           selectedId:
             s.selectedId != null && st.images.some((i) => i.id === s.selectedId)
@@ -346,6 +423,9 @@ export const useSstvStore = create<SstvState>((set, get) => {
           if (rerendered && get().pixels[ev.image.id]) void loadImage(ev.image.id);
           break;
         }
+        case 'tx':
+          set({ tx: ev.tx });
+          break;
         case 'discard':
         case 'removed':
           set((s) => {

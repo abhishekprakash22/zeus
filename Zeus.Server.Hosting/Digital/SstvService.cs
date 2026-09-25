@@ -39,9 +39,11 @@ public sealed record SstvImageMeta(
     long StartedUnixMs, long? EndedUnixMs, string? EndReason,
     string? Key, bool Adjustable, double SlantPpm, double ShiftPx, string? Callsign);
 
+public sealed record SstvModeInfo(string Name, int Width, int Height, double DurationMs);
+
 public sealed record SstvStatusDto(
     bool Enabled, int Receiver, SstvImageMeta? Current, SstvImageMeta[] Images, string[] Modes,
-    string? GalleryDir);
+    string? GalleryDir, SstvModeInfo[] ModeInfos);
 
 /// <summary>A picture's pixels: <see cref="Rgb"/> (raw base64 RGB) for pictures
 /// in memory, <see cref="Png"/> (base64 PNG) for ones only on disk.</summary>
@@ -168,7 +170,9 @@ public sealed class SstvService : IHostedService, IDisposable
                 _current is null ? null : Meta(_current),
                 _images.Select(Meta).ToArray(),
                 SstvModes.All.Select(m => m.Name).ToArray(),
-                _gallery?.Dir);
+                _gallery?.Dir,
+                SstvModes.All.Select(m => new SstvModeInfo(m.Name, m.Width, m.Height,
+                    Math.Round(SstvEncoder.VisMs + m.DurationMs))).ToArray());
         }
     }
 

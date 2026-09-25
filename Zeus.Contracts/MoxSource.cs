@@ -97,4 +97,12 @@ public enum MoxSource : byte
     /// The beacon self-disarms on a 30-minute watchdog and any halt aborts
     /// an in-flight transmission within one audio block.</summary>
     WsprBeacon = 11,
+
+    /// <summary>The in-core SSTV transmitter (<c>SstvTransmitter</c>) sending
+    /// one picture the operator explicitly asked to send. Same release rule
+    /// as <see cref="WsprBeacon"/>: only SSTV releases what it claimed and
+    /// <see cref="UI"/> remains the master override — an operator MOX-off
+    /// ends the picture. Never arms PureSignal, never auto-keys; HALT aborts
+    /// within one audio block and a per-picture watchdog bounds an overrun.</summary>
+    Sstv = 12,
 }

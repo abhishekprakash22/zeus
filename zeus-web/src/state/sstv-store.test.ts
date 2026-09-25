@@ -15,10 +15,21 @@ vi.mock('../api/client', async (importOriginal) => ({
   getSstvStatus: vi.fn(),
   postSstvEnabled: vi.fn(async (on: boolean) => ({ enabled: on })),
   postSstvStop: vi.fn(),
+  postSstvTx: vi.fn(async (req: { mode: string }) => {
+    if (req.mode === 'Bad') throw new Error('the transmitter is already keyed');
+    return { ...TX_IDLE, transmitting: true, mode: req.mode };
+  }),
+  postSstvTxHalt: vi.fn(async () => ({ ...TX_IDLE, lastError: 'halted' })),
+  getSstvTx: vi.fn(async () => TX_IDLE),
   setMode: vi.fn(async () => ({})),
 }));
 
 import { sstvSidebandFor, useSstvStore } from './sstv-store';
+import * as client from '../api/client';
+
+const TX_IDLE = {
+  transmitting: false, mode: null, progress: 0, startedUnixMs: null, durationMs: 0, lastError: null,
+};
 
 function meta(id: number, rowsDone = 0): SstvImageMeta {
   return {
@@ -76,6 +87,27 @@ describe('sstv store', () => {
     const st = useSstvStore.getState();
     expect(st.images).toEqual([]);
     expect(st.selectedId).toBeNull();
+  });
+
+  it('send reports the transmitter status, or the server refusal', async () => {
+    useSstvStore.setState({ txMode: 'Martin 1', tx: null, txError: null });
+    await useSstvStore.getState().send('AAAA', 'EA4ABC');
+    expect(useSstvStore.getState().tx?.transmitting).toBe(true);
+
+    useSstvStore.setState({ txMode: 'Bad' });
+    await useSstvStore.getState().send('AAAA', null);
+    expect(useSstvStore.getState().txError).toBe('the transmitter is already keyed');
+  });
+
+  it('tx events drive the transmitter status', () => {
+    useSstvStore.getState().ingest({ kind: 'tx', tx: { ...TX_IDLE, transmitting: true, progress: 0.5, mode: 'Robot 36' } });
+    expect(useSstvStore.getState().tx?.progress).toBe(0.5);
+  });
+
+  it('leaving SSTV mid-transmission halts the picture', async () => {
+    useSstvStore.setState({ panelOpen: true, tx: { ...TX_IDLE, transmitting: true } });
+    useSstvStore.getState().closeWorkspace();
+    await vi.waitFor(() => expect(client.postSstvTxHalt).toHaveBeenCalled());
   });
 
   it('discard drops a false start', () => {

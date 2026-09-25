@@ -5911,6 +5911,50 @@ export interface SstvStatusDto {
   images: SstvImageMeta[];
   modes: string[];
   galleryDir: string | null;
+  modeInfos: SstvModeInfo[];
+}
+
+export interface SstvModeInfo {
+  name: string;
+  width: number;
+  height: number;
+  /** VIS + picture, without the optional FSK ID. */
+  durationMs: number;
+}
+
+export interface SstvTxStatus {
+  transmitting: boolean;
+  mode: string | null;
+  /** 0..1 */
+  progress: number;
+  startedUnixMs: number | null;
+  durationMs: number;
+  /** Why the last picture stopped early ("halted", "MOX taken away…"), else null. */
+  lastError: string | null;
+}
+
+export interface SstvTxRequest {
+  mode: string;
+  /** base64 RGB at the mode's exact width × height. */
+  rgb: string;
+  fskId: string | null;
+}
+
+export function getSstvTx(signal?: AbortSignal): Promise<SstvTxStatus> {
+  return jsonFetch(`${SSTV_BASE}/tx`, { signal }, (raw) => raw as SstvTxStatus);
+}
+
+/** Resolves with the new status, or rejects with the server's refusal text. */
+export function postSstvTx(req: SstvTxRequest): Promise<SstvTxStatus> {
+  return jsonFetch(
+    `${SSTV_BASE}/tx`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) },
+    (raw) => raw as SstvTxStatus,
+  );
+}
+
+export function postSstvTxHalt(): Promise<SstvTxStatus> {
+  return jsonFetch(`${SSTV_BASE}/tx/halt`, { method: 'POST' }, (raw) => raw as SstvTxStatus);
 }
 
 export interface SstvImageDto {

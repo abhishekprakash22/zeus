@@ -1995,3 +1995,15 @@
 .sstv-rsv { width: 40px; flex: none; text-align: center; }
 .sstv-log-err { color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 120px; }
+.sstv-tabs { display: flex; gap: 2px; flex: none; }
+.sstv-tx-live { color: var(--tx); border-color: var(--tx); }
+.sstv-send { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+  font: 500 10.5px var(--font-mono, monospace); color: var(--fg-2); }
+.sstv-send .sstv-canvas-wrap { margin: 2px -8px; }
+.sstv-grow { flex: 1; }
+.sstv-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-3); }
+.sstv-send-btn { color: var(--tx); border-color: var(--tx); }
+.sstv-progress { flex: 1; height: 6px; background: var(--bg-2); border-radius: var(--r-xs);
+  overflow: hidden; }
+.sstv-progress-fill { height: 100%; background: var(--tx); }

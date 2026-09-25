@@ -833,6 +833,7 @@ public static class ZeusHost
         builder.Services.AddSingleton(_ =>
             new Zeus.Server.Hosting.Digital.Sstv.SstvGallery(Zeus.Server.PrefsDbPath.SstvDir()));
         builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.SstvService>();
+        builder.Services.AddSingleton<Zeus.Server.Hosting.Digital.SstvTransmitter>();
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.SstvService>());
         builder.Services.AddSingleton<ThemeSettingsStore>();

@@ -151,6 +151,13 @@ public static class DigitalEndpoints
             s.Adjust(id, req) is { } meta ? Results.Ok(meta) : Results.NotFound());
         g.MapDelete("/sstv/image/{id:int}", (int id, SstvService s) =>
             s.Delete(id) ? Results.Ok(new { ok = true }) : Results.NotFound());
+        // SSTV transmit: one picture per explicit request (SstvTransmitter).
+        g.MapGet("/sstv/tx", (SstvTransmitter t) => Results.Ok(t.Status()));
+        g.MapPost("/sstv/tx", (SstvTxRequest req, SstvTransmitter t) =>
+            t.Start(req) is { } error
+                ? Results.Json(new { error }, statusCode: StatusCodes.Status409Conflict)
+                : Results.Ok(t.Status()));
+        g.MapPost("/sstv/tx/halt", (SstvTransmitter t) => { t.Halt(); return Results.Ok(t.Status()); });
 
         // ---- config ---------------------------------------------------------
         g.MapPost("/config/identity", (IdentityRequest req, DigitalService d) =>

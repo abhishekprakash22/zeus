@@ -15,8 +15,10 @@ public sealed class SstvServiceTests
     [Fact]
     public async Task Pd50_FromRxAudio_StreamsRowsAndFinishesThePicture()
     {
+        var dir = Path.Combine(Path.GetTempPath(), "zeus-sstv-" + Guid.NewGuid().ToString("N"));
         var digital = new DigitalService(null!, NullLogger<DigitalService>.Instance);
-        var svc = new SstvService(null!, digital, NullLogger<SstvService>.Instance);
+        var svc = new SstvService(null!, digital, NullLogger<SstvService>.Instance,
+            gallery: new SstvGallery(dir));
         var (reader, lease) = digital.Events.Subscribe();
         var frames = new List<string>();
         var pump = Task.Run(async () =>
@@ -28,6 +30,7 @@ public sealed class SstvServiceTests
         try
         {
             svc.Enable(0);
+            while (svc.ResetPending) await Task.Delay(5);   // restart applied, then feed
             var mode = SstvModes.PD50;
             var rgb = new byte[mode.Width * mode.Height * 3];
             for (int i = 0; i < rgb.Length; i++) rgb[i] = (byte)(i * 7);
@@ -57,12 +60,34 @@ public sealed class SstvServiceTests
             Assert.Equal("Complete", img.EndReason);
             Assert.Equal(mode.Height, img.RowsDone);
             Assert.NotNull(svc.Image(img.Id));
+            Assert.True(img.Adjustable);
+            Assert.NotNull(img.Key);
+
+            // Manual slant re-renders and persists; the picture stays listed.
+            var adj = svc.Adjust(img.Id, new SstvAdjustRequest(null, 500, null));
+            Assert.Equal(500, adj!.SlantPpm);
+
+            // A fresh service (restart) finds it in the gallery, as a PNG.
+            var reborn = new SstvService(null!, digital, NullLogger<SstvService>.Instance,
+                gallery: new SstvGallery(dir));
+            await reborn.StartAsync(default);
+            var back = Assert.Single(reborn.Status().Images);
+            Assert.Equal(img.Key, back.Key);
+            Assert.Equal(500, back.SlantPpm);
+            Assert.False(back.Adjustable);
+            var dto = reborn.Image(back.Id);
+            Assert.NotNull(dto?.Png);
+            Assert.True(reborn.Delete(back.Id));
+            Assert.Empty(reborn.Status().Images);
+            Assert.Empty(Directory.GetFiles(dir));
+            await reborn.StopAsync(default);
         }
         finally
         {
             await svc.StopAsync(default);
             lease.Dispose();
             await pump;
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
         }
 
         lock (frames)

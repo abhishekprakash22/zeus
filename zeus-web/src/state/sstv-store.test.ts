@@ -10,6 +10,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   getSstvImage: vi.fn(async (id: number) => ({
     meta: meta(id, 2),
     rgb: btoa(String.fromCharCode(...new Array(2 * 2 * 3).fill(200))),
+    png: null,
   })),
   getSstvStatus: vi.fn(),
   postSstvEnabled: vi.fn(async (on: boolean) => ({ enabled: on })),
@@ -23,6 +24,7 @@ function meta(id: number, rowsDone = 0): SstvImageMeta {
   return {
     id, mode: 'Martin 1', width: 2, height: 2, rowsDone, offsetHz: 0, clockErrorPpm: 0,
     dialHz: 14_230_000, sideBand: 'USB', startedUnixMs: 0, endedUnixMs: null, endReason: null,
+    key: null, adjustable: true, slantPpm: 0, shiftPx: 0, callsign: null,
   };
 }
 
@@ -32,6 +34,7 @@ describe('sstv store', () => {
   beforeEach(() => {
     useSstvStore.setState({
       panelOpen: false, priorRadio: null, forcedMode: null, enabled: false, current: null, images: [],
+      modes: [], galleryDir: null,
       selectedId: null, pixels: {}, pixelsRev: 0,
     });
   });
@@ -56,6 +59,23 @@ describe('sstv store', () => {
     expect(useSstvStore.getState().current).toBeNull();
     expect(useSstvStore.getState().images.map((i) => i.id)).toEqual([3]);
     await vi.waitFor(() => expect(useSstvStore.getState().pixels[3]?.rgba[0]).toBe(200));
+  });
+
+  it('update replaces the listed meta (late FSK-ID callsign)', () => {
+    const s = useSstvStore.getState();
+    s.ingest({ kind: 'end', image: meta(7, 2) });
+    s.ingest({ kind: 'update', image: { ...meta(7, 2), callsign: 'EA4ABC' } });
+    expect(useSstvStore.getState().images[0]?.callsign).toBe('EA4ABC');
+  });
+
+  it('removed drops the picture and releases a selection of it', () => {
+    const s = useSstvStore.getState();
+    s.ingest({ kind: 'end', image: meta(9, 2) });
+    s.select(9);
+    s.ingest({ kind: 'removed', id: 9 });
+    const st = useSstvStore.getState();
+    expect(st.images).toEqual([]);
+    expect(st.selectedId).toBeNull();
   });
 
   it('discard drops a false start', () => {

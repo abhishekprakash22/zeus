@@ -9,18 +9,25 @@
 //   kind:'end'     — picture done; its rows were re-rendered with the final
 //                    slant fit, so the full picture is re-fetched
 //   kind:'discard' — a false start; drop it
+//   kind:'update'  — gallery edit (re-render, late FSK-ID callsign)
+//   kind:'removed' — deleted from the gallery
 // Pixels live here as RGBA buffers keyed by picture id (mutated in place;
-// `pixelsRev` bumps so the canvas redraws). SSE replays nothing, so refresh()
-// runs on every stream (re)open and re-fetches the picture in progress.
+// `pixelsRev` bumps so the canvas redraws). Only the pictures actually shown
+// are fetched — the gallery can list hundreds. SSE replays nothing, so
+// refresh() runs on every stream (re)open.
 
 import { create } from 'zustand';
 import {
+  deleteSstvImage,
   getSstvImage,
   getSstvStatus,
+  postSstvAdjust,
   postSstvEnabled,
   postSstvStop,
   setMode,
+  setVfo,
   type RxMode,
+  type SstvAdjust,
   type SstvImageMeta,
 } from '../api/client';
 import { useConnectionStore } from './connection-store';
@@ -31,13 +38,25 @@ export type SstvEvent =
   | { kind: 'start'; image: SstvImageMeta }
   | { kind: 'rows'; id: number; row: number; count: number; width: number; rgb: string }
   | { kind: 'end'; image: SstvImageMeta }
-  | { kind: 'discard'; id: number };
+  | { kind: 'update'; image: SstvImageMeta }
+  | { kind: 'discard'; id: number }
+  | { kind: 'removed'; id: number };
 
 export interface SstvPixels {
   width: number;
   height: number;
   rgba: Uint8ClampedArray<ArrayBuffer>;
 }
+
+/** The analog SSTV calling frequencies, with the sideband each is worked on. */
+export const SSTV_PRESETS: readonly { label: string; hz: number; mode: RxMode }[] = [
+  { label: '3.845', hz: 3_845_000, mode: 'LSB' },
+  { label: '7.171', hz: 7_171_000, mode: 'LSB' },
+  { label: '14.230', hz: 14_230_000, mode: 'USB' },
+  { label: '14.233', hz: 14_233_000, mode: 'USB' },
+  { label: '21.340', hz: 21_340_000, mode: 'USB' },
+  { label: '28.680', hz: 28_680_000, mode: 'USB' },
+];
 
 export interface SstvState {
   /** SSTV is engaged as a mode (button depressed, window up, decoder on). */
@@ -48,8 +67,10 @@ export interface SstvState {
   forcedMode: RxMode | null;
   enabled: boolean;
   current: SstvImageMeta | null;
-  /** Finished pictures this session, newest first. */
+  /** Finished pictures (session + gallery on disk), newest first. */
   images: SstvImageMeta[];
+  modes: string[];
+  galleryDir: string | null;
   /** Picture on screen; null follows the live one (or the newest). */
   selectedId: number | null;
   pixels: Record<number, SstvPixels>;
@@ -59,6 +80,11 @@ export interface SstvState {
   setEnabled: (on: boolean) => Promise<void>;
   stopCurrent: () => Promise<void>;
   select: (id: number | null) => void;
+  /** Fetch a picture's pixels if not held, without changing the selection. */
+  ensurePixels: (id: number) => void;
+  adjust: (id: number, adj: SstvAdjust) => Promise<void>;
+  remove: (id: number) => Promise<void>;
+  tuneTo: (hz: number, mode: RxMode) => Promise<void>;
   refresh: () => Promise<void>;
   ingest: (ev: SstvEvent) => void;
 }
@@ -77,7 +103,7 @@ function txActive(): boolean {
   return tx.moxOn || tx.tunOn;
 }
 
-function decodeBase64(b64: string): Uint8Array {
+function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -100,23 +126,53 @@ function blit(px: SstvPixels, row: number, rgb: Uint8Array): void {
   }
 }
 
-function prune(pixels: Record<number, SstvPixels>, keep: number[]): Record<number, SstvPixels> {
-  const ids = new Set(keep.slice(0, KEEP_PIXELS));
-  const next: Record<number, SstvPixels> = {};
-  for (const [k, v] of Object.entries(pixels)) if (ids.has(Number(k))) next[Number(k)] = v;
-  return next;
+/** Decode a gallery PNG to RGBA through the browser's own decoder. */
+async function pngPixels(b64: string): Promise<SstvPixels> {
+  const bmp = await createImageBitmap(new Blob([decodeBase64(b64)], { type: 'image/png' }));
+  const c = document.createElement('canvas');
+  c.width = bmp.width;
+  c.height = bmp.height;
+  const ctx = c.getContext('2d');
+  if (!ctx) throw new Error('no 2d context');
+  ctx.drawImage(bmp, 0, 0);
+  bmp.close();
+  return { width: c.width, height: c.height, rgba: ctx.getImageData(0, 0, c.width, c.height).data };
+}
+
+function withMeta(list: SstvImageMeta[], m: SstvImageMeta): SstvImageMeta[] {
+  return list.some((i) => i.id === m.id) ? list.map((i) => (i.id === m.id ? m : i)) : list;
 }
 
 export const useSstvStore = create<SstvState>((set, get) => {
-  /** Fetch a whole picture (after the end-of-picture re-render, or on rehydrate). */
+  /** Keep pixels only for the pictures most likely to be looked at again. */
+  const prune = (pixels: Record<number, SstvPixels>): Record<number, SstvPixels> => {
+    const s = get();
+    const keep = new Set<number>(
+      [s.current?.id, s.selectedId, ...s.images.slice(0, KEEP_PIXELS).map((i) => i.id)].filter(
+        (x): x is number => x != null,
+      ),
+    );
+    const next: Record<number, SstvPixels> = {};
+    for (const [k, v] of Object.entries(pixels)) if (keep.has(Number(k))) next[Number(k)] = v;
+    return next;
+  };
+
+  /** Fetch a whole picture (after a re-render, or to show a gallery one). */
   const loadImage = async (id: number): Promise<void> => {
     try {
       const dto = await getSstvImage(id);
-      const px = blank(dto.meta.width, dto.meta.height);
-      blit(px, 0, decodeBase64(dto.rgb));
-      set((s) => ({ pixels: { ...s.pixels, [id]: px }, pixelsRev: s.pixelsRev + 1 }));
+      let px: SstvPixels;
+      if (dto.rgb != null) {
+        px = blank(dto.meta.width, dto.meta.height);
+        blit(px, 0, decodeBase64(dto.rgb));
+      } else if (dto.png != null) {
+        px = await pngPixels(dto.png);
+      } else {
+        return;
+      }
+      set((s) => ({ pixels: prune({ ...s.pixels, [id]: px }), pixelsRev: s.pixelsRev + 1 }));
     } catch {
-      /* picture aged out of the backend ring — nothing to show */
+      /* picture gone (deleted, or its file removed by hand) — nothing to show */
     }
   };
 
@@ -127,6 +183,8 @@ export const useSstvStore = create<SstvState>((set, get) => {
     enabled: false,
     current: null,
     images: [],
+    modes: [],
+    galleryDir: null,
     selectedId: null,
     pixels: {},
     pixelsRev: 0,
@@ -145,6 +203,7 @@ export const useSstvStore = create<SstvState>((set, get) => {
       }
       set({ panelOpen: true, priorRadio: prior, forcedMode });
       if (!get().enabled) void get().setEnabled(true);
+      void get().refresh();
     },
 
     closeWorkspace: (opts) => {
@@ -183,7 +242,42 @@ export const useSstvStore = create<SstvState>((set, get) => {
 
     select: (id) => {
       set({ selectedId: id });
-      if (id != null && !get().pixels[id]) void loadImage(id);
+      if (id != null) get().ensurePixels(id);
+    },
+
+    ensurePixels: (id) => {
+      if (!get().pixels[id]) void loadImage(id);
+    },
+
+    adjust: async (id, adj) => {
+      try {
+        const meta = await postSstvAdjust(id, adj);
+        set((s) => ({ images: withMeta(s.images, meta) }));
+        await loadImage(id);
+      } catch {
+        /* no longer adjustable (aged out) — the 'update' SSE keeps meta honest */
+      }
+    },
+
+    remove: async (id) => {
+      try {
+        await deleteSstvImage(id);
+      } catch {
+        return;
+      }
+      get().ingest({ kind: 'removed', id });
+    },
+
+    // Band presets: QSY + the preset's sideband. The VFO first, the mode last,
+    // so the server's per-band mode recall (a cross-band SetVfo) can't win.
+    tuneTo: async (hz, mode) => {
+      if (txActive()) return;
+      try {
+        await setVfo(hz);
+        await setMode(mode);
+      } catch {
+        /* best effort — the operator can tune by hand */
+      }
     },
 
     refresh: async () => {
@@ -193,13 +287,16 @@ export const useSstvStore = create<SstvState>((set, get) => {
           enabled: st.enabled,
           current: st.current,
           images: st.images,
-          pixels: prune(s.pixels, [
-            ...(st.current ? [st.current.id] : []),
-            ...st.images.map((i) => i.id),
-          ]),
+          modes: st.modes,
+          galleryDir: st.galleryDir,
+          selectedId:
+            s.selectedId != null && st.images.some((i) => i.id === s.selectedId)
+              ? s.selectedId
+              : null,
         }));
-        const show = st.current?.id ?? st.images[0]?.id;
-        if (show != null) void loadImage(show);
+        set((s) => ({ pixels: prune(s.pixels) }));
+        const show = get().selectedId ?? st.current?.id ?? st.images[0]?.id;
+        if (show != null && (show === st.current?.id || !get().pixels[show])) void loadImage(show);
       } catch {
         /* backend without SSTV (older build) — stay idle */
       }
@@ -230,22 +327,34 @@ export const useSstvStore = create<SstvState>((set, get) => {
           break;
         }
         case 'end':
-          set((s) => {
-            const images = [ev.image, ...s.images.filter((i) => i.id !== ev.image.id)].slice(0, 12);
-            return {
-              current: s.current?.id === ev.image.id ? null : s.current,
-              images,
-              pixels: prune(s.pixels, [ev.image.id, ...images.map((i) => i.id)]),
-            };
-          });
+          set((s) => ({
+            current: s.current?.id === ev.image.id ? null : s.current,
+            images: [ev.image, ...s.images.filter((i) => i.id !== ev.image.id)],
+          }));
+          set((s) => ({ pixels: prune(s.pixels) }));
           void loadImage(ev.image.id);
           break;
+        case 'update': {
+          const prev = get().images.find((i) => i.id === ev.image.id);
+          set((s) => ({ images: withMeta(s.images, ev.image) }));
+          // A re-render changes pixels; a late FSK-ID callsign doesn't.
+          const rerendered =
+            prev != null &&
+            (prev.slantPpm !== ev.image.slantPpm ||
+              prev.shiftPx !== ev.image.shiftPx ||
+              prev.mode !== ev.image.mode);
+          if (rerendered && get().pixels[ev.image.id]) void loadImage(ev.image.id);
+          break;
+        }
         case 'discard':
+        case 'removed':
           set((s) => {
             const pixels = { ...s.pixels };
             delete pixels[ev.id];
             return {
               current: s.current?.id === ev.id ? null : s.current,
+              images: s.images.filter((i) => i.id !== ev.id),
+              selectedId: s.selectedId === ev.id ? null : s.selectedId,
               pixels,
               pixelsRev: s.pixelsRev + 1,
             };

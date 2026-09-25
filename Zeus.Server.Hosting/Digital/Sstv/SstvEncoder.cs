@@ -30,14 +30,16 @@ public static class SstvEncoder
     /// </summary>
     public static float[] Encode(
         SstvMode mode, ReadOnlySpan<byte> rgb, int sampleRate,
-        float amplitude = 0.8f, double freqOffsetHz = 0, double clockScale = 1.0)
+        float amplitude = 0.8f, double freqOffsetHz = 0, double clockScale = 1.0,
+        string? fskId = null)
     {
         if (rgb.Length != mode.Width * mode.Height * 3)
             throw new ArgumentException(
                 $"image must be {mode.Width}x{mode.Height} RGB ({mode.Width * mode.Height * 3} bytes)",
                 nameof(rgb));
 
-        double totalMs = VisMs + mode.DurationMs;
+        fskId = NormaliseFskId(fskId);
+        double totalMs = VisMs + mode.DurationMs + (fskId is null ? 0 : FskIdMs(fskId));
         var outBuf = new float[(int)Math.Ceiling(totalMs * clockScale * sampleRate / 1000.0) + 1];
         var w = new ToneWriter(outBuf, sampleRate, amplitude, freqOffsetHz, clockScale);
 
@@ -50,6 +52,7 @@ public static class SstvEncoder
         {
             WriteLine(ref w, mode, planes, line, lineBase + line * mode.LineMs);
         }
+        if (fskId is not null) WriteFskId(ref w, fskId);
         return outBuf.AsSpan(0, w.Written).ToArray();
     }
 
@@ -70,6 +73,48 @@ public static class SstvEncoder
         }
         w.Tone((ones & 1) != 0 ? SstvModes.VisOneHz : SstvModes.VisZeroHz, VisBitMs); // even parity
         w.Tone(SstvModes.SyncHz, VisBitMs);                     // stop bit
+    }
+
+    // ---- FSK ID -------------------------------------------------------------
+
+    /// <summary>Upper-cased, trimmed to the 6-bit alphabet MMSSTV/QSSTV can
+    /// carry (ASCII 0x23–0x5F plus space; '!' and '"' collide with the 0x01/
+    /// 0x02 control codes), at most 9 chars (QSSTV drops longer). Null if
+    /// nothing sendable is left.</summary>
+    public static string? NormaliseFskId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var chars = id.Trim().ToUpperInvariant()
+            .Where(c => c == ' ' || (c >= 0x23 && c <= 0x5F)).Take(9).ToArray();
+        return chars.Length == 0 ? null : new string(chars);
+    }
+
+    private static double FskIdMs(string id) =>
+        300 + 100 + SstvDecoder.FskBitMs + (id.Length + 3) * 6 * SstvDecoder.FskBitMs + 100;
+
+    private static void WriteFskId(ref ToneWriter w, string id)
+    {
+        w.Tone(SstvModes.BlackHz, 300);
+        w.Tone(SstvDecoder.FskSpaceHz, 100);
+        w.Tone(SstvDecoder.FskMarkHz, SstvDecoder.FskBitMs);   // start bit
+        int xsum = 0;
+        WriteChar(ref w, 0x2A);
+        foreach (char ch in id)
+        {
+            int v = (ch - 0x20) & 0x3F;
+            xsum ^= v;
+            WriteChar(ref w, v);
+        }
+        WriteChar(ref w, 0x01);
+        WriteChar(ref w, xsum);
+        w.Tone(SstvDecoder.FskSpaceHz, 100);
+
+        static void WriteChar(ref ToneWriter w, int v)
+        {
+            for (int i = 0; i < 6; i++)
+                w.Tone(((v >> i) & 1) != 0 ? SstvDecoder.FskMarkHz : SstvDecoder.FskSpaceHz,
+                    SstvDecoder.FskBitMs);
+        }
     }
 
     // ---- lines --------------------------------------------------------------

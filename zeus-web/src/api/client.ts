@@ -5894,6 +5894,14 @@ export interface SstvImageMeta {
   startedUnixMs: number;
   endedUnixMs: number | null;
   endReason: string | null;
+  /** Gallery file key (null while session-only). */
+  key: string | null;
+  /** The recorded track is still in memory, so the picture can be re-rendered. */
+  adjustable: boolean;
+  slantPpm: number;
+  shiftPx: number;
+  /** Sender's callsign from the FSK ID, when one followed the picture. */
+  callsign: string | null;
 }
 
 export interface SstvStatusDto {
@@ -5902,12 +5910,34 @@ export interface SstvStatusDto {
   current: SstvImageMeta | null;
   images: SstvImageMeta[];
   modes: string[];
+  galleryDir: string | null;
 }
 
 export interface SstvImageDto {
   meta: SstvImageMeta;
-  /** base64 RGB, width × height × 3. */
-  rgb: string;
+  /** base64 RGB, width × height × 3 — pictures still in memory. */
+  rgb: string | null;
+  /** base64 PNG — pictures known only from the gallery on disk. */
+  png: string | null;
+}
+
+export interface SstvAdjust {
+  /** "Decode as" another mode (name from SstvStatusDto.modes). */
+  mode?: string;
+  slantPpm?: number;
+  shiftPx?: number;
+}
+
+export function postSstvAdjust(id: number, adj: SstvAdjust): Promise<SstvImageMeta> {
+  return jsonFetch(
+    `${SSTV_BASE}/image/${id}/adjust`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(adj) },
+    (raw) => raw as SstvImageMeta,
+  );
+}
+
+export function deleteSstvImage(id: number): Promise<unknown> {
+  return jsonFetch(`${SSTV_BASE}/image/${id}`, { method: 'DELETE' }, (raw) => raw);
 }
 
 export function getSstvStatus(signal?: AbortSignal): Promise<SstvStatusDto> {

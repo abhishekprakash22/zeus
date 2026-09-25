@@ -1965,3 +1965,16 @@
 .sstv-chip:hover { color: var(--fg-0); }
 .sstv-chip.sel { border-color: var(--accent); color: var(--fg-0); }
 .sstv-chip.live { color: var(--accent); }
+.sstv-presets { display: flex; gap: 4px; padding: 0 8px 6px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line-soft); }
+.sstv-adjust { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+  border-top: 1px solid var(--line-soft); font: 500 10.5px var(--font-mono, monospace);
+  color: var(--fg-2); }
+.sstv-adjust-row { display: flex; align-items: center; gap: 8px; }
+.sstv-adjust-row > span:first-child { width: 36px; flex: none; }
+.sstv-adjust-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.sstv-adjust-val { width: 72px; flex: none; text-align: right; color: var(--fg-1); }
+.sstv-select { background: var(--bg-2); color: var(--fg-1); border: 1px solid var(--line);
+  border-radius: var(--r-sm); font: inherit; padding: 2px 4px; }
+.sstv-spacer { flex: 1; }
+.sstv-danger { color: var(--tx); border-color: var(--tx); }

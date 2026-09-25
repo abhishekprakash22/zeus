@@ -147,6 +147,10 @@ public static class DigitalEndpoints
         g.MapPost("/sstv/stop", (SstvService s) => { s.StopCurrent(); return Results.Ok(new { ok = true }); });
         g.MapGet("/sstv/image/{id:int}", (int id, SstvService s) =>
             s.Image(id) is { } img ? Results.Ok(img) : Results.NotFound());
+        g.MapPost("/sstv/image/{id:int}/adjust", (int id, SstvAdjustRequest req, SstvService s) =>
+            s.Adjust(id, req) is { } meta ? Results.Ok(meta) : Results.NotFound());
+        g.MapDelete("/sstv/image/{id:int}", (int id, SstvService s) =>
+            s.Delete(id) ? Results.Ok(new { ok = true }) : Results.NotFound());
 
         // ---- config ---------------------------------------------------------
         g.MapPost("/config/identity", (IdentityRequest req, DigitalService d) =>

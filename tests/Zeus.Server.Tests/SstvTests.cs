@@ -120,6 +120,105 @@ public sealed class SstvTests
         Assert.Equal(Enumerable.Range(0, mode.Height), rows);
     }
 
+    // ---- re-render ----------------------------------------------------------
+
+    [Fact]
+    public void Rerender_WithoutAdjustments_ReproducesThePicture()
+    {
+        var mode = SstvModes.S1;
+        var r = Decode(mode, TestCard(mode), clockScale: 1.002);
+        Assert.NotNull(r.Image.Recording);
+
+        var again = SstvDecoder.Rerender(r.Image);
+        Assert.Equal(r.Image.Id, again.Id);
+        Assert.Equal(r.Image.RowsDone, again.RowsDone);
+        Assert.Equal(r.Image.Rgb, again.Rgb);
+    }
+
+    [Fact]
+    public void Rerender_ShiftMovesThePictureRight_ByThatManyPixels()
+    {
+        var mode = SstvModes.M1;
+        var card = TestCard(mode);
+        var r = Decode(mode, card);
+        var shifted = SstvDecoder.Rerender(r.Image, shiftPx: 20);
+        Assert.Equal(20, shifted.ShiftPx);
+
+        // The grey ramp (bottom half) is monotonic in x: shifted[x] ≈ orig[x-20].
+        int y = mode.Height * 3 / 4, w = mode.Width;
+        double err = 0; int n = 0;
+        for (int x = 40; x < w - 20; x++, n++)
+            err += Math.Abs(shifted.Rgb[(y * w + x) * 3 + 1] - r.Image.Rgb[(y * w + x - 20) * 3 + 1]);
+        Assert.InRange(err / n, 0, 4);
+    }
+
+    [Fact]
+    public void Rerender_AdjustmentsAreAbsolute_NotCumulative()
+    {
+        var mode = SstvModes.PD90;
+        var r = Decode(mode, TestCard(mode));
+        var slanted = SstvDecoder.Rerender(r.Image, slantPpm: 4000);
+        Assert.True(MeanAbsError(mode, TestCard(mode), slanted.Rgb) >
+                    MeanAbsError(mode, TestCard(mode), r.Image.Rgb) + 10);
+        // Re-render the ADJUSTED image back to zero: identical to the original.
+        var back = SstvDecoder.Rerender(slanted, slantPpm: 0);
+        Assert.Equal(r.Image.Rgb, back.Rgb);
+    }
+
+    [Fact]
+    public void Rerender_DecodeAs_AnotherMode_AndBack()
+    {
+        var mode = SstvModes.M1;
+        var r = Decode(mode, TestCard(mode));
+        var asM2 = SstvDecoder.Rerender(r.Image, SstvModes.M2);
+        Assert.Same(SstvModes.M2, asM2.Mode);
+        var back = SstvDecoder.Rerender(asM2, SstvModes.M1);
+        Assert.Equal(r.Image.Rgb, back.Rgb);
+    }
+
+    // ---- FSK ID -------------------------------------------------------------
+
+    [Theory]
+    [InlineData("EA4ABC", 0)]
+    [InlineData("EA4ABC/P", 120)]
+    [InlineData("K1A", -80)]
+    public void FskId_FollowingThePicture_IsDecoded(string call, double offsetHz)
+    {
+        var mode = SstvModes.M2;
+        var audio = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f, offsetHz, fskId: call);
+        audio = Pad(audio, 1, 5, 0.05f);
+        var dec = new SstvDecoder();
+        string? got = null;
+        SstvImage? gotFor = null, ended = null;
+        dec.ImageEnded += (i, _) => ended = i;
+        dec.CallsignDecoded += (i, c) => { gotFor = i; got = c; };
+        for (int i = 0; i < audio.Length; i += 2048)
+            dec.Process(audio.AsSpan(i, Math.Min(2048, audio.Length - i)));
+
+        Assert.Equal(call, got);
+        Assert.Same(ended, gotFor);
+    }
+
+    [Fact]
+    public void FskId_Absent_ReportsNothing()
+    {
+        var mode = SstvModes.M2;
+        var audio = Pad(SstvEncoder.Encode(mode, TestCard(mode), Rate), 1, 5, 0.05f);
+        var dec = new SstvDecoder();
+        int calls = 0;
+        dec.CallsignDecoded += (_, _) => calls++;
+        dec.Process(audio);
+        Assert.Equal(0, calls);
+    }
+
+    [Theory]
+    [InlineData("ea4abc", "EA4ABC")]
+    [InlineData("  ea4abc/qrp-long ", "EA4ABC/QR")]   // 9-char cap (QSSTV)
+    [InlineData("hi!\"", "HI")]                     // ! and " are control codes
+    [InlineData("   ", null)]
+    public void FskId_Normalise(string input, string? want) =>
+        Assert.Equal(want, SstvEncoder.NormaliseFskId(input));
+
     // ---- helpers ------------------------------------------------------------
 
     private sealed record Result(SstvImage Image, SstvEndReason Reason);

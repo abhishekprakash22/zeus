@@ -7,30 +7,171 @@
 // SSTV pop-out — DiversityWindow's sibling: fixed-size, draggable, always on
 // top. It is the SSTV mode: the SSTV button in the mode row (beside FT8/FT4/
 // WSPR, via enter-digital) opens it, and closing it exits the mode — decoder
-// off, prior sideband restored. The picture paints line by
-// line as SstvService decodes it; when it ends, the straightened
-// (slant-corrected) re-render replaces it. The chip strip flips between the
-// live picture and this session's received ones.
+// off, prior sideband restored. The picture paints line by line as
+// SstvService decodes it; when it ends, the straightened (slant-corrected)
+// re-render replaces it and it lands in the gallery (PNG on disk).
+//
+// Below the picture: manual corrections for pictures whose recorded track is
+// still in memory (slant, shift, "decode as"), delete, and the gallery strip.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSstvStore } from '../state/sstv-store';
+import { SSTV_PRESETS, useSstvStore } from '../state/sstv-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useConnectionStore } from '../state/connection-store';
 import type { SstvImageMeta } from '../api/client';
 
-const WIDTH = 420;
+const WIDTH = 440;
+const SLANT_RANGE_PPM = 3000;
+const ADJUST_DEBOUNCE_MS = 250;
 
 function utcHm(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}z`;
 }
 
+function utcDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
 function describe(m: SstvImageMeta, live: boolean): string {
-  const parts = [m.mode, `${m.rowsDone}/${m.height}`];
+  const parts = [m.mode];
+  if (m.callsign) parts.push(`de ${m.callsign}`);
+  parts.push(`${m.rowsDone}/${m.height}`);
   if (Math.abs(m.offsetHz) >= 1) parts.push(`${m.offsetHz > 0 ? '+' : ''}${Math.round(m.offsetHz)} Hz`);
   if (!live && m.clockErrorPpm !== 0) parts.push(`${m.clockErrorPpm > 0 ? '+' : ''}${m.clockErrorPpm} ppm`);
   if (m.dialHz > 0) parts.push(`${(m.dialHz / 1e6).toFixed(3)} ${m.sideBand}`);
+  if (!live) parts.push(`${utcDate(m.startedUnixMs)} ${utcHm(m.startedUnixMs)}`);
   if (!live && m.endReason && m.endReason !== 'Complete') parts.push(m.endReason);
   return parts.join(' · ');
+}
+
+/** Slant / shift / decode-as for one finished picture. Sliders are local
+ *  while dragging and commit (debounced) as absolute values. */
+function AdjustBar({ meta }: { meta: SstvImageMeta }) {
+  const modes = useSstvStore((s) => s.modes);
+  const adjust = useSstvStore((s) => s.adjust);
+  const remove = useSstvStore((s) => s.remove);
+  const [slant, setSlant] = useState(meta.slantPpm);
+  const [shift, setShift] = useState(meta.shiftPx);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const pending = useRef<number | null>(null);
+
+  // Follow the server when another view (or a reset) changes the picture.
+  useEffect(() => {
+    setSlant(meta.slantPpm);
+    setShift(meta.shiftPx);
+    setConfirmDelete(false);
+  }, [meta.id, meta.slantPpm, meta.shiftPx]);
+
+  const commit = useCallback(
+    (next: { slantPpm?: number; shiftPx?: number; mode?: string }) => {
+      if (pending.current != null) window.clearTimeout(pending.current);
+      pending.current = window.setTimeout(() => {
+        pending.current = null;
+        void adjust(meta.id, next);
+      }, ADJUST_DEBOUNCE_MS);
+    },
+    [adjust, meta.id],
+  );
+  useEffect(
+    () => () => {
+      if (pending.current != null) window.clearTimeout(pending.current);
+    },
+    [],
+  );
+
+  const disabled = !meta.adjustable;
+  const lockedTitle = disabled
+    ? 'Only the newest pictures of this session keep the recording needed to re-render'
+    : undefined;
+  const shiftRange = Math.round(meta.width / 8);
+
+  return (
+    <div className="sstv-adjust" title={lockedTitle}>
+      <label className="sstv-adjust-row">
+        <span>Slant</span>
+        <input
+          type="range"
+          min={-SLANT_RANGE_PPM}
+          max={SLANT_RANGE_PPM}
+          step={10}
+          value={slant}
+          disabled={disabled}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setSlant(v);
+            commit({ slantPpm: v, shiftPx: shift });
+          }}
+        />
+        <span className="sstv-adjust-val">{`${slant > 0 ? '+' : ''}${slant} ppm`}</span>
+      </label>
+      <label className="sstv-adjust-row">
+        <span>Shift</span>
+        <input
+          type="range"
+          min={-shiftRange}
+          max={shiftRange}
+          step={1}
+          value={shift}
+          disabled={disabled}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setShift(v);
+            commit({ slantPpm: slant, shiftPx: v });
+          }}
+        />
+        <span className="sstv-adjust-val">{`${shift > 0 ? '+' : ''}${shift} px`}</span>
+      </label>
+      <div className="sstv-adjust-row">
+        <span>Mode</span>
+        <select
+          className="sstv-select"
+          value={meta.mode}
+          disabled={disabled}
+          onChange={(e) => void adjust(meta.id, { mode: e.target.value, slantPpm: 0, shiftPx: 0 })}
+          title="Decode the recording again as another mode"
+        >
+          {modes.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn sm"
+          disabled={disabled || (slant === 0 && shift === 0)}
+          onClick={() => {
+            setSlant(0);
+            setShift(0);
+            void adjust(meta.id, { slantPpm: 0, shiftPx: 0 });
+          }}
+        >
+          RESET
+        </button>
+        <span className="sstv-spacer" />
+        {confirmDelete ? (
+          <>
+            <button type="button" className="btn sm sstv-danger" onClick={() => void remove(meta.id)}>
+              DELETE
+            </button>
+            <button type="button" className="btn sm" onClick={() => setConfirmDelete(false)}>
+              KEEP
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => setConfirmDelete(true)}
+            title="Delete this picture from the gallery"
+          >
+            DELETE…
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function SstvWindow() {
@@ -41,10 +182,14 @@ export function SstvWindow() {
   const selectedId = useSstvStore((s) => s.selectedId);
   const pixels = useSstvStore((s) => s.pixels);
   const pixelsRev = useSstvStore((s) => s.pixelsRev);
+  const galleryDir = useSstvStore((s) => s.galleryDir);
   const closeWorkspace = useSstvStore((s) => s.closeWorkspace);
   const setEnabled = useSstvStore((s) => s.setEnabled);
   const stopCurrent = useSstvStore((s) => s.stopCurrent);
   const select = useSstvStore((s) => s.select);
+  const ensurePixels = useSstvStore((s) => s.ensurePixels);
+  const tuneTo = useSstvStore((s) => s.tuneTo);
+  const vfoHz = useConnectionStore((s) => s.vfoHz);
   const settingsViewOpen = useLayoutStore((s) => s.settingsViewOpen);
   const [pos, setPos] = useState({ x: window.innerWidth - WIDTH - 24, y: 88 });
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -57,6 +202,13 @@ export function SstvWindow() {
         ? current
         : (images.find((i) => i.id === shownId) ?? null);
   const shownPx = shownId == null ? undefined : pixels[shownId];
+
+  // The newest gallery picture shown by default (nothing selected, nothing
+  // live) needs its pixels fetched once — without selecting it, so the
+  // window keeps following the next live picture.
+  useEffect(() => {
+    if (open && shownId != null && !shownPx && shownId !== current?.id) ensurePixels(shownId);
+  }, [open, shownId, shownPx, current?.id, ensurePixels]);
 
   useEffect(() => {
     const c = canvasRef.current;
@@ -161,7 +313,23 @@ export function SstvWindow() {
         >
           STOP
         </button>
-        <span className={`sstv-status ${live ? 'live' : ''}`}>{status}</span>
+        <span className={`sstv-status ${live ? 'live' : ''}`} title={status}>
+          {status}
+        </span>
+      </div>
+
+      <div className="sstv-presets">
+        {SSTV_PRESETS.map((p) => (
+          <button
+            type="button"
+            key={p.hz}
+            className={`sstv-chip ${Math.abs(vfoHz - p.hz) < 500 ? 'sel' : ''}`}
+            onClick={() => void tuneTo(p.hz, p.mode)}
+            title={`QSY to ${p.label} MHz ${p.mode}`}
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
 
       <div className="sstv-canvas-wrap">
@@ -176,8 +344,10 @@ export function SstvWindow() {
         )}
       </div>
 
+      {shownMeta && !live && <AdjustBar meta={shownMeta} />}
+
       {(current || images.length > 0) && (
-        <div className="sstv-strip">
+        <div className="sstv-strip" title={galleryDir ? `Saved in ${galleryDir}` : undefined}>
           {current && (
             <button
               type="button"
@@ -196,7 +366,7 @@ export function SstvWindow() {
               onClick={() => select(m.id)}
               title={describe(m, false)}
             >
-              {m.mode} {utcHm(m.startedUnixMs)}
+              {m.callsign ?? m.mode} {utcHm(m.startedUnixMs)}
             </button>
           ))}
         </div>

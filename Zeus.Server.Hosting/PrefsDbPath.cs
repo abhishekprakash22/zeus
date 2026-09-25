@@ -50,6 +50,19 @@ public static class PrefsDbPath
         Environment.GetEnvironmentVariable("ZEUS_PREFS_PATH")
         ?? Path.Combine(DataDir, ActiveRelativePath());
 
+    // Received SSTV pictures (PNG + JSON sidecar per picture). Same directory
+    // rule as the logbook: next to the active prefs file, so a ZEUS_PREFS_PATH
+    // override (dev `/run fresh`, CI, tests) keeps test pictures out of the
+    // operator's gallery.
+    public static string SstvDir()
+    {
+        var env = Environment.GetEnvironmentVariable("ZEUS_PREFS_PATH");
+        var dir = string.IsNullOrEmpty(env)
+            ? DataDir
+            : (Path.GetDirectoryName(Path.GetFullPath(env)) ?? DataDir);
+        return Path.Combine(dir, "sstv");
+    }
+
     // The QSO logbook lives in its own plaintext DB (zeus-logbook.db), separate
     // from the prefs profiles. It sits in the SAME directory as the active prefs
     // file, so a ZEUS_PREFS_PATH override (dev `/run fresh`, CI, tests) isolates

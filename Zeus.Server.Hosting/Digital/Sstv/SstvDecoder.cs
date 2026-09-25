@@ -60,8 +60,17 @@ public sealed class SstvDecoder
     private const int FalseStartMinSyncs = 4;
     private const int LostAfterLines = 25;
 
-    // Idle history kept for the VIS edge refinement.
-    private const int IdleKeepSamples = 2 * SampleRate;
+    // Idle history kept for the VIS edge refinement and the FSK-ID scan.
+    private const int IdleKeepSamples = 6 * SampleRate;
+
+    // FSK ID (MMSSTV format, also QSSTV/YONIQ): after the picture, 1500 Hz
+    // 300 ms, 2100 Hz 100 ms guard, a 1900 Hz start bit, then 6-bit chars LSB
+    // first at 22 ms/bit (1 = 1900 Hz, 0 = 2100 Hz): 0x2A, C1..Cn, 0x01,
+    // XSUM (= C1 ^ … ^ Cn). Char value = ASCII − 0x20.
+    public const double FskBitMs = 22;
+    public const double FskMarkHz = 1900, FskSpaceHz = 2100;
+    public const int FskMaxChars = 16;
+    private const double FskWaitMs = 3500;          // lead-in + 16 chars ≈ 3 s
 
     private readonly FmDemodulator _fm = new();
     private readonly Track _track = new();
@@ -76,6 +85,10 @@ public sealed class SstvDecoder
 
     private Image? _img;
 
+    // FSK-ID scan armed by a completed picture.
+    private SstvImage? _fskFor;
+    private long _fskFrom, _fskScanAt;
+
     /// <summary>The picture being received, or null while hunting for VIS.</summary>
     public SstvImage? Current => _img?.Public;
 
@@ -84,6 +97,8 @@ public sealed class SstvDecoder
     /// but will be redrawn by the end-of-picture re-render.</summary>
     public event Action<SstvImage, int, int>? RowsDecoded;
     public event Action<SstvImage, SstvEndReason>? ImageEnded;
+    /// <summary>An FSK ID (sender's callsign) followed a finished picture.</summary>
+    public event Action<SstvImage, string>? CallsignDecoded;
 
     public long SamplesProcessed => _n;
 
@@ -94,6 +109,7 @@ public sealed class SstvDecoder
         _n = 0;
         _binCount = 0; _binAcc = 0; _binFill = 0; _visHoldUntilBin = 0;
         _img = null;
+        _fskFor = null;
     }
 
     /// <summary>End the picture in progress (if any) as <see cref="SstvEndReason.Stopped"/>.</summary>
@@ -120,6 +136,7 @@ public sealed class SstvDecoder
             }
         }
 
+        if (_fskFor is not null && _n >= _fskScanAt) ScanFskId();
         if (_img is not null) Advance();
         else if (_track.Length > 2 * IdleKeepSamples) _track.TrimBefore(_n - IdleKeepSamples);
     }
@@ -194,10 +211,80 @@ public sealed class SstvDecoder
         return best;
     }
 
+    // ---- FSK ID -------------------------------------------------------------
+
+    private void ScanFskId()
+    {
+        var img = _fskFor!;
+        _fskFor = null;
+        if (FindFskId(_track, Math.Max(_track.Base, _fskFrom), _track.End, img.OffsetHz) is { } call)
+            CallsignDecoded?.Invoke(img, call);
+    }
+
+    /// <summary>Find and read an FSK ID in [from, to) of the track, or null.</summary>
+    private static string? FindFskId(Track track, long from, long to, double offset)
+    {
+        double bit = FskBitMs * SamplesPerMs;
+        long guard = (long)(50 * SamplesPerMs);
+        for (long t = from + guard; t + 10 * bit < to; t += 6)
+        {
+            if (Math.Abs(track.Mean(t - guard, t) - offset - FskSpaceHz) > 60) continue;
+            if (Math.Abs(track.Mean(t + 0.25 * bit, t + 0.75 * bit) - offset - FskMarkHz) > 60) continue;
+
+            // Refine the 2100 → 1900 edge of the start bit to the sample.
+            long edge = t;
+            double best = double.MinValue;
+            long w = (long)(5 * SamplesPerMs);
+            for (long e = t - 12; e <= t + 24; e++)
+            {
+                double score = track.Mean(e - w, e) - track.Mean(e, e + w);
+                if (score > best) { best = score; edge = e; }
+            }
+            if (ReadFskId(track, edge, to, offset) is { } call) return call;
+            t = edge + (long)bit;
+        }
+        return null;
+    }
+
+    private static string? ReadFskId(Track track, long startBitEdge, long to, double offset)
+    {
+        double bit = FskBitMs * SamplesPerMs;
+        int k = 1;                                    // bit 0 is the start bit
+        int? Char()
+        {
+            int v = 0;
+            for (int i = 0; i < 6; i++, k++)
+            {
+                double c = startBitEdge + (k + 0.5) * bit;
+                if (c + 0.3 * bit > to) return null;
+                double hz = track.Mean(c - 0.3 * bit, c + 0.3 * bit) - offset;
+                if (hz < 2000) v |= 1 << i;
+            }
+            return v;
+        }
+
+        if (Char() != 0x2A) return null;
+        var sb = new System.Text.StringBuilder();
+        int xsum = 0;
+        while (true)
+        {
+            int? c = Char();
+            if (c is null) return null;
+            if (c == 0x01) break;
+            if (sb.Length == FskMaxChars) return null;
+            xsum ^= c.Value;
+            sb.Append((char)(c.Value + 0x20));
+        }
+        if (sb.Length == 0 || Char() != xsum) return null;
+        string call = sb.ToString().Trim();
+        return call.Length == 0 ? null : call;
+    }
+
     // ---- picture ------------------------------------------------------------
 
     private void Begin(SstvMode mode, long visEnd, double offset)
     {
+        if (_fskFor is not null) ScanFskId();       // before the trim discards it
         _track.TrimBefore(visEnd - (long)(50 * SamplesPerMs));
         var img = new Image(mode, visEnd, offset);
         _img = img;
@@ -215,14 +302,14 @@ public sealed class SstvDecoder
             double lineEnd = img.LineStart(n) + img.Mode.LineMs * img.MsToSamples;
             if (Math.Max(predicted + win + img.SyncLen, lineEnd) + 2 > _n) return;  // need more audio
 
-            if (FindSync(img, predicted, win) is double ts)
+            if (FindSync(_track, img, predicted, win) is double ts)
             {
                 img.Syncs.Add((n, ts));
                 img.LastSyncLine = n;
                 img.Refit();
             }
 
-            RenderLine(img, n);
+            RenderLine(_track, img, n);
             img.NextLine++;
             img.Public.RowsDone = img.NextLine * img.Mode.RowsPerLine;
             RowsDecoded?.Invoke(img.Public, n * img.Mode.RowsPerLine, img.Mode.RowsPerLine);
@@ -243,14 +330,14 @@ public sealed class SstvDecoder
 
     /// <summary>Best sync-pulse start within ±win of <paramref name="predicted"/>,
     /// or null if nothing pulse-shaped is there.</summary>
-    private double? FindSync(Image img, double predicted, double win)
+    private static double? FindSync(Track track, Image img, double predicted, double win)
     {
         int len = (int)Math.Round(img.SyncLen);
         // Never before the VIS stop-bit edge: Martin/PD line 0 starts with its
         // sync pulse flush against the (also 1200 Hz) stop bit, and a window
         // reaching back into it finds one long plateau instead of the pulse.
-        long lo = Math.Max(Math.Max(_track.Base, img.VisEnd), (long)Math.Floor(predicted - win));
-        long hi = Math.Min(_n - len, (long)Math.Ceiling(predicted + win));
+        long lo = Math.Max(Math.Max(track.Base, img.VisEnd), (long)Math.Floor(predicted - win));
+        long hi = Math.Min(track.End - len, (long)Math.Ceiling(predicted + win));
         if (hi <= lo) return null;
 
         double target = SstvModes.SyncHz + img.Offset;
@@ -267,10 +354,10 @@ public sealed class SstvDecoder
         if (best < 0.5 * len) return null;
         return (first + last) / 2.0;
 
-        bool IsSync(long t) => Math.Abs(_track[t] - target) < SyncTolHz;
+        bool IsSync(long t) => Math.Abs(track[t] - target) < SyncTolHz;
     }
 
-    private void RenderLine(Image img, int n)
+    private static void RenderLine(Track track, Image img, int n)
     {
         var m = img.Mode;
         double lineStart = img.LineStart(n);
@@ -285,7 +372,7 @@ public sealed class SstvDecoder
             for (int x = 0; x < w; x++)
             {
                 double a = start + x * px;
-                double hz = _track.Mean(a, a + px) - img.Offset;
+                double hz = track.Mean(a, a + px) - img.Offset;
                 scratch[plane * w + x] = SstvModes.HzToLuma(hz);
             }
         }
@@ -323,16 +410,79 @@ public sealed class SstvDecoder
         {
             // Lines after the last sync are noise once the sender has gone.
             int lines = reason == SstvEndReason.SignalLost ? img.LastSyncLine + 1 : img.NextLine;
-            img.Refit();
-            for (int n = 0; n < lines; n++) RenderLine(img, n);
-            int keep = lines * img.Mode.RowsPerLine * img.Mode.Width * 3;
-            Array.Clear(img.Public.Rgb, keep, img.Public.Rgb.Length - keep);
-            img.Public.RowsDone = lines * img.Mode.RowsPerLine;
-            img.Public.ClockError = img.ClockScale - 1;
+            FinalRender(_track, img, lines);
+            img.Public.Recording = new SstvRecording(_track.Copy(), _track.Base, img.VisEnd);
+            if (reason == SstvEndReason.Complete)
+            {
+                _fskFor = img.Public;
+                _fskFrom = _n - (long)(300 * SamplesPerMs);
+                _fskScanAt = _n + (long)(FskWaitMs * SamplesPerMs);
+            }
         }
         img.Public.EndReason = reason;
         _track.TrimBefore(_n - IdleKeepSamples);
         ImageEnded?.Invoke(img.Public, reason);
+    }
+
+    private static void FinalRender(Track track, Image img, int lines)
+    {
+        img.Refit();
+        img.Adjust();
+        for (int n = 0; n < lines; n++) RenderLine(track, img, n);
+        int keep = lines * img.Mode.RowsPerLine * img.Mode.Width * 3;
+        Array.Clear(img.Public.Rgb, keep, img.Public.Rgb.Length - keep);
+        img.Public.RowsDone = lines * img.Mode.RowsPerLine;
+        img.Public.ClockError = img.ClockScale - 1;
+    }
+
+    // ---- re-render ----------------------------------------------------------
+
+    /// <summary>Largest manual slant the adjust path accepts (±2 %).</summary>
+    public const double MaxSlantPpm = 20_000;
+
+    /// <summary>
+    /// Redraw a finished picture from its recorded frequency track: the sync
+    /// search and line fit run again (in <paramref name="mode"/> if given —
+    /// "decode as…" for a missed or mis-read VIS), then the operator's manual
+    /// corrections are applied on top of the fit: <paramref name="slantPpm"/>
+    /// scales the line period, <paramref name="shiftPx"/> moves the picture
+    /// sideways. Parameters are absolute, not cumulative, so the same call
+    /// always yields the same picture. Returns a new image with the same id.
+    /// </summary>
+    public static SstvImage Rerender(
+        SstvImage source, SstvMode? mode = null, double slantPpm = 0, double shiftPx = 0)
+    {
+        var rec = source.Recording
+                  ?? throw new InvalidOperationException("picture has no recording to re-render");
+        var m = mode ?? source.Mode;
+        var track = Track.Wrap(rec.Samples, rec.Base);
+        var img = new Image(m, rec.VisEnd, source.OffsetHz, source.Id)
+        {
+            SlantPpm = Math.Clamp(slantPpm, -MaxSlantPpm, MaxSlantPpm),
+            ShiftPx = Math.Clamp(shiftPx, -m.Width, m.Width),
+        };
+
+        bool lost = false;
+        for (int n = 0; n < m.TxLines; n++)
+        {
+            double predicted = img.SyncAt(n);
+            double lineEnd = img.LineStart(n) + m.LineMs * img.MsToSamples;
+            if (Math.Max(predicted + img.SyncWindow + img.SyncLen, lineEnd) + 2 > track.End) break;
+            if (FindSync(track, img, predicted, img.SyncWindow) is double ts)
+            {
+                img.Syncs.Add((n, ts));
+                img.LastSyncLine = n;
+                img.Refit();
+            }
+            img.NextLine = n + 1;
+            if (n - img.LastSyncLine >= LostAfterLines) { lost = true; break; }
+        }
+
+        int lines = lost ? img.LastSyncLine + 1 : img.NextLine;
+        FinalRender(track, img, Math.Max(0, lines));
+        img.Public.Recording = rec;
+        img.Public.EndReason = source.EndReason;
+        return img.Public;
     }
 
     // ---- per-picture state --------------------------------------------------
@@ -352,7 +502,10 @@ public sealed class SstvDecoder
         public int LastSyncLine = -1;
         public double A, B;
 
-        public Image(SstvMode mode, long visEnd, double offset)
+        /// <summary>Manual corrections applied after the fit (re-render only).</summary>
+        public double SlantPpm, ShiftPx;
+
+        public Image(SstvMode mode, long visEnd, double offset, int? id = null)
         {
             Mode = mode;
             Offset = offset;
@@ -363,10 +516,25 @@ public sealed class SstvDecoder
             SyncLen = mode.SyncMs * SamplesPerMs;
             SyncWindow = Math.Max(4.0, 0.02 * mode.LineMs) * SamplesPerMs;
             Scratch = new byte[7 * mode.Width];
-            Public = new SstvImage(mode, offset);
+            Public = new SstvImage(mode, offset, id);
         }
 
         public double ClockScale => B / NominalB;
+
+        /// <summary>Apply the manual slant/shift on top of the fitted line.</summary>
+        public void Adjust()
+        {
+            if (SlantPpm == 0 && ShiftPx == 0) return;
+            // Keep the middle line where the fit put it, so slant pivots on
+            // the picture's centre instead of swinging the bottom half away.
+            double mid = Mode.TxLines / 2.0;
+            double pivot = A + B * mid;
+            B *= 1 + SlantPpm * 1e-6;
+            A = pivot - B * mid;
+            A -= ShiftPx * Mode.PixelMs * MsToSamples;
+            Public.SlantPpm = SlantPpm;
+            Public.ShiftPx = ShiftPx;
+        }
         public double MsToSamples => SamplesPerMs * ClockScale;
         public double SyncAt(int n) => A + B * n;
         public double LineStart(int n) => SyncAt(n) - Mode.SyncOffsetMs * MsToSamples;
@@ -437,6 +605,12 @@ public sealed class SstvDecoder
         public int Length => _len;
 
         public float this[long abs] => _buf[abs - Base];
+        public long End => Base + _len;
+
+        public static Track Wrap(float[] samples, long baseAbs) =>
+            new() { _buf = samples, _len = samples.Length, Base = baseAbs };
+
+        public float[] Copy() => _buf.AsSpan(0, _len).ToArray();
 
         public void Append(float v)
         {
@@ -479,9 +653,13 @@ public sealed class SstvImage
 {
     private static int _nextId;
 
-    public SstvImage(SstvMode mode, double offsetHz)
+    /// <summary>Allocate an id from the same sequence pictures use, for
+    /// gallery entries loaded from disk.</summary>
+    public static int NextId() => Interlocked.Increment(ref _nextId);
+
+    public SstvImage(SstvMode mode, double offsetHz, int? id = null)
     {
-        Id = Interlocked.Increment(ref _nextId);
+        Id = id ?? Interlocked.Increment(ref _nextId);
         Mode = mode;
         OffsetHz = offsetHz;
         Rgb = new byte[mode.Width * mode.Height * 3];
@@ -495,4 +673,15 @@ public sealed class SstvImage
     /// <summary>Sender clock error from the final sync fit (0.001 = +0.1 %).</summary>
     public double ClockError { get; internal set; }
     public SstvEndReason? EndReason { get; internal set; }
+    /// <summary>Manual slant correction (ppm) applied on top of the fit.</summary>
+    public double SlantPpm { get; internal set; }
+    /// <summary>Manual horizontal shift (pixels; + moves the picture right).</summary>
+    public double ShiftPx { get; internal set; }
+    /// <summary>The demodulated track behind the picture, for re-rendering.
+    /// Null once the owner drops it to bound memory.</summary>
+    public SstvRecording? Recording { get; set; }
 }
+
+/// <summary>Frequency track (Hz per 12 kHz sample) from just before the VIS
+/// stop-bit edge to the end of the picture.</summary>
+public sealed record SstvRecording(float[] Samples, long Base, long VisEnd);

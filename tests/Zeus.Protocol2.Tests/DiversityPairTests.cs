@@ -78,6 +78,28 @@ public class DiversityPairTests
     }
 
     [Fact]
+    public void HighPriority_PairActive_TunesDdc0AndDdc1ToRx1()
+    {
+        // The field fault: pair configured, DDC0/1 left at 0 Hz — RX1 vanished
+        // and a carrier stood at the DDC centre. Both phase words must be RX1's.
+        var hp = new byte[1444];
+        uint rxPhase = 0x12345678;
+        Protocol2Client.ApplyDiversityPairTuning(hp, pairActive: true, rxPhase);
+        Assert.Equal(new byte[] { 0x12, 0x34, 0x56, 0x78 }, hp[9..13]);    // DDC0
+        Assert.Equal(new byte[] { 0x12, 0x34, 0x56, 0x78 }, hp[13..17]);   // DDC1
+    }
+
+    [Fact]
+    public void HighPriority_PairInactive_LeavesDdc0AndDdc1Alone()
+    {
+        var hp = new byte[1444];
+        hp[9] = 0xAA; hp[13] = 0xBB;   // e.g. PS feedback's TX phase
+        Protocol2Client.ApplyDiversityPairTuning(hp, pairActive: false, 0x12345678);
+        Assert.Equal(0xAA, hp[9]);
+        Assert.Equal(0xBB, hp[13]);
+    }
+
+    [Fact]
     public void ConfigureSynchronizedDiversityPair_WritesExactBytes()
     {
         var p = new byte[1444];

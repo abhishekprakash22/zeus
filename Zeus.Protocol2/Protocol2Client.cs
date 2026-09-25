@@ -462,6 +462,13 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     }
 
     private long _totalFrames;
+    // Diversity pair diagnostic: paired packets seen, and a ~1 Hz log of the
+    // two branches' levels so the bench can tell 'pair not live' from 'second
+    // antenna 24 dB down' without guessing from a panadapter photo.
+    private long _pairedFrames;
+    private long _pairedDiagLastMs;
+    private double _pairedRx0Sq, _pairedSrcSq;
+    private int _pairedDiagN;
     private long _droppedFrames;
     private uint _lastDdc0Seq;
     private bool _haveFirstDdc0;
@@ -1036,6 +1043,16 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
     // makes DDC1 phase-lock to DDC0, and the radio then delivers ADC0 and ADC1
     // samples interleaved in DDC0's packets. DDC1 is enabled by the sync, not
     // as a separate stream.
+    /// <summary>High-priority packet: while the diversity pair runs, DDC0 and
+    /// DDC1 carry RX1 and must be tuned to RX1's phase word (bytes 9 and 13).
+    /// Separate so the one byte-level fact the first port missed is tested.</summary>
+    internal static void ApplyDiversityPairTuning(byte[] highPriority, bool pairActive, uint rxPhase)
+    {
+        if (!pairActive) return;
+        WriteBeU32(highPriority, 9, rxPhase);    // DDC0 = RX1
+        WriteBeU32(highPriority, 13, rxPhase);   // DDC1 = RX1 (phase-locked to DDC0 by the sync)
+    }
+
     internal static void ConfigureSynchronizedDiversityPair(byte[] packet, HpsdrBoardKind board,
         ushort sampleRateKhz, byte sourceAdc)
     {
@@ -3046,6 +3063,16 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
             WriteBeU32(p, 13, txPhase);    // DDC1 = TX freq
         }
 
+        // Diversity pair: DDC0 and DDC1 ARE RX1 while the pair runs — tune both
+        // to RX1's frequency. The receive-specific packet configures the pair
+        // (sync byte, ADC sources); THIS is what points it at the band. Without
+        // it both DDCs sat at 0 Hz: RX1's signals vanished, the floor rose and
+        // a carrier stood at the DDC centre (field, G2 Ultra). Upstream writes
+        // exactly this; the first port carried the configuration and not the
+        // tuning. Same predicate as the composers, so PS-keyed yields here too.
+        ApplyDiversityPairTuning(p, UsesDiversityPair(Volatile.Read(ref _diversitySourceEnabled) != 0,
+            _psFeedbackEnabled, moxOn || tuneActive, _boardKind, _numAdc), rxPhase);
+
         // Drive level (0..255) at byte 345. Set by RadioService after applying
         // per-band PA gain calibration. Honored by the radio only while run=1
         // and TX is keyed elsewhere (byte 4 bit 1). piHPSDR `new_protocol.c:860`.
@@ -4230,6 +4257,27 @@ public sealed class Protocol2Client : IDisposable, IAsyncDisposable
                 : default);
 
         Interlocked.Increment(ref _totalFrames);
+        if (paired)
+        {
+            Interlocked.Increment(ref _pairedFrames);
+            // Accumulate mean-square of each branch; log ~1 Hz as dBFS.
+            double a = 0, b = 0;
+            int n2 = samplesPerPacket * 2;
+            for (int i = 0; i < n2; i++) { double v = samples[i]; a += v * v; }
+            for (int i = 0; i < n2; i++) { double v = samples[n2 + i]; b += v * v; }
+            _pairedRx0Sq += a / samplesPerPacket; _pairedSrcSq += b / samplesPerPacket; _pairedDiagN++;
+            long now = Environment.TickCount64;
+            if (now - _pairedDiagLastMs >= 1000)
+            {
+                double rx0Db = 10 * Math.Log10(Math.Max(1e-30, _pairedRx0Sq / Math.Max(1, _pairedDiagN)));
+                double srcDb = 10 * Math.Log10(Math.Max(1e-30, _pairedSrcSq / Math.Max(1, _pairedDiagN)));
+                // hdrSamples is logged, not acted on: it records what the radio
+                // put in bytes 14-15 for a synchronised packet, for the record.
+                _log.LogInformation("p2.diversity.pair frames={Frames} hdrSamples={Hdr} rx0={Rx0:F1}dBFS src={Src:F1}dBFS delta={Delta:F1}dB",
+                    Volatile.Read(ref _pairedFrames), (buf[14] << 8) | buf[15], rx0Db, srcDb, srcDb - rx0Db);
+                _pairedRx0Sq = 0; _pairedSrcSq = 0; _pairedDiagN = 0; _pairedDiagLastMs = now;
+            }
+        }
         // iter5: prefer the synchronous sink (snapshotted above) — bypasses the
         // Channel<T> hop that costs a TP wake-up per frame on the consumer.
         if (pooled)

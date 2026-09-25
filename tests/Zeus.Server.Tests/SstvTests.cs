@@ -235,6 +235,22 @@ public sealed class SstvTests
     }
 
     [Fact]
+    public void FskId_IsFound_WhateverTheBlockSize()
+    {
+        // The service normally feeds ~50 ms blocks, but a worker catching up
+        // after a stall hands over seconds at once. The ID search is anchored
+        // to where the picture ended, not to the block — so one block holding
+        // the whole transmission must still yield the callsign.
+        var mode = SstvModes.M2;
+        var audio = Pad(SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f, fskId: "EA5IUE"), 1, 5, 0.05f);
+        var dec = new SstvDecoder();
+        string? got = null;
+        dec.CallsignDecoded += (_, c) => got = c;
+        dec.Process(audio);
+        Assert.Equal("EA5IUE", got);
+    }
+
+    [Fact]
     public void FskId_Absent_ReportsNothing()
     {
         var mode = SstvModes.M2;

@@ -136,9 +136,13 @@ public sealed class SstvDecoder
             }
         }
 
-        if (_fskFor is not null && _n >= _fskScanAt) ScanFskId();
+        // Advance first: a picture that ends inside this block arms the FSK
+        // scan, which may already have all the audio it needs.
         if (_img is not null) Advance();
-        else if (_track.Length > 2 * IdleKeepSamples) _track.TrimBefore(_n - IdleKeepSamples);
+        if (_fskFor is not null && _n >= _fskScanAt) ScanFskId();
+        // Idle trim — never while a picture or a pending FSK scan needs the track.
+        if (_img is null && _fskFor is null && _track.Length > 2 * IdleKeepSamples)
+            _track.TrimBefore(_n - IdleKeepSamples);
     }
 
     // ---- VIS ----------------------------------------------------------------
@@ -422,13 +426,18 @@ public sealed class SstvDecoder
             img.Public.Recording = new SstvRecording(_track.Copy(), _track.Base, img.VisEnd);
             if (reason == SstvEndReason.Complete)
             {
+                // Relative to where the picture ENDED on the track, not to how
+                // much audio this Process() call happened to carry — a big
+                // block (a worker catching up) would otherwise start the search
+                // past the ID, or trim it away.
+                long pictureEnd = (long)img.LineStart(lines);
                 _fskFor = img.Public;
-                _fskFrom = _n - (long)(300 * SamplesPerMs);
-                _fskScanAt = _n + (long)(FskWaitMs * SamplesPerMs);
+                _fskFrom = pictureEnd - (long)(300 * SamplesPerMs);
+                _fskScanAt = pictureEnd + (long)(FskWaitMs * SamplesPerMs);
             }
         }
         img.Public.EndReason = reason;
-        _track.TrimBefore(_n - IdleKeepSamples);
+        if (_fskFor is null) _track.TrimBefore(_n - IdleKeepSamples);
         ImageEnded?.Invoke(img.Public, reason);
     }
 

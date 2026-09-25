@@ -1940,3 +1940,70 @@
 .fpga-err { color: #ffb3b3; font-size: 12px; }
 .fpga-cmp-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   margin: 10px 0 2px; font-size: 12px; }
+
+
+/* ---- SSTV pop-out window (DiversityWindow sibling; reuses its header) ----
+   Token colours only; the picture itself is the only thing that isn't chrome. */
+.sstv-window { position: fixed; z-index: 420; background: var(--bg-1);
+  border: 1px solid var(--line-strong); border-radius: var(--r-md); overflow: hidden;
+  box-shadow: var(--panel-shadow); display: flex; flex-direction: column; }
+.sstv-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft); }
+.sstv-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font: 500 10.5px var(--font-mono, monospace); color: var(--fg-2); }
+.sstv-status.live { color: var(--accent); }
+.sstv-canvas-wrap { padding: 8px; background: var(--bg-inset); display: flex;
+  justify-content: center; }
+.sstv-canvas { width: 100%; height: auto; display: block; background: var(--bg-0); }
+.sstv-empty { width: 100%; aspect-ratio: 5 / 4; display: flex; align-items: center;
+  justify-content: center; color: var(--fg-3); font: 500 11px var(--font-mono, monospace); }
+.sstv-strip { display: flex; gap: 4px; padding: 6px 8px; overflow-x: auto;
+  border-top: 1px solid var(--line-soft); }
+.sstv-chip { flex: none; background: var(--bg-2); color: var(--fg-2);
+  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 2px 6px;
+  font: 500 10px var(--font-mono, monospace); cursor: pointer; }
+.sstv-chip:hover { color: var(--fg-0); }
+.sstv-chip.sel { border-color: var(--accent); color: var(--fg-0); }
+.sstv-chip.live { color: var(--accent); }
+.sstv-presets { display: flex; gap: 4px; padding: 0 8px 6px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line-soft); }
+.sstv-adjust { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+  border-top: 1px solid var(--line-soft); font: 500 10.5px var(--font-mono, monospace);
+  color: var(--fg-2); }
+.sstv-adjust-row { display: flex; align-items: center; gap: 8px; }
+.sstv-adjust-row > span:first-child { width: 36px; flex: none; }
+.sstv-adjust-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.sstv-adjust-val { width: 72px; flex: none; text-align: right; color: var(--fg-1); }
+.sstv-select { background: var(--bg-2); color: var(--fg-1); border: 1px solid var(--line);
+  border-radius: var(--r-sm); font: inherit; padding: 2px 4px; }
+.sstv-spacer { flex: 1; }
+.sstv-danger { color: var(--tx); border-color: var(--tx); }
+
+/* ---- SSTV tuning marks on the RX1 panadapter (SstvTuneOverlay) ---- */
+.sstv-tune-ovl { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
+.sstv-tune-band { position: absolute; top: 0; bottom: 0; background: var(--accent-soft);
+  opacity: .35; }
+.sstv-tune-mark { position: absolute; top: 0; bottom: 0; width: 0;
+  border-left: 1px dashed var(--accent-line); }
+.sstv-tune-mark.sync { border-left: 1px solid var(--accent); }
+.sstv-tune-label { position: absolute; top: 4px; left: 3px; white-space: nowrap;
+  font: 600 9px var(--font-mono, monospace); letter-spacing: .06em; color: var(--accent); }
+.sstv-adjust + .sstv-adjust { border-top: none; padding-top: 0; }
+.sstv-input { background: var(--bg-2); color: var(--fg-0); border: 1px solid var(--line);
+  border-radius: var(--r-sm); font: inherit; padding: 2px 5px; min-width: 0; }
+.sstv-call { flex: 1; text-transform: uppercase; }
+.sstv-rsv { width: 40px; flex: none; text-align: center; }
+.sstv-log-err { color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 120px; }
+.sstv-tabs { display: flex; gap: 2px; flex: none; }
+.sstv-tx-live { color: var(--tx); border-color: var(--tx); }
+.sstv-send { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+  font: 500 10.5px var(--font-mono, monospace); color: var(--fg-2); }
+.sstv-send .sstv-canvas-wrap { margin: 2px -8px; }
+.sstv-grow { flex: 1; }
+.sstv-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fg-3); }
+.sstv-send-btn { color: var(--tx); border-color: var(--tx); }
+.sstv-progress { flex: 1; height: 6px; background: var(--bg-2); border-radius: var(--r-xs);
+  overflow: hidden; }
+.sstv-progress-fill { height: 100%; background: var(--tx); }

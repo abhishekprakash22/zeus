@@ -46,9 +46,11 @@
 import { useCallback } from 'react';
 import { type RxMode } from '../api/client';
 import {
+  DIGITAL_ENTRY_KEYS,
   digitalEntryUnavailableReason,
   isDigitalEntryAvailable,
   toggleDigital,
+  type DigitalEntryKey,
 } from '../state/enter-digital';
 import { useDigitalPluginStore } from '../state/digital-plugin-store';
 import {
@@ -58,6 +60,7 @@ import {
 } from '../state/freedv-plugin-store';
 import { useFt8Store } from '../state/ft8-store';
 import { useWsprStore } from '../state/wspr-store';
+import { useSstvStore } from '../state/sstv-store';
 import { useConnectionStore } from '../state/connection-store';
 import {
   gangedReceiverAction,
@@ -96,8 +99,9 @@ export function ModeBandwidth() {
   const ft8Open = useFt8Store((s) => s.open);
   const ft8Protocol = useFt8Store((s) => s.protocol);
   const wsprOpen = useWsprStore((s) => s.open);
-  const digitalEngaged = (p: 'FT8' | 'FT4' | 'WSPR') =>
-    p === 'WSPR' ? wsprOpen : ft8Open && ft8Protocol === p;
+  const sstvOpen = useSstvStore((s) => s.panelOpen);
+  const digitalEngaged = (p: DigitalEntryKey) =>
+    p === 'WSPR' ? wsprOpen : p === 'SSTV' ? sstvOpen : ft8Open && ft8Protocol === p;
 
   // Subscribe to the plugin gate so FT8/FT4 light up the moment the Zeus
   // Digital plugin goes installed+live (isDigitalEntryAvailable reads it).
@@ -163,9 +167,10 @@ export function ModeBandwidth() {
           ))}
           {/* Digital modes are Zeus-level modes (like FreeDV), not WDSP demods —
               they open the dedicated FT8/FT4/WSPR workspace and auto-configure
-              the radio (DIGU + FT8 bandwidth + band dial). Rendered inline with
+              the radio (DIGU + FT8 bandwidth + band dial); SSTV opens its
+              picture window without QSY. Rendered inline with
               the mode buttons so they're always visible next to DIGU/DIGL. */}
-          {(['FT8', 'FT4', 'WSPR'] as const).map((p) => {
+          {DIGITAL_ENTRY_KEYS.map((p) => {
             const engaged = digitalEngaged(p);
             const available = isDigitalEntryAvailable(p);
             return (
@@ -187,9 +192,13 @@ export function ModeBandwidth() {
                 title={
                   !available
                     ? (digitalEntryUnavailableReason(p) ?? `${p} — not available`)
-                    : engaged
-                      ? `Exit ${p} — restores the prior frequency and mode`
-                      : `Enter ${p} — QSYs the radio and opens the ${p} pop-out`
+                    : p === 'SSTV'
+                      ? engaged
+                        ? 'Exit SSTV — stops the decoder and restores the prior mode'
+                        : 'Enter SSTV — opens the picture window and listens on RX1 (no QSY)'
+                      : engaged
+                        ? `Exit ${p} — restores the prior frequency and mode`
+                        : `Enter ${p} — QSYs the radio and opens the ${p} pop-out`
                 }
               >
                 {p}

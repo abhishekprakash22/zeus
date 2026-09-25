@@ -123,6 +123,7 @@ export interface DigitalEventsHandlers {
   onFt8Decode?: (json: string) => void;
   onWsprSpot?: (json: string) => void;
   onCwSkim?: (json: string) => void;
+  onSstv?: (json: string) => void;
   onTxStatus?: (json: string) => void;
 }
 
@@ -182,6 +183,7 @@ export function openDigitalEvents(h: DigitalEventsHandlers): () => void {
     es.addEventListener('ft8decode', (ev) => h.onFt8Decode?.((ev as MessageEvent<string>).data));
     es.addEventListener('wsprspot', (ev) => h.onWsprSpot?.((ev as MessageEvent<string>).data));
     es.addEventListener('cwskim', (ev) => h.onCwSkim?.((ev as MessageEvent<string>).data));
+    es.addEventListener('sstv', (ev) => h.onSstv?.((ev as MessageEvent<string>).data));
     es.addEventListener('txstatus', (ev) => h.onTxStatus?.((ev as MessageEvent<string>).data));
   };
 
@@ -309,6 +311,9 @@ export function onRemoteDigitalFrame(payload: ArrayBuffer): void {
       break;
     case 'cwskim':
       h.onCwSkim?.(data);
+      break;
+    case 'sstv':
+      h.onSstv?.(data);
       break;
     default:
       break;

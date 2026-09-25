@@ -133,6 +133,32 @@ public static class DigitalEndpoints
             return Results.Ok(new { ok = true });
         });
 
+        // ---- SSTV -----------------------------------------------------------
+        // VIS-triggered picture decoder (SstvService). Pictures stream as
+        // `sstv` SSE frames; /sstv rehydrates after a reconnect and
+        // /sstv/image/{id} returns the full (re-rendered) picture.
+        g.MapGet("/sstv", (SstvService s) => Results.Ok(s.Status()));
+        g.MapPost("/sstv/enable", (SstvEnableRequest? req, SstvService s) =>
+        {
+            s.Enable(req?.Receiver ?? 0);
+            return Results.Ok(s.Status());
+        });
+        g.MapPost("/sstv/disable", (SstvService s) => { s.Disable(); return Results.Ok(s.Status()); });
+        g.MapPost("/sstv/stop", (SstvService s) => { s.StopCurrent(); return Results.Ok(new { ok = true }); });
+        g.MapGet("/sstv/image/{id:int}", (int id, SstvService s) =>
+            s.Image(id) is { } img ? Results.Ok(img) : Results.NotFound());
+        g.MapPost("/sstv/image/{id:int}/adjust", (int id, SstvAdjustRequest req, SstvService s) =>
+            s.Adjust(id, req) is { } meta ? Results.Ok(meta) : Results.NotFound());
+        g.MapDelete("/sstv/image/{id:int}", (int id, SstvService s) =>
+            s.Delete(id) ? Results.Ok(new { ok = true }) : Results.NotFound());
+        // SSTV transmit: one picture per explicit request (SstvTransmitter).
+        g.MapGet("/sstv/tx", (SstvTransmitter t) => Results.Ok(t.Status()));
+        g.MapPost("/sstv/tx", (SstvTxRequest req, SstvTransmitter t) =>
+            t.Start(req) is { } error
+                ? Results.Json(new { error }, statusCode: StatusCodes.Status409Conflict)
+                : Results.Ok(t.Status()));
+        g.MapPost("/sstv/tx/halt", (SstvTransmitter t) => { t.Halt(); return Results.Ok(t.Status()); });
+
         // ---- config ---------------------------------------------------------
         g.MapPost("/config/identity", (IdentityRequest req, DigitalService d) =>
         {

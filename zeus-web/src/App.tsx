@@ -92,6 +92,7 @@ import { QrzAccessGate } from './components/QrzAccessGate';
 import { HostedLanding } from './components/HostedLanding';
 import { QrmButton, QrmPanelToggleButton } from './components/QrmButton';
 import { DiversityWindow, DiversityToggleButton } from './components/DiversityWindow';
+import { SstvWindow } from './components/SstvWindow';
 import { SplitButton, RitButton } from './components/RitSplitButtons';
 import { CwDecodeController } from './components/CwDecodeController';
 import { CwDecodeWindow, CwDecodeToggleButton } from './components/CwDecodeWindow';
@@ -1336,6 +1337,7 @@ export default function App() {
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
       <DiversityWindow />
+      <SstvWindow />
       <CwDecodeController />
       <CwDecodeWindow />
       </div>
@@ -1666,6 +1668,7 @@ export default function App() {
           combiner itself is backend state, so closing the window never
           disengages an active null. */}
       <DiversityWindow />
+      <SstvWindow />
       <CwDecodeController />
       <CwDecodeWindow />
 

@@ -29,6 +29,7 @@ import {
 } from '../../state/freedv-plugin-store';
 import { useFt8Store } from '../../state/ft8-store';
 import { useWsprStore } from '../../state/wspr-store';
+import { useSstvStore } from '../../state/sstv-store';
 import { ToolbarFavorites, type ToolbarOption } from './ToolbarFavorites';
 
 const WDSP_MODE_OPTIONS: readonly ToolbarOption[] = [
@@ -56,7 +57,8 @@ export function ModeFavorites() {
   const ft8Open = useFt8Store((s) => s.open);
   const ft8Protocol = useFt8Store((s) => s.protocol);
   const wsprOpen = useWsprStore((s) => s.open);
-  const engagedDigital = wsprOpen ? 'WSPR' : ft8Open ? ft8Protocol : null;
+  const sstvOpen = useSstvStore((s) => s.panelOpen);
+  const engagedDigital = sstvOpen ? 'SSTV' : wsprOpen ? 'WSPR' : ft8Open ? ft8Protocol : null;
   const currentKey = engagedDigital ?? activeMode;
 
   // Zeus-level digital modes — these open the FT8/FT4/WSPR workspace and

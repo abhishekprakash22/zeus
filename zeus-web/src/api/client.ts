@@ -5879,6 +5879,138 @@ export function postCwSkim(enabled: boolean, receiver = 0): Promise<unknown> {
   );
 }
 
+const SSTV_BASE = '/api/plugins/org.openhpsdr.digital/sstv';
+
+export interface SstvImageMeta {
+  id: number;
+  mode: string;
+  width: number;
+  height: number;
+  rowsDone: number;
+  offsetHz: number;
+  clockErrorPpm: number;
+  dialHz: number;
+  sideBand: string;
+  startedUnixMs: number;
+  endedUnixMs: number | null;
+  endReason: string | null;
+  /** Gallery file key (null while session-only). */
+  key: string | null;
+  /** The recorded track is still in memory, so the picture can be re-rendered. */
+  adjustable: boolean;
+  slantPpm: number;
+  shiftPx: number;
+  /** Sender's callsign from the FSK ID, when one followed the picture. */
+  callsign: string | null;
+  /** Started from the sync train without a VIS header (tuned in mid-picture,
+   *  or the VIS lost to a fade). */
+  viaSync: boolean;
+}
+
+export interface SstvStatusDto {
+  enabled: boolean;
+  receiver: number;
+  current: SstvImageMeta | null;
+  images: SstvImageMeta[];
+  modes: string[];
+  galleryDir: string | null;
+  modeInfos: SstvModeInfo[];
+}
+
+export interface SstvModeInfo {
+  name: string;
+  width: number;
+  height: number;
+  /** VIS + picture, without the optional FSK ID. */
+  durationMs: number;
+}
+
+export interface SstvTxStatus {
+  transmitting: boolean;
+  mode: string | null;
+  /** 0..1 */
+  progress: number;
+  startedUnixMs: number | null;
+  durationMs: number;
+  /** Why the last picture stopped early ("halted", "MOX taken away…"), else null. */
+  lastError: string | null;
+}
+
+export interface SstvTxRequest {
+  mode: string;
+  /** base64 RGB at the mode's exact width × height. */
+  rgb: string;
+  fskId: string | null;
+}
+
+export function getSstvTx(signal?: AbortSignal): Promise<SstvTxStatus> {
+  return jsonFetch(`${SSTV_BASE}/tx`, { signal }, (raw) => raw as SstvTxStatus);
+}
+
+/** Resolves with the new status, or rejects with the server's refusal text. */
+export function postSstvTx(req: SstvTxRequest): Promise<SstvTxStatus> {
+  return jsonFetch(
+    `${SSTV_BASE}/tx`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) },
+    (raw) => raw as SstvTxStatus,
+  );
+}
+
+export function postSstvTxHalt(): Promise<SstvTxStatus> {
+  return jsonFetch(`${SSTV_BASE}/tx/halt`, { method: 'POST' }, (raw) => raw as SstvTxStatus);
+}
+
+export interface SstvImageDto {
+  meta: SstvImageMeta;
+  /** base64 RGB, width × height × 3 — pictures still in memory. */
+  rgb: string | null;
+  /** base64 PNG — pictures known only from the gallery on disk. */
+  png: string | null;
+}
+
+export interface SstvAdjust {
+  /** "Decode as" another mode (name from SstvStatusDto.modes). */
+  mode?: string;
+  slantPpm?: number;
+  shiftPx?: number;
+}
+
+export function postSstvAdjust(id: number, adj: SstvAdjust): Promise<SstvImageMeta> {
+  return jsonFetch(
+    `${SSTV_BASE}/image/${id}/adjust`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(adj) },
+    (raw) => raw as SstvImageMeta,
+  );
+}
+
+export function deleteSstvImage(id: number): Promise<unknown> {
+  return jsonFetch(`${SSTV_BASE}/image/${id}`, { method: 'DELETE' }, (raw) => raw);
+}
+
+export function getSstvStatus(signal?: AbortSignal): Promise<SstvStatusDto> {
+  return jsonFetch(SSTV_BASE, { signal }, (raw) => raw as SstvStatusDto);
+}
+
+export function postSstvEnabled(enabled: boolean, receiver = 0): Promise<SstvStatusDto> {
+  return jsonFetch(
+    enabled ? `${SSTV_BASE}/enable` : `${SSTV_BASE}/disable`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enabled ? JSON.stringify({ receiver }) : '{}',
+    },
+    (raw) => raw as SstvStatusDto,
+  );
+}
+
+export function postSstvStop(): Promise<unknown> {
+  return jsonFetch(`${SSTV_BASE}/stop`, { method: 'POST' }, (raw) => raw);
+}
+
+export function getSstvImage(id: number, signal?: AbortSignal): Promise<SstvImageDto> {
+  return jsonFetch(`${SSTV_BASE}/image/${id}`, { signal }, (raw) => raw as SstvImageDto);
+}
+
 export interface UpdateApplyStatusDto {
   phase: 'idle' | 'downloading' | 'verifying' | 'swapping' | 'restarting' | 'failed' | 'unsupported';
   percent: number;

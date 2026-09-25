@@ -1988,3 +1988,10 @@
 .sstv-tune-mark.sync { border-left: 1px solid var(--accent); }
 .sstv-tune-label { position: absolute; top: 4px; left: 3px; white-space: nowrap;
   font: 600 9px var(--font-mono, monospace); letter-spacing: .06em; color: var(--accent); }
+.sstv-adjust + .sstv-adjust { border-top: none; padding-top: 0; }
+.sstv-input { background: var(--bg-2); color: var(--fg-0); border: 1px solid var(--line);
+  border-radius: var(--r-sm); font: inherit; padding: 2px 5px; min-width: 0; }
+.sstv-call { flex: 1; text-transform: uppercase; }
+.sstv-rsv { width: 40px; flex: none; text-align: center; }
+.sstv-log-err { color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 120px; }

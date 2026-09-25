@@ -18,11 +18,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SSTV_PRESETS, useSstvStore } from '../state/sstv-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useConnectionStore } from '../state/connection-store';
+import { useLoggerStore } from '../state/logger-store';
+import { freqHzToBand } from '../state/spots-store';
 import type { SstvImageMeta } from '../api/client';
 
 const WIDTH = 440;
 const SLANT_RANGE_PPM = 3000;
 const ADJUST_DEBOUNCE_MS = 250;
+/** SSTV reports are RSV (readability, signal, video); 595 is the clean-copy
+ *  default operators exchange. */
+const DEFAULT_RSV = '595';
 
 function utcHm(ms: number): string {
   const d = new Date(ms);
@@ -170,6 +175,70 @@ function AdjustBar({ meta }: { meta: SstvImageMeta }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Log the QSO behind a received picture: the FSK-ID callsign pre-filled,
+ *  RSV both ways, mode SSTV at the picture's dial and start time. */
+function LogRow({ meta }: { meta: SstvImageMeta }) {
+  const addLogEntry = useLoggerStore((s) => s.addLogEntry);
+  const logError = useLoggerStore((s) => s.error);
+  const [call, setCall] = useState(meta.callsign ?? '');
+  const [sent, setSent] = useState(DEFAULT_RSV);
+  const [rcvd, setRcvd] = useState(DEFAULT_RSV);
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
+
+  useEffect(() => {
+    setCall(meta.callsign ?? '');
+    setState('idle');
+  }, [meta.id, meta.callsign]);
+
+  const canLog = call.trim().length >= 3 && meta.dialHz > 0 && state !== 'busy' && state !== 'done';
+  const log = async () => {
+    setState('busy');
+    const entry = await addLogEntry({
+      callsign: call.trim().toUpperCase(),
+      frequencyMhz: meta.dialHz / 1e6,
+      band: freqHzToBand(meta.dialHz) ?? '',
+      mode: 'SSTV',
+      rstSent: sent.trim(),
+      rstRcvd: rcvd.trim(),
+      comment: `${meta.mode} picture`,
+      qsoDateTimeUtc: new Date(meta.startedUnixMs).toISOString(),
+    });
+    setState(entry ? 'done' : 'failed');
+  };
+
+  return (
+    <div className="sstv-adjust-row sstv-log">
+      <span>Log</span>
+      <input
+        className="sstv-input sstv-call"
+        value={call}
+        placeholder="CALL"
+        spellCheck={false}
+        onChange={(e) => {
+          setCall(e.target.value.toUpperCase());
+          if (state !== 'busy') setState('idle');
+        }}
+      />
+      <input className="sstv-input sstv-rsv" value={sent} title="RSV sent" onChange={(e) => setSent(e.target.value)} />
+      <input className="sstv-input sstv-rsv" value={rcvd} title="RSV received" onChange={(e) => setRcvd(e.target.value)} />
+      <button
+        type="button"
+        className={`btn sm ${state === 'done' ? 'active' : ''}`}
+        disabled={!canLog}
+        onClick={() => void log()}
+        title={meta.dialHz > 0 ? 'Log this SSTV QSO' : 'No dial frequency recorded for this picture'}
+      >
+        {state === 'done' ? 'LOGGED' : 'LOG'}
+      </button>
+      {state === 'failed' && (
+        <span className="sstv-log-err" title={logError ?? undefined}>
+          {logError ?? 'failed'}
+        </span>
+      )}
     </div>
   );
 }
@@ -344,7 +413,14 @@ export function SstvWindow() {
         )}
       </div>
 
-      {shownMeta && !live && <AdjustBar meta={shownMeta} />}
+      {shownMeta && !live && (
+        <>
+          <AdjustBar meta={shownMeta} />
+          <div className="sstv-adjust">
+            <LogRow meta={shownMeta} />
+          </div>
+        </>
+      )}
 
       {(current || images.length > 0) && (
         <div className="sstv-strip" title={galleryDir ? `Saved in ${galleryDir}` : undefined}>

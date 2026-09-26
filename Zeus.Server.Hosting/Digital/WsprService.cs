@@ -111,6 +111,12 @@ public sealed class WsprService : IHostedService, IDisposable
     // Optional capture of each slot's 375 Hz IQ (+ both decoders' messages)
     // to build the recorded golden corpus: ZEUS_WSPR_CAPTURE_DIR=/some/dir.
     private readonly string? _captureDir = Environment.GetEnvironmentVariable("ZEUS_WSPR_CAPTURE_DIR");
+
+    // TX counterpart of the RX shadow: the beacon's symbols are checked
+    // against the native encoder once per message (the last one checked is
+    // remembered so a long beacon session logs a mismatch once, not every
+    // slot).
+    private string? _txShadowChecked;
     public bool Enabled => _enabled;
 
     /// <summary>
@@ -337,6 +343,17 @@ public sealed class WsprService : IHostedService, IDisposable
         return new WsprSpotBatch(receiver, slot * (long)SlotMs, dialMhz, outSpots);
     }
 
+    /// <summary>True/false when the native encoder agrees/disagrees with
+    /// <paramref name="symbols"/> for <paramref name="message"/>; null when it
+    /// is unavailable or refuses the message.</summary>
+    internal static bool? NativeEncoderAgrees(string message, ReadOnlySpan<byte> symbols)
+    {
+        if (!WsprNative.Available) return null;
+        Span<byte> native = stackalloc byte[Wspr.WsprEncoder.SymbolCount];
+        if (!WsprNative.Encode(message, native)) return null;
+        return native.SequenceEqual(symbols[..Wspr.WsprEncoder.SymbolCount]);
+    }
+
     private static unsafe string[] NativeMessages(float[] idat, float[] qdat, int dialHz, ZeusWsprSpot[] spots)
     {
         int n;
@@ -455,7 +472,15 @@ public sealed class WsprService : IHostedService, IDisposable
     private float[]? BuildWaveform()
     {
         Span<byte> sym = stackalloc byte[Wspr.WsprEncoder.SymbolCount];
-        if (!Wspr.WsprEncoder.TryEncode($"{_call} {_grid4} {_dBm}", sym)) return null;
+        string message = $"{_call} {_grid4} {_dBm}";
+        if (!Wspr.WsprEncoder.TryEncode(message, sym)) return null;
+        if (_shadowNative && _txShadowChecked != message)
+        {
+            _txShadowChecked = message;
+            if (NativeEncoderAgrees(message, sym) is false)
+                _log.LogWarning("wspr beacon: managed and native encoders disagree on '{Message}' — " +
+                                "transmitting the managed symbols; please report this", message);
+        }
 
         // 48 kHz: 32768 samples/symbol (256/375 s exactly), spacing 1.4648 Hz.
         const int rate = 48_000;

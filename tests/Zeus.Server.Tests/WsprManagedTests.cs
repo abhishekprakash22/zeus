@@ -44,6 +44,19 @@ public sealed class WsprManagedTests
         Assert.Equal(want, got);
     }
 
+    // The beacon's TX shadow check (WsprService.NativeEncoderAgrees): agrees
+    // for a real message, catches a corrupted symbol.
+    [SkippableFact]
+    public void BeaconShadowCheck_AgreesWithNative_AndCatchesADifference()
+    {
+        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
+        var sym = new byte[162];
+        Assert.True(WsprEncoder.TryEncode("EA5IUE IM76 23", sym));
+        Assert.True(WsprService.NativeEncoderAgrees("EA5IUE IM76 23", sym));
+        sym[40] ^= 2;
+        Assert.False(WsprService.NativeEncoderAgrees("EA5IUE IM76 23", sym));
+    }
+
     [Fact]
     public void Encoder_RefusesShapelessMessages()
     {

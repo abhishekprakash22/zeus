@@ -259,6 +259,82 @@ describe('startFt8SlotDriver (boundary → settle → decodes pipeline)', () => 
   });
 });
 
+describe('startFt8SlotDriver waiting for the batch (zeus-hw6r)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // The backend publishes a slot's batch 0-100 ms after the boundary plus the
+  // decode time. The driver used to read the slot at a fixed 100-150 ms and, if
+  // the batch was late, acted on an empty window and never looked again: an FT4
+  // QSO kept sending R-09 through the DX's RR73.
+  it('acts on a slot only once its batch is in, however late it lands', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const slotMs = 7_500; // FT4
+    let rows: Ft8Row[] = [];
+    let lastBatch: number | null = null;
+    const windows: string[][] = [];
+
+    const stop = startFt8SlotDriver({
+      slotMs,
+      settleMs: 0,
+      deadlineMs: 1_000,
+      getRows: () => rows,
+      getLastBatchSlotMs: () => lastBatch,
+      onWindow: (r) => windows.push(r.map((x) => x.text)),
+    });
+
+    vi.advanceTimersByTime(slotMs + 300); // boundary, then 300 ms with no batch
+    expect(windows).toHaveLength(0);
+
+    rows = [row(0, 'EA5IUE ON5RJ RR73')]; // the batch lands
+    lastBatch = 0;
+    vi.advanceTimersByTime(50);
+    expect(windows).toEqual([['EA5IUE ON5RJ RR73']]);
+
+    vi.advanceTimersByTime(2_000); // nothing fires twice
+    expect(windows).toHaveLength(1);
+    stop();
+  });
+
+  it('acts on an empty batch at once', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const windows: string[][] = [];
+    const stop = startFt8SlotDriver({
+      slotMs: 15_000,
+      settleMs: 0,
+      deadlineMs: 2_500,
+      getRows: () => [],
+      getLastBatchSlotMs: () => (Date.now() >= 15_100 ? 0 : null),
+      onWindow: (r) => windows.push(r.map((x) => x.text)),
+    });
+    vi.advanceTimersByTime(15_150);
+    expect(windows).toEqual([[]]);
+    stop();
+  });
+
+  it('acts without the batch at the deadline, so the sequencer never stalls', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const windows: Slot[] = [];
+    const stop = startFt8SlotDriver({
+      slotMs: 15_000,
+      settleMs: 0,
+      deadlineMs: 2_500,
+      getRows: () => [],
+      getLastBatchSlotMs: () => null, // decoder off: no batch ever
+      onWindow: (_r, senderSlot) => windows.push(senderSlot),
+    });
+    vi.advanceTimersByTime(15_000 + 2_450);
+    expect(windows).toHaveLength(0);
+    vi.advanceTimersByTime(50);
+    expect(windows).toEqual(['even']);
+    stop();
+  });
+});
+
 describe('beaconDisarm', () => {
   it('disarms the FT8 keyer via sendBeacon on the arm endpoint', () => {
     const calls: Array<{ url: string; body: string }> = [];

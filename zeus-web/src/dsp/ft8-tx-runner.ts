@@ -34,24 +34,22 @@ export function slotMsFor(mode: DigitalQsoMode): number {
 }
 
 /**
- * Decoder settle time (ms) after a slot boundary before its decodes are in. Kept
- * inside the backend's late-start window (FT8 ≤2.5 s / FT4 ≤1.0 s into the slot,
- * see Ft8TxService.MaxLateStartSecondsFor) so a decode-driven reply staged here
- * keys in the SAME slot rather than a full cycle later. If a stage lands after the
- * window (decoder/POST jitter) the backend's one-cycle freshness window still
- * keys it at the next matching boundary — graceful degradation, never a stall.
- * G2 bench-tune.
+ * How long after a slot boundary the runner waits for that slot's decode batch
+ * before acting without it: the backend keyer's late-start window
+ * (Ft8KeyerService.MaxLateStartMs — FT8 2.5 s, FT4 1.0 s). A reply staged
+ * inside it still keys in the same slot; past it, the keyer's freshness window
+ * keys it at the next matching boundary.
+ *
+ * The runner used to read the slot a fixed 100-150 ms after the boundary. The
+ * backend publishes each batch 0-100 ms after the boundary (its watcher polls
+ * at 100 ms) plus the decode time, so the two raced: when the batch lost, the
+ * window was read empty and never again, and the QSO ignored the DX — an FT4
+ * QSO kept sending R-report through two RR73s (zeus-hw6r). Now the window
+ * fires the moment the batch for that slot is in; this is only the fallback
+ * for a batch that never comes (decoder off, no RX audio).
  */
-function settleMsFor(mode: DigitalQsoMode): number {
-  // The backend publishes one decode batch per slot about 110 ms after the
-  // boundary (its watcher polls at 100 ms; the decode itself measures ~13 ms
-  // for a whole slot). What matters is that the reply reaches the keyer before
-  // it commits to a message, which it does StageCommitMs (350 ms) into the
-  // slot — see Ft8KeyerService. A 400 ms settle on top of a 250 ms detection
-  // tick put the stage at 400-650 ms, i.e. AFTER that commit, which is why the
-  // QSO kept answering the DX's second copy. Keep the margin small and let the
-  // keyer's late-start window absorb a slow host.
-  return mode === 'FT4' ? 100 : 150;
+function deadlineMsFor(mode: DigitalQsoMode): number {
+  return mode === 'FT4' ? 1_000 : 2_500;
 }
 
 /** The UTC slot index a given epoch-ms falls in, for a slot length. */
@@ -179,33 +177,51 @@ const ARM_RECONCILE_GRACE_MS = 5_000;
  */
 export function startFt8SlotDriver(opts: {
   slotMs: number;
+  /** Minimum wait after the boundary. With {@link getLastBatchSlotMs} it is
+   *  also the only wait once that slot's batch is in (0 = act on arrival);
+   *  without it, the window fires at exactly this delay (legacy timing). */
   settleMs: number;
   getRows: () => readonly Ft8Row[];
+  /** slotStartUnixMs of the newest decode batch received. When given, the
+   *  window waits for the ended slot's batch, up to {@link deadlineMs}. */
+  getLastBatchSlotMs?: () => number | null;
+  /** Act without the batch this long after the boundary (default: settleMs). */
+  deadlineMs?: number;
   onWindow: (rows: Ft8Row[], senderSlot: Slot) => void;
 }): () => void {
-  const { slotMs, settleMs, getRows, onWindow } = opts;
+  const { slotMs, settleMs, getRows, getLastBatchSlotMs, onWindow } = opts;
+  const deadlineMs = Math.max(settleMs, opts.deadlineMs ?? settleMs);
   let lastSlot = slotIndexOf(Date.now(), slotMs);
-  const pending: ReturnType<typeof setTimeout>[] = [];
+  // Ended slots still waiting for their decodes, oldest first.
+  const pending: Array<{ slot: number; since: number }> = [];
+
+  const batchIn = (slot: number): boolean => {
+    const last = getLastBatchSlotMs?.();
+    return last != null && slotIndexOf(last, slotMs) >= slot;
+  };
 
   const tick = () => {
-    const cur = slotIndexOf(Date.now(), slotMs);
-    if (cur === lastSlot) return;
-    const endedSlot = lastSlot; // the slot that just closed
-    lastSlot = cur;
-    const id = setTimeout(() => {
-      onWindow(rowsForSlot(getRows(), endedSlot, slotMs), slotParity(endedSlot));
-    }, settleMs);
-    pending.push(id);
+    const now = Date.now();
+    const cur = slotIndexOf(now, slotMs);
+    if (cur !== lastSlot) {
+      pending.push({ slot: lastSlot, since: now }); // the slot that just closed
+      lastSlot = cur;
+    }
+    while (pending.length > 0) {
+      const { slot, since } = pending[0]!;
+      const waited = now - since;
+      const ready =
+        waited >= deadlineMs || (waited >= settleMs && (getLastBatchSlotMs == null || batchIn(slot)));
+      if (!ready) break;
+      pending.shift();
+      onWindow(rowsForSlot(getRows(), slot, slotMs), slotParity(slot));
+    }
   };
 
-  // Boundary detection granularity. It adds directly to the settle above
-  // before the reply is staged, so it has to stay well inside the keyer's
-  // commit point.
+  // Boundary and batch-arrival granularity: a window fires at most 50 ms after
+  // its batch lands, well inside the keyer's commit point.
   const interval = setInterval(tick, 50);
-  return () => {
-    clearInterval(interval);
-    for (const id of pending) clearTimeout(id);
-  };
+  return () => clearInterval(interval);
 }
 
 /** Best-effort disarm of the backend keyer. Uses sendBeacon so it survives a tab
@@ -291,14 +307,16 @@ export function useFt8TxRunner(opts: UseFt8TxRunnerOpts): Ft8TxRunnerView {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, myCall, myGrid]);
 
-  // Slot timer: detect each UTC slot boundary, then after the decoder settles,
-  // feed the just-completed slot's decodes to the controller.
+  // Slot driver: detect each UTC slot boundary, then as soon as that slot's
+  // decode batch is in, feed its decodes to the controller.
   useEffect(() => {
     if (!active) return;
     return startFt8SlotDriver({
       slotMs: slotMsFor(mode),
-      settleMs: settleMsFor(mode),
+      settleMs: 0,
+      deadlineMs: deadlineMsFor(mode),
       getRows: () => useFt8Store.getState().rows,
+      getLastBatchSlotMs: () => useFt8Store.getState().lastBatchSlotMs,
       onWindow: (rows, senderSlot) => {
         // Thread the measured SNR of the DX station so the report we send (and
         // log) is the real exchange, not a constant fallback.

@@ -85,6 +85,9 @@ interface Ft8State {
   rows: Ft8Row[];
   /** Decoded slots, newest first — empty ones included. */
   slots: Ft8SlotMark[];
+  /** slotStartUnixMs of the newest batch received — empty ones included. The TX
+   *  runner waits for this to reach the slot it is about to act on. */
+  lastBatchSlotMs: number | null;
   error: string | null;
   /** Active band label (e.g. "20m") for the workspace band selector. */
   band: string;
@@ -134,6 +137,7 @@ export const useFt8Store = create<Ft8State>((set, get) => ({
   passes: 3,
   rows: [],
   slots: [],
+  lastBatchSlotMs: null,
   error: null,
   band: '20m',
   priorRadio: null,
@@ -211,7 +215,8 @@ export const useFt8Store = create<Ft8State>((set, get) => ({
         const oldest = rows[rows.length - 1]!.slotStartUnixMs;
         slots = slots.filter((m) => m.slotStartUnixMs >= oldest);
       }
-      return { rows, slots };
+      const lastBatchSlotMs = Math.max(s.lastBatchSlotMs ?? -Infinity, batch.slotStartUnixMs);
+      return { rows, slots, lastBatchSlotMs };
     }),
 
   refreshStatus: async (signal) => {

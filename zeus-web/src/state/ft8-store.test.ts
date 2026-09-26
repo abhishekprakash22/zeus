@@ -107,6 +107,15 @@ describe('ft8-store ingest (0x38 decode frames)', () => {
     expect(useFt8Store.getState().rows[0]?.text).toMatch(/^msg-59-/);
   });
 
+  it('records the newest batch slot, empty batches included', () => {
+    useFt8Store.setState({ lastBatchSlotMs: null });
+    useFt8Store.getState().ingest(batch(15_000, ['CQ K1ABC FN42']));
+    useFt8Store.getState().ingest(batch(30_000, []));
+    expect(useFt8Store.getState().lastBatchSlotMs).toBe(30_000);
+    useFt8Store.getState().ingest(batch(15_000, [])); // a late duplicate never goes back
+    expect(useFt8Store.getState().lastBatchSlotMs).toBe(30_000);
+  });
+
   it('clear() empties the table', () => {
     useFt8Store.getState().ingest(batch(1000, ['a', 'b']));
     useFt8Store.getState().clear();

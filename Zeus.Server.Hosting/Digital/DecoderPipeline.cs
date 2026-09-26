@@ -204,10 +204,11 @@ public sealed class DecoderPipeline : IDisposable
 
                 var sw = Stopwatch.StartNew();
                 IReadOnlyList<Ft8DecodeDto> decodes;
+                float[]? audio12k = null;
                 long slotStartMs = (long)SlotClock.SlotStartMs(ended, mode);
                 try
                 {
-                    decodes = DecodeSlot(audio, rate, mode, slotStartMs);
+                    (decodes, audio12k) = DecodeSlot(audio, rate, mode);
                 }
                 catch (Exception ex)
                 {
@@ -226,6 +227,15 @@ public sealed class DecoderPipeline : IDisposable
                     Protocol = mode == DigitalMode.Ft4 ? "FT4" : "FT8",
                     Decodes = decodes,
                 });
+
+                // Only after publishing: the TX sequencer reads each slot's
+                // decodes a fixed ~100-150 ms after the boundary, so nothing
+                // optional may sit between the decode and the publish.
+                if (audio12k is not null && (ShadowNative || CaptureDir is not null))
+                {
+                    var (a, d, md, s) = (audio12k, decodes, mode, slotStartMs);
+                    _ = Task.Run(() => ShadowAndCapture(a, d, md, s));
+                }
             }
         }
         catch (OperationCanceledException) { /* normal */ }
@@ -268,16 +278,21 @@ public sealed class DecoderPipeline : IDisposable
     /// <summary>
     /// Decode one slot with the managed decoder, audio already aligned to the
     /// slot boundary on the disciplined clock (so dtSec is measured against it).
+    /// Also returns the 12 kHz audio for the shadow and the capture.
     /// </summary>
-    private IReadOnlyList<Ft8DecodeDto> DecodeSlot(float[] audio, int rate, DigitalMode mode, long slotStartMs)
+    private static (IReadOnlyList<Ft8DecodeDto>, float[]) DecodeSlot(float[] audio, int rate, DigitalMode mode)
     {
-        bool isFt4 = mode == DigitalMode.Ft4;
-
         // Resample once and decode the 12 kHz copy: the decoder would resample
         // to exactly this, and it is what a capture must hold to replay the slot.
         float[] audio12k = FtxDecoder.ResampleTo12k(audio, rate);
-        var decodes = Ft8Managed.Decode(audio12k, FtxDecoder.DecodeRate, isFt4);
+        return (Ft8Managed.Decode(audio12k, FtxDecoder.DecodeRate, mode == DigitalMode.Ft4), audio12k);
+    }
 
+    /// <summary>Native shadow comparison and corpus capture, off the publish path.</summary>
+    private void ShadowAndCapture(float[] audio12k, IReadOnlyList<Ft8DecodeDto> decodes,
+                                  DigitalMode mode, long slotStartMs)
+    {
+        bool isFt4 = mode == DigitalMode.Ft4;
         IReadOnlyList<Ft8DecodeDto>? native = null;
         if (ShadowNative)
         {
@@ -298,7 +313,6 @@ public sealed class DecoderPipeline : IDisposable
         }
 
         if (CaptureDir is not null) Capture(slotStartMs, mode, audio12k, decodes, native);
-        return decodes;
     }
 
     private static string Describe(IReadOnlyList<Ft8DecodeDto> decodes) =>

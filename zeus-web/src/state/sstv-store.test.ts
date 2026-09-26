@@ -104,10 +104,34 @@ describe('sstv store', () => {
     expect(useSstvStore.getState().tx?.progress).toBe(0.5);
   });
 
+  it('goes back to receiving when a transmission ends', async () => {
+    useSstvStore.setState({
+      view: 'tx', enabled: false, selectedId: 3, tx: { ...TX_IDLE, transmitting: true },
+    });
+    useSstvStore.getState().ingest({ kind: 'tx', tx: { ...TX_IDLE, transmitting: false, progress: 1 } });
+    const st = useSstvStore.getState();
+    expect(st.view).toBe('rx');
+    expect(st.selectedId).toBeNull();                       // follow the live picture
+    await vi.waitFor(() => expect(useSstvStore.getState().enabled).toBe(true));
+  });
+
+  it('a status that was never transmitting does not switch tabs', () => {
+    useSstvStore.setState({ view: 'tx', tx: TX_IDLE });
+    useSstvStore.getState().ingest({ kind: 'tx', tx: TX_IDLE });
+    expect(useSstvStore.getState().view).toBe('tx');
+  });
+
   it('leaving SSTV mid-transmission halts the picture', async () => {
     useSstvStore.setState({ panelOpen: true, tx: { ...TX_IDLE, transmitting: true } });
     useSstvStore.getState().closeWorkspace();
     await vi.waitFor(() => expect(client.postSstvTxHalt).toHaveBeenCalled());
+  });
+
+  it('remembers the header-strip choice in this browser', () => {
+    useSstvStore.getState().setTxOptions({ txHeader: false });
+    expect(localStorage.getItem('zeus.sstv.txHeader')).toBe('0');
+    useSstvStore.getState().setTxOptions({ txHeader: true });
+    expect(localStorage.getItem('zeus.sstv.txHeader')).toBe('1');
   });
 
   it('discard drops a false start', () => {

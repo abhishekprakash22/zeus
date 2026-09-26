@@ -91,6 +91,8 @@ export interface SstvState {
   txTop: string;
   txBottom: string;
   txFsk: boolean;
+  /** Stamp the header strip (call + Zeus version) on outgoing pictures. */
+  txHeader: boolean;
   /** Picture on screen; null follows the live one (or the newest). */
   selectedId: number | null;
   pixels: Record<number, SstvPixels>;
@@ -107,7 +109,9 @@ export interface SstvState {
   tuneTo: (hz: number, mode: RxMode) => Promise<void>;
   setView: (view: 'rx' | 'tx') => void;
   setTxSource: (src: ImageBitmap | null) => void;
-  setTxOptions: (opts: Partial<Pick<SstvState, 'txMode' | 'txTop' | 'txBottom' | 'txFsk'>>) => void;
+  setTxOptions: (
+    opts: Partial<Pick<SstvState, 'txMode' | 'txTop' | 'txBottom' | 'txFsk' | 'txHeader'>>,
+  ) => void;
   /** Quick reply: a received picture becomes the one to send. */
   replyTo: (id: number) => Promise<void>;
   send: (rgbBase64: string, fskId: string | null) => Promise<void>;
@@ -117,6 +121,24 @@ export interface SstvState {
 }
 
 const KEEP_PIXELS = 13;
+
+// The header-strip choice is a per-operator habit; remember it in this
+// browser (a convenience only — absent storage just means "on").
+const TX_HEADER_KEY = 'zeus.sstv.txHeader';
+function loadTxHeader(): boolean {
+  try {
+    return localStorage.getItem(TX_HEADER_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+function saveTxHeader(on: boolean): void {
+  try {
+    localStorage.setItem(TX_HEADER_KEY, on ? '1' : '0');
+  } catch {
+    /* private window / blocked storage — the default stands */
+  }
+}
 
 /** SSTV rides an SSB receiver. The analog SSTV convention: LSB below 10 MHz
  *  (3.845, 7.171), USB above (14.230, 21.340, 28.680). */
@@ -171,6 +193,18 @@ function withMeta(list: SstvImageMeta[], m: SstvImageMeta): SstvImageMeta[] {
 }
 
 export const useSstvStore = create<SstvState>((set, get) => {
+  /** Take a transmitter status. When a picture stops going out (sent in
+   *  full, or halted), go back to receiving: the RX tab, decoder on — the
+   *  reply is what the operator is waiting for. */
+  const applyTx = (tx: SstvTxStatus) => {
+    const wasSending = get().tx?.transmitting === true;
+    set({ tx });
+    if (wasSending && !tx.transmitting) {
+      set({ view: 'rx', selectedId: null });
+      if (!get().enabled) void get().setEnabled(true);
+    }
+  };
+
   /** Keep pixels only for the pictures most likely to be looked at again. */
   const prune = (pixels: Record<number, SstvPixels>): Record<number, SstvPixels> => {
     const s = get();
@@ -221,6 +255,7 @@ export const useSstvStore = create<SstvState>((set, get) => {
     txTop: '',
     txBottom: '',
     txFsk: true,
+    txHeader: loadTxHeader(),
     selectedId: null,
     pixels: {},
     pixelsRev: 0,
@@ -322,7 +357,10 @@ export const useSstvStore = create<SstvState>((set, get) => {
 
     setTxSource: (src) => set({ txSource: src }),
 
-    setTxOptions: (opts) => set(opts),
+    setTxOptions: (opts) => {
+      set(opts);
+      if (opts.txHeader !== undefined) saveTxHeader(opts.txHeader);
+    },
 
     replyTo: async (id) => {
       const px = get().pixels[id];
@@ -349,7 +387,7 @@ export const useSstvStore = create<SstvState>((set, get) => {
 
     halt: async () => {
       try {
-        set({ tx: await postSstvTxHalt() });
+        applyTx(await postSstvTxHalt());
       } catch {
         /* the 'tx' SSE frame reconciles */
       }
@@ -382,8 +420,10 @@ export const useSstvStore = create<SstvState>((set, get) => {
     ingest: (ev) => {
       switch (ev.kind) {
         case 'start':
+          // Also a picture resumed after a fade: it leaves the finished list.
           set((s) => ({
             current: ev.image,
+            images: s.images.filter((i) => i.id !== ev.image.id),
             pixels: { ...s.pixels, [ev.image.id]: blank(ev.image.width, ev.image.height) },
             pixelsRev: s.pixelsRev + 1,
           }));
@@ -424,7 +464,7 @@ export const useSstvStore = create<SstvState>((set, get) => {
           break;
         }
         case 'tx':
-          set({ tx: ev.tx });
+          applyTx(ev.tx);
           break;
         case 'discard':
         case 'removed':

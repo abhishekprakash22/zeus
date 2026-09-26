@@ -8,11 +8,11 @@
 // resolution, and SEND ships its pixels to SstvTransmitter. Nothing keys
 // without that click; HALT (or MOX off anywhere) ends the picture.
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSstvStore } from '../state/sstv-store';
 import { useOperatorStore } from '../state/operator-store';
 import { useTxStore } from '../state/tx-store';
-import { composeSstvPicture, rgbaToRgbBase64 } from '../dsp/sstv-compose';
+import { composeSstvPicture, rgbaToRgbBase64, zeusHeaderVersion } from '../dsp/sstv-compose';
 
 function mmss(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -28,6 +28,7 @@ export function SstvSendPanel() {
   const txTop = useSstvStore((s) => s.txTop);
   const txBottom = useSstvStore((s) => s.txBottom);
   const txFsk = useSstvStore((s) => s.txFsk);
+  const txHeader = useSstvStore((s) => s.txHeader);
   const setTxSource = useSstvStore((s) => s.setTxSource);
   const setTxOptions = useSstvStore((s) => s.setTxOptions);
   const send = useSstvStore((s) => s.send);
@@ -41,8 +42,23 @@ export function SstvSendPanel() {
     () => modeInfos.find((m) => m.name === txMode) ?? modeInfos[0],
     [modeInfos, txMode],
   );
-  const topText = txTop || myCall;
+  // With the header strip on, it already names the sender; don't repeat the
+  // call as the big top line unless the operator typed one.
+  const topText = txTop || (txHeader ? '' : myCall);
   const fskId = txFsk && myCall ? myCall : null;
+  const [zeusVersion, setZeusVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/version')
+      .then((r) => r.json() as Promise<{ version?: string }>)
+      .then((d) => alive && setZeusVersion(d.version ?? null))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const headerRight = txHeader ? zeusHeaderVersion(zeusVersion) : null;
+  const headerLeft = myCall || '';
   const sending = tx?.transmitting === true;
 
   useEffect(() => {
@@ -51,8 +67,9 @@ export function SstvSendPanel() {
     if (!c || !ctx || !info) return;
     c.width = info.width;
     c.height = info.height;
-    composeSstvPicture(ctx, info.width, info.height, txSource, topText, txBottom);
-  }, [info, txSource, topText, txBottom]);
+    const header = headerRight != null ? { left: headerLeft, right: headerRight } : null;
+    composeSstvPicture(ctx, info.width, info.height, txSource, topText, txBottom, header);
+  }, [info, txSource, topText, txBottom, headerLeft, headerRight]);
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -113,7 +130,7 @@ export function SstvSendPanel() {
         <input
           className="sstv-input sstv-grow"
           value={txTop}
-          placeholder={myCall || 'your call'}
+          placeholder={txHeader ? 'optional — the header strip names you' : myCall || 'your call'}
           disabled={sending}
           onChange={(e) => setTxOptions({ txTop: e.target.value })}
         />
@@ -140,6 +157,18 @@ export function SstvSendPanel() {
           {myCall
             ? `send ${myCall} as FSK ID after the picture`
             : 'set your callsign to send an FSK ID'}
+        </span>
+      </label>
+      <label className="sstv-adjust-row">
+        <span>Header</span>
+        <input
+          type="checkbox"
+          checked={txHeader}
+          disabled={sending}
+          onChange={(e) => setTxOptions({ txHeader: e.target.checked })}
+        />
+        <span className="sstv-hint">
+          {`strip across the top: ${myCall || 'your call'} · ${zeusHeaderVersion(zeusVersion)}`}
         </span>
       </label>
 

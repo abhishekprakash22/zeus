@@ -5,9 +5,29 @@
 // SSTV picture composition for the send panel: draw the outgoing picture at
 // the mode's resolution, and turn canvas pixels into the transmitter's input.
 
-/** Draw the outgoing picture: the source cover-fitted, then the text lines
- *  in white with a dark outline (legible on any picture, and the look SSTV
- *  operators expect). */
+/** The optional header strip: the sender's call on the left and the
+ *  software on the right, the way MMSSTV stamps "CALL … MMSSTV Ver 1.13" —
+ *  it names the sender even when no FSK ID gets through. */
+export interface SstvHeader {
+  left: string;
+  right: string;
+}
+
+/** Header strip height for a picture `h` pixels tall (≈ 7 % — two SSTV
+ *  lines of Martin 1 per text pixel row is plenty to stay legible). */
+export function sstvHeaderHeight(h: number): number {
+  return Math.max(12, Math.round(h / 14));
+}
+
+/** "0.10.9-dev+047710f…" → "Zeus v0.10.9-dev": the build hash is noise on air. */
+export function zeusHeaderVersion(version: string | null | undefined): string {
+  const v = (version ?? '').split('+')[0]?.trim();
+  return v ? `Zeus v${v}` : 'Zeus';
+}
+
+/** Draw the outgoing picture: the source cover-fitted, the optional header
+ *  strip, then the text lines in white with a dark outline (legible on any
+ *  picture, and the look SSTV operators expect). */
 export function composeSstvPicture(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -15,6 +35,7 @@ export function composeSstvPicture(
   src: (CanvasImageSource & { width: number; height: number }) | null,
   top: string,
   bottom: string,
+  header: SstvHeader | null = null,
 ): void {
   ctx.fillStyle = 'black';
   ctx.fillRect(0, 0, w, h);
@@ -23,6 +44,24 @@ export function composeSstvPicture(
     const dw = src.width * k,
       dh = src.height * k;
     ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  }
+  let topY = 0;
+  if (header) {
+    const band = sstvHeaderHeight(h);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, w, band);
+    const hs = Math.round(band * 0.72);
+    ctx.font = `bold ${hs}px sans-serif`;
+    ctx.textBaseline = 'middle';
+    const pad = Math.round(w * 0.02);
+    ctx.fillStyle = '#ffd23a';
+    ctx.textAlign = 'left';
+    ctx.fillText(header.left, pad, band / 2, w * 0.45);
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'right';
+    ctx.fillText(header.right, w - pad, band / 2, w * 0.5);
+    ctx.textBaseline = 'alphabetic';
+    topY = band;
   }
   const size = Math.round(h / 9);
   ctx.font = `bold ${size}px sans-serif`;
@@ -36,7 +75,7 @@ export function composeSstvPicture(
     ctx.strokeText(s, x, y, w * 0.94);
     ctx.fillText(s, x, y, w * 0.94);
   };
-  text(top, Math.round(w * 0.04), Math.round(h * 0.04 + size * 0.85), 'left');
+  text(top, Math.round(w * 0.04), Math.round(topY + h * 0.04 + size * 0.85), 'left');
   text(bottom, Math.round(w / 2), Math.round(h * 0.95), 'center');
 }
 

@@ -63,6 +63,7 @@ public sealed class SstvDecoder
     private const int FalseStartLines = 12;
     private const int FalseStartMinSyncs = 4;
     private const int LostAfterLines = 25;
+    private const int MinKeepRows = 16;
 
     // Idle history kept for the VIS edge refinement and the FSK-ID scan.
     // (12 s: also the look-back a sync-train start can anchor to.)
@@ -100,6 +101,13 @@ public sealed class SstvDecoder
 
     private Image? _img;
 
+    // A SignalLost picture waiting to be resumed if its sync train comes back
+    // in phase. While one waits the track is not trimmed: the final re-render
+    // redraws every line from it.
+    private Image? _lost;
+    private long _lostUntil;
+    private const double LostResumeMaxMs = 60_000;
+
     // Sync-train hunt state (idle only).
     private readonly float[] _pAvgRing = new float[PulseAvg];
     private int _pAvgPos;
@@ -113,7 +121,7 @@ public sealed class SstvDecoder
 
     // FSK-ID scan armed by a completed picture.
     private SstvImage? _fskFor;
-    private long _fskFrom, _fskScanAt;
+    private long _fskFrom, _fskTo, _fskScanAt;
 
     public SstvDecoder() => ClearPulses();
 
@@ -127,6 +135,13 @@ public sealed class SstvDecoder
     public event Action<SstvImage, SstvEndReason>? ImageEnded;
     /// <summary>An FSK ID (sender's callsign) followed a finished picture.</summary>
     public event Action<SstvImage, string>? CallsignDecoded;
+    /// <summary>A picture that ended SignalLost picked up again after the fade
+    /// (same id, same pixels so far) — see <see cref="SstvEndReason.SignalLost"/>.</summary>
+    public event Action<SstvImage>? ImageResumed;
+    /// <summary>An FSK burst (guard + start bit) followed the picture but did
+    /// not read as a valid ID — with why, for the log. Tells "the sender sent
+    /// none" apart from "we failed to read it".</summary>
+    public event Action<SstvImage, string>? FskIdUnreadable;
 
     public long SamplesProcessed => _n;
 
@@ -138,6 +153,7 @@ public sealed class SstvDecoder
         _binCount = 0; _binAcc = 0; _binFill = 0; _visHoldUntilBin = 0;
         _img = null;
         _fskFor = null;
+        _lost = null;
         ClearPulses();
     }
 
@@ -172,8 +188,10 @@ public sealed class SstvDecoder
         // scan, which may already have all the audio it needs.
         if (_img is not null) Advance();
         if (_fskFor is not null && _n >= _fskScanAt) ScanFskId();
-        // Idle trim — never while a picture or a pending FSK scan needs the track.
-        if (_img is null && _fskFor is null && _track.Length > 2 * IdleKeepSamples)
+        if (_lost is not null && _n > _lostUntil) _lost = null;       // the fade outlasted it
+        // Idle trim — never while a picture, a pending FSK scan or a resumable
+        // picture needs the track.
+        if (_img is null && _fskFor is null && _lost is null && _track.Length > 2 * IdleKeepSamples)
             _track.TrimBefore(_n - IdleKeepSamples);
     }
 
@@ -301,13 +319,18 @@ public sealed class SstvDecoder
     {
         var img = _fskFor!;
         _fskFor = null;
-        if (FindFskId(_track, Math.Max(_track.Base, _fskFrom), _track.End, img.OffsetHz) is { } call)
-            CallsignDecoded?.Invoke(img, call);
+        var (call, why) = FindFskId(_track, Math.Max(_track.Base, _fskFrom),
+            Math.Min(_track.End, _fskTo), img.OffsetHz);
+        if (call is not null) CallsignDecoded?.Invoke(img, call);
+        else if (why is not null) FskIdUnreadable?.Invoke(img, why);
     }
 
-    /// <summary>Find and read an FSK ID in [from, to) of the track, or null.</summary>
-    private static string? FindFskId(Track track, long from, long to, double offset)
+    /// <summary>Find and read an FSK ID in [from, to) of the track. Returns
+    /// the callsign, or why the first burst that looked like one didn't read
+    /// (both null: no burst at all).</summary>
+    private static (string? Call, string? Why) FindFskId(Track track, long from, long to, double offset)
     {
+        string? firstWhy = null;
         double bit = FskBitMs * SamplesPerMs;
         long guard = (long)(50 * SamplesPerMs);
         for (long t = from + guard; t + 10 * bit < to; t += 6)
@@ -324,13 +347,15 @@ public sealed class SstvDecoder
                 double score = track.Mean(e - w, e) - track.Mean(e, e + w);
                 if (score > best) { best = score; edge = e; }
             }
-            if (ReadFskId(track, edge, to, offset) is { } call) return call;
+            var (call, why) = ReadFskId(track, edge, to, offset);
+            if (call is not null) return (call, null);
+            firstWhy ??= why;
             t = edge + (long)bit;
         }
-        return null;
+        return (null, firstWhy);
     }
 
-    private static string? ReadFskId(Track track, long startBitEdge, long to, double offset)
+    private static (string? Call, string? Why) ReadFskId(Track track, long startBitEdge, long to, double offset)
     {
         double bit = FskBitMs * SamplesPerMs;
         int k = 1;                                    // bit 0 is the start bit
@@ -347,21 +372,24 @@ public sealed class SstvDecoder
             return v;
         }
 
-        if (Char() != 0x2A) return null;
+        int? head = Char();
+        if (head != 0x2A) return (null, $"header 0x{head ?? -1:X2}, not 0x2A");
         var sb = new System.Text.StringBuilder();
         int xsum = 0;
         while (true)
         {
             int? c = Char();
-            if (c is null) return null;
+            if (c is null) return (null, $"ran out of audio after '{sb}'");
             if (c == 0x01) break;
-            if (sb.Length == FskMaxChars) return null;
+            if (sb.Length == FskMaxChars) return (null, $"no terminator after '{sb}'");
             xsum ^= c.Value;
             sb.Append((char)(c.Value + 0x20));
         }
-        if (sb.Length == 0 || Char() != xsum) return null;
+        if (sb.Length == 0) return (null, "empty ID");
+        int? sum = Char();
+        if (sum != xsum) return (null, $"checksum 0x{sum ?? -1:X2} ≠ 0x{xsum:X2} for '{sb}'");
         string call = sb.ToString().Trim();
-        return call.Length == 0 ? null : call;
+        return call.Length == 0 ? (null, "blank ID") : (call, null);
     }
 
     // ---- picture ------------------------------------------------------------
@@ -369,6 +397,7 @@ public sealed class SstvDecoder
     private void Begin(SstvMode mode, long visEnd, double offset, bool viaSync = false)
     {
         if (_fskFor is not null) ScanFskId();       // before the trim discards it
+        _lost = null;                               // a new picture supersedes it
         _track.TrimBefore(visEnd - (long)(50 * SamplesPerMs));
         ClearPulses();
         var img = new Image(mode, visEnd, offset);
@@ -477,9 +506,40 @@ public sealed class SstvDecoder
         if (bestMode == SstvModes.R36 && IsRobot36OddLine(anchorSync, offset))
             anchorSync += (long)(150 * SamplesPerMs);         // start on an even (R-Y) line
 
+        if (TryResume(bestMode, anchorSync)) return;
+
         // Place "VIS end" so line 0's sync lands on the anchor pulse.
         long visEnd = anchorSync - (long)Math.Round((bestMode.LeadInMs + bestMode.SyncOffsetMs) * SamplesPerMs);
         Begin(bestMode, visEnd, offset, viaSync: true);
+    }
+
+    /// <summary>
+    /// The train that came back belongs to the picture lost to a fade if it
+    /// is the same mode and its pulse lands on that picture's line grid (the
+    /// fit extrapolated across the gap). Then carry on painting it — same id,
+    /// same gallery entry — instead of opening a new, headless picture: on
+    /// the air one Scottie 2 used to become an 8-row and a 123-row picture.
+    /// </summary>
+    private bool TryResume(SstvMode mode, long anchorSync)
+    {
+        var img = _lost;
+        if (img is null || img.Mode != mode) return false;
+        double exact = (anchorSync - img.A) / img.B;
+        int line = (int)Math.Round(exact);
+        if (line <= img.LastSyncLine || line >= mode.TxLines) return false;
+        double tol = 3 * SamplesPerMs + 0.001 * (anchorSync - img.A);
+        if (Math.Abs(anchorSync - img.SyncAt(line)) > tol) return false;
+
+        _lost = null;
+        if (_fskFor == img.Public) _fskFor = null;  // not over after all
+        // Re-render from the last good line; the gap paints what the fade left.
+        img.NextLine = img.LastSyncLine + 1;
+        img.LastSyncLine = line - 1;                // the lost count restarts at the resume point
+        img.Public.EndReason = null;
+        _img = img;
+        ClearPulses();
+        ImageResumed?.Invoke(img.Public);
+        return true;
     }
 
     /// <summary>Robot 36 carries R-Y on even lines behind a 1500 Hz separator
@@ -661,27 +721,51 @@ public sealed class SstvDecoder
     {
         var img = _img!;
         _img = null;
+
+        // Lines after the last sync are noise once the sender has gone.
+        int lines = reason == SstvEndReason.SignalLost ? img.LastSyncLine + 1 : img.NextLine;
+
+        // A fade may be followed by the rest of the picture: keep it resumable.
+        if (reason == SstvEndReason.SignalLost)
+        {
+            _lost = img;
+            double nominalEnd = img.SyncAt(img.Mode.TxLines);
+            _lostUntil = Math.Min((long)nominalEnd + (long)(5_000 * SamplesPerMs),
+                                  _n + (long)(LostResumeMaxMs * SamplesPerMs));
+        }
+
+        // A few rows are a fragment, not a picture — unless the rest follows
+        // (resume above), nothing worth a gallery entry.
+        int minRows = Math.Max(MinKeepRows, img.Mode.Height / 10);
+        if (reason != SstvEndReason.Complete && lines * img.Mode.RowsPerLine < minRows)
+            reason = SstvEndReason.FalseStart;
+
         if (reason != SstvEndReason.FalseStart)
         {
-            // Lines after the last sync are noise once the sender has gone.
-            int lines = reason == SstvEndReason.SignalLost ? img.LastSyncLine + 1 : img.NextLine;
             FinalRender(_track, img, lines);
             img.Public.Recording = new SstvRecording(_track.Copy(), _track.Base, img.VisEnd);
-            if (reason == SstvEndReason.Complete)
+            if (reason is SstvEndReason.Complete or SstvEndReason.SignalLost)
             {
-                // Relative to where the picture ENDED on the track, not to how
-                // much audio this Process() call happened to carry — a big
-                // block (a worker catching up) would otherwise start the search
-                // past the ID, or trim it away.
+                // Relative to where the picture ENDED on the track — the last
+                // line that had a sync — not to how much audio this Process()
+                // call carried. SignalLost matters as much as Complete: a
+                // picture started from the sync train can never "complete" (it
+                // began mid-transmission), and QSB turns many others into
+                // SignalLost; the sender's ID follows either way, and the
+                // track still holds it (nothing is trimmed while a picture
+                // runs). A few lines of slack cover a fade that ate the last
+                // lines before the ID.
                 long pictureEnd = (long)img.LineStart(lines);
+                double slack = (FskWaitMs + 3 * img.Mode.LineMs) * SamplesPerMs;
                 _fskFor = img.Public;
                 _fskFrom = pictureEnd - (long)(300 * SamplesPerMs);
+                _fskTo = pictureEnd + (long)slack;
                 _fskScanAt = pictureEnd + (long)(FskWaitMs * SamplesPerMs);
             }
         }
         img.Public.EndReason = reason;
         ClearPulses();
-        if (_fskFor is null) _track.TrimBefore(_n - IdleKeepSamples);
+        if (_fskFor is null && _lost is null) _track.TrimBefore(_n - IdleKeepSamples);
         ImageEnded?.Invoke(img.Public, reason);
     }
 

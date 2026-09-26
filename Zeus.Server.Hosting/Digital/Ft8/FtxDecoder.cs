@@ -4,11 +4,12 @@
 //
 // FT8/FT4 slot decoder, ported from ft8_lib's ft8/decode.c (candidate search
 // on the Costas sync, soft demodulation, LDPC + CRC; Karlis Goba, MIT, see
-// LICENSE.ft8_lib) and native/ft8/zeus_ft8.c (zeus_ft8_decode: resampling,
-// the pipeline and its settings, de-duplication, and the SNR estimate).
+// LICENSE.ft8_lib) and the former native/ft8/zeus_ft8.c (zeus_ft8_decode:
+// resampling, the pipeline and its settings, de-duplication, and the SNR
+// estimate).
 //
-// One pass, no subtraction — exactly what the native decoder does today.
-// Better decoding is separate work, once this matches the native output.
+// One pass, no subtraction — exactly what the native decoder did, which the
+// golden tests (TestData/ft8) hold it to. Better decoding is separate work.
 
 namespace Zeus.Server.Hosting.Digital.Ft8;
 

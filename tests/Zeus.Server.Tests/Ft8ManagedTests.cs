@@ -2,8 +2,8 @@
 //
 // Managed FT8/FT4 port (zeus-wi0p). The pack/encode and unpack paths are
 // integer code, so they must match ft8_lib exactly: the expected values are
-// the native library's own output, frozen into TestData/ft8 by
-// native/ft8/tests/encoder_dump.c (see docs/designs/ft8-managed-port.md).
+// the native library's own output, frozen into TestData/ft8 before native/ft8
+// was retired (see docs/designs/ft8-managed-port.md). Runs everywhere.
 
 using Zeus.Server.Hosting.Digital;
 using Zeus.Server.Hosting.Digital.Ft8;
@@ -134,42 +134,6 @@ public sealed class Ft8ManagedTests
     public void Erf_MatchesReferenceValues(float x, double want) =>
         Assert.Equal(want, FtxSynth.Erf(x), 1e-7);
 
-    // Waveform against the native synth. The float maths differ only in
-    // library sinf/erff rounding, so the samples agree closely; the hard check
-    // is that the native decoder reads the managed audio back.
-    [SkippableTheory]
-    [InlineData("CQ EA5IUE IM76", false, 1500f, 48000)]
-    [InlineData("W1AW EA5IUE R-09", false, 800f, 48000)]
-    [InlineData("CQ EA5IUE IM76", true, 1200f, 48000)]
-    [InlineData("EA5IUE W1AW RR73", true, 2000f, 12000)]
-    [InlineData("CQ PJ4/K1ABC", false, 1000f, 12000)]
-    public void Synth_MatchesNative(string message, bool isFt4, float audioHz, int rate)
-    {
-        Skip.IfNot(Ft8Native.Available, "libzeus_ft8 not staged for this platform");
-
-        var native = Ft8Native.Synth(message, isFt4, audioHz, rate, out string? error);
-        Assert.NotNull(native);
-        var managed = FtxSynth.Synth(message, isFt4, audioHz, rate, null, out var rc);
-        Assert.Equal(FtxMessageRc.Ok, rc);
-        Assert.NotNull(managed);
-        Assert.Equal(FtxSynth.WaveSamples(isFt4, rate), managed!.Length);
-        Assert.Equal(native!.Length, managed.Length);
-
-        double maxDiff = 0;
-        for (int i = 0; i < managed.Length; i++) maxDiff = Math.Max(maxDiff, Math.Abs(managed[i] - native[i]));
-        Assert.True(maxDiff < 1e-3, $"max |managed - native| = {maxDiff}");
-
-        // Place it in a slot (0.5 s in, light noise) and let native decode it.
-        int slot = (int)((isFt4 ? 7.5 : 15.0) * rate);
-        var audio = new float[slot];
-        var rng = new Random(1);
-        for (int i = 0; i < slot; i++) audio[i] = (float)(rng.NextDouble() - 0.5) * 0.02f;
-        int start = rate / 2;
-        for (int i = 0; i < managed.Length && start + i < slot; i++) audio[start + i] += 0.3f * managed[i];
-        var decodes = Ft8Native.Decode(audio, rate, isFt4);
-        Assert.Contains(decodes, d => d.Text == message);
-    }
-
     [Fact]
     public void Synth_RefusesWhatTheEncoderRefuses()
     {
@@ -214,14 +178,30 @@ public sealed class Ft8ManagedTests
         { false, 1 }, { false, 2 }, { false, 3 }, { true, 4 }, { true, 5 },
     };
 
-    [SkippableTheory]
+    // The native decoder's output on these slots, frozen before native/ft8
+    // was retired: same messages, frequencies, dt, SNR and sync score.
+    [Theory]
     [MemberData(nameof(DecoderSlots))]
-    public void Decoder_MatchesNativeOnSynthesizedSlots(bool isFt4, int seed)
+    public void Decoder_MatchesFrozenNativeOnSynthesizedSlots(bool isFt4, int seed)
     {
-        Skip.IfNot(Ft8Native.Available, "libzeus_ft8 not staged for this platform");
+        var audio = DecoderSlotAudio(isFt4, seed);
+        var managed = Ft8Managed.ToDtos(FtxDecoder.Decode(audio, 48000, isFt4, null)).Select(Ft8GoldenTests.Line).ToList();
+
+        string prefix = $"{(isFt4 ? "FT4" : "FT8")}\t{seed}\t";
+        var native = File.ReadAllLines(TestData("synthetic-native.tsv"))
+            .Where(l => l.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(l => l[prefix.Length..]).ToList();
+
+        Assert.True(native.Count >= 4);
+        Assert.Equal(native, managed);
+    }
+
+    /// <summary>The 48 kHz slot a DecoderSlots row stands for.</summary>
+    internal static float[] DecoderSlotAudio(bool isFt4, int seed)
+    {
         const int rate = 48000;
         float t0 = isFt4 ? 0.3f : 0.5f;
-        var audio = SynthSlot(isFt4, rate, seed, 0.1,
+        return SynthSlot(isFt4, rate, seed, 0.1,
             ("CQ EA5IUE IM76", 600f + 7 * seed, t0, 0.20f),
             ("W1AW EA5IUE R-09", 900f, t0 + 0.1f, 0.05f),
             ("EA5IUE W1AW RR73", 1210f, t0 - 0.2f, 0.02f),
@@ -230,14 +210,5 @@ public sealed class Ft8ManagedTests
             ("W9XYZ K1ABC -11", 2140f, t0 + 0.8f, 0.006f),
             ("CQ POTA EA5HYW IM98", 2400f, t0 - 0.4f, 0.004f),
             ("TNX BOB 73 GL", 350f, t0 + 0.2f, 0.003f));
-
-        var native = Ft8Native.Decode(audio, rate, isFt4);
-        var managed = FtxDecoder.Decode(audio, rate, isFt4, null);
-
-        string Show(IEnumerable<string> xs) => string.Join(" | ", xs);
-        var n = native.Select(d => $"{d.Text}@{d.FreqHz}/{d.DtSec:F2}/{d.SnrDb}/{d.Score}").ToList();
-        var m = managed.Select(d => $"{d.Text}@{(int)Math.Round(d.FreqHz)}/{Math.Round(d.DtSec, 2):F2}/{d.SnrDb}/{d.Score}").ToList();
-        Assert.True(n.SequenceEqual(m), $"native:  {Show(n)}\nmanaged: {Show(m)}");
-        Assert.True(managed.Count >= 4, $"only {managed.Count} decodes: {Show(m)}");
     }
 }

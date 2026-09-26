@@ -115,8 +115,7 @@ public sealed class DigitalService : IHostedService, IDisposable
     {
         _pipeline.RxAudioAvailable += OnRxAudio;
         _log.LogInformation(
-            "digital: FT8 backend in core (managed decoder; native shadow={Shadow}{Capture}, clock={Clock})",
-            Decoder.ShadowNative,
+            "digital: FT8 backend in core (managed decoder{Capture}, clock={Clock})",
             Decoder.CaptureDir is null ? "" : $", capturing to {Decoder.CaptureDir}",
             Clock.Status.Source);
         return Task.CompletedTask;

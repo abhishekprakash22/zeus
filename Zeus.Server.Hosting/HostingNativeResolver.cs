@@ -7,8 +7,8 @@
 // Single owner of the NativeLibrary.SetDllImportResolver hook for the
 // Zeus.Server.Hosting assembly — the runtime permits exactly ONE resolver
 // per assembly, and this assembly had grown two independent registrants
-// (MiniAudioInterop, Ft8Native): whichever initialized second threw
-// 'A resolver is already set for the assembly', which is precisely how the
+// (MiniAudioInterop and the since-removed Ft8Native): whichever initialized
+// second threw 'A resolver is already set for the assembly', which is how the
 // first Windows installer died at DigitalService.StartAsync (Linux masked
 // it by initialization order/platform gating). Same cure the plugin host
 // already carries as NativeBridgeResolver: interop classes register their

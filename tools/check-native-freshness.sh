@@ -77,13 +77,9 @@ check_lib() {
 echo "Native binaries vs their source, at ${REF}:"
 echo
 
-check_lib native/ft8 \
-    Zeus.Dsp/runtimes/linux-arm64/native/libzeus_ft8.so \
-    Zeus.Dsp/runtimes/linux-x64/native/libzeus_ft8.so \
-    Zeus.Dsp/runtimes/osx-arm64/native/libzeus_ft8.dylib \
-    Zeus.Dsp/runtimes/win-x64/native/zeus_ft8.dll
-
-# (native/wspr is gone: WSPR is managed code in Digital/Wspr — nothing to check.)
+# (native/ft8 and native/wspr are gone: FT8/FT4 and WSPR are managed code in
+# Digital/Ft8 and Digital/Wspr. No hand-committed library is built from
+# in-tree source any more; add a check_lib line here if one ever is again.)
 
 echo
 if [ "$rc" -ne 0 ]; then

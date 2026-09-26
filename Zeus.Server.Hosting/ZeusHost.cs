@@ -814,7 +814,7 @@ public static class ZeusHost
         builder.Services.AddHostedService(sp =>
             sp.GetRequiredService<Zeus.Server.Hosting.Digital.DigitalService>());
         // FT8/FT4 TX modulator — consumes staged messages at the slot boundary,
-        // synthesizes GFSK via zeus_ft8_synth, keys MOX, streams into the TX
+        // synthesizes GFSK (managed, Digital/Ft8), keys MOX, streams into the TX
         // mic path. See Digital/Ft8KeyerService.cs.
         builder.Services.AddHostedService<Zeus.Server.Hosting.Digital.Ft8KeyerService>();
 

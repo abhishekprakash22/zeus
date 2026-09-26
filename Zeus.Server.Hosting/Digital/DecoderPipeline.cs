@@ -6,11 +6,9 @@
 // decode itself runs OFF the audio thread: Push() only copies into a ring and
 // returns. Decoding inline would starve the radio audio path.
 //
-// DecodeSlot() runs the managed FT8/FT4 decoder (Digital/Ft8, the port of
-// ft8_lib). While the native libzeus_ft8 still ships it decodes every slot too,
-// as a shadow, and any disagreement is logged (ZEUS_FT8_SHADOW=0 turns that
-// off). ZEUS_FT8_CAPTURE_DIR saves each slot's 12 kHz audio and both decoders'
-// messages for the recorded golden corpus (docs/designs/ft8-managed-port.md).
+// DecodeSlot() runs the FT8/FT4 decoder (Digital/Ft8, a C# port of ft8_lib).
+// ZEUS_FT8_CAPTURE_DIR saves each slot's 12 kHz audio and its decodes, to grow
+// the recorded golden corpus (TestData/ft8, docs/designs/ft8-managed-port.md).
 
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -72,10 +70,6 @@ public sealed class DecoderPipeline : IDisposable
     }
 
     private readonly ILogger _log;
-
-    /// <summary>Decode every slot with the native library too and log disagreements.</summary>
-    internal bool ShadowNative { get; } = Ft8Native.Available
-        && Environment.GetEnvironmentVariable("ZEUS_FT8_SHADOW") != "0";
 
     /// <summary>Where to save each slot for the golden corpus, if anywhere.</summary>
     internal string? CaptureDir { get; } = Environment.GetEnvironmentVariable("ZEUS_FT8_CAPTURE_DIR");
@@ -231,10 +225,10 @@ public sealed class DecoderPipeline : IDisposable
                 // Only after publishing: the TX sequencer reads each slot's
                 // decodes a fixed ~100-150 ms after the boundary, so nothing
                 // optional may sit between the decode and the publish.
-                if (audio12k is not null && (ShadowNative || CaptureDir is not null))
+                if (audio12k is not null && CaptureDir is not null)
                 {
                     var (a, d, md, s) = (audio12k, decodes, mode, slotStartMs);
-                    _ = Task.Run(() => ShadowAndCapture(a, d, md, s));
+                    _ = Task.Run(() => Capture(s, md, a, d));
                 }
             }
         }
@@ -288,41 +282,10 @@ public sealed class DecoderPipeline : IDisposable
         return (Ft8Managed.Decode(audio12k, FtxDecoder.DecodeRate, mode == DigitalMode.Ft4), audio12k);
     }
 
-    /// <summary>Native shadow comparison and corpus capture, off the publish path.</summary>
-    private void ShadowAndCapture(float[] audio12k, IReadOnlyList<Ft8DecodeDto> decodes,
-                                  DigitalMode mode, long slotStartMs)
-    {
-        bool isFt4 = mode == DigitalMode.Ft4;
-        IReadOnlyList<Ft8DecodeDto>? native = null;
-        if (ShadowNative)
-        {
-            try
-            {
-                native = Ft8Native.Decode(audio12k, FtxDecoder.DecodeRate, isFt4);
-                string m = Describe(decodes), n = Describe(native);
-                if (m != n)
-                    _log.LogWarning("ft8: managed/native disagree on {Mode} slot {Slot}: managed [{Managed}] native [{Native}]",
-                        mode, slotStartMs, m, n);
-                else if (decodes.Count > 0)
-                    _log.LogInformation("ft8: shadow agrees on {Mode} slot {Slot} ({N} decodes)", mode, slotStartMs, decodes.Count);
-            }
-            catch (Exception ex)
-            {
-                _log.LogDebug(ex, "ft8: native shadow decode failed");
-            }
-        }
-
-        if (CaptureDir is not null) Capture(slotStartMs, mode, audio12k, decodes, native);
-    }
-
-    private static string Describe(IReadOnlyList<Ft8DecodeDto> decodes) =>
-        string.Join(" | ", decodes.Select(d => $"{d.Text}@{d.FreqHz}/{d.DtSec:0.00}/{d.SnrDb}/{d.Score}"));
-
     /// <summary>Save one slot for the golden corpus: &lt;slotStartMs&gt;_&lt;FT8|FT4&gt;.f32
-    /// (12 kHz mono float32 LE) and a .txt of "M" (managed) and "N" (native)
-    /// lines: text, freqHz, dtSec, snrDb, score.</summary>
-    private void Capture(long slotStartMs, DigitalMode mode, float[] audio12k,
-                         IReadOnlyList<Ft8DecodeDto> managed, IReadOnlyList<Ft8DecodeDto>? native)
+    /// (12 kHz mono float32 LE) and a .txt of its decodes, one per line: text,
+    /// freqHz, dtSec, snrDb, score (the columns of TestData/ft8/*.native.tsv).</summary>
+    private void Capture(long slotStartMs, DigitalMode mode, float[] audio12k, IReadOnlyList<Ft8DecodeDto> decodes)
     {
         try
         {
@@ -333,18 +296,15 @@ public sealed class DecoderPipeline : IDisposable
                 BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), audio12k[i]);
             File.WriteAllBytes(stem + ".f32", bytes);
 
-            var lines = new List<string>();
-            foreach (var d in managed) lines.Add(Line('M', d));
-            if (native is not null) foreach (var d in native) lines.Add(Line('N', d));
-            File.WriteAllLines(stem + ".txt", lines);
+            File.WriteAllLines(stem + ".txt", decodes.Select(Line));
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "ft8: slot capture failed ({Dir})", CaptureDir);
         }
 
-        static string Line(char who, Ft8DecodeDto d) =>
-            FormattableString.Invariant($"{who}\t{d.Text}\t{d.FreqHz}\t{d.DtSec:0.00}\t{d.SnrDb}\t{d.Score}");
+        static string Line(Ft8DecodeDto d) =>
+            FormattableString.Invariant($"{d.Text}\t{d.FreqHz}\t{d.DtSec:0.00}\t{d.SnrDb}\t{d.Score}");
     }
 
     public void Dispose()

@@ -12,9 +12,8 @@
 //
 // LOADING: deliberately NOT a [DllImport] + SetDllImportResolver pair.
 // The .NET runtime allows exactly ONE DllImport resolver per assembly and
-// this assembly already has claimants (Ft8Native's static ctor and
-// MiniAudioInterop.EnsureResolverRegistered — a latent first-wins race of
-// their own). Instead we NativeLibrary.TryLoad the RID-probed path once and
+// this assembly already has a claimant (MiniAudioInterop.EnsureResolverRegistered,
+// via HostingNativeResolver). Instead we NativeLibrary.TryLoad the RID-probed path once and
 // bind unmanaged function pointers via GetExport. A missing library is NOT
 // fatal: Available goes false, /status reports nativeAvailable:false, the
 // FreeDV UI shows its gated state, and RadioService refuses FREEDV mode.

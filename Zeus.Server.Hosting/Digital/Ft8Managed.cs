@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Zeus Digital — FT8/FT4 decode and synth in managed code (Digital/Ft8, the
-// port of ft8_lib + zeus_ft8.c). Same surface as Ft8Native, so the pipeline
-// and the keyer switch over by name. One callsign table is shared by decode
-// and synth for the whole session, as the native library's static table was:
+// Zeus Digital — FT8/FT4 decode and synth (Digital/Ft8, a C# port of ft8_lib
+// and of the former native zeus_ft8.c shim), for the pipeline and the keyer.
+// One callsign table is shared by decode and synth for the whole session, as
+// the native library's static table was:
 // a non-standard call spelled out in one slot resolves hashed references to
 // it in later ones, including in what we send.
 
@@ -21,8 +21,8 @@ public static class Ft8Managed
     /// <summary>Always true: nothing to load.</summary>
     public static bool Available => true;
 
-    /// <summary>Decode one slot of mono audio at any rate. Mapped to the wire
-    /// DTO exactly as Ft8Native.Decode maps the native results.</summary>
+    /// <summary>Decode one slot of mono audio at any rate, mapped to the wire
+    /// DTO as the native wrapper mapped it (dt to 0.01 s, frequency to 1 Hz).</summary>
     public static IReadOnlyList<Ft8DecodeDto> Decode(float[] audio, int rate, bool isFt4) =>
         ToDtos(FtxDecoder.Decode(audio, rate, isFt4, Table));
 

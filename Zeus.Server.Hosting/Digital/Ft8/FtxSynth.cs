@@ -2,8 +2,8 @@
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
 //
-// Message text → FT8/FT4 GFSK audio, ported from native/ft8/zeus_ft8.c
-// (zeus_ft8_synth, gfsk_pulse, synth_gfsk — themselves the WSJT-X algorithm
+// Message text → FT8/FT4 GFSK audio, ported from the former
+// native/ft8/zeus_ft8.c (zeus_ft8_synth, gfsk_pulse, synth_gfsk — the WSJT-X algorithm
 // as in ft8_lib's demo/gen_ft8.c). Continuous-phase GFSK: per-sample phase
 // increments from the tone sequence convolved with a Gaussian pulse three
 // symbols long, dummy symbols flattening the edge tails, and a raised-cosine

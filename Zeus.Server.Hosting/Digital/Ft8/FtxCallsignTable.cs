@@ -2,8 +2,8 @@
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
 //
-// The callsign hash table, ported from native/ft8/zeus_ft8.c. It must outlive
-// a single decode: a non-standard call is spelled out once (e.g. "CQ II7ABB")
+// The callsign hash table, ported from the former native/ft8/zeus_ft8.c. It
+// must outlive a single decode: a non-standard call is spelled out once (e.g. "CQ II7ABB")
 // and later messages refer to it only by hash, in LATER slots. It is a
 // session-long cache, as in WSJT-X, reached from the decode worker and the
 // keyer thread, hence the lock.

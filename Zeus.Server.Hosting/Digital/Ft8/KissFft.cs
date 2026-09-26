@@ -2,9 +2,10 @@
 //
 // Zeus — OpenHPSDR Protocol-1 / Protocol-2 client.
 //
-// Forward FFTs ported from KISS FFT (Mark Borgerding, BSD-3-Clause), the
-// library ft8_lib vendors: kiss_fft (mixed radix 4/2/3/5/generic) and kiss_fftr
-// (a real FFT through a half-size complex one). Ported butterfly for
+// Forward FFTs ported from KISS FFT (Copyright (c) 2003-2010, Mark
+// Borgerding; BSD-3-Clause, see LICENSE.kissfft), the library ft8_lib
+// vendored: kiss_fft (mixed radix 4/2/3/5/generic) and kiss_fftr (a real FFT
+// through a half-size complex one). Ported butterfly for
 // butterfly, with the same twiddles (double cos/sin rounded to float) and the
 // same float operation order, so the FT8 waterfall is built the way the native
 // monitor built it. Only what ft8_lib uses is here: float, forward, stride 1.

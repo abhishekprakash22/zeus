@@ -50,6 +50,17 @@ see the corresponding GitHub Release page.
   chain are loopback-validated in-tree. Follow-ups: wsprnet.org upload and
   the propagation tracking map.
 
+### 📶 FT8 / FT4 — no native library
+
+- **The FT8/FT4 decoder and encoder are now C#.** ft8_lib and Zeus's native
+  shim are ported to managed code, so `libzeus_ft8` and its four per-platform
+  builds are gone, and **Windows on ARM gets FT8/FT4**. Nothing changes on air
+  or in the decode list: before the native library was retired the two ran
+  side by side on the HL2 over 79 live slots (754 decodes) and every FT8 and
+  FT4 transmission of a QSO session, with identical decodes and waveforms
+  throughout, and that output is frozen into the tests. It opens the door to multi-pass decoding
+  with subtraction, which the native decoder never had.
+
 ## [0.10.9] — 2026-07-05
 
 > **📖 The Logbook grows up, and Zeus goes modular.** The headline is a completely reworked **Logbook**: pop it out onto its own monitor and it blooms into a full logging workspace — sortable table, live station-detail card, analytics dashboard, and an interactive globe — with **QSO editing, tags, QSL tracking, and LoTW upload/sync (TQSL)** built in. Around it, Zeus's big features keep moving into **installable plugins** (FT8/FT4 digital suite, FreeDV, and the Logbook engine itself), so the core stays lean and features update on their own schedule. Also in this release: a **0–60 MHz wideband display**, PureSignal fixes for the **ANAN-10E**, the Audio Suite in its **own OS window**, a first-launch **crash-report agreement**, a **macOS .pkg installer**, and a long list of transmit, audio, and stability fixes. **Note: this version is a one-time required update** — older installs will be prompted to move up to 0.10.9, after which updates go back to being optional.

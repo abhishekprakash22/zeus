@@ -5,6 +5,21 @@
 the `zeus_ft8.c` shim (`native/ft8`) to C#. Keep the native library as the
 oracle until the managed path matches it on a golden corpus, then drop it.
 
+**Status: done** on `feat/ft8-managed`. The port lives in
+`Zeus.Server.Hosting/Digital/Ft8` (with `Ft8Managed` as the service facade).
+It matched native exactly:
+- the encoder on 106 messages (return code, payload, FT8 and FT4 tones) and
+  the unpacker on 2000 random payloads;
+- the decoder on 5 synthesized slots and, live on the HL2 in shadow mode, on
+  79 slots (27 FT8, 52 FT4; 754 decodes), with every transmitted waveform
+  checked too.
+
+Eight of those slots (4 FT8, 4 FT4, 4.4 MB) and the native output are frozen
+in `tests/Zeus.Server.Tests/TestData/ft8`. `native/ft8`, its CI steps and
+the four per-RID libraries are removed. Release timing is about 31 ms per FT8
+slot and 24 ms per FT4 slot on Apple Silicon. The encoder quirks below are
+still reproduced; fixing them is follow-up work.
+
 ## Why
 
 The case is weaker than for WSPR, because `zeus_ft8.dll` does ship for

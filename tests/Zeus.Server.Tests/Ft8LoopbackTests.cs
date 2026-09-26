@@ -1,27 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Digital-mode natives. libzeus_ft8: synthesize an FT8 / FT4 transmission
-// with the native encoder, drop it into a slot of audio with a little noise,
-// and decode it back. Runs wherever the library is staged for this RID and
-// is skipped elsewhere (the decoder degrades to "unavailable", never throws).
-// (WSPR has no native library any more — see WsprManagedTests.)
+// FT8 / FT4 end to end: synthesize a transmission, drop it into a slot of
+// audio with a little noise, and decode it back — all managed code (see
+// Ft8ManagedTests and Ft8GoldenTests for the checks against ft8_lib).
 
 using Zeus.Server.Hosting.Digital;
 
 namespace Zeus.Server.Tests;
 
-public sealed class Ft8NativeTests
+public sealed class Ft8LoopbackTests
 {
-    [SkippableTheory]
+    [Theory]
     [InlineData(false, 15.0)]   // FT8: 15 s slot
     [InlineData(true, 7.5)]     // FT4: 7.5 s slot
     public void SynthThenDecode_RecoversTheMessage(bool isFt4, double slotSec)
     {
-        Skip.IfNot(Ft8Native.Available, "libzeus_ft8 not staged for this platform");
-
         const int rate = 48_000;
         const string message = "CQ EA5IUE IM76";
-        var tx = Ft8Native.Synth(message, isFt4, 1500f, rate, out var error);
+        var tx = Ft8Managed.Synth(message, isFt4, 1500f, rate, out var error);
         Assert.Null(error);
         Assert.NotNull(tx);
 
@@ -32,7 +28,7 @@ public sealed class Ft8NativeTests
         int start = rate / 2;
         for (int i = 0; i < tx!.Length && start + i < slot.Length; i++) slot[start + i] += 0.3f * tx[i];
 
-        var decodes = Ft8Native.Decode(slot, rate, isFt4);
+        var decodes = Ft8Managed.Decode(slot, rate, isFt4);
 
         var hit = Assert.Single(decodes, d => d.Text.Trim() == message);
         Assert.InRange(hit.FreqHz, 1480, 1520);
@@ -41,14 +37,12 @@ public sealed class Ft8NativeTests
         Assert.InRange(hit.SnrDb, -30, 40);
     }
 
-    [SkippableFact]
+    [Fact]
     public void Snr_FollowsTheSignalLevel_AndReadsBelowZeroInNoise()
     {
-        Skip.IfNot(Ft8Native.Available, "libzeus_ft8 not staged for this platform");
-
         const int rate = 48_000;
         const string message = "CQ EA5IUE IM76";
-        var tx = Ft8Native.Synth(message, isFt4: false, 1500f, rate, out var error);
+        var tx = Ft8Managed.Synth(message, isFt4: false, 1500f, rate, out var error);
         Assert.Null(error);
 
         int SnrAt(float amplitude)
@@ -59,7 +53,7 @@ public sealed class Ft8NativeTests
             int start = rate / 2;
             for (int i = 0; i < tx!.Length && start + i < slot.Length; i++)
                 slot[start + i] += amplitude * tx[i];
-            var d = Ft8Native.Decode(slot, rate, isFt4: false)
+            var d = Ft8Managed.Decode(slot, rate, isFt4: false)
                 .FirstOrDefault(x => x.Text.Trim() == message);
             Assert.NotNull(d);
             return d!.SnrDb;

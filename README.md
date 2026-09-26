@@ -63,9 +63,10 @@ and the Pi decodes **every CW signal in the passband concurrently** — one
 lane per station at its true frequency, tap a lane to tune there.
 Bench-verified on real 40 m QSOs at under half the Pi 5's CPU.
 
-**Digital modes in the core.** FreeDV 700D/700E digital voice, a full WSPR
-receive pipeline plus an autonomous beacon, and the FT8/FT4 suite — no
-virtual audio cables, no companion apps.
+**Digital modes in the core.** FreeDV 700D/700E and RADE V1 digital voice
+with FreeDV Reporter, the FT8/FT4 suite, a full WSPR receive pipeline plus
+an autonomous beacon, and SSTV receive, gallery and transmit. Spots go to
+PSK Reporter and WSPRnet. No virtual audio cables, no companion apps.
 
 **Diversity, touchable.** The G2 Ultra's two phase-coherent ADCs combine
 under one draggable point on a polar pad: steer the null, watch local
@@ -94,16 +95,16 @@ and supported by Apache Labs and is separate from the current ZeusSDR
 project.
 
 It stands on the shoulders of the OpenHPSDR community: **Warren Pratt
-(WDSP)**, **David Rowe (Codec2/FreeDV)**, **K9AN (WSPR)**, the **e04
+(WDSP)**, **David Rowe (Codec2/FreeDV)**, **Joe Taylor K1JT and Steven
+Franke K9AN (WSJT-X, WSPR)**, **Kārlis Goba (ft8_lib)**, the **e04
 DeepCW engine** (AGPL-3.0, combined per GPLv3 §13 — see
 `zeus-web/public/deepcw/NOTICE.txt`), and Thetis, from which much of the
 DSP lineage flows.
 
 ## Roadmap
 
-Auto-notch from the stationarity map · WSPRnet upload + map · SKIM as the
-primary CW decoder · RADE and FreeDV Reporter · diversity auto-null servo ·
-Vulkan display backend.
+Auto-notch from the stationarity map · WSPR propagation map · SKIM as the
+primary CW decoder · diversity auto-null servo · Vulkan display backend.
 
 ## License
 

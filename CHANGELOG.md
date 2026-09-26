@@ -35,12 +35,15 @@ see the corresponding GitHub Release page.
 ### 📡 WSPR — receive and beacon, in core
 
 - **WSPR joins the in-core Digital suite.** Open the WSPR workspace and Zeus
-  runs the real thing end to end: **RX spots** every 120 s slot via the
-  vendored K9AN `wsprd` decoder (WSJT-X's own, `native/wspr`, GPL) with
-  bit-exact slot alignment off the digital clock, and an **autonomous TX
-  beacon** — arm it and Zeus rolls your TX % each even slot, keys MOX, and
-  streams the 162-symbol waveform (native WSJT-X message encoding, so the
-  bits on air are canonical). Safety first-class: HALT/disarm aborts
+  runs the real thing end to end: **RX spots** every 120 s slot via a C#
+  port of K9AN's `wsprd` decoder (WSJT-X's own, GPL) with bit-exact slot
+  alignment off the digital clock, and an **autonomous TX beacon** — arm it
+  and Zeus rolls your TX % each even slot, keys MOX, and streams the
+  162-symbol waveform (WSJT-X message encoding, ported bit-exact, so the
+  bits on air are canonical). **No native library: WSPR now works on
+  Windows too.** The port was checked spot for spot against the original C
+  decoder on synthesized slots and on real 20 m / 17 m slots before the native
+  library was retired. Safety first-class: HALT/disarm aborts
   mid-signal within one audio block, per-transmission watchdog, band-change
   and page-close disarm in the UI, and a 30-minute abandoned-beacon
   auto-disarm as the backstop. Decoder + encoder + the full RX conversion

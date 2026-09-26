@@ -47,7 +47,7 @@ function WsprSpotTable({ slots }: { slots: WsprSlot[] }) {
       </thead>
       <tbody>
         {slots.map((slot) => [
-          <tr key={slot.id} className="wspr-slot-sep">
+          <tr key={slot.id} className="slot-sep">
             <td colSpan={8}>{fmtSlot(slot)}</td>
           </tr>,
           ...slot.rows.map((r) => (

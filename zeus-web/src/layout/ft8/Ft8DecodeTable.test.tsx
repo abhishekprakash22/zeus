@@ -40,7 +40,7 @@ function bodyRowCount(container: HTMLElement): number {
 describe('Ft8DecodeTable filters', () => {
   beforeEach(() => {
     act(() => {
-      useFt8Store.setState({ rows: ROWS });
+      useFt8Store.setState({ rows: ROWS, slots: [] });
       useDigitalWorkedStore.setState({ calls: new Set<string>(), loaded: false });
     });
   });
@@ -162,6 +162,32 @@ describe('Ft8DecodeTable filters', () => {
     expect(txRow?.querySelector('.ft8-row__tx-badge')?.textContent).toBe('TX');
     // Newest-first: the TX echo (t=10) sorts above the received rows (t=0).
     expect(container.querySelector('tbody tr')?.classList.contains('ft8-row--tx')).toBe(true);
+    unmount();
+  });
+
+  it('heads each slot with a separator, above its TX echo and decodes', () => {
+    const mark = (slot: number, count: number) => ({
+      id: `0:${slot}`,
+      receiver: 0,
+      protocol: 'FT8' as const,
+      slotStartUnixMs: slot,
+      dialHz: 14_074_000,
+      count,
+    });
+    act(() => {
+      useFt8Store.setState({
+        rows: [row('CQ K1ABC FN42', 0, { slotStartUnixMs: 15_000 })],
+        slots: [mark(30_000, 0), mark(15_000, 1)],
+      });
+    });
+    const txEchoes = [
+      { id: 'tx:1', timeUtcMs: 30_400, message: 'CQ MYCALL FN30', mode: 'FT8', slot: 'odd', audioHz: 800 },
+    ];
+    const { container, unmount } = render(createElement(Ft8DecodeTable, { txEchoes }));
+    const trs = [...container.querySelectorAll('tbody tr')];
+    expect(trs.map((tr) => tr.className)).toEqual(['slot-sep', 'ft8-row--tx', 'slot-sep', 'ft8-row--cq']);
+    expect(trs[0]?.textContent).toBe('1970-01-01 00:00:30 UTC · FT8 · 14.074000 MHz · no decodes');
+    expect(trs[2]?.textContent).toContain('1 decode');
     unmount();
   });
 

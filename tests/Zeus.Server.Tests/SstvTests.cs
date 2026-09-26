@@ -375,6 +375,48 @@ public sealed class SstvTests
         Assert.Equal(0, calls);
     }
 
+    [Fact]
+    public void FskId_AfterAPictureStartedMidTransmission_IsDecoded()
+    {
+        // Seen on the air: pictures started from the sync train can never
+        // complete — they began mid-transmission — so they end SignalLost, and
+        // their FSK ID used to be ignored.
+        var mode = SstvModes.M1;
+        var audio = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f, 15, fskId: "IU2DYL");
+        int cut = (int)((SstvEncoder.VisMs + 60 * mode.LineMs + 37) * Rate / 1000);
+        var buf = Pad(audio.AsSpan(cut).ToArray(), 0.5, 30 * mode.LineMs / 1000.0, 0.02f);
+        var dec = new SstvDecoder();
+        string? call = null;
+        SstvEndReason? why = null;
+        dec.ImageEnded += (_, r) => why ??= r;
+        dec.CallsignDecoded += (_, c) => call = c;
+        for (int i = 0; i < buf.Length; i += 600)
+            dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+        Assert.Equal(SstvEndReason.SignalLost, why);
+        Assert.Equal("IU2DYL", call);
+    }
+
+    [Fact]
+    public void FskId_BurstThatDoesNotRead_IsReportedWithWhy()
+    {
+        var mode = SstvModes.M2;
+        var audio = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f, fskId: "EA5IUE");
+        // Stamp a steady 1900 Hz over two characters in the middle of the ID:
+        // the guard and start bit still look right, the frame no longer adds up.
+        double idStartMs = SstvEncoder.VisMs + mode.DurationMs + 300 + 100 + SstvDecoder.FskBitMs;
+        int a0 = (int)((idStartMs + 3 * 6 * SstvDecoder.FskBitMs) * Rate / 1000);
+        int a1 = a0 + (int)(2 * 6 * SstvDecoder.FskBitMs * Rate / 1000);
+        for (int i = a0; i < a1; i++) audio[i] = 0.5f * (float)Math.Sin(2 * Math.PI * 1900 * i / Rate);
+        var buf = Pad(audio, 1, 5, 0.02f);
+        var dec = new SstvDecoder();
+        string? call = null, why = null;
+        dec.CallsignDecoded += (_, c) => call = c;
+        dec.FskIdUnreadable += (_, w) => why = w;
+        dec.Process(buf);
+        Assert.Null(call);
+        Assert.NotNull(why);
+    }
+
     [Theory]
     [InlineData("ea4abc", "EA4ABC")]
     [InlineData("  ea4abc/qrp-long ", "EA4ABC/QR")]   // 9-char cap (QSSTV)

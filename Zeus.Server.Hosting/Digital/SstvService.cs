@@ -136,6 +136,8 @@ public sealed class SstvService : IHostedService, IDisposable
         _decoder.RowsDecoded += OnRowsDecoded;
         _decoder.ImageEnded += OnImageEnded;
         _decoder.CallsignDecoded += OnCallsign;
+        _decoder.FskIdUnreadable += (img, why) =>
+            _log.LogInformation("sstv: FSK burst after {Mode} not decoded ({Why})", img.Mode.Name, why);
     }
 
     public bool Enabled => _enabled;

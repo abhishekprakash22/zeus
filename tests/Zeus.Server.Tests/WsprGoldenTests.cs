@@ -119,4 +119,41 @@ public sealed unsafe class WsprGoldenTests(ITestOutputHelper output)
             Assert.InRange((m.FreqMhz - n.FreqMhz) * 1e6, -0.3, 0.3);
         }
     }
+
+    // ---- recorded slots (ZEUS_WSPR_CAPTURE_DIR output) ---------------------
+
+    private static readonly string CorpusDir =
+        Path.Combine(AppContext.BaseDirectory, "TestData", "wspr");
+
+    public static TheoryData<string> Recorded()
+    {
+        var d = new TheoryData<string>();
+        if (Directory.Exists(CorpusDir))
+            foreach (var f in Directory.EnumerateFiles(CorpusDir, "*.iq").Order())
+                d.Add(Path.GetFileName(f));
+        if (d.Count == 0) d.Add("");                    // keeps the theory non-empty; skipped below
+        return d;
+    }
+
+    /// <summary>Real on-air slots captured by WsprService: the managed
+    /// decoder must find the same spots as native on each.</summary>
+    [SkippableTheory]
+    [MemberData(nameof(Recorded))]
+    public void Managed_DecodesWhatNativeDecodes_OnRecordedSlots(string file)
+    {
+        Skip.If(file.Length == 0, "no recorded slots in TestData/wspr yet");
+        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
+        var bytes = File.ReadAllBytes(Path.Combine(CorpusDir, file));
+        var all = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(bytes).ToArray();
+        int n = all.Length / 2;
+        var I = all[..n];
+        var Q = all[n..];
+        int dial = int.Parse(Path.GetFileNameWithoutExtension(file).Split('_')[1]);
+
+        var native = Native(I, Q, dial);
+        var managed = WsprDecoder.Decode(I, Q, dial);
+        output.WriteLine($"{file}: native [{string.Join(" | ", native.Select(d => d.Message))}]");
+        output.WriteLine($"{file}: managed [{string.Join(" | ", managed.Select(d => d.Message))}]");
+        Assert.Equal(native.Select(d => d.Message).Order(), managed.Select(d => d.Message).Order());
+    }
 }

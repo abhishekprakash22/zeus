@@ -12,8 +12,11 @@
 // allocation-free ÷4 decimator into a 12 kHz ring; a slot watcher wakes just
 // after each even-UTC 120 s boundary, snapshots exactly one slot, and a
 // worker converts it to the decoder contract (mix 1500 Hz → ÷32 → 375 Hz
-// complex baseband, 45000 samples) and calls the vendored K9AN wsprd via
-// WsprNative. Spots publish as the `wsprspot` SSE batch the frontend store
+// complex baseband, 45000 samples) and runs the managed port of K9AN's
+// wsprd (Digital/Wspr/WsprDecoder) — no native library, so WSPR works on
+// every platform. While native/wspr still ships, each slot is also decoded
+// by it in shadow and disagreements are logged. Spots publish as the
+// `wsprspot` SSE batch the frontend store
 // already speaks. Slot alignment follows the FT8 pipeline's hard rule: hand
 // the decoder EXACTLY the slot that ended, computed from the digital clock —
 // "close enough" slot maths is not close enough.
@@ -23,8 +26,8 @@
 // keys MOX (MoxSource.WsprBeacon), streams the 162-symbol 4-FSK waveform
 // (110.6 s, tone spacing 12000/8192 = 1.4648 Hz, WSJT-X-nominal 1 s in-slot
 // start) through the same TxAudioIngest path as the FT8 keyer, and unkeys.
-// Channel symbols come from the NATIVE encoder (bit-exact WSJT-X packing) —
-// no hand-ported bit twiddling. Safety: HALT/disarm aborts mid-signal within
+// Channel symbols come from WsprEncoder, the managed port of wsprsim, which
+// golden tests pin bit-for-bit to the native encoder. Safety: HALT/disarm aborts mid-signal within
 // one audio block; a per-transmission watchdog caps overruns; a 30-minute
 // auto-disarm bounds an abandoned beacon (the frontend's pagehide disarm is
 // the first line, this is the backstop it documents).
@@ -94,7 +97,20 @@ public sealed class WsprService : IHostedService, IDisposable
         _log = log;
     }
 
-    public bool NativeAvailable => WsprNative.Available;
+    /// <summary>The decoder and encoder are managed code now (Digital/Wspr),
+    /// so WSPR is available on every platform. Kept under this name because
+    /// the frontend reads `nativeAvailable` from the status DTOs.</summary>
+    public bool NativeAvailable => true;
+
+    // Shadow mode — while the native wsprd still ships, decode every slot
+    // with it too and log any disagreement, so real on-air slots keep
+    // checking the port. Removed together with native/wspr.
+    private readonly bool _shadowNative = WsprNative.Available
+        && Environment.GetEnvironmentVariable("ZEUS_WSPR_SHADOW") != "0";
+
+    // Optional capture of each slot's 375 Hz IQ (+ both decoders' messages)
+    // to build the recorded golden corpus: ZEUS_WSPR_CAPTURE_DIR=/some/dir.
+    private readonly string? _captureDir = Environment.GetEnvironmentVariable("ZEUS_WSPR_CAPTURE_DIR");
     public bool Enabled => _enabled;
 
     /// <summary>
@@ -203,7 +219,8 @@ public sealed class WsprService : IHostedService, IDisposable
         { IsBackground = true, Name = "wspr-beacon" };
         _slotThread.Start();
         _beaconThread.Start();
-        _log.LogInformation("wspr: in core (native={Native})", NativeAvailable);
+        _log.LogInformation("wspr: in core (managed decoder; native shadow={Shadow}{Capture})",
+            _shadowNative, _captureDir is null ? "" : $", capturing to {_captureDir}");
         return Task.CompletedTask;
     }
 
@@ -285,31 +302,78 @@ public sealed class WsprService : IHostedService, IDisposable
         }
     }
 
-    private unsafe WsprSpotBatch DecodeSlot(
+    private WsprSpotBatch DecodeSlot(
         float[] audio12k, double dialMhz, int receiver, long slot, ZeusWsprSpot[] spots)
     {
         // 12 kHz real → 375 Hz complex baseband (WSPR window centre 1500 Hz
-        // → 0 Hz), the vendored decoder's input contract. Worker thread —
-        // allocation is fine here.
+        // → 0 Hz), the decoder's input contract. Worker thread — allocation
+        // is fine here.
         var (idat, qdat) = MixAndDecimate32(audio12k);
+        int dialHz = (int)Math.Round(dialMhz * 1e6);
+
+        var decodes = Wspr.WsprDecoder.Decode(idat, qdat, dialHz);
+        var outSpots = decodes.Select(d => new WsprSpotDtoOut(
+            Math.Round(d.SnrDb, 1), Math.Round(d.DtSec, 2), d.FreqMhz, Math.Round(d.DriftHz, 2), d.Message))
+            .ToArray();
+
+        string[]? native = null;
+        if (_shadowNative)
+        {
+            try
+            {
+                native = NativeMessages(idat, qdat, dialHz, spots);
+                var mine = decodes.Select(d => d.Message).Order().ToArray();
+                if (!mine.SequenceEqual(native.Order()))
+                    _log.LogWarning("wspr: managed/native disagree on slot {Slot}: managed [{Managed}] native [{Native}]",
+                        slot, string.Join(" | ", mine), string.Join(" | ", native.Order()));
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "wspr: native shadow decode failed");
+            }
+        }
+        if (_captureDir is not null) Capture(slot, dialHz, idat, qdat, decodes, native);
+
+        return new WsprSpotBatch(receiver, slot * (long)SlotMs, dialMhz, outSpots);
+    }
+
+    private static unsafe string[] NativeMessages(float[] idat, float[] qdat, int dialHz, ZeusWsprSpot[] spots)
+    {
         int n;
         fixed (float* pi = idat)
         fixed (float* pq = qdat)
         fixed (ZeusWsprSpot* ps = spots)
-            n = WsprNative.Decode(pi, pq, idat.Length,
-                (int)Math.Round(dialMhz * 1e6), ps, spots.Length);
+            n = WsprNative.Decode(pi, pq, idat.Length, dialHz, ps, spots.Length);
+        var msgs = new string[Math.Max(0, n)];
+        for (int i = 0; i < msgs.Length; i++)
+            fixed (byte* pm = spots[i].Message)
+                msgs[i] = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)pm) ?? "";
+        return msgs;
+    }
 
-        var outSpots = new WsprSpotDtoOut[Math.Max(0, n)];
-        for (int i = 0; i < outSpots.Length; i++)
+    /// <summary>Write one slot for the golden corpus: &lt;slot&gt;_&lt;dialHz&gt;.iq
+    /// (float32 LE, all I then all Q, 375 Hz) and a .txt with what each
+    /// decoder made of it. Best-effort.</summary>
+    private void Capture(long slot, int dialHz, float[] idat, float[] qdat,
+                         List<Wspr.WsprDecode> managed, string[]? native)
+    {
+        try
         {
-            string msg;
-            unsafe { fixed (byte* pm = spots[i].Message)
-                msg = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)pm) ?? ""; }
-            outSpots[i] = new WsprSpotDtoOut(
-                Math.Round(spots[i].SnrDb, 1), Math.Round(spots[i].DtSec, 2),
-                spots[i].FreqHz, Math.Round(spots[i].DriftHz, 2), msg);
+            Directory.CreateDirectory(_captureDir!);
+            string stem = Path.Combine(_captureDir!, $"{slot}_{dialHz}");
+            using (var f = File.Create(stem + ".iq"))
+            {
+                f.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(idat.AsSpan()));
+                f.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(qdat.AsSpan()));
+            }
+            File.WriteAllLines(stem + ".txt",
+                [.. managed.Select(d => $"M {d.Message}\t{d.SnrDb:0.0}\t{d.DtSec:0.00}\t{d.FreqMhz:0.000000}\t{d.DriftHz}"),
+                 .. (native ?? []).Select(m => $"N {m}")]);
         }
-        return new WsprSpotBatch(receiver, slot * (long)SlotMs, dialMhz, outSpots);
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.LogWarning(ex, "wspr: slot capture failed ({Dir})", _captureDir);
+        }
     }
 
     /// <summary>12 kHz real → 375 Hz complex: mix by −1500 Hz, 1024-tap
@@ -337,7 +401,7 @@ public sealed class WsprService : IHostedService, IDisposable
         }
         for (int i = 0; i < taps; i++) h[i] /= sum;
 
-        int outLen = Math.Min(WsprNative.SlotSamples, n / 32);
+        int outLen = Math.Min(Wspr.WsprDecoder.SlotSamples, n / 32);
         var I = new float[outLen];
         var Q = new float[outLen];
         for (int o = 0; o < outLen; o++)
@@ -390,15 +454,15 @@ public sealed class WsprService : IHostedService, IDisposable
 
     private float[]? BuildWaveform()
     {
-        Span<byte> sym = stackalloc byte[WsprNative.SymbolCount];
-        if (!WsprNative.Encode($"{_call} {_grid4} {_dBm}", sym)) return null;
+        Span<byte> sym = stackalloc byte[Wspr.WsprEncoder.SymbolCount];
+        if (!Wspr.WsprEncoder.TryEncode($"{_call} {_grid4} {_dBm}", sym)) return null;
 
         // 48 kHz: 32768 samples/symbol (256/375 s exactly), spacing 1.4648 Hz.
         const int rate = 48_000;
         const int spSym = 32_768;
-        var wave = new float[WsprNative.SymbolCount * spSym];
+        var wave = new float[Wspr.WsprEncoder.SymbolCount * spSym];
         double phase = 0, spacing = 12_000.0 / 8_192.0;
-        for (int s = 0; s < WsprNative.SymbolCount; s++)
+        for (int s = 0; s < Wspr.WsprEncoder.SymbolCount; s++)
         {
             double f = _audioHz + (sym[s] - 1.5) * spacing;
             double dp = 2 * Math.PI * f / rate;

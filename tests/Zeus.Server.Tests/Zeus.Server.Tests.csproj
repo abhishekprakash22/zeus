@@ -43,4 +43,10 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <!-- Recorded WSPR slots for the managed-vs-native golden test
+       (WsprGoldenTests). Captured with ZEUS_WSPR_CAPTURE_DIR. -->
+  <ItemGroup>
+    <None Include="TestData/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

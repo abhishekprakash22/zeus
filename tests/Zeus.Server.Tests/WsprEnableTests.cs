@@ -16,11 +16,10 @@ public sealed class WsprEnableTests
         new(pipeline: null!, digital: null!, ingest: null!, tx: null!,
             log: NullLogger<WsprService>.Instance);
 
-    [SkippableFact]
+    [Fact]
     public void ReEnabling_TheSameReceiveSettings_KeepsTheCapture()
     {
         var w = NewService();
-        Skip.IfNot(w.NativeAvailable, "libzeus_wspr not staged for this platform");
 
         Assert.True(w.Enable(0, 14.0956));
         int afterFirst = w.CaptureRestarts;
@@ -32,11 +31,10 @@ public sealed class WsprEnableTests
         Assert.True(w.Enabled);
     }
 
-    [SkippableFact]
+    [Fact]
     public void ChangingBandOrReceiver_RestartsTheCapture()
     {
         var w = NewService();
-        Skip.IfNot(w.NativeAvailable, "libzeus_wspr not staged for this platform");
 
         w.Enable(0, 14.0956);
         w.Enable(0, 7.0386);                            // QSY

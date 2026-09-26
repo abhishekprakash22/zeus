@@ -176,4 +176,68 @@ public sealed class Ft8ManagedTests
         Assert.Null(FtxSynth.Synth("THIS IS TOO LONG FOR FREE TEXT", false, 1500f, 48000, null, out var rc));
         Assert.Equal(FtxMessageRc.ErrorType, rc);
     }
+
+    // ---- decoder -----------------------------------------------------------
+
+    /// <summary>A slot with several transmissions at chosen levels, offsets
+    /// and frequencies, in Gaussian noise (fixed seed).</summary>
+    internal static float[] SynthSlot(bool isFt4, int rate, int seed, double noiseRms,
+                                      params (string msg, float hz, float dt, float amp)[] txs)
+    {
+        int slot = (int)((isFt4 ? 7.5 : 15.0) * rate);
+        var audio = new float[slot];
+        var rng = new Random(seed);
+        for (int i = 0; i < slot; i += 2)
+        {
+            // Box-Muller
+            double u1 = 1.0 - rng.NextDouble(), u2 = rng.NextDouble();
+            double r = Math.Sqrt(-2 * Math.Log(u1)) * noiseRms;
+            audio[i] = (float)(r * Math.Cos(2 * Math.PI * u2));
+            if (i + 1 < slot) audio[i + 1] = (float)(r * Math.Sin(2 * Math.PI * u2));
+        }
+        foreach (var (msg, hz, dt, amp) in txs)
+        {
+            var w = FtxSynth.Synth(msg, isFt4, hz, rate, null, out var rc)!;
+            Assert.Equal(FtxMessageRc.Ok, rc);
+            int start = (int)(dt * rate);
+            for (int i = 0; i < w.Length; i++)
+            {
+                int j = start + i;
+                if (j >= 0 && j < slot) audio[j] += amp * w[i];
+            }
+        }
+        return audio;
+    }
+
+    public static TheoryData<bool, int> DecoderSlots => new()
+    {
+        { false, 1 }, { false, 2 }, { false, 3 }, { true, 4 }, { true, 5 },
+    };
+
+    [SkippableTheory]
+    [MemberData(nameof(DecoderSlots))]
+    public void Decoder_MatchesNativeOnSynthesizedSlots(bool isFt4, int seed)
+    {
+        Skip.IfNot(Ft8Native.Available, "libzeus_ft8 not staged for this platform");
+        const int rate = 48000;
+        float t0 = isFt4 ? 0.3f : 0.5f;
+        var audio = SynthSlot(isFt4, rate, seed, 0.1,
+            ("CQ EA5IUE IM76", 600f + 7 * seed, t0, 0.20f),
+            ("W1AW EA5IUE R-09", 900f, t0 + 0.1f, 0.05f),
+            ("EA5IUE W1AW RR73", 1210f, t0 - 0.2f, 0.02f),
+            ("CQ DX K1ABC FN42", 1523f, t0 + 0.4f, 0.012f),
+            ("K1ABC W9XYZ EN37", 1876f + seed, t0, 0.008f),
+            ("W9XYZ K1ABC -11", 2140f, t0 + 0.8f, 0.006f),
+            ("CQ POTA EA5HYW IM98", 2400f, t0 - 0.4f, 0.004f),
+            ("TNX BOB 73 GL", 350f, t0 + 0.2f, 0.003f));
+
+        var native = Ft8Native.Decode(audio, rate, isFt4);
+        var managed = FtxDecoder.Decode(audio, rate, isFt4, null);
+
+        string Show(IEnumerable<string> xs) => string.Join(" | ", xs);
+        var n = native.Select(d => $"{d.Text}@{d.FreqHz}/{d.DtSec:F2}/{d.SnrDb}/{d.Score}").ToList();
+        var m = managed.Select(d => $"{d.Text}@{(int)Math.Round(d.FreqHz)}/{Math.Round(d.DtSec, 2):F2}/{d.SnrDb}/{d.Score}").ToList();
+        Assert.True(n.SequenceEqual(m), $"native:  {Show(n)}\nmanaged: {Show(m)}");
+        Assert.True(managed.Count >= 4, $"only {managed.Count} decodes: {Show(m)}");
+    }
 }

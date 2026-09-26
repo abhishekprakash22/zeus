@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // WSPR spot store. WSPR is a beacon mode — no QSO, no TX sequencing — so this is
-// just a rolling list of received spots for the WSPR workspace table, plus the
-// enable/native state. Spots arrive as `wsprspot` SSE events from the Zeus
+// just a rolling list of decoded slots (each with its spots, possibly none) for
+// the WSPR workspace table, plus the enable/native state. Empty slots are kept
+// so the table can draw a separator for every slot the decoder ran on. Spots arrive as `wsprspot` SSE events from the Zeus
 // Digital plugin (one per 120 s UTC slot — payload identical to the old 0x39
 // WS frame), dispatched in state/digital-plugin-store.ts and applied via
 // ingest(). Enable/disable hydrate from the plugin's /wspr endpoints. Mirrors
@@ -46,9 +47,23 @@ export interface WsprRow extends WsprSpotDto {
   powerDbm: number | null;
 }
 
-const MAX_ROWS = 500;
+/** One decoded slot — a table separator plus its spots (possibly none). */
+export interface WsprSlot {
+  id: string;
+  receiver: number;
+  slotStartUnixMs: number;
+  dialFreqMhz: number;
+  rows: WsprRow[];
+}
 
-function parseSpotMessage(message: string): { callsign: string; grid: string; powerDbm: number | null } {
+const MAX_ROWS = 500;
+const MAX_SLOTS = 360; // 12 h of 2-minute slots
+
+function parseSpotMessage(message: string): {
+  callsign: string;
+  grid: string;
+  powerDbm: number | null;
+} {
   const t = message.trim().split(/\s+/);
   const powerDbm = t[2] != null && /^\d+$/.test(t[2]) ? parseInt(t[2], 10) : null;
   return { callsign: t[0] ?? '', grid: t[1] ?? '', powerDbm };
@@ -59,7 +74,7 @@ interface WsprState {
   nativeAvailable: boolean;
   enabled: boolean;
   band: string;
-  rows: WsprRow[];
+  slots: WsprSlot[]; // newest first
   error: string | null;
   priorRadio: RadioModeSnapshot | null;
 
@@ -78,7 +93,7 @@ export const useWsprStore = create<WsprState>((set, get) => ({
   nativeAvailable: false,
   enabled: false,
   band: '20m',
-  rows: [],
+  slots: [],
   error: null,
   priorRadio: null,
 
@@ -108,14 +123,32 @@ export const useWsprStore = create<WsprState>((set, get) => ({
 
   ingest: (batch) =>
     set((s) => {
-      const incoming: WsprRow[] = batch.spots.map((d, i) => ({
-        ...d,
-        ...parseSpotMessage(d.message),
-        id: `${batch.receiver}:${batch.slotStartUnixMs}:${i}`,
+      const id = `${batch.receiver}:${batch.slotStartUnixMs}`;
+      const slot: WsprSlot = {
+        id,
+        receiver: batch.receiver,
         slotStartUnixMs: batch.slotStartUnixMs,
-      }));
-      const rows = [...incoming, ...s.rows].slice(0, MAX_ROWS);
-      return { rows };
+        dialFreqMhz: batch.dialFreqMhz,
+        rows: batch.spots.map((d, i) => ({
+          ...d,
+          ...parseSpotMessage(d.message),
+          id: `${id}:${i}`,
+          slotStartUnixMs: batch.slotStartUnixMs,
+        })),
+      };
+      // Keep whole slots: drop the oldest once past MAX_SLOTS or MAX_ROWS spots
+      // (the newest slot always stays).
+      const slots = [slot, ...s.slots.filter((x) => x.id !== id)];
+      let n = slots.length > MAX_SLOTS ? MAX_SLOTS : slots.length;
+      let total = 0;
+      for (let i = 0; i < n; i++) {
+        total += slots[i]!.rows.length;
+        if (total > MAX_ROWS && i > 0) {
+          n = i;
+          break;
+        }
+      }
+      return { slots: slots.slice(0, n) };
     }),
 
   refreshStatus: async (signal) => {
@@ -179,5 +212,5 @@ export const useWsprStore = create<WsprState>((set, get) => ({
     })();
   },
 
-  clear: () => set({ rows: [] }),
+  clear: () => set({ slots: [] }),
 }));

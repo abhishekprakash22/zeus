@@ -7,7 +7,7 @@
 // WsprTxControl logic are unchanged.
 
 import { useEffect } from 'react';
-import { useWsprStore, type WsprRow } from '../../state/wspr-store';
+import { useWsprStore, type WsprSlot } from '../../state/wspr-store';
 import { useConnectionStore } from '../../state/connection-store';
 import { useOperatorStore } from '../../state/operator-store';
 import { DIGITAL_BANDS, nearestDigitalBand } from '../../dsp/digital-segments';
@@ -19,8 +19,16 @@ function fmtUtc(ms: number): string {
   return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
 
-function WsprSpotTable({ rows }: { rows: WsprRow[] }) {
-  if (rows.length === 0) {
+// Separator label: "2026-09-26 17:22 UTC · 14.095600 MHz · 3 spots".
+function fmtSlot(slot: WsprSlot): string {
+  const date = new Date(slot.slotStartUnixMs).toISOString().slice(0, 10);
+  const n = slot.rows.length;
+  const spots = n === 0 ? 'no spots' : n === 1 ? '1 spot' : `${n} spots`;
+  return `${date} ${fmtUtc(slot.slotStartUnixMs)} UTC · ${slot.dialFreqMhz.toFixed(6)} MHz · ${spots}`;
+}
+
+function WsprSpotTable({ slots }: { slots: WsprSlot[] }) {
+  if (slots.length === 0) {
     return <div className="ft8-decode-empty">Waiting for spots… (WSPR slots are 2 minutes)</div>;
   }
   return (
@@ -38,18 +46,25 @@ function WsprSpotTable({ rows }: { rows: WsprRow[] }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
-          <tr key={r.id}>
-            <td>{fmtUtc(r.slotStartUnixMs)}</td>
-            <td className="num">{r.snrDb >= 0 ? `+${r.snrDb.toFixed(0)}` : r.snrDb.toFixed(0)}</td>
-            <td className="num">{r.dtSec.toFixed(1)}</td>
-            <td className="num">{r.freqMhz.toFixed(6)}</td>
-            <td className="num">{r.driftHz}</td>
-            <td>{r.callsign}</td>
-            <td>{r.grid}</td>
-            <td className="num">{r.powerDbm ?? ''}</td>
-          </tr>
-        ))}
+        {slots.map((slot) => [
+          <tr key={slot.id} className="wspr-slot-sep">
+            <td colSpan={8}>{fmtSlot(slot)}</td>
+          </tr>,
+          ...slot.rows.map((r) => (
+            <tr key={r.id}>
+              <td>{fmtUtc(r.slotStartUnixMs)}</td>
+              <td className="num">
+                {r.snrDb >= 0 ? `+${r.snrDb.toFixed(0)}` : r.snrDb.toFixed(0)}
+              </td>
+              <td className="num">{r.dtSec.toFixed(1)}</td>
+              <td className="num">{r.freqMhz.toFixed(6)}</td>
+              <td className="num">{r.driftHz}</td>
+              <td>{r.callsign}</td>
+              <td>{r.grid}</td>
+              <td className="num">{r.powerDbm ?? ''}</td>
+            </tr>
+          )),
+        ])}
       </tbody>
     </table>
   );
@@ -57,7 +72,7 @@ function WsprSpotTable({ rows }: { rows: WsprRow[] }) {
 
 export function WsprPopBody() {
   const band = useWsprStore((s) => s.band);
-  const rows = useWsprStore((s) => s.rows);
+  const slots = useWsprStore((s) => s.slots);
   const qsyBand = useWsprStore((s) => s.qsyBand);
   const vfoHz = useConnectionStore((s) => s.vfoHz);
   const myCall = useOperatorStore((s) => s.call);
@@ -117,7 +132,7 @@ export function WsprPopBody() {
       <section className="dw-section dw-section--grow">
         <div className="ft8-region__head">Received spots · {band}</div>
         <div className="dw-section__body dw-section__body--flush">
-          <WsprSpotTable rows={rows} />
+          <WsprSpotTable slots={slots} />
         </div>
       </section>
 

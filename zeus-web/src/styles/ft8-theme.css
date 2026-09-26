@@ -340,6 +340,17 @@
   vertical-align: middle;
 }
 
+/* WSPR: one thin separator per decoded slot (empty ones too) so an empty
+   slot reads differently from a decoder that isn't running. */
+.ft8-decode-table tr.wspr-slot-sep td {
+  padding: 1px 8px;
+  border-bottom: 1px solid var(--hud-text-dim);
+  color: var(--hud-text-dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
 .ft8-decode-empty {
   padding: 16px;
   text-align: center;

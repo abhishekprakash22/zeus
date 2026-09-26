@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Managed WSPR port (zeus-88xj) against the native wsprd oracle. Where the
-// native library is not staged (Windows today) the oracle comparisons skip;
-// the self-contained vectors still run everywhere.
+// Managed WSPR port (zeus-88xj). The encoder is checked against the native
+// wsprsim symbols frozen into TestData/wspr/encoder-native.tsv before
+// native/wspr was retired; everything here runs on every platform.
 
 using System.Text;
 using Zeus.Server.Hosting.Digital;
@@ -32,16 +32,24 @@ public sealed class WsprManagedTests
         "<K1ABC> FN42AB 37", "<EA5IUE> IM76HE 23", "<PJ4/K1ABC> FK52UD 37",
     };
 
-    [SkippableTheory]
-    [MemberData(nameof(Messages))]
-    public void Encoder_MatchesNative(string message)
+    public static TheoryData<string, string> NativeVectors()
     {
-        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
-        var want = new byte[162];
-        Assert.True(WsprNative.Encode(message, want));
+        var d = new TheoryData<string, string>();
+        foreach (var line in File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "TestData", "wspr", "encoder-native.tsv")))
+        {
+            var f = line.Split('\t');
+            d.Add(f[0], f[1]);
+        }
+        return d;
+    }
+
+    [Theory]
+    [MemberData(nameof(NativeVectors))]
+    public void Encoder_MatchesNativeSymbols(string message, string nativeSymbols)
+    {
         var got = new byte[162];
         Assert.True(WsprEncoder.TryEncode(message, got));
-        Assert.Equal(want, got);
+        Assert.Equal(nativeSymbols, string.Concat(got.Select(b => (char)('0' + b))));
     }
 
     // The beacon's TX shadow check (WsprService.NativeEncoderAgrees): agrees
@@ -66,33 +74,11 @@ public sealed class WsprManagedTests
         Assert.False(WsprEncoder.TryEncode("K1ABC FN42", s));     // no power
     }
 
-    // Shapes the native encoder refuses, the managed one must refuse too
-    // (a 3-character call is not type 1: the C requires the first space
-    // after position 3).
-    // (Only shapes the C survives: "HELLO" makes native get_wspr_channel_symbols
-    // read a NULL grid token and crash the process — the managed encoder just
-    // returns false, see Encoder_RefusesShapelessMessages.)
-    [SkippableTheory]
-    [InlineData("K1A FN42 30")]
-    public void Encoder_RefusesWhatNativeRefuses(string message)
-    {
-        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
-        var s = new byte[162];
-        Assert.False(WsprNative.Encode(message, s));
-        Assert.False(WsprEncoder.TryEncode(message, s));
-    }
-
+    // The native encoder refused a 3-character call as type 1 (the C
+    // requires the first space after position 3); the managed one must too.
     [Fact]
-    public void Encoder_SymbolsCarryTheSyncVectorInTheirLowBit()
-    {
-        var s = new byte[162];
-        Assert.True(WsprEncoder.TryEncode("K1ABC FN42 37", s));
-        for (int i = 0; i < 162; i++)
-        {
-            Assert.InRange(s[i], 0, 3);
-            Assert.Equal(WsprEncoder.Sync[i], (byte)(s[i] & 1));
-        }
-    }
+    public void Encoder_RefusesWhatNativeRefused() =>
+        Assert.False(WsprEncoder.TryEncode("K1A FN42 30", new byte[162]));
 
     // ---- Fano + unpack (zeus-88xj.2) ----------------------------------------
 

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Golden tests: the managed WSPR decoder against the native wsprd oracle on
-// the same audio. Same messages and drift; SNR, dt and frequency within
-// small tolerances (libm vs .NET math and FFTW vs a managed FFT differ in
-// the last bits). Skips where the native library is not staged.
+// Golden tests: the managed WSPR decoder against what the native wsprd
+// decoded on the same audio, frozen into TestData/wspr before native/wspr
+// was retired (synthetic-native.tsv for the synthesized slots, the "N" lines
+// of each recorded slot's .txt). Same messages and drift; SNR, dt and
+// frequency within small tolerances. Runs on every platform.
 
 using System.Diagnostics;
 using Xunit.Abstractions;
@@ -12,7 +13,7 @@ using Zeus.Server.Hosting.Digital.Wspr;
 
 namespace Zeus.Server.Tests;
 
-public sealed unsafe class WsprGoldenTests(ITestOutputHelper output)
+public sealed class WsprGoldenTests(ITestOutputHelper output)
 {
     private const int Rate = 12_000, SpSym = 8_192;
 
@@ -51,23 +52,6 @@ public sealed unsafe class WsprGoldenTests(ITestOutputHelper output)
         return audio;
     }
 
-    private static List<WsprDecode> Native(float[] I, float[] Q, int dialHz)
-    {
-        var spots = new ZeusWsprSpot[64];
-        int n;
-        fixed (float* pi = I) fixed (float* pq = Q) fixed (ZeusWsprSpot* ps = spots)
-            n = WsprNative.Decode(pi, pq, I.Length, dialHz, ps, spots.Length);
-        var list = new List<WsprDecode>();
-        for (int k = 0; k < n; k++)
-        {
-            string msg;
-            fixed (byte* pm = spots[k].Message)
-                msg = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)pm) ?? "";
-            list.Add(new WsprDecode(spots[k].FreqHz, spots[k].SnrDb, spots[k].DtSec, spots[k].DriftHz, msg, 0, 0, 0));
-        }
-        return list;
-    }
-
     public static TheoryData<string> Cases => new() { "five-beacons", "types-1-2-3", "drifting", "weak", "crowded", "noise-only" };
 
     private static (Beacon[] Beacons, double Noise) Case(string name) => name switch
@@ -89,24 +73,34 @@ public sealed unsafe class WsprGoldenTests(ITestOutputHelper output)
         _ => throw new ArgumentException(name),
     };
 
-    [SkippableTheory]
-    [MemberData(nameof(Cases))]
-    public void Managed_DecodesWhatNativeDecodes(string name)
+    private static readonly string CorpusDir =
+        Path.Combine(AppContext.BaseDirectory, "TestData", "wspr");
+
+    /// <summary>The native decoder's spots for a synthesized case.</summary>
+    private static List<WsprDecode> Frozen(string name)
     {
-        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        return File.ReadAllLines(Path.Combine(CorpusDir, "synthetic-native.tsv"))
+            .Where(l => !l.StartsWith('#') && l.Length > 0)
+            .Select(l => l.Split('\t'))
+            .Where(f => f[0] == name)
+            .Select(f => new WsprDecode(double.Parse(f[4], inv), float.Parse(f[2], inv), float.Parse(f[3], inv),
+                                        float.Parse(f[5], inv), f[1], 0, 0, 0))
+            .ToList();
+    }
+
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void Managed_DecodesWhatNativeDecoded(string name)
+    {
         var (beacons, noise) = Case(name);
         var (I, Q) = WsprService.MixAndDecimate32(Slot(beacons, noise, seed: name.Length));
         const int dial = 14_095_600;
 
+        var native = Frozen(name);
         var sw = Stopwatch.StartNew();
-        var native = Native(I, Q, dial);
-        long tn = sw.ElapsedMilliseconds;
-        sw.Restart();
         var managed = WsprDecoder.Decode(I, Q, dial);
-        long tm = sw.ElapsedMilliseconds;
-
-        output.WriteLine($"{name}: native {native.Count} spots in {tn} ms, managed {managed.Count} in {tm} ms");
-        foreach (var d in native) output.WriteLine($"  N {d.Message,-20} snr {d.SnrDb,6:0.0} dt {d.DtSec,5:0.00} f {d.FreqMhz:0.000000} drift {d.DriftHz}");
+        output.WriteLine($"{name}: native {native.Count} spots, managed {managed.Count} in {sw.ElapsedMilliseconds} ms");
         foreach (var d in managed) output.WriteLine($"  M {d.Message,-20} snr {d.SnrDb,6:0.0} dt {d.DtSec,5:0.00} f {d.FreqMhz:0.000000} drift {d.DriftHz}");
 
         Assert.Equal(native.Select(d => d.Message).Order(), managed.Select(d => d.Message).Order());
@@ -122,9 +116,6 @@ public sealed unsafe class WsprGoldenTests(ITestOutputHelper output)
 
     // ---- recorded slots (ZEUS_WSPR_CAPTURE_DIR output) ---------------------
 
-    private static readonly string CorpusDir =
-        Path.Combine(AppContext.BaseDirectory, "TestData", "wspr");
-
     public static TheoryData<string> Recorded()
     {
         var d = new TheoryData<string>();
@@ -136,24 +127,22 @@ public sealed unsafe class WsprGoldenTests(ITestOutputHelper output)
     }
 
     /// <summary>Real on-air slots captured by WsprService: the managed
-    /// decoder must find the same spots as native on each.</summary>
+    /// decoder must find the spots native found on each (the .txt "N" lines).</summary>
     [SkippableTheory]
     [MemberData(nameof(Recorded))]
-    public void Managed_DecodesWhatNativeDecodes_OnRecordedSlots(string file)
+    public void Managed_DecodesWhatNativeDecoded_OnRecordedSlots(string file)
     {
         Skip.If(file.Length == 0, "no recorded slots in TestData/wspr yet");
-        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
         var bytes = File.ReadAllBytes(Path.Combine(CorpusDir, file));
         var all = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(bytes).ToArray();
         int n = all.Length / 2;
-        var I = all[..n];
-        var Q = all[n..];
         int dial = int.Parse(Path.GetFileNameWithoutExtension(file).Split('_')[1]);
+        var native = File.ReadAllLines(Path.Combine(CorpusDir, Path.ChangeExtension(file, ".txt")))
+            .Where(l => l.StartsWith("N ")).Select(l => l[2..]).Order().ToList();
 
-        var native = Native(I, Q, dial);
-        var managed = WsprDecoder.Decode(I, Q, dial);
-        output.WriteLine($"{file}: native [{string.Join(" | ", native.Select(d => d.Message))}]");
+        var managed = WsprDecoder.Decode(all[..n], all[n..], dial);
+        output.WriteLine($"{file}: native [{string.Join(" | ", native)}]");
         output.WriteLine($"{file}: managed [{string.Join(" | ", managed.Select(d => d.Message))}]");
-        Assert.Equal(native.Select(d => d.Message).Order(), managed.Select(d => d.Message).Order());
+        Assert.Equal(native, managed.Select(d => d.Message).Order());
     }
 }

@@ -366,7 +366,7 @@ public sealed class SstvService : IHostedService, IDisposable
         };
         e.Absorb(img);
         lock (_imgLock) _current = e;
-        _log.LogInformation("sstv: {Mode} started (offset {Off:+0;-0} Hz)", img.Mode.Name, img.OffsetHz);
+        _log.LogInformation("sstv: {Mode} started (offset {Off:+0;-0;0} Hz)", img.Mode.Name, img.OffsetHz);
         _digital.Events.PublishSstv(new { kind = "start", image = Meta(e) });
     }
 

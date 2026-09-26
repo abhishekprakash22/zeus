@@ -45,7 +45,39 @@ function batch(slotMs: number, texts: string[], receiver = 0): Ft8DecodeBatch {
 
 describe('ft8-store ingest (0x38 decode frames)', () => {
   beforeEach(() => {
-    useFt8Store.setState({ rows: [] });
+    useFt8Store.setState({ rows: [], slots: [] });
+  });
+
+  it('marks every slot, empty ones included, newest first', () => {
+    useConnectionStore.setState({ vfoHz: 14_074_000 });
+    useFt8Store.getState().ingest(batch(15_000, ['CQ KB2UKA FN12']));
+    useFt8Store.getState().ingest(batch(30_000, []));
+    const slots = useFt8Store.getState().slots;
+    expect(slots.map((m) => [m.slotStartUnixMs, m.count])).toEqual([
+      [30_000, 0],
+      [15_000, 1],
+    ]);
+    expect(slots[0]?.dialHz).toBe(14_074_000);
+  });
+
+  it('replaces a slot delivered twice', () => {
+    useFt8Store.getState().ingest(batch(15_000, []));
+    useFt8Store.getState().ingest(batch(15_000, ['K1JT FN20']));
+    expect(useFt8Store.getState().slots).toHaveLength(1);
+    expect(useFt8Store.getState().slots[0]?.count).toBe(1);
+  });
+
+  it('drops slot marks older than the oldest kept row', () => {
+    const texts = Array.from({ length: 300 }, (_, i) => `K1JT FN${i}`);
+    useFt8Store.getState().ingest(batch(15_000, texts));
+    useFt8Store.getState().ingest(batch(30_000, texts));
+    useFt8Store.getState().ingest(batch(45_000, []));
+    const slots = useFt8Store.getState().slots;
+    expect(slots.map((m) => m.slotStartUnixMs)).toEqual([45_000, 30_000, 15_000]);
+    useFt8Store.getState().ingest(batch(60_000, texts));
+    expect(useFt8Store.getState().slots.map((m) => m.slotStartUnixMs)).toEqual([
+      60_000, 45_000, 30_000,
+    ]);
   });
 
   it('flattens a batch into rows', () => {

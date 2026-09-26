@@ -5,11 +5,12 @@
 // presentation over the store; clicking a row will (later) prefill the QSO /
 // move the audio cursor.
 
-import { useFt8Store, type Ft8Row } from '../../state/ft8-store';
+import { useFt8Store, type Ft8Row, type Ft8SlotMark } from '../../state/ft8-store';
 import type { Ft8TxEcho } from '../../state/ft8-tx-store';
 import { useDigitalWorkedStore } from '../../state/digital-worked-store';
 import { parseFt8Message } from '../../dsp/ft8-message';
 import { tryParseSender } from '../../dsp/ft8-sender';
+import { slotMsFor } from '../../dsp/ft8-tx-runner';
 
 export type Ft8RowClass = 'cq' | 'me' | 'worked' | 'new' | 'normal';
 
@@ -65,6 +66,14 @@ function fmtUtc(ms: number): string {
   return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
+// Separator label: "2026-09-26 17:22:15 UTC · FT8 · 14.074000 MHz · 12 decodes".
+function fmtSlot(m: Ft8SlotMark): string {
+  const date = new Date(m.slotStartUnixMs).toISOString().slice(0, 10);
+  const n = m.count === 0 ? 'no decodes' : m.count === 1 ? '1 decode' : `${m.count} decodes`;
+  const dial = m.dialHz > 0 ? ` · ${(m.dialHz / 1e6).toFixed(6)} MHz` : '';
+  return `${date} ${fmtUtc(m.slotStartUnixMs)} UTC · ${m.protocol}${dial} · ${n}`;
+}
+
 const CLASS_CSS: Record<Ft8RowClass, string> = {
   cq: 'ft8-row--cq',
   me: 'ft8-row--me',
@@ -91,7 +100,8 @@ export interface Ft8DecodeTableProps {
 /** A unified, time-sorted render item: a received decode or one of our TX echoes. */
 type FlowItem =
   | { kind: 'rx'; t: number; row: Ft8Row; cls: Ft8RowClass }
-  | { kind: 'tx'; t: number; echo: Ft8TxEcho };
+  | { kind: 'tx'; t: number; echo: Ft8TxEcho }
+  | { kind: 'slot'; t: number; mark: Ft8SlotMark };
 
 export function Ft8DecodeTable({
   myCall,
@@ -102,6 +112,7 @@ export function Ft8DecodeTable({
   txEchoes,
 }: Ft8DecodeTableProps) {
   const allRows = useFt8Store((s) => s.rows);
+  const slots = useFt8Store((s) => s.slots);
   // Render-time worked-before decoration (see classifyDecode): re-renders when
   // the worked-set fetch lands, so early rows self-heal.
   const workedCalls = useDigitalWorkedStore((s) => s.calls);
@@ -126,6 +137,13 @@ export function Ft8DecodeTable({
       cls: classifyDecode(r, myCall, workedGrids, workedCalls),
     })),
     ...(txEchoes ?? []).map<FlowItem>((e) => ({ kind: 'tx', t: e.timeUtcMs, echo: e })),
+    // A separator sorts just before its slot ends, so it heads everything in
+    // that slot — our TX echo as well as the decodes.
+    ...slots.map<FlowItem>((m) => ({
+      kind: 'slot',
+      t: m.slotStartUnixMs + slotMsFor(m.protocol) - 1,
+      mark: m,
+    })),
   ].sort((a, b) => b.t - a.t);
 
   if (items.length === 0) {
@@ -150,6 +168,13 @@ export function Ft8DecodeTable({
       </thead>
       <tbody>
         {items.map((item) => {
+          if (item.kind === 'slot') {
+            return (
+              <tr key={`slot:${item.mark.id}`} className="slot-sep">
+                <td colSpan={6}>{fmtSlot(item.mark)}</td>
+              </tr>
+            );
+          }
           if (item.kind === 'tx') {
             const e = item.echo;
             return (

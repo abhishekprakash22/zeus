@@ -59,6 +59,20 @@ export interface Ft8Row extends Ft8DecodeDto {
 /** Keep the table bounded — FT8 produces ~10-30 decodes every 15 s. */
 const MAX_ROWS = 500;
 
+/** One decoded slot, for the table's per-slot separator. Kept apart from `rows`
+ *  (which the TX sequencer reads) so empty slots are remembered too. */
+export interface Ft8SlotMark {
+  id: string;
+  receiver: number;
+  protocol: Ft8ProtocolName;
+  slotStartUnixMs: number;
+  /** Radio dial when the batch arrived (0 when not connected). */
+  dialHz: number;
+  count: number;
+}
+
+const MAX_SLOTS = 240; // 1 h of FT8, 30 min of FT4
+
 interface Ft8State {
   /** Workspace overlay visibility — independent of decoder enable so the shell
    *  is viewable on a dev box without the radio / native lib. */
@@ -69,6 +83,8 @@ interface Ft8State {
   protocol: Ft8ProtocolName;
   passes: number;
   rows: Ft8Row[];
+  /** Decoded slots, newest first — empty ones included. */
+  slots: Ft8SlotMark[];
   error: string | null;
   /** Active band label (e.g. "20m") for the workspace band selector. */
   band: string;
@@ -117,6 +133,7 @@ export const useFt8Store = create<Ft8State>((set, get) => ({
   protocol: 'FT8',
   passes: 3,
   rows: [],
+  slots: [],
   error: null,
   band: '20m',
   priorRadio: null,
@@ -178,7 +195,23 @@ export const useFt8Store = create<Ft8State>((set, get) => ({
       }));
       // Newest first, bounded.
       const rows = [...incoming, ...s.rows].slice(0, MAX_ROWS);
-      return { rows };
+      const id = `${batch.receiver}:${batch.slotStartUnixMs}`;
+      const mark: Ft8SlotMark = {
+        id,
+        receiver: batch.receiver,
+        protocol: batch.protocol,
+        slotStartUnixMs: batch.slotStartUnixMs,
+        dialHz: useConnectionStore.getState().vfoHz,
+        count: batch.decodes.length,
+      };
+      let slots = [mark, ...s.slots.filter((m) => m.id !== id)].slice(0, MAX_SLOTS);
+      // Once rows are trimmed, older marks would claim slots whose decodes are
+      // gone — drop them.
+      if (rows.length === MAX_ROWS) {
+        const oldest = rows[rows.length - 1]!.slotStartUnixMs;
+        slots = slots.filter((m) => m.slotStartUnixMs >= oldest);
+      }
+      return { rows, slots };
     }),
 
   refreshStatus: async (signal) => {
@@ -239,7 +272,7 @@ export const useFt8Store = create<Ft8State>((set, get) => ({
     set({ enabled: false, receiver: -1 });
   },
 
-  clear: () => set({ rows: [] }),
+  clear: () => set({ rows: [], slots: [] }),
 
   setPasses: (passes) => {
     const p = Math.min(4, Math.max(1, Math.round(passes)));

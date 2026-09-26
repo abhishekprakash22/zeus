@@ -17,6 +17,11 @@ managed path matches it on a golden corpus, then drop it.
   - `sync_and_demodulate()` keeps `static float fplast` across calls. It is
     harmless while Zeus decodes one slot at a time, but the function is not
     reentrant.
+  - `get_wspr_channel_symbols()` **crashes the process** on a message it
+    mistakes for type 1 but that has no grid token (e.g. `"HELLO"`: strtok
+    returns NULL and the grid is dereferenced). Zeus always builds
+    "CALL GRID DBM", so it is not reachable today; the managed encoder returns
+    false.
 
 ## What there is to port
 

@@ -201,7 +201,7 @@ internal sealed class Ft8KeyerService : BackgroundService
             if (WantsLateStart(stage, now, _digital.LastTxSlotMs, out double curStart, out int skipMs))
             {
                 bool lateFt4 = stage.Mode == DigitalMode.Ft4;
-                float[]? lateWave = Ft8Native.Synth(stage.Message, lateFt4, stage.AudioHz,
+                float[]? lateWave = Synth(stage.Message, lateFt4, stage.AudioHz,
                                                     SampleRateHz, out string? lateErr);
                 if (lateWave is null)
                 {
@@ -233,7 +233,7 @@ internal sealed class Ft8KeyerService : BackgroundService
 
             // --- inside the lead window with an eligible stage: synthesize ---
             bool isFt4 = stage.Mode == DigitalMode.Ft4;
-            float[]? wave = Ft8Native.Synth(stage.Message, isFt4, stage.AudioHz,
+            float[]? wave = Synth(stage.Message, isFt4, stage.AudioHz,
                                             SampleRateHz, out string? synthError);
             if (wave is null)
             {
@@ -252,6 +252,39 @@ internal sealed class Ft8KeyerService : BackgroundService
             Transmit(wave, stage, boundaryMs, ct);
         }
     }
+
+    /// <summary>Managed synth. While the native libzeus_ft8 still ships, its
+    /// waveform for the same message is checked too and a mismatch is logged
+    /// (ZEUS_FT8_SHADOW=0 turns that off). Only the managed audio is sent.</summary>
+    private float[]? Synth(string message, bool isFt4, float audioHz, int sampleRate, out string? error)
+    {
+        float[]? wave = Ft8Managed.Synth(message, isFt4, audioHz, sampleRate, out error);
+        if (_shadowNative)
+        {
+            try
+            {
+                float[]? native = Ft8Native.Synth(message, isFt4, audioHz, sampleRate, out _);
+                double maxDiff = 0;
+                if (wave is not null && native is not null && wave.Length == native.Length)
+                    for (int i = 0; i < wave.Length; i++) maxDiff = Math.Max(maxDiff, Math.Abs(wave[i] - native[i]));
+                else if (wave is not null || native is not null)
+                    maxDiff = double.PositiveInfinity;
+
+                if (maxDiff > 1e-3)
+                    _log.LogWarning("ft8 keyer: managed/native synth disagree for '{Msg}' (max diff {Diff})", message, maxDiff);
+                else
+                    _log.LogInformation("ft8 keyer: shadow synth agrees for '{Msg}'", message);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "ft8 keyer: native shadow synth failed");
+            }
+        }
+        return wave;
+    }
+
+    private readonly bool _shadowNative = Ft8Native.Available
+        && Environment.GetEnvironmentVariable("ZEUS_FT8_SHADOW") != "0";
 
     /// <summary>Key MOX, stream the waveform paced in real time, unkey.</summary>
     private void Transmit(float[] wave, TxStage stage, double boundaryMs, CancellationToken ct,
@@ -291,7 +324,7 @@ internal sealed class Ft8KeyerService : BackgroundService
                 if (_digital.Stages.Peek() is { } fresh
                     && WantsFresherStage(stage, fresh, boundaryMs))
                 {
-                    float[]? freshWave = Ft8Native.Synth(
+                    float[]? freshWave = Synth(
                         fresh.Message, fresh.Mode == DigitalMode.Ft4, fresh.AudioHz,
                         SampleRateHz, out string? freshErr);
                     if (freshWave is null)

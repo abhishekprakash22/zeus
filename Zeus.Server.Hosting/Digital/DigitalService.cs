@@ -108,15 +108,17 @@ public sealed class DigitalService : IHostedService, IDisposable
     {
         _pipeline = pipeline;
         _log = log;
-        Decoder = new DecoderPipeline(Clock, Events, () => ModeKind);
+        Decoder = new DecoderPipeline(Clock, Events, () => ModeKind, log);
     }
 
     public Task StartAsync(CancellationToken ct)
     {
         _pipeline.RxAudioAvailable += OnRxAudio;
         _log.LogInformation(
-            "digital: FT8 backend in core (decoder available={Available}, clock={Clock})",
-            Ft8Native.Available, Clock.Status.Source);
+            "digital: FT8 backend in core (managed decoder; native shadow={Shadow}{Capture}, clock={Clock})",
+            Decoder.ShadowNative,
+            Decoder.CaptureDir is null ? "" : $", capturing to {Decoder.CaptureDir}",
+            Clock.Status.Source);
         return Task.CompletedTask;
     }
 
@@ -203,7 +205,7 @@ public sealed class DigitalService : IHostedService, IDisposable
             Slot = s?.Slot ?? "",
             WatchdogSecsRemaining = 0,
             LastTxSlotMs = LastTxSlotMs is { } lastMs ? (long?)Math.Round(lastMs) : null,
-            NativeAvailable = Ft8Native.Available,
+            NativeAvailable = Ft8Managed.Available,
         };
     }
 

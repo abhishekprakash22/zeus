@@ -6,11 +6,17 @@
 // decode itself runs OFF the audio thread: Push() only copies into a ring and
 // returns. Decoding inline would starve the radio audio path.
 //
-// SEAM: DecodeSlot() is where ft8_lib is wired in. Everything around it — slot
-// alignment against the disciplined clock, resampling to 12 kHz, batching,
-// latency measurement, SSE publishing — is complete and testable without it.
+// DecodeSlot() runs the managed FT8/FT4 decoder (Digital/Ft8, the port of
+// ft8_lib). While the native libzeus_ft8 still ships it decodes every slot too,
+// as a shadow, and any disagreement is logged (ZEUS_FT8_SHADOW=0 turns that
+// off). ZEUS_FT8_CAPTURE_DIR saves each slot's 12 kHz audio and both decoders'
+// messages for the recorded golden corpus (docs/designs/ft8-managed-port.md).
 
+using System.Buffers.Binary;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Zeus.Server.Hosting.Digital.Ft8;
 
 namespace Zeus.Server.Hosting.Digital;
 
@@ -56,21 +62,32 @@ public sealed class DecoderPipeline : IDisposable
     /// on the wrong boundaries with the wrong demodulator and decoded nothing,
     /// for ever, with no error anywhere.
     /// </param>
-    public DecoderPipeline(ClockService clock, EventHub events, Func<DigitalMode>? mode = null)
+    public DecoderPipeline(ClockService clock, EventHub events, Func<DigitalMode>? mode = null,
+                           ILogger? log = null)
     {
         _clock = clock;
         _events = events;
         _mode = mode ?? (static () => DigitalMode.Ft8);
+        _log = log ?? NullLogger.Instance;
     }
+
+    private readonly ILogger _log;
+
+    /// <summary>Decode every slot with the native library too and log disagreements.</summary>
+    internal bool ShadowNative { get; } = Ft8Native.Available
+        && Environment.GetEnvironmentVariable("ZEUS_FT8_SHADOW") != "0";
+
+    /// <summary>Where to save each slot for the golden corpus, if anywhere.</summary>
+    internal string? CaptureDir { get; } = Environment.GetEnvironmentVariable("ZEUS_FT8_CAPTURE_DIR");
 
     private readonly Func<DigitalMode> _mode;
 
     /// <summary>The mode the next decode cycle will use.</summary>
     internal DigitalMode CurrentMode => _mode();
 
-    /// <summary>True once a real decoder backend is linked. Reported in /status
-    /// and as Ft8TxStatus.nativeAvailable.</summary>
-    public bool Available => Ft8Native.Available;
+    /// <summary>True once a real decoder backend is linked — always, now that
+    /// it is managed code. Reported in /status and as Ft8TxStatus.nativeAvailable.</summary>
+    public bool Available => Ft8Managed.Available;
 
     /// <summary>Duration of the last decode pass. Surfaced in /status so the
     /// timing budget is visible rather than mysterious.</summary>
@@ -187,12 +204,14 @@ public sealed class DecoderPipeline : IDisposable
 
                 var sw = Stopwatch.StartNew();
                 IReadOnlyList<Ft8DecodeDto> decodes;
+                long slotStartMs = (long)SlotClock.SlotStartMs(ended, mode);
                 try
                 {
-                    decodes = DecodeSlot(audio, rate, mode);
+                    decodes = DecodeSlot(audio, rate, mode, slotStartMs);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _log.LogWarning(ex, "ft8: decode failed for slot {Slot}", slotStartMs);
                     decodes = Array.Empty<Ft8DecodeDto>();
                 }
                 sw.Stop();
@@ -203,7 +222,7 @@ public sealed class DecoderPipeline : IDisposable
                 _events.PublishFt8Decode(new Ft8DecodeBatch
                 {
                     Receiver = rx,
-                    SlotStartUnixMs = (long)SlotClock.SlotStartMs(ended, mode),
+                    SlotStartUnixMs = slotStartMs,
                     Protocol = mode == DigitalMode.Ft4 ? "FT4" : "FT8",
                     Decodes = decodes,
                 });
@@ -246,20 +265,73 @@ public sealed class DecoderPipeline : IDisposable
         return outBuf;
     }
 
-    /// <summary></summary>
-    /// Decode one slot. Wire ft8_lib here.
-    ///
-    /// Steps: resample <paramref name="rate"/> → 12 kHz, hand the slot's samples
-    /// to ft8_lib's monitor/decode, map each candidate to Ft8DecodeDto (snrDb,
-    /// dtSec measured against the DISCIPLINED clock, freqHz, text), and enrich
-    /// `country` from the callsign prefix.
-    ///
-    /// dtSec MUST be measured against ClockService.UtcNowMs, not DateTime.UtcNow —
-    /// otherwise every decode inherits the host clock's error and slot parity can
-    /// flip under the sequencer.
+    /// <summary>
+    /// Decode one slot with the managed decoder, audio already aligned to the
+    /// slot boundary on the disciplined clock (so dtSec is measured against it).
     /// </summary>
-    private IReadOnlyList<Ft8DecodeDto> DecodeSlot(float[] audio, int rate, DigitalMode mode)
-        => Ft8Native.Decode(audio, rate, isFt4: mode == DigitalMode.Ft4);
+    private IReadOnlyList<Ft8DecodeDto> DecodeSlot(float[] audio, int rate, DigitalMode mode, long slotStartMs)
+    {
+        bool isFt4 = mode == DigitalMode.Ft4;
+
+        // Resample once and decode the 12 kHz copy: the decoder would resample
+        // to exactly this, and it is what a capture must hold to replay the slot.
+        float[] audio12k = FtxDecoder.ResampleTo12k(audio, rate);
+        var decodes = Ft8Managed.Decode(audio12k, FtxDecoder.DecodeRate, isFt4);
+
+        IReadOnlyList<Ft8DecodeDto>? native = null;
+        if (ShadowNative)
+        {
+            try
+            {
+                native = Ft8Native.Decode(audio12k, FtxDecoder.DecodeRate, isFt4);
+                string m = Describe(decodes), n = Describe(native);
+                if (m != n)
+                    _log.LogWarning("ft8: managed/native disagree on {Mode} slot {Slot}: managed [{Managed}] native [{Native}]",
+                        mode, slotStartMs, m, n);
+                else if (decodes.Count > 0)
+                    _log.LogInformation("ft8: shadow agrees on {Mode} slot {Slot} ({N} decodes)", mode, slotStartMs, decodes.Count);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "ft8: native shadow decode failed");
+            }
+        }
+
+        if (CaptureDir is not null) Capture(slotStartMs, mode, audio12k, decodes, native);
+        return decodes;
+    }
+
+    private static string Describe(IReadOnlyList<Ft8DecodeDto> decodes) =>
+        string.Join(" | ", decodes.Select(d => $"{d.Text}@{d.FreqHz}/{d.DtSec:0.00}/{d.SnrDb}/{d.Score}"));
+
+    /// <summary>Save one slot for the golden corpus: &lt;slotStartMs&gt;_&lt;FT8|FT4&gt;.f32
+    /// (12 kHz mono float32 LE) and a .txt of "M" (managed) and "N" (native)
+    /// lines: text, freqHz, dtSec, snrDb, score.</summary>
+    private void Capture(long slotStartMs, DigitalMode mode, float[] audio12k,
+                         IReadOnlyList<Ft8DecodeDto> managed, IReadOnlyList<Ft8DecodeDto>? native)
+    {
+        try
+        {
+            Directory.CreateDirectory(CaptureDir!);
+            string stem = Path.Combine(CaptureDir!, $"{slotStartMs}_{(mode == DigitalMode.Ft4 ? "FT4" : "FT8")}");
+            var bytes = new byte[audio12k.Length * 4];
+            for (int i = 0; i < audio12k.Length; i++)
+                BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * 4), audio12k[i]);
+            File.WriteAllBytes(stem + ".f32", bytes);
+
+            var lines = new List<string>();
+            foreach (var d in managed) lines.Add(Line('M', d));
+            if (native is not null) foreach (var d in native) lines.Add(Line('N', d));
+            File.WriteAllLines(stem + ".txt", lines);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "ft8: slot capture failed ({Dir})", CaptureDir);
+        }
+
+        static string Line(char who, Ft8DecodeDto d) =>
+            FormattableString.Invariant($"{who}\t{d.Text}\t{d.FreqHz}\t{d.DtSec:0.00}\t{d.SnrDb}\t{d.Score}");
+    }
 
     public void Dispose()
     {

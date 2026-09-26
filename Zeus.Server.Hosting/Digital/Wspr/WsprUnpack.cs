@@ -182,8 +182,9 @@ internal static class WsprUnpack
             if (ntype == -64) noprint = true;                        // "A000AA" grids
             return new(noprint, Cap22($"{call} {grid6} {cdbm}"), call, grid6, Cap2(cdbm), call);
         }
-        // ntype 63: no branch in the C — nothing printed, nothing refused.
-        return new(false, "", "", "", "", callsign);
+        // ntype 63: no message type — nothing to report (wsprd returned it
+        // unrefused, with an empty message).
+        return Refused(callsign);
 
         static WsprMessage Refused(string callsign = "") => new(true, "", "", "", "", callsign);
     }

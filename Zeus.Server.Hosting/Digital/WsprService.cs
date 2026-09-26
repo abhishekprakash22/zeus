@@ -82,6 +82,12 @@ public sealed class WsprService : IHostedService, IDisposable
     private double _txPercent = 0.20;
     private Thread? _beaconThread;
     private readonly Random _rng = new();
+
+    // Callsigns heard in type-1/2 spots, kept for the session so a later
+    // type-3 spot (hashed call + 6-char grid) names its sender instead of
+    // "<...>" — a type-2/type-3 station sends the two in different slots.
+    // Only the slot thread touches it.
+    private readonly Wspr.WsprHashTable _hashtab = new();
     private readonly float[] _block = new float[TxMicBlockResampler.OutputBlockSamples];
     private readonly byte[] _payload = new byte[TxMicBlockResampler.OutputBlockSamples * sizeof(float)];
 
@@ -300,7 +306,7 @@ public sealed class WsprService : IHostedService, IDisposable
         var (idat, qdat) = MixAndDecimate32(audio12k);
         int dialHz = (int)Math.Round(dialMhz * 1e6);
 
-        var decodes = Wspr.WsprDecoder.Decode(idat, qdat, dialHz);
+        var decodes = Wspr.WsprDecoder.Decode(idat, qdat, dialHz, hashtab: _hashtab);
         var outSpots = decodes.Select(d => new WsprSpotDtoOut(
             Math.Round(d.SnrDb, 1), Math.Round(d.DtSec, 2), d.FreqMhz, Math.Round(d.DriftHz, 2), d.Message))
             .ToArray();

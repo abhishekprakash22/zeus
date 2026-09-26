@@ -3,8 +3,12 @@
 // Golden tests: the managed WSPR decoder against what the native wsprd
 // decoded on the same audio, frozen into TestData/wspr before native/wspr
 // was retired (synthetic-native.tsv for the synthesized slots, the "N" lines
-// of each recorded slot's .txt). Same messages and drift; SNR, dt and
-// frequency within small tolerances. Runs on every platform.
+// of each recorded slot's .txt). Since wsprd's own bugs were fixed
+// (zeus-88xj.5) the managed decoder finds more than native did, so the rule
+// is: every native spot is still found (SNR, dt and frequency within small
+// tolerances), and every extra spot is real — a beacon that was actually
+// synthesized, or, on a recorded slot, a spot confirmed on WSPRnet
+// (wsprnet-verified.tsv). Runs on every platform.
 
 using System.Diagnostics;
 using Xunit.Abstractions;
@@ -103,15 +107,36 @@ public sealed class WsprGoldenTests(ITestOutputHelper output)
         output.WriteLine($"{name}: native {native.Count} spots, managed {managed.Count} in {sw.ElapsedMilliseconds} ms");
         foreach (var d in managed) output.WriteLine($"  M {d.Message,-20} snr {d.SnrDb,6:0.0} dt {d.DtSec,5:0.00} f {d.FreqMhz:0.000000} drift {d.DriftHz}");
 
-        Assert.Equal(native.Select(d => d.Message).Order(), managed.Select(d => d.Message).Order());
+        // Nothing native found is lost, and it is measured the same way.
         foreach (var n in native)
         {
-            var m = managed.First(x => x.Message == n.Message);
-            Assert.Equal(n.DriftHz, m.DriftHz);
-            Assert.InRange(m.SnrDb - n.SnrDb, -0.5, 0.5);
+            var m = managed.FirstOrDefault(x => x.Message == n.Message);
+            Assert.True(m is not null, $"{name}: lost native spot {n.Message}");
+            Assert.InRange(m!.SnrDb - n.SnrDb, -0.5, 0.5);
             Assert.InRange(m.DtSec - n.DtSec, -0.03, 0.03);
             Assert.InRange((m.FreqMhz - n.FreqMhz) * 1e6, -0.3, 0.3);
         }
+
+        // Every spot is a beacon that was sent, with its drift found (wsprd's
+        // coarse search divided the drift term by 375·256 and hardly saw it).
+        foreach (var m in managed)
+        {
+            var b = beacons.FirstOrDefault(x => x.Message == m.Message);
+            Assert.True(b is not null, $"{name}: false spot {m.Message}");
+            Assert.InRange(m.DriftHz - b!.DriftHz, -1, 1);
+        }
+    }
+
+    // wsprd decoded only 2 of these 3 drifting beacons; with the drift search
+    // fixed all three decode, each with its own drift.
+    [Fact]
+    public void DriftingBeacons_AllDecode()
+    {
+        var (beacons, noise) = Case("drifting");
+        var (I, Q) = WsprService.MixAndDecimate32(Slot(beacons, noise, seed: "drifting".Length));
+        Assert.Equal(2, Frozen("drifting").Count);
+        var managed = WsprDecoder.Decode(I, Q, 14_095_600);
+        Assert.Equal(beacons.Select(b => b.Message).Order(), managed.Select(d => d.Message).Order());
     }
 
     // ---- recorded slots (ZEUS_WSPR_CAPTURE_DIR output) ---------------------
@@ -126,8 +151,9 @@ public sealed class WsprGoldenTests(ITestOutputHelper output)
         return d;
     }
 
-    /// <summary>Real on-air slots captured by WsprService: the managed
-    /// decoder must find the spots native found on each (the .txt "N" lines).</summary>
+    /// <summary>Real on-air slots captured by WsprService: the managed decoder
+    /// must find the spots native found on each (the .txt "N" lines), and any
+    /// other spot must be one confirmed on WSPRnet.</summary>
     [SkippableTheory]
     [MemberData(nameof(Recorded))]
     public void Managed_DecodesWhatNativeDecoded_OnRecordedSlots(string file)
@@ -140,9 +166,14 @@ public sealed class WsprGoldenTests(ITestOutputHelper output)
         var native = File.ReadAllLines(Path.Combine(CorpusDir, Path.ChangeExtension(file, ".txt")))
             .Where(l => l.StartsWith("N ")).Select(l => l[2..]).Order().ToList();
 
-        var managed = WsprDecoder.Decode(all[..n], all[n..], dial);
+        var verified = File.ReadAllLines(Path.Combine(CorpusDir, "wsprnet-verified.tsv"))
+            .Where(l => l.Length > 0 && !l.StartsWith('#')).Select(l => l.Split('\t'))
+            .Where(f => f[0] == file).Select(f => f[1]).ToList();
+
+        var managed = WsprDecoder.Decode(all[..n], all[n..], dial).Select(d => d.Message).Order().ToList();
         output.WriteLine($"{file}: native [{string.Join(" | ", native)}]");
-        output.WriteLine($"{file}: managed [{string.Join(" | ", managed.Select(d => d.Message))}]");
-        Assert.Equal(native, managed.Select(d => d.Message).Order());
+        output.WriteLine($"{file}: managed [{string.Join(" | ", managed)}]");
+        Assert.Empty(native.Except(managed));                    // nothing lost
+        Assert.Equal(verified.Order(), managed.Except(native));  // every gain confirmed on WSPRnet
     }
 }

@@ -14,8 +14,17 @@ and decoder live in `Zeus.Server.Hosting/Digital/Wspr`. They matched native:
 A live shadow run had no disagreement. The native output is frozen in
 `tests/Zeus.Server.Tests/TestData/wspr`. `native/wspr`, its CI steps and the
 per-RID libraries are removed. Release timing is about 2× native (0.2–0.9 s
-per slot on Apple Silicon). The C's quirks are still reproduced; fixing them
-is zeus-88xj.5.
+per slot on Apple Silicon).
+
+**Quirks fixed (zeus-88xj.5).** With native gone, wsprd's own bugs were
+fixed: the coarse drift search divided the drift term by 375·256 (an
+unparenthesised macro), noprint decodes were reported, an encoder refusal or
+an "A000AA" grid ended the pass, negative time indices read the previous
+frequency row, and sample 0 was skipped. The drift fix alone added 8 spots on
+the 10 recorded slots; 7 were confirmed on WSPRnet (frozen in
+`TestData/wspr/wsprnet-verified.tsv`) and the eighth, `<...> NU82QT 54`, is
+dropped as noprint. WsprService also keeps one callsign hash table for the
+session, so type-3 spots name stations heard in earlier slots.
 
 ## Why
 

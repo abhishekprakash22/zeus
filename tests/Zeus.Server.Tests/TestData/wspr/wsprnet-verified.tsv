@@ -1,0 +1,14 @@
+# Spots the managed decoder finds on the recorded slots that the native wsprd
+# missed (it gained them with the drift-search fix, zeus-88xj.5). Each was
+# checked by hand on wspr.live on 2026-09-26, the day the slots were recorded:
+# the station was spotted by other receivers on that band in that very slot.
+# This file is the frozen record of that check — the tests only read it and
+# never go to the network (wspr.live keeps spots for a limited time only).
+# Columns: slot file, message, reporters, spotted as.
+14920336_14095600.iq	HB9BAX JN36 30	30	HB9BAX JN36oc
+14920336_14095600.iq	G0OIW IO91 23	14	G0OIW IO91ml
+14920338_14095600.iq	F6EGX JN35 37	56	F6EGX JN35bq
+14920339_14095600.iq	F5HRS IN97 23	12	F5HRS IN97
+14920340_14095600.iq	OZ1BZS JO46 37	9	OZ1BZS JO46
+14920354_18104600.iq	<...> KM56VO 37	54	TA4/G8SCU KM56vo
+14920356_18104600.iq	IU3IOU JN65 23	9	IU3IOU JN65at

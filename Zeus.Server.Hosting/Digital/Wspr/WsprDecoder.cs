@@ -10,26 +10,28 @@
 //
 // FIDELITY. The port was built to decode exactly what the native library
 // decoded, and was checked spot for spot against it (synthesized and real
-// 20 m / 17 m slots) before native/wspr was retired; the golden tests hold that
-// native output frozen in TestData/wspr. It therefore still reproduces the
-// C's quirks, each marked "(as the C)" — fixing them is zeus-88xj.5, each
-// with a test showing the gain:
-//   * the coarse drift search divides by an unparenthesised macro
-//     (`... * idrift / DF` with DF = 375.0 / 256.0 → `/ 375.0 / 256.0`), so
-//     drift barely moves the bin there;
-//   * the coarse search indexes the power matrix flat, so a negative time
-//     index reads the tail of the previous frequency row;
-//   * decodes the unpacker marks "noprint" are still reported;
-//   * a message the encoder refuses (e.g. an empty ntype-63 decode) or an
-//     "A000AA" grid ends the candidate loop for that pass.
+// 20 m / 17 m slots) before native/wspr was retired; that native output is
+// frozen in TestData/wspr. Since then wsprd's own bugs are fixed (zeus-88xj.5),
+// so this now finds everything native found and more:
+//   * the coarse drift search divided by an unparenthesised macro
+//     (`... * idrift / DF` → `/ 375.0 / 256.0`), so drift barely moved the
+//     bin and drifting signals were searched as if steady — fixed, it gained
+//     8 spots on the 10 recorded slots, 7 of them confirmed on WSPRnet;
+//   * the coarse search read its flat power matrix at negative time indices
+//     (the tail of the previous frequency row) — those blocks are skipped;
+//   * decodes the unpacker marks "noprint" (invalid power, implausible grid,
+//     "A000AA", ntype 63) were reported — they are dropped;
+//   * a message the encoder refused, or an "A000AA" grid, ended the candidate
+//     loop for the whole pass — now only that candidate's subtraction is
+//     skipped (an unresolved type-3 "<...>" spot is still a spot).
 // Floating-point work is done in float where the C uses float, double where
 // it promotes to double. Differences left: libm vs .NET sin/cos/log ULPs and
 // the FFT (managed radix-2 vs FFTW) — they can flip only borderline decodes.
 //
 // What the port does NOT copy: fftw_wisdom.dat reads/writes in the working
 // directory, the static fplast cache (made local — the function is
-// reentrant here), and the process-wide hash table (per call, as the shim
-// used it: usehashtable = 0 allocates a fresh one every slot).
+// reentrant here), and the process-wide hash table (the caller passes one;
+// WsprService keeps it for the session, as WSJT-X keeps hashtable.txt).
 //
 // Originals: Copyright 2001-2015 Joe Taylor K1JT; 2014-2015 Steven Franke
 // K9AN; 2016 Guenael Jouchet VA2GKA. GPL.
@@ -55,17 +57,20 @@ public static class WsprDecoder
 
     /// <summary>
     /// Decode one slot. <paramref name="idat"/>/<paramref name="qdat"/> are
-    /// copied (subtraction mutates them). Two passes with signal subtraction,
-    /// as the Zeus shim ran the native decoder.
+    /// copied (subtraction mutates them). Two passes with signal subtraction.
+    /// <paramref name="hashtab"/> is the callsign table type-3 spots resolve
+    /// against; pass the same one every slot so a call heard in one slot names
+    /// the hashed spots of later ones (null: a fresh table, this slot only).
     /// </summary>
     public static List<WsprDecode> Decode(ReadOnlySpan<float> idat, ReadOnlySpan<float> qdat, int dialFreqHz,
-                                          int npasses = 2, bool subtraction = true, bool quickmode = false)
+                                          int npasses = 2, bool subtraction = true, bool quickmode = false,
+                                          WsprHashTable? hashtab = null)
     {
         int samples = Math.Min(idat.Length, qdat.Length);
         var id = idat[..samples].ToArray();
         var qd = qdat[..samples].ToArray();
         var decodes = new List<WsprDecode>();
-        var hashtab = new WsprHashTable();
+        hashtab ??= new WsprHashTable();
 
         // Performance-tuning parameters (wsprd).
         float minsync1 = 0.10f, minsync2 = 0.12f;
@@ -181,13 +186,15 @@ public static class WsprDecoder
                     float ss = 0.0f, pow = 0.0f;
                     for (int k = 0; k < NSym; k++)
                     {
-                        // (as the C) `... * ((float)idrift) / DF` with an unparenthesised
-                        // DF macro: the drift term is divided by 375.0 then by 256.0.
-                        int ifd = (int)(ifr + (double)(((float)k - NBits) / NBits * idrift) / 375.0 / 256.0);
+                        // Drift offset in half-bins (DF / 2): (k - 81) / 81 · idrift / 2 Hz.
+                        // wsprd's unparenthesised DF macro divided by 375 then 256 instead,
+                        // so drift hardly moved the bin and the search barely saw it.
+                        int ifd = (int)(ifr + (double)(((float)k - NBits) / NBits * idrift) / DF);
                         int kindex = k0 + 2 * k;
-                        if (kindex < blocks)
+                        if (kindex >= 0 && kindex < blocks)
                         {
-                            // (as the C) flat indexing: a negative kindex reads the previous row.
+                            // (wsprd indexed its flat matrix with negative kindex too,
+                            // reading the tail of the previous frequency row.)
                             float p0 = psq[(ifd - 3) * blocks + kindex];
                             float p1 = psq[(ifd - 1) * blocks + kindex];
                             float p2 = psq[(ifd + 1) * blocks + kindex];
@@ -261,16 +268,21 @@ public static class WsprDecoder
 
                 decdata[10] = 0;
                 var msg = WsprUnpack.Unpack(decdata, hashtab);
-                if (subtraction && ipass == 0 && !msg.NoPrint)
+
+                // Not a reportable message (odd power, implausible grid, "A000AA",
+                // ntype 63): skip this candidate. wsprd reported noprint decodes
+                // and ended the whole pass on an "A000AA" grid.
+                if (msg.NoPrint) continue;
+
+                // Subtract what we decoded. A message that cannot be re-encoded
+                // (a type-3 spot whose hashed call is unknown, "<...>") is still a
+                // spot; only its subtraction is skipped — wsprd ended the pass.
+                if (subtraction && ipass == 0)
                 {
                     var channel = new byte[NSym];
-                    // (as the C) a message the encoder refuses ends this pass's candidate loop.
-                    if (!WsprEncoder.TryEncode(msg.CallLocPow, channel)) break;
-                    SubtractSignal2(id, qd, samples, freq, shift, drift, channel);
+                    if (WsprEncoder.TryEncode(msg.CallLocPow, channel))
+                        SubtractSignal2(id, qd, samples, freq, shift, drift, channel);
                 }
-
-                // (as the C) this pattern ends the candidate loop too.
-                if (msg.Loc == "A000AA") break;
 
                 bool dupe = false;
                 for (int u = 0; u < uniques; u++)
@@ -366,7 +378,7 @@ public static class WsprDecoder
                     for (int j = 0; j < NsPerSym; j++)
                     {
                         int k = lag + i * NsPerSym + j;
-                        if (k > 0 && k < np)                     // (as the C) k > 0, not >= 0
+                        if (k >= 0 && k < np)                    // (wsprd: k > 0, dropping sample 0)
                         {
                             float x = id[k], y = qd[k];
                             i0 = i0 + x * c0[j] + y * s0[j];
@@ -456,7 +468,7 @@ public static class WsprDecoder
         {
             float cs = channelSymbols[i];
             float dphi = (float)(TwoPiDt * (f0 + (drift / 2.0) * ((float)i - NSym / 2.0) / (NSym / 2.0)
-                                            + (cs - 1.5) * 375.0 / 256.0));   // (as the C) DF macro
+                                            + (cs - 1.5) * 375.0 / 256.0));   // tone offset, (cs - 1.5) · DF
             for (int j = 0; j < NsPerSym; j++)
             {
                 int ii = NsPerSym * i + j;
@@ -482,7 +494,7 @@ public static class WsprDecoder
         for (int i = 0; i < n; i++)
         {
             int k = shift + i;
-            if (k > 0 && k < np)
+            if (k >= 0 && k < np)
             {
                 ci[i + nfilt] = id[k] * refi[i] + qd[k] * refq[i];
                 cq[i + nfilt] = qd[k] * refi[i] - id[k] * refq[i];
@@ -509,7 +521,7 @@ public static class WsprDecoder
             else if (i > n - 1 - nfilt / 2) norm = partialsum[nfilt / 2 + n - 1 - i];
             else norm = 1.0f;
             int k = shift + i, j = i + nfilt;
-            if (k > 0 && k < np)
+            if (k >= 0 && k < np)
             {
                 id[k] = id[k] - (cfi[j] * refi[i] - cfq[j] * refq[i]) / norm;
                 qd[k] = qd[k] - (cfi[j] * refq[i] + cfq[j] * refi[i]) / norm;

@@ -382,8 +382,10 @@ export const useSstvStore = create<SstvState>((set, get) => {
     ingest: (ev) => {
       switch (ev.kind) {
         case 'start':
+          // Also a picture resumed after a fade: it leaves the finished list.
           set((s) => ({
             current: ev.image,
+            images: s.images.filter((i) => i.id !== ev.image.id),
             pixels: { ...s.pixels, [ev.image.id]: blank(ev.image.width, ev.image.height) },
             pixelsRev: s.pixelsRev + 1,
           }));

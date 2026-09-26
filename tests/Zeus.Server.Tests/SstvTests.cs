@@ -180,6 +180,77 @@ public sealed class SstvTests
         dec.Process(buf);                                   // and one big block
     }
 
+    // ---- fragments and fades (first on-air session) --------------------------
+
+    [Fact]
+    public void AFewRows_AreAFragment_NotAPicture()
+    {
+        var mode = SstvModes.M1;
+        var audio = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f);
+        int cut = (int)((SstvEncoder.VisMs + 8 * mode.LineMs) * Rate / 1000);
+        var buf = Pad(audio.AsSpan(0, cut).ToArray(), 0.5, 30 * mode.LineMs / 1000.0, 0.02f);
+        var dec = new SstvDecoder();
+        var ends = new List<SstvEndReason>();
+        dec.ImageEnded += (_, r) => ends.Add(r);
+        dec.Process(buf);
+        Assert.Equal([SstvEndReason.FalseStart], ends);
+    }
+
+    [Fact]
+    public void AFadeLongerThanTheLostLimit_ResumesTheSamePicture()
+    {
+        // Martin 2, 32 lines (7.3 s) faded out mid-picture: long enough to be
+        // declared lost, then the rest arrives. One picture, not two.
+        var mode = SstvModes.M2;
+        var card = TestCard(mode);
+        var audio = SstvEncoder.Encode(mode, card, Rate, 0.5f, 15);
+        int f0 = (int)((SstvEncoder.VisMs + 80 * mode.LineMs) * Rate / 1000);
+        int f1 = (int)((SstvEncoder.VisMs + 112 * mode.LineMs) * Rate / 1000);
+        Array.Clear(audio, f0, f1 - f0);
+        var buf = Pad(audio, 1, 30 * mode.LineMs / 1000.0, 0.02f);
+
+        var dec = new SstvDecoder();
+        var started = new List<int>();
+        var resumed = new List<int>();
+        var ends = new List<(int Id, SstvEndReason Why, int Rows)>();
+        dec.ImageStarted += i => started.Add(i.Id);
+        dec.ImageResumed += i => resumed.Add(i.Id);
+        dec.ImageEnded += (i, r) => ends.Add((i.Id, r, i.RowsDone));
+        for (int i = 0; i < buf.Length; i += 600)
+            dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+
+        int id = Assert.Single(started);
+        Assert.Equal([id], resumed);
+        var last = ends[^1];
+        Assert.Equal((id, SstvEndReason.Complete, mode.Height), last);
+        Assert.Equal(SstvEndReason.SignalLost, ends[0].Why);     // the fade, before the resume
+    }
+
+    [Fact]
+    public void AnotherTransmissionOutOfPhase_IsANewPicture_NotAResume()
+    {
+        var mode = SstvModes.M2;
+        var first = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f);
+        int firstCut = (int)((SstvEncoder.VisMs + 80 * mode.LineMs) * Rate / 1000);
+        var second = SstvEncoder.Encode(mode, TestCard(mode), Rate, 0.5f);
+        // Joined mid-line, half a line off the first picture's grid.
+        int secondFrom = (int)((SstvEncoder.VisMs + 150.5 * mode.LineMs) * Rate / 1000);
+        var gap = new float[8 * Rate];
+        var buf = Pad([.. first.AsSpan(0, firstCut), .. gap, .. second.AsSpan(secondFrom)],
+            0.5, 30 * mode.LineMs / 1000.0, 0.02f);
+
+        var dec = new SstvDecoder();
+        var started = new List<int>();
+        int resumes = 0;
+        dec.ImageStarted += i => started.Add(i.Id);
+        dec.ImageResumed += _ => resumes++;
+        for (int i = 0; i < buf.Length; i += 600)
+            dec.Process(buf.AsSpan(i, Math.Min(600, buf.Length - i)));
+
+        Assert.Equal(0, resumes);
+        Assert.Equal(2, started.Count);
+    }
+
     [Fact]
     public void GaussianNoise_ThreeMinutes_NoFalseStart()
     {

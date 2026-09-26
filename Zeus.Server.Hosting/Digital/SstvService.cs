@@ -136,6 +136,7 @@ public sealed class SstvService : IHostedService, IDisposable
         _decoder.RowsDecoded += OnRowsDecoded;
         _decoder.ImageEnded += OnImageEnded;
         _decoder.CallsignDecoded += OnCallsign;
+        _decoder.ImageResumed += OnImageResumed;
         _decoder.FskIdUnreadable += (img, why) =>
             _log.LogInformation("sstv: FSK burst after {Mode} not decoded ({Why})", img.Mode.Name, why);
     }
@@ -367,6 +368,36 @@ public sealed class SstvService : IHostedService, IDisposable
         lock (_imgLock) _current = e;
         _log.LogInformation("sstv: {Mode} started (offset {Off:+0;-0} Hz)", img.Mode.Name, img.OffsetHz);
         _digital.Events.PublishSstv(new { kind = "start", image = Meta(e) });
+    }
+
+    /// <summary>A picture lost to a fade picked up again: it goes back to
+    /// being the live one under the same id (and gallery key, so the final
+    /// save overwrites the partial one). A fragment that had been discarded
+    /// comes back as a fresh entry. The rows it already has are re-sent in
+    /// one frame so a client redraws them.</summary>
+    private void OnImageResumed(SstvImage img)
+    {
+        Entry e;
+        lock (_imgLock)
+        {
+            var existing = _images.FirstOrDefault(x => x.Id == img.Id);
+            if (existing is not null) _images.Remove(existing);
+            var st = existing is null ? _radio?.Snapshot() : null;
+            e = existing ?? new Entry
+            {
+                Id = img.Id,
+                DialHz = st?.VfoHz ?? 0,
+                SideBand = st?.Mode.ToString() ?? "",
+                StartedUnixMs = (long)_digital.Clock.UtcNowMs,
+            };
+            e.Absorb(img);
+            e.EndedUnixMs = null;
+            e.EndReason = null;
+            _current = e;
+        }
+        _log.LogInformation("sstv: {Mode} resumed after a fade at row {Row}", img.Mode.Name, img.RowsDone);
+        _digital.Events.PublishSstv(new { kind = "start", image = Meta(e) });
+        if (img.RowsDone > 0) OnRowsDecoded(img, 0, img.RowsDone);
     }
 
     private void OnRowsDecoded(SstvImage img, int firstRow, int count)

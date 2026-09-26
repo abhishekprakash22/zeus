@@ -79,6 +79,18 @@ describe('Ft8TxController', () => {
     expect(String(stage?.body.message)).toBe('CQ KB2UKA FN12');
   });
 
+  it('sends a 6-character grid as its 4-character FT8 form', () => {
+    const { fn, calls } = makeFetch();
+    const ctrl = new Ft8TxController({ myCall: 'EA5IUE', myGrid4: 'IM76HE', fetchFn: fn });
+    ctrl.enableTx();
+    expect(String(tx(calls).at(-1)?.body.message)).toBe('CQ EA5IUE IM76');
+
+    ctrl.setIdentity('ea5iue', ' im76he ');
+    expect(ctrl.getState().myGrid4).toBe('IM76');
+    ctrl.setIdentity('EA5IUE', '');
+    expect(ctrl.getState().myGrid4).toBeNull();
+  });
+
   it('callStation() opens a QSO against any clicked decode', () => {
     const { fn } = makeFetch();
     const ctrl = new Ft8TxController({ myCall: 'KB2UKA', myGrid4: 'FN12', fetchFn: fn });

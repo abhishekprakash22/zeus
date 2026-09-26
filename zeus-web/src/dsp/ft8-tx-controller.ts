@@ -72,6 +72,16 @@ export interface Ft8TxControllerOpts extends Ft8TxBehavior {
 
 /** The QSO runner. Owns the live QsoState and the TX audio offset, and issues
  *  the backend stage/arm/halt POSTs as the sequencer advances. */
+/**
+ * The operator's grid as FT8/FT4 sends it: 4 characters. A standard message
+ * only carries a 4-character locator, so a 6-character one from Settings
+ * ("IM76HE") went out as IM76 while the TX echo and log showed IM76HE.
+ */
+function grid4(grid: string | null | undefined): string | null {
+  const g = grid?.toUpperCase().trim().slice(0, 4) ?? '';
+  return g.length > 0 ? g : null;
+}
+
 export class Ft8TxController {
   private state: QsoState;
   private audioHz: number;
@@ -98,7 +108,7 @@ export class Ft8TxController {
     this.txAck = opts.txAck ?? 'RR73';
     this.state = seqStartCq({
       myCall: opts.myCall,
-      myGrid4: opts.myGrid4 ?? null,
+      myGrid4: grid4(opts.myGrid4),
       mode: opts.mode ?? 'FT8',
       txAck: this.txAck,
       noReplyLimit: this.noReplyLimit,
@@ -298,7 +308,7 @@ export class Ft8TxController {
     this.state = {
       ...this.state,
       myCall: myCall.toUpperCase().trim(),
-      myGrid4: myGrid4 ? myGrid4.toUpperCase().trim() : null,
+      myGrid4: grid4(myGrid4),
     };
   }
 

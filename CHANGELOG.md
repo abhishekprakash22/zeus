@@ -49,6 +49,14 @@ see the corresponding GitHub Release page.
   auto-disarm as the backstop. Decoder + encoder + the full RX conversion
   chain are loopback-validated in-tree. Follow-ups: wsprnet.org upload and
   the propagation tracking map.
+- **WSPR decodes more, and more cleanly.** wsprd's coarse search barely
+  looked for drift (a macro divided the drift term by 375·256), so drifting
+  beacons were searched as if steady. Fixed, the decoder finds everything the
+  original did plus more: 8 extra spots on 10 recorded 20 m/17 m slots, 7 of
+  them confirmed on WSPRnet. Invalid decodes (impossible power levels) are no
+  longer reported, one odd message no longer stops the rest of a pass, and
+  hashed type-3 spots now name the station when its full call was heard in an
+  earlier slot.
 
 ### 📶 FT8 / FT4 — no native library
 

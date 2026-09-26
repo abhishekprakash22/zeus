@@ -154,4 +154,58 @@ public sealed class WsprManagedTests
                 ok++;
         Assert.True(ok >= 18, $"{ok}/20");
     }
+
+    // ---- wsprd quirks fixed (zeus-88xj.5) ------------------------------------
+
+    private static (float[] I, float[] Q, int Dial) Recorded(string file)
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "TestData", "wspr", file));
+        var all = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(bytes).ToArray();
+        int n = all.Length / 2;
+        return (all[..n], all[n..], int.Parse(Path.GetFileNameWithoutExtension(file).Split('_')[1]));
+    }
+
+    // ntype 63 names no message type. wsprd returned it unrefused with an
+    // empty message; the encoder then refused that and ended the pass.
+    [Fact]
+    public void Unpack_Ntype63_IsNotReportable()
+    {
+        int n1 = 0, n2 = (100 << 7) | 127;                    // valid grid, ntype = 127 - 64 = 63
+        var dat = new byte[11];
+        dat[0] = (byte)(n1 >> 20); dat[1] = (byte)(n1 >> 12); dat[2] = (byte)(n1 >> 4);
+        dat[3] = (byte)(((n1 & 15) << 4) | ((n2 >> 18) & 15));
+        dat[4] = (byte)(n2 >> 10); dat[5] = (byte)(n2 >> 2); dat[6] = (byte)((n2 & 3) << 6);
+        Assert.True(WsprUnpack.Unpack(dat, new WsprHashTable()).NoPrint);
+    }
+
+    // A decode with an invalid power (WSPR powers end in 0, 3 or 7) is noise
+    // that happened to pass the Fano decoder. On this 17 m slot the fixed
+    // drift search turns up "<...> NU82QT 54" — nobody spotted an NU82 locator
+    // on 17 m within an hour of it — and it must not be reported.
+    [Fact]
+    public void NoPrintDecodes_AreNotReported()
+    {
+        var (i, q, dial) = Recorded("14920356_18104600.iq");
+        var spots = WsprDecoder.Decode(i, q, dial);
+        Assert.NotEmpty(spots);
+        Assert.DoesNotContain(spots, d => d.Message.Contains("NU82QT"));
+        foreach (var d in spots)
+            Assert.Contains(d.Message.TrimEnd()[^1], "037");
+    }
+
+    // TA4/G8SCU alternates type 2 ("TA4/G8SCU 37") and type 3 ("<hash> KM56VO
+    // 37") in consecutive slots. With one table per slot the type-3 spot is
+    // always "<...>"; with the session's table it names the station.
+    [Fact]
+    public void SessionHashTable_NamesType3SpotsFromAnEarlierSlot()
+    {
+        var (i5, q5, d5) = Recorded("14920355_18104600.iq");
+        var (i6, q6, d6) = Recorded("14920356_18104600.iq");
+
+        Assert.Contains(WsprDecoder.Decode(i6, q6, d6), d => d.Message == "<...> KM56VO 37");
+
+        var table = new WsprHashTable();
+        Assert.Contains(WsprDecoder.Decode(i5, q5, d5, hashtab: table), d => d.Message == "TA4/G8SCU 37");
+        Assert.Contains(WsprDecoder.Decode(i6, q6, d6, hashtab: table), d => d.Message == "<TA4/G8SCU> KM56VO 37");
+    }
 }

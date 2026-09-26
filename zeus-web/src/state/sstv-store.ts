@@ -193,6 +193,18 @@ function withMeta(list: SstvImageMeta[], m: SstvImageMeta): SstvImageMeta[] {
 }
 
 export const useSstvStore = create<SstvState>((set, get) => {
+  /** Take a transmitter status. When a picture stops going out (sent in
+   *  full, or halted), go back to receiving: the RX tab, decoder on — the
+   *  reply is what the operator is waiting for. */
+  const applyTx = (tx: SstvTxStatus) => {
+    const wasSending = get().tx?.transmitting === true;
+    set({ tx });
+    if (wasSending && !tx.transmitting) {
+      set({ view: 'rx', selectedId: null });
+      if (!get().enabled) void get().setEnabled(true);
+    }
+  };
+
   /** Keep pixels only for the pictures most likely to be looked at again. */
   const prune = (pixels: Record<number, SstvPixels>): Record<number, SstvPixels> => {
     const s = get();
@@ -375,7 +387,7 @@ export const useSstvStore = create<SstvState>((set, get) => {
 
     halt: async () => {
       try {
-        set({ tx: await postSstvTxHalt() });
+        applyTx(await postSstvTxHalt());
       } catch {
         /* the 'tx' SSE frame reconciles */
       }
@@ -452,7 +464,7 @@ export const useSstvStore = create<SstvState>((set, get) => {
           break;
         }
         case 'tx':
-          set({ tx: ev.tx });
+          applyTx(ev.tx);
           break;
         case 'discard':
         case 'removed':

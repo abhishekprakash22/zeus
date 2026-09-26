@@ -27,7 +27,7 @@ public static class DigitalEndpoints
         {
             Ft8Enabled = d.Ft8Enabled,
             WsprEnabled = d.WsprEnabled,
-            DecoderAvailable = Ft8Native.Available,
+            DecoderAvailable = Ft8Managed.Available,
             DecodeLatencyMs = d.Decoder.LastLatencyMs,
             Clock = ClockStatusDto.From(d.Clock.Status),
             Call = d.Callsign,

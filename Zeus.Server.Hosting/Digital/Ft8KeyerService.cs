@@ -7,7 +7,7 @@
 //   frontend sequencer (ft8-sequencer.ts) → POST /ft8/tx stages a message
 //   → TxStageBook holds it → THIS SERVICE watches the SlotClock, and at each
 //   matching-parity boundary while ARMED it encodes the staged text
-//   (ft8_lib pack/CRC/LDPC via zeus_ft8_synth), synthesizes the GFSK
+//   (pack/CRC/LDPC, the managed port of ft8_lib in Digital/Ft8), synthesizes the GFSK
 //   waveform at the staged audio offset, keys MOX, streams the audio into the
 //   normal TX mic path, and unkeys.
 //
@@ -201,7 +201,7 @@ internal sealed class Ft8KeyerService : BackgroundService
             if (WantsLateStart(stage, now, _digital.LastTxSlotMs, out double curStart, out int skipMs))
             {
                 bool lateFt4 = stage.Mode == DigitalMode.Ft4;
-                float[]? lateWave = Ft8Native.Synth(stage.Message, lateFt4, stage.AudioHz,
+                float[]? lateWave = Ft8Managed.Synth(stage.Message, lateFt4, stage.AudioHz,
                                                     SampleRateHz, out string? lateErr);
                 if (lateWave is null)
                 {
@@ -233,7 +233,7 @@ internal sealed class Ft8KeyerService : BackgroundService
 
             // --- inside the lead window with an eligible stage: synthesize ---
             bool isFt4 = stage.Mode == DigitalMode.Ft4;
-            float[]? wave = Ft8Native.Synth(stage.Message, isFt4, stage.AudioHz,
+            float[]? wave = Ft8Managed.Synth(stage.Message, isFt4, stage.AudioHz,
                                             SampleRateHz, out string? synthError);
             if (wave is null)
             {
@@ -291,7 +291,7 @@ internal sealed class Ft8KeyerService : BackgroundService
                 if (_digital.Stages.Peek() is { } fresh
                     && WantsFresherStage(stage, fresh, boundaryMs))
                 {
-                    float[]? freshWave = Ft8Native.Synth(
+                    float[]? freshWave = Ft8Managed.Synth(
                         fresh.Message, fresh.Mode == DigitalMode.Ft4, fresh.AudioHz,
                         SampleRateHz, out string? freshErr);
                     if (freshWave is null)

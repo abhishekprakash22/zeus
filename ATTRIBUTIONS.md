@@ -219,16 +219,21 @@ licences. The RNNoise `src/` is vendored unmodified except for the minimal
 `rnnoise_data.c` described above; per-file headers are preserved as received
 from upstream and must remain so on re-vendor.
 
-## ft8_lib / wsprd (moved to the Zeus Digital plugin)
+## ft8_lib, KISS FFT and wsprd (ported to C#)
 
-The native FT8/FT4 core (**ft8_lib**, Kārlis Goba, MIT) and the WSPR
-encoder/decoder (**wsprd**, Joe Taylor K1JT / Steven Franke K9AN, GPL-3)
-moved out of the Zeus tree together with the FT8/FT4/WSPR suite, which now
-ships as the installable **com.kb2uka.digital** plugin. Their vendored
-sources, build glue, and full attribution/licence statements live in the
-plugin repository:
-<https://github.com/OpenHPSDR-Zeus-org/openhpsdr-zeus-plugins> under
-`modes/Digital/`.
+The FT8/FT4 and WSPR modes run on managed C# ports of their reference C
+code; no native library is shipped for them.
+
+- **ft8_lib** — Kārlis Goba, MIT. Ported in
+  `Zeus.Server.Hosting/Digital/Ft8/` (message pack/unpack, CRC, LDPC encode
+  and decode, monitor, candidate search); licence in
+  `Digital/Ft8/LICENSE.ft8_lib`.
+- **KISS FFT** — Mark Borgerding, BSD-3-Clause. The forward transforms
+  ft8_lib used, ported in `Digital/Ft8/KissFft.cs`; licence in
+  `Digital/Ft8/LICENSE.kissfft`.
+- **wsprd / wsprsim** — Joe Taylor K1JT, Steven Franke K9AN and others, GPL.
+  Ported in `Zeus.Server.Hosting/Digital/Wspr/`; licence in
+  `Digital/Wspr/LICENSE.wsprd`.
 
 ## RADE V1 (Radio Autoencoder — radae_c, opus_dnn, freedv_text)
 

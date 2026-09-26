@@ -110,6 +110,13 @@ describe('sstv store', () => {
     await vi.waitFor(() => expect(client.postSstvTxHalt).toHaveBeenCalled());
   });
 
+  it('remembers the header-strip choice in this browser', () => {
+    useSstvStore.getState().setTxOptions({ txHeader: false });
+    expect(localStorage.getItem('zeus.sstv.txHeader')).toBe('0');
+    useSstvStore.getState().setTxOptions({ txHeader: true });
+    expect(localStorage.getItem('zeus.sstv.txHeader')).toBe('1');
+  });
+
   it('discard drops a false start', () => {
     const s = useSstvStore.getState();
     s.ingest({ kind: 'start', image: meta(5) });

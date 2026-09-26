@@ -4,6 +4,19 @@
 (`native/wspr`) to C#. Keep the native library as the reference until the
 managed path matches it on a golden corpus, then drop it.
 
+**Status: done** on `feat/wspr-managed`. The managed encoder, Fano/unpack
+and decoder live in `Zeus.Server.Hosting/Digital/Wspr`. They matched native:
+- the encoder on 16 messages, bit for bit;
+- the decoder on 6 synthesized slots and on 10 real slots: 5 on 20 m (30
+  spots), 3 on 17 m (12 spots, including type-2 and type-3 messages), plus
+  40 m CW and 15 m RTTY QRM with none.
+
+A live shadow run had no disagreement. The native output is frozen in
+`tests/Zeus.Server.Tests/TestData/wspr`. `native/wspr`, its CI steps and the
+per-RID libraries are removed. Release timing is about 2× native (0.2–0.9 s
+per slot on Apple Silicon). The C's quirks are still reproduced; fixing them
+is zeus-88xj.5.
+
 ## Why
 
 - **Every platform needs its own native build.** `libzeus_wspr` is built per

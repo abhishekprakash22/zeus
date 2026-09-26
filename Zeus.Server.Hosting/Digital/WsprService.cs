@@ -14,8 +14,7 @@
 // worker converts it to the decoder contract (mix 1500 Hz → ÷32 → 375 Hz
 // complex baseband, 45000 samples) and runs the managed port of K9AN's
 // wsprd (Digital/Wspr/WsprDecoder) — no native library, so WSPR works on
-// every platform. While native/wspr still ships, each slot is also decoded
-// by it in shadow and disagreements are logged. Spots publish as the
+// every platform. Spots publish as the
 // `wsprspot` SSE batch the frontend store
 // already speaks. Slot alignment follows the FT8 pipeline's hard rule: hand
 // the decoder EXACTLY the slot that ended, computed from the digital clock —
@@ -27,7 +26,7 @@
 // (110.6 s, tone spacing 12000/8192 = 1.4648 Hz, WSJT-X-nominal 1 s in-slot
 // start) through the same TxAudioIngest path as the FT8 keyer, and unkeys.
 // Channel symbols come from WsprEncoder, the managed port of wsprsim, which
-// golden tests pin bit-for-bit to the native encoder. Safety: HALT/disarm aborts mid-signal within
+// golden tests pin bit-for-bit to the native encoder's frozen output. Safety: HALT/disarm aborts mid-signal within
 // one audio block; a per-transmission watchdog caps overruns; a 30-minute
 // auto-disarm bounds an abandoned beacon (the frontend's pagehide disarm is
 // the first line, this is the backstop it documents).
@@ -102,21 +101,9 @@ public sealed class WsprService : IHostedService, IDisposable
     /// the frontend reads `nativeAvailable` from the status DTOs.</summary>
     public bool NativeAvailable => true;
 
-    // Shadow mode — while the native wsprd still ships, decode every slot
-    // with it too and log any disagreement, so real on-air slots keep
-    // checking the port. Removed together with native/wspr.
-    private readonly bool _shadowNative = WsprNative.Available
-        && Environment.GetEnvironmentVariable("ZEUS_WSPR_SHADOW") != "0";
-
-    // Optional capture of each slot's 375 Hz IQ (+ both decoders' messages)
-    // to build the recorded golden corpus: ZEUS_WSPR_CAPTURE_DIR=/some/dir.
+    // Optional capture of each slot's 375 Hz IQ (+ the decoded messages) to
+    // grow the recorded golden corpus: ZEUS_WSPR_CAPTURE_DIR=/some/dir.
     private readonly string? _captureDir = Environment.GetEnvironmentVariable("ZEUS_WSPR_CAPTURE_DIR");
-
-    // TX counterpart of the RX shadow: the beacon's symbols are checked
-    // against the native encoder once per message (the last one checked is
-    // remembered so a long beacon session logs a mismatch once, not every
-    // slot).
-    private string? _txShadowChecked;
     public bool Enabled => _enabled;
 
     /// <summary>
@@ -209,24 +196,21 @@ public sealed class WsprService : IHostedService, IDisposable
 
     // ---- lifecycle ----------------------------------------------------------
 
-    internal const int WsprDecodeStackBytes = 16 * 1024 * 1024;
 
     public Task StartAsync(CancellationToken ct)
     {
         _cts = new CancellationTokenSource();
         _pipeline.RxAudioAvailable += OnRxAudio;
-        // wsprd keeps its hash table (32768 × 13 B ≈ 426 KB) and reference
-        // waveforms (≈ 342 KB) on the stack. That fits Linux's 8 MB default
-        // thread stack but overflows macOS's 512 KB (and Windows's 1 MB) and
-        // kills the process, so the decode thread gets an explicit stack.
-        _slotThread = new Thread(() => SlotLoop(_cts.Token), maxStackSize: WsprDecodeStackBytes)
+        // (The native wsprd needed a 16 MB stack here; the managed decoder
+        // keeps its buffers on the heap — WsprManagedTests runs it on 512 KB.)
+        _slotThread = new Thread(() => SlotLoop(_cts.Token))
         { IsBackground = true, Name = "wspr-slots" };
         _beaconThread = new Thread(() => BeaconLoop(_cts.Token))
         { IsBackground = true, Name = "wspr-beacon" };
         _slotThread.Start();
         _beaconThread.Start();
-        _log.LogInformation("wspr: in core (managed decoder; native shadow={Shadow}{Capture})",
-            _shadowNative, _captureDir is null ? "" : $", capturing to {_captureDir}");
+        _log.LogInformation("wspr: in core (managed decoder{Capture})",
+            _captureDir is null ? "" : $", capturing to {_captureDir}");
         return Task.CompletedTask;
     }
 
@@ -261,7 +245,6 @@ public sealed class WsprService : IHostedService, IDisposable
 
     private void SlotLoop(CancellationToken ct)
     {
-        var spots = new ZeusWsprSpot[64];
         while (!ct.IsCancellationRequested)
         {
             Thread.Sleep(200);
@@ -296,7 +279,7 @@ public sealed class WsprService : IHostedService, IDisposable
 
             try
             {
-                var batch = DecodeSlot(slotAudio, dialMhz, receiver, ended, spots);
+                var batch = DecodeSlot(slotAudio, dialMhz, receiver, ended);
                 _digital.Events.PublishWsprSpot(batch);
                 if (batch.Spots.Length > 0)
                     _log.LogInformation("wspr: slot {Slot} → {N} spot(s)", ended, batch.Spots.Length);
@@ -309,7 +292,7 @@ public sealed class WsprService : IHostedService, IDisposable
     }
 
     private WsprSpotBatch DecodeSlot(
-        float[] audio12k, double dialMhz, int receiver, long slot, ZeusWsprSpot[] spots)
+        float[] audio12k, double dialMhz, int receiver, long slot)
     {
         // 12 kHz real → 375 Hz complex baseband (WSPR window centre 1500 Hz
         // → 0 Hz), the decoder's input contract. Worker thread — allocation
@@ -322,57 +305,16 @@ public sealed class WsprService : IHostedService, IDisposable
             Math.Round(d.SnrDb, 1), Math.Round(d.DtSec, 2), d.FreqMhz, Math.Round(d.DriftHz, 2), d.Message))
             .ToArray();
 
-        string[]? native = null;
-        if (_shadowNative)
-        {
-            try
-            {
-                native = NativeMessages(idat, qdat, dialHz, spots);
-                var mine = decodes.Select(d => d.Message).Order().ToArray();
-                if (!mine.SequenceEqual(native.Order()))
-                    _log.LogWarning("wspr: managed/native disagree on slot {Slot}: managed [{Managed}] native [{Native}]",
-                        slot, string.Join(" | ", mine), string.Join(" | ", native.Order()));
-            }
-            catch (Exception ex)
-            {
-                _log.LogDebug(ex, "wspr: native shadow decode failed");
-            }
-        }
-        if (_captureDir is not null) Capture(slot, dialHz, idat, qdat, decodes, native);
+        if (_captureDir is not null) Capture(slot, dialHz, idat, qdat, decodes);
 
         return new WsprSpotBatch(receiver, slot * (long)SlotMs, dialMhz, outSpots);
-    }
-
-    /// <summary>True/false when the native encoder agrees/disagrees with
-    /// <paramref name="symbols"/> for <paramref name="message"/>; null when it
-    /// is unavailable or refuses the message.</summary>
-    internal static bool? NativeEncoderAgrees(string message, ReadOnlySpan<byte> symbols)
-    {
-        if (!WsprNative.Available) return null;
-        Span<byte> native = stackalloc byte[Wspr.WsprEncoder.SymbolCount];
-        if (!WsprNative.Encode(message, native)) return null;
-        return native.SequenceEqual(symbols[..Wspr.WsprEncoder.SymbolCount]);
-    }
-
-    private static unsafe string[] NativeMessages(float[] idat, float[] qdat, int dialHz, ZeusWsprSpot[] spots)
-    {
-        int n;
-        fixed (float* pi = idat)
-        fixed (float* pq = qdat)
-        fixed (ZeusWsprSpot* ps = spots)
-            n = WsprNative.Decode(pi, pq, idat.Length, dialHz, ps, spots.Length);
-        var msgs = new string[Math.Max(0, n)];
-        for (int i = 0; i < msgs.Length; i++)
-            fixed (byte* pm = spots[i].Message)
-                msgs[i] = System.Runtime.InteropServices.Marshal.PtrToStringAnsi((IntPtr)pm) ?? "";
-        return msgs;
     }
 
     /// <summary>Write one slot for the golden corpus: &lt;slot&gt;_&lt;dialHz&gt;.iq
     /// (float32 LE, all I then all Q, 375 Hz) and a .txt with what each
     /// decoder made of it. Best-effort.</summary>
     private void Capture(long slot, int dialHz, float[] idat, float[] qdat,
-                         List<Wspr.WsprDecode> managed, string[]? native)
+                         List<Wspr.WsprDecode> managed)
     {
         try
         {
@@ -384,8 +326,7 @@ public sealed class WsprService : IHostedService, IDisposable
                 f.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(qdat.AsSpan()));
             }
             File.WriteAllLines(stem + ".txt",
-                [.. managed.Select(d => $"M {d.Message}\t{d.SnrDb:0.0}\t{d.DtSec:0.00}\t{d.FreqMhz:0.000000}\t{d.DriftHz}"),
-                 .. (native ?? []).Select(m => $"N {m}")]);
+                managed.Select(d => $"M {d.Message}\t{d.SnrDb:0.0}\t{d.DtSec:0.00}\t{d.FreqMhz:0.000000}\t{d.DriftHz}"));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -474,13 +415,6 @@ public sealed class WsprService : IHostedService, IDisposable
         Span<byte> sym = stackalloc byte[Wspr.WsprEncoder.SymbolCount];
         string message = $"{_call} {_grid4} {_dBm}";
         if (!Wspr.WsprEncoder.TryEncode(message, sym)) return null;
-        if (_shadowNative && _txShadowChecked != message)
-        {
-            _txShadowChecked = message;
-            if (NativeEncoderAgrees(message, sym) is false)
-                _log.LogWarning("wspr beacon: managed and native encoders disagree on '{Message}' — " +
-                                "transmitting the managed symbols; please report this", message);
-        }
 
         // 48 kHz: 32768 samples/symbol (256/375 s exactly), spacing 1.4648 Hz.
         const int rate = 48_000;

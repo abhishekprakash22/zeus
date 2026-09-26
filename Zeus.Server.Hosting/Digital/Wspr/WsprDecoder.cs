@@ -5,13 +5,15 @@
 // WSPR decoder, ported from wsprd's wsprd.c (wspr_decode,
 // sync_and_demodulate, subtract_signal2). Input: one 120 s slot of complex
 // baseband at 375 Hz, the classic 1500 Hz WSPR window centred on 0 Hz — the
-// same contract as the native zeus_wspr_decode, so WsprService feeds both
-// from MixAndDecimate32.
+// same contract the native zeus_wspr_decode had; WsprService feeds it from
+// MixAndDecimate32.
 //
-// FIDELITY. The goal of this first port is to decode what the native
-// library decodes, so golden tests can compare the two spot for spot before
-// the native one is dropped. It therefore reproduces the C's quirks on
-// purpose, each marked "(as the C)":
+// FIDELITY. The port was built to decode exactly what the native library
+// decoded, and was checked spot for spot against it (synthesized and real
+// 20 m / 17 m slots) before native/wspr was retired; the golden tests hold that
+// native output frozen in TestData/wspr. It therefore still reproduces the
+// C's quirks, each marked "(as the C)" — fixing them is zeus-88xj.5, each
+// with a test showing the gain:
 //   * the coarse drift search divides by an unparenthesised macro
 //     (`... * idrift / DF` with DF = 375.0 / 256.0 → `/ 375.0 / 256.0`), so
 //     drift barely moves the bin there;

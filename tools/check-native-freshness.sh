@@ -83,10 +83,7 @@ check_lib native/ft8 \
     Zeus.Dsp/runtimes/osx-arm64/native/libzeus_ft8.dylib \
     Zeus.Dsp/runtimes/win-x64/native/zeus_ft8.dll
 
-check_lib native/wspr \
-    Zeus.Dsp/runtimes/linux-arm64/native/libzeus_wspr.so \
-    Zeus.Dsp/runtimes/linux-x64/native/libzeus_wspr.so \
-    Zeus.Dsp/runtimes/osx-arm64/native/libzeus_wspr.dylib
+# (native/wspr is gone: WSPR is managed code in Digital/Wspr — nothing to check.)
 
 echo
 if [ "$rc" -ne 0 ]; then

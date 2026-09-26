@@ -52,17 +52,24 @@ public sealed class WsprManagedTests
         Assert.Equal(nativeSymbols, string.Concat(got.Select(b => (char)('0' + b))));
     }
 
-    // The beacon's TX shadow check (WsprService.NativeEncoderAgrees): agrees
-    // for a real message, catches a corrupted symbol.
-    [SkippableFact]
-    public void BeaconShadowCheck_AgreesWithNative_AndCatchesADifference()
+    // The native wsprd kept ~0.8 MB on the stack and needed a 16 MB decode
+    // thread (it killed the process on macOS's 512 KB default). The managed
+    // decoder must run on the smallest ordinary thread.
+    [Fact]
+    public void Decoder_RunsOnASmallThreadStack()
     {
-        Skip.IfNot(WsprNative.Available, "native wsprd not staged for this platform");
-        var sym = new byte[162];
-        Assert.True(WsprEncoder.TryEncode("EA5IUE IM76 23", sym));
-        Assert.True(WsprService.NativeEncoderAgrees("EA5IUE IM76 23", sym));
-        sym[40] ^= 2;
-        Assert.False(WsprService.NativeEncoderAgrees("EA5IUE IM76 23", sym));
+        const int samples = WsprDecoder.SlotSamples;
+        var i = new float[samples];
+        var q = new float[samples];
+        var rng = new Random(3);
+        for (int k = 0; k < samples; k++) { i[k] = (float)(rng.NextDouble() - 0.5); q[k] = (float)(rng.NextDouble() - 0.5); }
+
+        List<WsprDecode>? spots = null;
+        var t = new Thread(() => spots = WsprDecoder.Decode(i, q, 14_095_600), 512 * 1024);
+        t.Start();
+        Assert.True(t.Join(TimeSpan.FromSeconds(60)), "WSPR decode did not finish");
+        Assert.NotNull(spots);
+        Assert.Empty(spots!);                       // noise: no spots, clean return
     }
 
     [Fact]

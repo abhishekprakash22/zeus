@@ -16,6 +16,12 @@ namespace Zeus.Server.Hosting.Digital.Wspr;
 
 internal static class Lookup3
 {
+    /// <summary>wsprd's nhash(): hashlittle() masked to 15 bits (the size of
+    /// its 32768-entry callsign table). The C skips the mask for a zero-length
+    /// key and would then index far outside the table; here it always masks.</summary>
+    public static int Nhash(ReadOnlySpan<byte> key, uint initval) =>
+        (int)(HashLittle(key, initval) & 32767);
+
     public static uint HashLittle(ReadOnlySpan<byte> key, uint initval)
     {
         uint a, b, c;

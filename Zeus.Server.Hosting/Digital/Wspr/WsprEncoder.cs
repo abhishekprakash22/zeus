@@ -90,7 +90,7 @@ public static class WsprEncoder
             int power = Math.Clamp(Atoi(rest[1]), 0, 60);
             power += Nu[power % 10];
             int ntype = -(power + 1);
-            int ihash = unchecked((int)Lookup3.HashLittle(Ascii(callsign), 146));
+            int ihash = Lookup3.Nhash(Ascii(callsign), 146);
             m = unchecked(128 * ihash + ntype + 64);
 
             // grid6 = grid[1..] + grid[0], as a C string in char[7].
@@ -295,7 +295,7 @@ public static class WsprEncoder
         return new string(nul < 0 ? buf : buf[..nul]);
     }
 
-    private static byte[] Ascii(string s)
+    internal static byte[] Ascii(string s)
     {
         var b = new byte[s.Length];
         for (int i = 0; i < s.Length; i++) b[i] = (byte)s[i];

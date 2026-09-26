@@ -80,4 +80,72 @@ public sealed class WsprManagedTests
             Assert.Equal(WsprEncoder.Sync[i], (byte)(s[i] & 1));
         }
     }
+
+    // ---- Fano + unpack (zeus-88xj.2) ----------------------------------------
+
+    /// <summary>Soft symbols as wspr_decode's mode-2 demodulator hands them
+    /// over (data bit 1 → above 128), optionally noisy.</summary>
+    private static byte[] SoftSymbols(string message, double noiseRms = 0, int seed = 1)
+    {
+        var ch = new byte[162];
+        Assert.True(WsprEncoder.TryEncode(message, ch));
+        var rng = new Random(seed);
+        var soft = new byte[162];
+        for (int i = 0; i < 162; i++)
+        {
+            double v = (ch[i] >> 1) == 1 ? 60 : -60;
+            if (noiseRms > 0)
+            {
+                double u1 = 1 - rng.NextDouble(), u2 = rng.NextDouble();
+                v += noiseRms * Math.Sqrt(-2 * Math.Log(u1)) * Math.Cos(2 * Math.PI * u2);
+            }
+            soft[i] = (byte)Math.Clamp(Math.Round(v) + 128, 0, 255);
+        }
+        return soft;
+    }
+
+    private static WsprMessage? DecodeSoft(byte[] soft, WsprHashTable table)
+    {
+        var sym = (byte[])soft.Clone();
+        WsprUnpack.Deinterleave(sym);
+        var data = new byte[11];
+        if (!WsprFano.Decode(sym, 81, 60, 10_000, data, out _, out _)) return null;
+        return WsprUnpack.Unpack(data, table);
+    }
+
+    [Theory]
+    [InlineData("K1ABC FN42 37", "K1ABC FN42 37")]
+    [InlineData("EA5IUE IM76 23", "EA5IUE IM76 23")]
+    [InlineData("G4XYZ IO91 0", "G4XYZ IO91 00")]          // type 1 prints %02d
+    [InlineData("PJ4/K1ABC 37", "PJ4/K1ABC 37")]
+    [InlineData("K1ABC/P 30", "K1ABC/P 30")]
+    [InlineData("EA5IUE/12 33", "EA5IUE/12 33")]
+    [InlineData("F/G4XYZ 7", "F/G4XYZ  7")]                 // types 2/3 print %2d
+    public void FanoAndUnpack_RoundTrip(string sent, string want)
+    {
+        var got = DecodeSoft(SoftSymbols(sent), new WsprHashTable());
+        Assert.NotNull(got);
+        Assert.False(got!.Value.NoPrint);
+        Assert.Equal(want, got.Value.CallLocPow);
+    }
+
+    [Fact]
+    public void Type3_NamesTheSender_OnceTheCallWasHeardUnhashed()
+    {
+        var table = new WsprHashTable();
+        Assert.Equal("<...> FN42AB 37", DecodeSoft(SoftSymbols("<K1ABC> FN42AB 37"), table)!.Value.CallLocPow);
+        DecodeSoft(SoftSymbols("K1ABC FN42 37"), table);                      // type 1 fills the table
+        Assert.Equal("<K1ABC> FN42AB 37", DecodeSoft(SoftSymbols("<K1ABC> FN42AB 37"), table)!.Value.CallLocPow);
+    }
+
+    [Fact]
+    public void Fano_CorrectsNoisySoftSymbols()
+    {
+        // rms 50 against ±60 signal: many raw bit errors, the code still decodes.
+        int ok = 0;
+        for (int seed = 0; seed < 20; seed++)
+            if (DecodeSoft(SoftSymbols("EA5IUE IM76 23", 50, seed), new WsprHashTable())?.CallLocPow == "EA5IUE IM76 23")
+                ok++;
+        Assert.True(ok >= 18, $"{ok}/20");
+    }
 }

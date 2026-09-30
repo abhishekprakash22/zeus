@@ -83,6 +83,8 @@ function reporterModeToSubmode(mode: string): FreeDvSubmode | null {
     case 'RADEV1':
     case 'RADE':
       return 'RadeV1';
+    case 'RADEV2':
+      return 'RadeV2';
     default:
       return null;
   }

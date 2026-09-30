@@ -39,6 +39,11 @@ see the corresponding GitHub Release page.
   Windows arm64). The native shim remains as a fallback: set
   `ZEUS_RADE_ENGINE=native` to use it. The two engines interoperate on air in
   both directions.
+- **RADEV2, receive and transmit.** RADE V2 is a new FreeDV submode next to
+  RADEV1, running on RadeSharp. It includes the SSB TX band-pass filter, RX
+  AGC, and FrameSync, and auto-detect scans it right after RADEV1. RADE V2 has
+  no End-of-Over callsign. Upstream V2 may still change incompatibly; the
+  RadeSharp submodule follows it.
 - **FreeDV Reporter is connected.** The stations panel shows the live
   qso.freedv.org station list (view only, no personal data sent). Opt in with
   your callsign and grid and Zeus reports your frequency, your transmissions

@@ -5,7 +5,7 @@
 //                         Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
-// FreeDvModemService — RADE V1 path. RADE is not a freedv_open submode: it
+// FreeDvModemService — RADE V1 / V2 path. RADE is not a freedv_open submode: it
 // has its own engine (IRadeEngine: managed RadeSharp by default, the native
 // zeus_rade shim as fallback — see RadeEngine.cs), complex modem IO and 16 kHz
 // speech, so it
@@ -20,7 +20,8 @@
 //   TX: 48 kHz mic → ÷3 → 16 kHz speech → engine Tx per n_speech frame
 //       → 8 kHz complex modem → real part → ×6 → in-place block.
 //       FinishTx() pads the last frame and appends the End-of-Over frame,
-//       which carries the callsign (first word of the TX text).
+//       which on RADEV1 carries the callsign (first word of the TX text).
+//       RADEV2 has no EOO callsign channel (rade_n_eoo_bits() == 0).
 //
 // LEVELS (freedv-gui 2.1.0 RADEReceiveStep / RADETransmitStep): RX feeds the
 // modem short/32767 — i.e. Zeus's float audio as-is; TX scales the modem's
@@ -53,7 +54,7 @@ public sealed partial class FreeDvModemService
     private int _rxCallsignSeq;
 
     /// <summary>
-    /// The last End-of-Over callsign decoded on RADEV1, if one arrived after
+    /// The last End-of-Over callsign decoded on RADEV1 (RADEV2 carries none), if one arrived after
     /// <paramref name="afterSeq"/>. Control-thread only (takes the state lock);
     /// used by the FreeDV Reporter to send rx_report once per heard over.
     /// </summary>
@@ -71,14 +72,18 @@ public sealed partial class FreeDvModemService
     /// <summary>True when a RADE engine can run on this platform (always, with the managed engine).</summary>
     public static bool RadeAvailable => RadeEngines.Available;
 
+    /// <summary>True for the RADE submodes (own engine and signal path).</summary>
+    internal static bool IsRade(FreeDvSubmode s) => s is FreeDvSubmode.RadeV1 or FreeDvSubmode.RadeV2;
+
     /// <summary>Name of the open RADE engine, or null.</summary>
     public string? RadeEngineName => Volatile.Read(ref _rade)?.Name;
 
-    private bool OpenRadeLocked()
+    private bool OpenRadeLocked(bool v2)
     {
+        string label = v2 ? "RADEV2" : "RADEV1";
         IRadeEngine? z;
         string? error;
-        try { z = RadeEngines.Open(out error); }
+        try { z = RadeEngines.Open(v2, out error); }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "freedv: RADE engine open threw");
@@ -86,7 +91,7 @@ public sealed partial class FreeDvModemService
         }
         if (z == null)
         {
-            _log.LogInformation("freedv: RADEV1 selected but no RADE engine could be opened ({Error}) — modem idle", error);
+            _log.LogInformation("freedv: {Mode} selected but no RADE engine could be opened ({Error}) — modem idle", label, error);
             return false;
         }
         if (error != null) _log.LogWarning("freedv: {Error}; using {Engine}", error, z.Name);
@@ -106,8 +111,8 @@ public sealed partial class FreeDvModemService
             || (nTxOut + nEoo) * 6 > Ring48k / 2)
         {
             _log.LogWarning(
-                "freedv: RADEV1 geometry unsupported (nin={Nin}/{NinMax} pcm={Pcm} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
-                nin, ninMax, maxPcm, nSpeech, nTxOut, nEoo);
+                "freedv: {Mode} geometry unsupported (nin={Nin}/{NinMax} pcm={Pcm} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
+                label, nin, ninMax, maxPcm, nSpeech, nTxOut, nEoo);
             z.Dispose();
             return false;
         }
@@ -127,8 +132,8 @@ public sealed partial class FreeDvModemService
         FlushRxLocked();
         FlushTxLocked();
         _log.LogInformation(
-            "freedv: opened RADEV1 on {Engine} (nin={Nin}/{NinMax} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
-            z.Name, nin, ninMax, nSpeech, nTxOut, nEoo);
+            "freedv: opened {Mode} on {Engine} (nin={Nin}/{NinMax} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
+            label, z.Name, nin, ninMax, nSpeech, nTxOut, nEoo);
         return true;
     }
 

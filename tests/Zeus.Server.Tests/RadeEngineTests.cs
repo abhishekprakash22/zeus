@@ -73,6 +73,18 @@ public class RadeEngineTests
         Assert.Equal("EA5IUE", call);
     }
 
+    [Fact]
+    public void ManagedEngine_V2_Loopback()
+    {
+        using var tx = new ManagedRadeEngine(RadeSharp.RadeMode.V2);
+        using var rx = new ManagedRadeEngine(RadeSharp.RadeMode.V2);
+        Assert.Contains("V2", tx.Name);
+        var (pcm, synced, call) = OverTheAir(tx, rx);
+        Assert.True(synced);
+        Assert.True(pcm > 16000, $"only {pcm} PCM samples");
+        Assert.Equal("", call);   // RADE V2 has no EOO callsign channel
+    }
+
     [SkippableFact]
     public void ManagedAndNativeEngines_Interoperate()
     {

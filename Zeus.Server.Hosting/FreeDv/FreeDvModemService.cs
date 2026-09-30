@@ -61,6 +61,7 @@ public enum FreeDvSubmode : byte
     Mode1600 = 3,
     Mode800XA = 4,
     RadeV1 = 5,
+    RadeV2 = 6,
 }
 
 /// <summary>Immutable status snapshot for the REST surface.</summary>
@@ -97,10 +98,11 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
     };
 
     // RADEV1 is freedv-gui's default and the busiest mode on air, so it leads
-    // the scan wherever a RADE engine is available (everywhere, with RadeSharp).
+    // the scan wherever a RADE engine is available (everywhere, with RadeSharp),
+    // followed by RADEV2.
     private static readonly FreeDvSubmode[] AutoScanSetWithRade =
     {
-        FreeDvSubmode.RadeV1, FreeDvSubmode.Mode700D, FreeDvSubmode.Mode700E,
+        FreeDvSubmode.RadeV1, FreeDvSubmode.RadeV2, FreeDvSubmode.Mode700D, FreeDvSubmode.Mode700E,
         FreeDvSubmode.Mode1600, FreeDvSubmode.Mode700C, FreeDvSubmode.Mode800XA,
     };
 
@@ -423,8 +425,8 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
             ModemSampleRateHz: _modemRateHz,
             RxText: rxText.Length == 0 ? null : rxText,
             TxText: _txText.Length == 0 ? null : _txText,
-            LibraryVersion: sub == FreeDvSubmode.RadeV1
-                ? (RadeEngineName ?? (RadeAvailable ? (RadeEngines.NativeRequested ? "zeus_rade (native RADE V1 + FARGAN)" : "RadeSharp (managed RADE V1 + FARGAN)") : null))
+            LibraryVersion: IsRade(sub)
+                ? (RadeEngineName ?? (RadeAvailable ? RadeEngines.DescribeEngine(sub == FreeDvSubmode.RadeV2) : null))
                 : FreeDvNative.ApiVersion is int v ? $"libcodec2 1.2.0 (freedv_api v{v})" : null,
             AutoDetect: _autoDetect,
             RadeAvailable: RadeAvailable);
@@ -568,11 +570,11 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
     {
         CloseLocked();
         var sub = (FreeDvSubmode)_submode;
-        if (sub == FreeDvSubmode.RadeV1)
+        if (IsRade(sub))
         {
-            // RADE has its own library and signal path (FreeDvModemService.Rade.cs).
+            // RADE has its own engine and signal path (FreeDvModemService.Rade.cs).
             // If it can't open, Active stays false and the panel shows the gate.
-            OpenRadeLocked();
+            OpenRadeLocked(sub == FreeDvSubmode.RadeV2);
             return;
         }
         if (!NativeAvailable) return;

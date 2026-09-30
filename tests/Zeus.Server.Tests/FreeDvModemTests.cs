@@ -261,6 +261,65 @@ public sealed class FreeDvModemTests : IDisposable
     }
 
     [Fact]
+    public async Task Modem_CleanLoopback_SyncsAndDecodes_RadeV2()
+    {
+        using var store = new FreeDvSettingsStore(
+            NullLogger<FreeDvSettingsStore>.Instance, _dbPath);
+        using var modem = new FreeDvModemService(
+            NullLogger<FreeDvModemService>.Instance, store);
+        await modem.StartAsync(default);
+        modem.Configure(FreeDvSubmode.RadeV2, autoDetect: false,
+            squelchEnabled: null, snrSquelchThreshDb: null, txText: "ea5iue 73");
+        modem.SyncMode((byte)Zeus.Contracts.RxMode.FreeDv);
+        Assert.True(modem.Active);
+        var st0 = modem.Snapshot();
+        Assert.Equal(FreeDvSubmode.RadeV2, st0.Submode);
+        Assert.Equal(16000, st0.SpeechSampleRateHz);
+        Assert.Contains("V2", st0.LibraryVersion);
+
+        const int rate = 48_000;
+        var onAir = new List<float>(5 * rate);
+        var blk = new float[1024];
+        for (int off = 0; off < 4 * rate; off += blk.Length)
+        {
+            for (int i = 0; i < blk.Length; i++)
+            {
+                float t = (off + i) / (float)rate;
+                float v = 0;
+                for (int h = 1; h <= 8; h++) v += MathF.Sin(2 * MathF.PI * 140 * h * t) / h;
+                blk[i] = 0.15f * v;
+            }
+            modem.ProcessTx(blk);
+            onAir.AddRange(blk);
+        }
+        Assert.True(modem.FinishTx() > 0);
+        int real;
+        while ((real = modem.DrainTx(blk)) > 0)
+            onAir.AddRange(blk.Take(real));
+
+        var air = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(onAir);
+        Assert.True(Rms(air) > 0.01, "no modem audio on air");
+        float peak = 0;
+        foreach (var x in air) peak = Math.Max(peak, Math.Abs(x));
+        Assert.True(peak < 1.0f, $"TX modem audio clips (peak {peak:F2})");
+
+        modem.FlushRx();
+        int speechBlocks = 0;
+        bool synced = false;
+        for (int off = 0; off + blk.Length <= air.Length; off += blk.Length)
+        {
+            air.Slice(off, blk.Length).CopyTo(blk);
+            modem.ProcessRx(blk);
+            if (Rms(blk) > 1e-4) speechBlocks++;
+            if (modem.Snapshot().Synced) synced = true;
+        }
+        Assert.True(synced, "no sync on a clean RADEV2 loopback");
+        Assert.True(speechBlocks > 20, "no decoded speech reached the output");
+
+        await modem.StopAsync(default);
+    }
+
+    [Fact]
     public void SettingsStore_Persists_Modem_And_Reporter_Rows()
     {
         using (var store = new FreeDvSettingsStore(

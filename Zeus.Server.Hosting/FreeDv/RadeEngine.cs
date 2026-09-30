@@ -5,18 +5,20 @@
 //                         Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
-// RADE engines — the RADEV1 modem behind one surface, two implementations:
+// RADE engines — the RADE modem behind one surface, two implementations:
 //
 //   managed  RadeSharp (external/RadeSharp submodule): a bit-exact C# port of
 //            rade_c + the Opus FARGAN vocoder / LPCNet analyzer + the FreeDV
-//            reliable-text EOO callsign. No native library, every RID. DEFAULT.
-//   native   the zeus_rade shim via RadeNative (P/Invoke). Kept as a fallback
-//            while the managed engine is proven on air.
+//            reliable-text EOO callsign. RADE V1 and V2, no native library,
+//            every RID. DEFAULT, and the only engine for RADEV2.
+//   native   the zeus_rade shim via RadeNative (P/Invoke), RADE V1 only. Kept
+//            as a fallback while the managed engine is proven on air.
 //
-// SELECTION: ZEUS_RADE_ENGINE=native forces the shim; anything else (or unset)
-// uses the managed engine, falling back to the shim only if the managed engine
-// fails to open. Both engines expose the zeus_rade.h geometry and semantics, so
-// FreeDvModemService.Rade.cs is engine-agnostic.
+// SELECTION: ZEUS_RADE_ENGINE=native forces the shim for RADEV1; anything else
+// (or unset) uses the managed engine, falling back to the shim only if the
+// managed engine fails to open. RADEV2 always runs managed. Both engines expose
+// the zeus_rade.h geometry and semantics, so FreeDvModemService.Rade.cs is
+// engine-agnostic.
 //
 // ABI of the spans: modem IQ is interleaved float (re, im, re, im, ...) at
 // 8 kHz; speech is int16 at 16 kHz — exactly RadeNative's pointers.
@@ -71,12 +73,18 @@ internal static class RadeEngines
     /// Opens the configured engine. Returns null (with <paramref name="error"/>) when nothing could be opened.
     /// Control-thread only: opening allocates and, for the managed engine, loads the embedded weights once per process.
     /// </summary>
-    public static IRadeEngine? Open(out string? error)
+    public static IRadeEngine? Open(bool v2, out string? error)
     {
         error = null;
+        if (v2)
+        {
+            // The native shim is RADE V1 only.
+            try { return new ManagedRadeEngine(RadeMode.V2); }
+            catch (Exception ex) { error = $"managed RADE V2 engine failed: {ex.Message}"; return null; }
+        }
         if (!NativeRequested)
         {
-            try { return new ManagedRadeEngine(); }
+            try { return new ManagedRadeEngine(RadeMode.V1); }
             catch (Exception ex) { error = $"managed RADE engine failed: {ex.Message}"; }
         }
         if (!RadeNative.Available)
@@ -92,6 +100,12 @@ internal static class RadeEngines
         }
         return new NativeRadeEngine(z);
     }
+
+    /// <summary>Engine description for status before one is open.</summary>
+    public static string DescribeEngine(bool v2) =>
+        v2 ? "RadeSharp (managed RADE V2 + FARGAN)"
+        : NativeRequested ? "zeus_rade (native RADE V1 + FARGAN)"
+        : "RadeSharp (managed RADE V1 + FARGAN)";
 
     /// <summary>Same sanitising the shim binding always applied: ≤ 8 chars in '!'..'~'.</summary>
     public static int SanitiseCallsign(string callsign, Span<byte> dest)
@@ -111,14 +125,15 @@ internal sealed class ManagedRadeEngine : IRadeEngine
 {
     private readonly RadeVoiceModem _m;
 
-    public ManagedRadeEngine()
+    public ManagedRadeEngine(RadeMode mode = RadeMode.V1)
     {
         // The C library's rade_open banner goes to stderr; keep the server log clean.
         RadeLog.Writer = null;
-        _m = new RadeVoiceModem(RadeMode.V1);
+        _m = new RadeVoiceModem(mode);
+        Name = RadeEngines.DescribeEngine(mode == RadeMode.V2);
     }
 
-    public string Name => "RadeSharp (managed RADE V1 + FARGAN)";
+    public string Name { get; }
     public int Nin => _m.RxSamplesNeeded;
     public int NinMax => _m.RxMaxSamples;
     public int MaxPcmPerRx => _m.MaxPcmPerReceive;

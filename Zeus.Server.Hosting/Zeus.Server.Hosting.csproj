@@ -45,6 +45,10 @@
     <ProjectReference Include="..\Zeus.Protocol2\Zeus.Protocol2.csproj" />
     <ProjectReference Include="..\Zeus.Midi\Zeus.Midi.csproj" />
     <ProjectReference Include="..\Zeus.Dsp\Zeus.Dsp.csproj" />
+    <!-- RadeSharp (git submodule external/RadeSharp): managed RADE V1 engine,
+         bit-exact port of rade_c + FARGAN/LPCNet + FreeDV EOO text. Brings
+         RadeSharp (BSD) and RadeSharp.Text (LGPL-2.1). See FreeDv/RadeEngine.cs. -->
+    <ProjectReference Include="..\external\RadeSharp\src\RadeSharp.Text\RadeSharp.Text.csproj" />
   </ItemGroup>
 
   <ItemGroup>

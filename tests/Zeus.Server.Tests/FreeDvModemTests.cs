@@ -105,7 +105,7 @@ public sealed class FreeDvModemTests : IDisposable
 
         var st = modem.Snapshot();
         Assert.Equal(FreeDvNative.Available, st.NativeAvailable);
-        Assert.Equal(RadeNative.Available, st.RadeAvailable);
+        Assert.Equal(RadeEngines.Available, st.RadeAvailable);
         Assert.Equal(8000, st.SpeechSampleRateHz);
         Assert.Equal(8000, st.ModemSampleRateHz);
 
@@ -191,11 +191,10 @@ public sealed class FreeDvModemTests : IDisposable
     [SkippableFact]
     public async Task Modem_CleanLoopback_SyncsDecodes_AndCarriesCallsign_RadeV1()
     {
-        // SKIP, not silent return: the RID that has no libzeus_rade staged is
-        // exactly the one where nobody has ever exercised this path, and a
-        // quiet green tells you the opposite. The run now says which it was.
-        Skip.IfNot(RadeNative.Available,
-            "libzeus_rade is not staged for this RID — the RADEV1 path was NOT exercised here.");
+        // The managed engine (RadeSharp) runs on every RID. Only a forced native
+        // engine can be missing — SKIP then, never a silent green.
+        Skip.If(RadeEngines.NativeRequested && !RadeNative.Available,
+            "ZEUS_RADE_ENGINE=native but libzeus_rade is not staged for this RID — the RADEV1 path was NOT exercised here.");
 
         using var store = new FreeDvSettingsStore(
             NullLogger<FreeDvSettingsStore>.Instance, _dbPath);

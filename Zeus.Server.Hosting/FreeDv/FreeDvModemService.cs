@@ -97,7 +97,7 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
     };
 
     // RADEV1 is freedv-gui's default and the busiest mode on air, so it leads
-    // the scan wherever libzeus_rade is present.
+    // the scan wherever a RADE engine is available (everywhere, with RadeSharp).
     private static readonly FreeDvSubmode[] AutoScanSetWithRade =
     {
         FreeDvSubmode.RadeV1, FreeDvSubmode.Mode700D, FreeDvSubmode.Mode700E,
@@ -190,7 +190,7 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
     /// untouched and the panel shows its gated state.
     /// </summary>
     public bool Active => _engaged
-        && (Volatile.Read(ref _f) != IntPtr.Zero || Volatile.Read(ref _rade) != IntPtr.Zero);
+        && (Volatile.Read(ref _f) != IntPtr.Zero || Volatile.Read(ref _rade) != null);
 
     public void SyncMode(byte rxModeByte)
     {
@@ -211,9 +211,9 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
         if (!Monitor.TryEnter(_state)) { block48k.Clear(); return; }
         try
         {
-            if (_f == IntPtr.Zero && _rade == IntPtr.Zero) { block48k.Clear(); return; }
+            if (_f == IntPtr.Zero && _rade == null) { block48k.Clear(); return; }
             if (_pendingRxFlush) { FlushRxLocked(); _pendingRxFlush = false; }
-            if (_rade != IntPtr.Zero) { RadeProcessRxLocked(block48k); return; }
+            if (_rade != null) { RadeProcessRxLocked(block48k); return; }
 
             // 1) 48 kHz demod audio → 8 kHz modem shorts into the ring.
             int off = 0;
@@ -314,9 +314,9 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
         if (!Monitor.TryEnter(_state)) { block48k.Clear(); return; }
         try
         {
-            if (_f == IntPtr.Zero && _rade == IntPtr.Zero) { block48k.Clear(); return; }
+            if (_f == IntPtr.Zero && _rade == null) { block48k.Clear(); return; }
             if (_pendingTxFlush) { FlushTxLocked(); _pendingTxFlush = false; }
-            if (_rade != IntPtr.Zero) { RadeProcessTxLocked(block48k); return; }
+            if (_rade != null) { RadeProcessTxLocked(block48k); return; }
 
             // 1) 48 kHz mic → 8 kHz speech shorts.
             int off = 0;
@@ -378,7 +378,7 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
         // parked by TxAudioIngest's _tailDraining handoff.
         lock (_state)
         {
-            if (_rade != IntPtr.Zero) return RadeFinishTxLocked();
+            if (_rade != null) return RadeFinishTxLocked();
             if (_f == IntPtr.Zero) return 0;
             EncodeQueuedSpeechLocked(padPartialFrame: true);
             return _txOutCount;
@@ -424,7 +424,7 @@ public sealed unsafe partial class FreeDvModemService : IAudioModemPlugin, IHost
             RxText: rxText.Length == 0 ? null : rxText,
             TxText: _txText.Length == 0 ? null : _txText,
             LibraryVersion: sub == FreeDvSubmode.RadeV1
-                ? (RadeAvailable ? "zeus_rade (RADE V1 + FARGAN)" : null)
+                ? (RadeEngineName ?? (RadeAvailable ? (RadeEngines.NativeRequested ? "zeus_rade (native RADE V1 + FARGAN)" : "RadeSharp (managed RADE V1 + FARGAN)") : null))
                 : FreeDvNative.ApiVersion is int v ? $"libcodec2 1.2.0 (freedv_api v{v})" : null,
             AutoDetect: _autoDetect,
             RadeAvailable: RadeAvailable);

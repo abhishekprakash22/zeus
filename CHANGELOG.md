@@ -12,6 +12,16 @@ see the corresponding GitHub Release page.
 
 ## [Unreleased]
 
+### 🐧 Linux x86_64 AppImage
+
+- **Releases now ship x86_64 AppImages alongside the arm64 ones.** A G2 /
+  G2E (or any other radio) driven from an ordinary Linux PC can run the same
+  desktop and server AppImages as the G2 Ultra's onboard Pi 5:
+  `OpenhpsdrZeus-<version>-linux-x86_64.AppImage` and
+  `OpenhpsdrZeus-Server-<version>-linux-x86_64.AppImage`. The release's
+  `latest.json` lists both arches, so the built-in updater keeps each install
+  on its own build.
+
 ### 🎙️ FreeDV — digital voice RX + TX now ships in core
 
 - **FreeDV works out of the box — nothing to install.** The FreeDV modem

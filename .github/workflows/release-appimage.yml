@@ -1,11 +1,19 @@
-# Build and publish the Linux arm64 AppImages + the updater manifest on every
-# version tag, so a fork can self-update from its own GitHub Releases.
+# Build and publish the Linux AppImages (arm64 and x86_64) + the updater
+# manifest on every version tag, so a fork can self-update from its own GitHub
+# Releases.
 #
 #   git tag v0.14.0 && git push origin v0.14.0
 #     -> Release "v0.14.0" with:
 #          OpenhpsdrZeus-0.14.0-linux-aarch64.AppImage
 #          OpenhpsdrZeus-Server-0.14.0-linux-aarch64.AppImage
+#          OpenhpsdrZeus-0.14.0-linux-x86_64.AppImage
+#          OpenhpsdrZeus-Server-0.14.0-linux-x86_64.AppImage
 #          latest.json        (RepoUpdateService manifest schema)
+#
+# arm64 is the onboard Pi 5 of the G2 Ultra; x86_64 is a G2 / G2E (or any
+# other radio) driven from an ordinary Linux PC. Each arch builds on its own
+# native runner; one publish job then writes a single latest.json listing all
+# four, because RepoUpdateService picks its asset by arch from that one file.
 #
 # The appliance then points the STOCK updater at the stable alias URL:
 #   ZEUS_UPDATE_MANIFEST_URL=https://github.com/<owner>/<repo>/releases/latest/download/latest.json
@@ -73,8 +81,16 @@ jobs:
 
   build:
     needs: freshness
-    # Native arm64 runner — the existing installer script runs unmodified.
-    runs-on: ubuntu-24.04-arm
+    name: Build AppImages (${{ matrix.rid }})
+    strategy:
+      matrix:
+        include:
+          # Native runners — the installer script runs unmodified on both.
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+          - rid: linux-x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -110,7 +126,7 @@ jobs:
 
       # Build the operator's manual PDF so the installer script stages it into
       # the AppImage (About -> Open the User Manual). Chromium is the headless
-      # print engine; the arm runner image does not ship a browser.
+      # print engine; the runner images do not ship a usable browser.
       - name: Build operator's manual PDF
         env:
           MANUAL_CHROME_EXTRA_FLAGS: "--no-sandbox --disable-dev-shm-usage"
@@ -124,14 +140,50 @@ jobs:
           chmod +x docs/manual/build.sh
           docs/manual/build.sh
 
-      - name: Build AppImages (linux-arm64)
+      - name: Build AppImages (${{ matrix.rid }})
         env:
           # appimagetool is itself an AppImage; runners have no FUSE.
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           bash installers/create-linux-desktop-appimage.sh \
-            "${{ steps.ver.outputs.version }}" linux-arm64
+            "${{ steps.ver.outputs.version }}" "${{ matrix.rid }}"
           ls -la installers/output/OpenhpsdrZeus*.AppImage
+
+      - name: Upload AppImages
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimages-${{ matrix.rid }}
+          # Only Zeus's own AppImages: the build script caches the downloaded
+          # appimagetool-<arch>.AppImage in the same folder, and a bare
+          # *.AppImage shipped that build tool as a release download.
+          path: installers/output/OpenhpsdrZeus*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/{0}', inputs.tag) }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          TAG="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect AppImages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: appimages-*
+          path: /tmp/release-artifacts
+          merge-multiple: true
 
       - name: Generate updater manifest (latest.json)
         env:
@@ -140,11 +192,15 @@ jobs:
           DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
           ZEUS_DOWNLOAD_VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          mkdir -p /tmp/release-artifacts
-          # Only Zeus's own AppImages: the build script caches the downloaded
-          # appimagetool-<arch>.AppImage in the same folder, and a bare
-          # *.AppImage shipped that build tool as a release download.
-          cp installers/output/OpenhpsdrZeus*.AppImage /tmp/release-artifacts/
+          ls -la /tmp/release-artifacts
+          # Both arches or none: a manifest missing one arch would leave those
+          # appliances without an update.
+          for arch in aarch64 x86_64; do
+            for kind in OpenhpsdrZeus OpenhpsdrZeus-Server; do
+              f="/tmp/release-artifacts/${kind}-${{ steps.ver.outputs.version }}-linux-${arch}.AppImage"
+              [ -f "$f" ] || { echo "missing $f"; exit 1; }
+            done
+          done
           echo '{}' > /tmp/empty-manifest.json
           node tools/update-download-manifest.mjs \
             /tmp/release-artifacts /tmp/empty-manifest.json /tmp/release-artifacts/latest.json

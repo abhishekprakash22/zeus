@@ -235,7 +235,10 @@ independently. The flag S-meters carry a peak-hold tick, and the S-meter
 and filter cards can be closed with ✕ (restore pills appear top-right).
 The S-meters ignore the receiver while you transmit (MOX, TUNE or 2TON)
 and for half a second after you unkey, so your own carrier never swings
-the needle or the peak-hold tick on the way back to receive.
+the needle or the peak-hold tick on the way back to receive. The analog
+meter's needle jumps straight to the new reading when it changes over
+between S (receive) and power (transmit), instead of gliding from where
+the other scale left it.
 On a keyboard, hold **Space** to transmit; release to return to receive.
 Audio
 follows the active receiver — the inactive pane is muted until you tap

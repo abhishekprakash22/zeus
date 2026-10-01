@@ -308,6 +308,12 @@ export function AnalogMeterPanel({
     swr: 1,
   });
   const avgRef = useRef<Averager>(makeAverager(cfg.avg));
+  // Scale the needle last read. On an RX<->TX switch the one physical needle
+  // changes what it measures, so its position, averager and peak ghost from
+  // the old scale mean nothing on the new one: carried over, an 80 W PO
+  // deflection read as S9+30 on unkey and decayed for seconds, and key-down
+  // had to climb out of the S reading before showing power.
+  const lastScaleRef = useRef<ScaleId | null>(null);
   useEffect(() => {
     avgRef.current.resize(cfg.avg);
   }, [cfg.avg]);
@@ -338,6 +344,8 @@ export function AnalogMeterPanel({
     // used to drag the always-mounted child subtree along with it.
     const PUBLISH_INTERVAL_MS = 33;
     let lastPublishMs = 0;
+    let snapToScale = lastScaleRef.current !== null && lastScaleRef.current !== activeScaleId;
+    lastScaleRef.current = activeScaleId;
 
     const loop = (now: number) => {
       raf = 0;
@@ -362,6 +370,12 @@ export function AnalogMeterPanel({
         raw = s.swr;
       }
       const targetN = Math.max(0, Math.min(1, activeScale.n(raw)));
+      if (snapToScale) {
+        snapToScale = false;
+        avgRef.current.reset();
+        s.needleN = targetN;
+        s.peakN = targetN;
+      }
       const avgedN = avgRef.current.push(targetN);
       s.needleN = ballistics(s.needleN, avgedN, dt, cfg.attack, cfg.decay);
 

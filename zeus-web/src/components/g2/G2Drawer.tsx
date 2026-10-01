@@ -55,6 +55,7 @@ import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
 import { disconnectAll } from '../../util/disconnect-all';
 import { setReceiverMuted, setTwoTone } from '../../api/client';
 import { useFastTap } from '../../util/fast-tap';
+import { toggleRadioVfoLock } from '../../state/vfo-lock-actions';
 import { useRadioStore } from '../../state/radio-store';
 import { useTxStore } from '../../state/tx-store';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
@@ -110,12 +111,11 @@ function MuteKeyButton() {
 
 function VfoLockKeyButton() {
   const locked = useVfoLockStore((s) => s.locked);
-  const toggle = useVfoLockStore((s) => s.toggle);
   return (
     <button
       type="button"
       className={`btn ghost${locked ? ' active' : ''}`}
-      onClick={toggle}
+      onClick={toggleRadioVfoLock}
       title="Lock the VFO — touch tuning, scrolls, and band picks stop moving the dial"
     >
       LOCK

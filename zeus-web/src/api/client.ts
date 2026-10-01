@@ -492,6 +492,9 @@ export type RadioStateDto = {
   // the display on the tuned frequency. Toggled via setCtun → POST
   // /api/radio/ctun. See docs/prd/panfall_behavior.md.
   ctunEnabled: boolean;
+  // VFO lock, owned by the radio (G2 panel LOCK, TCI, MIDI, screen LOCK).
+  // Undefined from a server that predates the field.
+  vfoLocked?: boolean;
   ritEnabled: boolean;
   ritHz: number;
   // XIT (Thetis chkXIT/udXIT): TX carrier offset, the dial untouched. Can be
@@ -2681,6 +2684,7 @@ export function normalizeState(raw: unknown): RadioStateDto {
     cwPitchHz: typeof r.cwPitchHz === 'number' ? r.cwPitchHz : 600,
     // Legacy server without the field → CTUN off (classic recenter-on-click).
     ctunEnabled: typeof r.ctunEnabled === 'boolean' ? r.ctunEnabled : false,
+    vfoLocked: typeof r.vfoLocked === 'boolean' ? r.vfoLocked : undefined,
     ritEnabled: typeof r.ritEnabled === 'boolean' ? r.ritEnabled : false,
     ritHz: typeof r.ritHz === 'number' ? r.ritHz : 0,
     xitEnabled: typeof r.xitEnabled === 'boolean' ? r.xitEnabled : false,
@@ -5849,6 +5853,24 @@ export function setReceiverLo(
 // StateDto; on enable the hardware NCO is frozen at its current centre, on
 // disable it snaps back to the dial. See use-pan-tune-gesture.ts for how the
 // gesture changes when ctunEnabled flips.
+// VFO lock lives on the radio: the G2 front-panel LOCK, TCI, MIDI and this
+// call all set the same RadioService.VfoLocked, which SetVfo honours.
+export function setVfoLock(
+  locked: boolean,
+  signal?: AbortSignal,
+): Promise<RadioStateDto> {
+  return jsonFetch(
+    '/api/radio/vfo-lock',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ locked }),
+      signal,
+    },
+    normalizeState,
+  );
+}
+
 export function setCtun(
   enabled: boolean,
   signal?: AbortSignal,

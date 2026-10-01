@@ -64,6 +64,7 @@ import {
   setExposedReceiverCount,
 } from '../../state/receiver-state';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
+import { toggleRadioVfoLock } from '../../state/vfo-lock-actions';
 
 export function VfoPanel() {
   const applyState = useConnectionStore((s) => s.applyState);
@@ -78,7 +79,6 @@ export function VfoPanel() {
   const selectedRxIndices = useConnectionStore((s) => s.selectedRxIndices);
   const toggleRxSelection = useConnectionStore((s) => s.toggleRxSelection);
   const vfoLocked = useVfoLockStore((s) => s.locked);
-  const toggleVfoLock = useVfoLockStore((s) => s.toggle);
 
   const patchRx2 = (req: {
     enabled?: boolean;
@@ -245,7 +245,7 @@ export function VfoPanel() {
           <button
             type="button"
             className={`vfo-lock-key ${vfoLocked ? 'is-on' : ''}`}
-            onClick={toggleVfoLock}
+            onClick={toggleRadioVfoLock}
             title={
               vfoLocked
                 ? 'VFO LOCKED — click to unlock and tune'

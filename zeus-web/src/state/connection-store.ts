@@ -45,6 +45,7 @@
 
 import { create } from 'zustand';
 import { msSinceOptimisticTuneFor } from './view-center';
+import { useVfoLockStore } from './vfo-lock-store';
 
 // Optimistic-CTUN window: stamped by CtunButton on a local toggle; applyState
 // suppresses stream-applied ctunEnabled inside it (see the field comment).
@@ -347,7 +348,10 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         ),
       };
     }),
-  applyState: (s, opts) =>
+  applyState: (s, opts) => {
+    // The radio owns the VFO lock (front panel, TCI, MIDI and the screen key
+    // all set it), so every state snapshot drives the screen's lock flag.
+    if (typeof s.vfoLocked === 'boolean') useVfoLockStore.getState().setLocked(s.vfoLocked);
     set((prev) => {
       const trustVfo = opts?.trustVfo ?? true;
       return {
@@ -434,7 +438,8 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         rx2ZoomLevel: s.rx2ZoomLevel,
         workspaceZoomPct: s.workspaceZoomPct,
       };
-    }),
+    });
+  },
   setInflight: (inflight) => set({ inflight }),
   setBoardId: (boardId) => set({ boardId }),
   setConnectedProtocol: (connectedProtocol) => set({ connectedProtocol }),

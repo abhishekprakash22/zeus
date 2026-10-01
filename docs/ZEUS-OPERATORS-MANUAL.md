@@ -154,7 +154,8 @@ lives somewhere else swaps the two (the picker marks such keys with
 `⇄ set-number`), so duplicates cannot be created and no slot is ever
 blank. The stock arrangement covers every assignable key: set 1 **TUN /
 MON / PS / CTUN**, set 2 **SPLIT / RIT / DIV / MUTE** (mute follows the
-focused receiver), set 3 **LOCK** (VFO lock), **2TON** (two-tone test
+focused receiver), set 3 **LOCK** (VFO lock — the same lock as the front-panel LOCK button, so either one
+locks the dial, the knob and the screen, and both light together), **2TON** (two-tone test
 generator — this keys the transmitter, and its key lights TX red), **CW⌁**
 (the CW decoder), and **FULL SCR**. PRE joins the pool only on the one
 board where the preamp bit does anything. All keys carry the same

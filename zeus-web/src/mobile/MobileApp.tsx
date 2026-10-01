@@ -49,6 +49,7 @@ import { DriveSlider } from '../components/DriveSlider';
 import { MicGainSlider } from '../components/MicGainSlider';
 import { TunePowerSlider } from '../components/TunePowerSlider';
 import { levelsLockUnset, useVfoLockStore } from '../state/vfo-lock-store';
+import { toggleRadioVfoLock } from '../state/vfo-lock-actions';
 import { G2_THEMES, useG2ThemeStore } from '../state/g2-theme-store';
 import { getReceiverMode } from '../state/receiver-state';
 import { saveReceiverBandModeMemory } from '../util/band-memory';
@@ -729,11 +730,10 @@ function SMeterSection() {
 // without depending on emoji font availability.
 function VfoLockButton() {
   const locked = useVfoLockStore((s) => s.locked);
-  const toggle = useVfoLockStore((s) => s.toggle);
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={toggleRadioVfoLock}
       aria-pressed={locked}
       aria-label={locked ? 'VFO locked — tap to unlock' : 'VFO unlocked — tap to lock'}
       title={locked ? 'VFO locked — tap to unlock' : 'Lock VFO'}

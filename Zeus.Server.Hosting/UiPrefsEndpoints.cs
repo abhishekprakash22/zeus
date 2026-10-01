@@ -45,6 +45,15 @@ public static class UiPrefsEndpoints
         return Path.Combine(dir, "ui-spec-frac.json");
     }
 
+    private static string FlagScalePath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-flag-scale.json");
+    }
+
+    internal static double ClampFlagScale(double scale) =>
+        double.IsFinite(scale) ? Math.Clamp(scale, 1.0, 2.0) : 1.0;
+
     public static IEndpointRouteBuilder MapUiPrefsEndpoints(this IEndpointRouteBuilder app)
     {
         // Pan/waterfall split per receiver (field request ×2: localStorage
@@ -107,6 +116,38 @@ public static class UiPrefsEndpoints
             return Results.Ok(new { rx = req.Rx, frac });
         });
 
+        // G2 receiver-flag scale (field request: flag text and mini S-meter
+        // too small on the 8-inch panel). One value for both flags; same
+        // durable-directory pattern as spec-frac so the kiosk keeps it.
+        app.MapGet("/api/ui/flag-scale", () =>
+        {
+            try
+            {
+                var path = FlagScalePath();
+                if (!File.Exists(path)) return Results.Ok(new { scale = 1.0 });
+                var stored = System.Text.Json.JsonSerializer.Deserialize<FlagScaleRequest>(
+                    File.ReadAllText(path));
+                return Results.Ok(new { scale = ClampFlagScale(stored?.Scale ?? 1.0) });
+            }
+            catch { return Results.Ok(new { scale = 1.0 }); }
+        });
+        app.MapPost("/api/ui/flag-scale", (FlagScaleRequest req) =>
+        {
+            var scale = ClampFlagScale(req.Scale);
+            try
+            {
+                var path = FlagScalePath();
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new FlagScaleRequest(scale)));
+                return Results.Ok(new { scale });
+            }
+            catch (Exception)
+            {
+                // Read-only data dir etc. — preference storage is best-effort.
+                return Results.Ok(new { scale, persisted = false });
+            }
+        });
+
         // PureSignal persistence (field request: the PS button forgot its
         // state across sessions). Same marker-file pattern as
         // kiosk-fullscreen; the frontend re-arms PS through the normal
@@ -162,4 +203,6 @@ public static class UiPrefsEndpoints
     public sealed record KioskFullscreenRequest(bool On);
 
 public sealed record SpecFracRequest(int Rx, double Frac);
+
+public sealed record FlagScaleRequest(double Scale);
 }

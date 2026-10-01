@@ -79,6 +79,10 @@ function isEditableTarget(el: EventTarget | null): boolean {
   return el.isContentEditable;
 }
 
+
+/** Space release is held this long so an auto-repeat keyup/keydown pair never unkeys. */
+export const SPACE_RELEASE_GRACE_MS = 80;
+
 /**
  * Window-scoped arrow-key shortcuts:
  *   ←/→             nudge the VFO down/up by the operator's selected tune step
@@ -101,6 +105,14 @@ export function useKeyboardShortcuts() {
     let zoomAbort: AbortController | null = null;
     let moxAbort: AbortController | null = null;
     let moxSeq = 0;
+    let spaceReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+    let spaceHeldMox = false;
+    const cancelSpaceRelease = () => {
+      if (spaceReleaseTimer !== null) {
+        clearTimeout(spaceReleaseTimer);
+        spaceReleaseTimer = null;
+      }
+    };
 
     const flushTune = () => {
       pendingRaf = 0;
@@ -171,12 +183,14 @@ export function useKeyboardShortcuts() {
         if (seq !== moxSeq) return;
         const current = useTxStore.getState();
         if (current.moxOn === on) return;
-        current.setMoxOn(on);
-        current.setLocalMicArmed(on);
         moxAbort?.abort();
         const ctrl = new AbortController();
         moxAbort = ctrl;
-        setMox(on, ctrl.signal).catch(() => {
+        // Request first, then the optimistic flip (see MoxButton).
+        const req = setMox(on, ctrl.signal);
+        current.setMoxOn(on);
+        current.setLocalMicArmed(on);
+        req.catch(() => {
           if (!ctrl.signal.aborted) {
             const t = useTxStore.getState();
             t.setMoxOn(!on);
@@ -234,7 +248,13 @@ export function useKeyboardShortcuts() {
           // e.repeat filters native autorepeat so we fire MOX-on exactly
           // once per physical press; release-handled MOX-off runs on keyup.
           e.preventDefault();
-          if (!e.repeat) driveMox(true);
+          // Any Space keydown (repeat or not) cancels a pending release: X11
+          // auto-repeat can deliver release/press pairs while the key is held.
+          cancelSpaceRelease();
+          if (!e.repeat) {
+            spaceHeldMox = true;
+            driveMox(true);
+          }
           break;
       }
     };
@@ -245,15 +265,35 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         // Drop MOX regardless of connection state — if we somehow keyed
         // during a brief reconnect window, releasing still clears the latch.
+        // Deferred by SPACE_RELEASE_GRACE_MS so an auto-repeat release/press
+        // pair (keyup immediately followed by keydown) never unkeys.
+        cancelSpaceRelease();
+        spaceReleaseTimer = setTimeout(() => {
+          spaceReleaseTimer = null;
+          spaceHeldMox = false;
+          driveMox(false);
+        }, SPACE_RELEASE_GRACE_MS);
+      }
+    };
+
+    // Focus leaving the window swallows the keyup: unkey now rather than
+    // leave MOX latched.
+    const onBlur = () => {
+      cancelSpaceRelease();
+      if (spaceHeldMox) {
+        spaceHeldMox = false;
         driveMox(false);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      cancelSpaceRelease();
       if (pendingRaf !== 0) cancelAnimationFrame(pendingRaf);
       tuneAbort?.abort();
       zoomAbort?.abort();

@@ -158,7 +158,10 @@ focused receiver), set 3 **LOCK** (VFO lock), **2TON** (two-tone test
 generator — this keys the transmitter, and its key lights TX red), **CW⌁**
 (the CW decoder), and **FULL SCR**. PRE joins the pool only on the one
 board where the preamp bit does anything. All keys carry the same
-safeguards as their desktop originals, at finger size. A compact
+safeguards as their desktop originals, at finger size. On the touchscreen,
+**MOX**, **TUNE** and **2TON** act the moment your finger lifts, as fast as
+the front-panel buttons; sliding your finger off the key before lifting
+cancels the press. A compact
 FWD / SWR / ALC readout (label, bar, value) sits inline in the transport
 row.
 
@@ -230,6 +233,17 @@ and on the waterfall, each receiver's levels fully independent — plus ZOOM and
 multiplier docked bottom-right — each receiver zooms and scrolls
 independently. The flag S-meters carry a peak-hold tick, and the S-meter
 and filter cards can be closed with ✕ (restore pills appear top-right).
+Drag the small wedge at a flag's bottom-right corner to enlarge it, up to
+twice its size; everything on the flag grows together, both flags follow,
+and the radio remembers the size. The S-METER card's corner handle resizes
+the meter, and its S / PO / SWR readouts grow with the card.
+The S-meters ignore the receiver while you transmit (MOX, TUNE or 2TON)
+and for half a second after you unkey, so your own carrier never swings
+the needle or the peak-hold tick on the way back to receive. The analog
+meter's needle jumps straight to the new reading when it changes over
+between S (receive) and power (transmit), instead of gliding from where
+the other scale left it.
+On a keyboard, hold **Space** to transmit; release to return to receive.
 Audio
 follows the active receiver — the inactive pane is muted until you tap
 it (both unmute when you leave the layout). With the drawer on, the whole workspace

@@ -325,6 +325,8 @@ public sealed class TxAudioIngest : IDisposable
         _log = log;
         _handler = OnMicPcmBytesFromBrowserMic;
         _hub.MicPcmReceived += _handler;
+        _hub.SetMicUplinkExpectation(() =>
+            _isMoxOn() && !_txOwnedByTuneDriver() && ActiveSource == MicBlockSource.Host);
     }
 
     /// <summary>
@@ -666,6 +668,7 @@ public sealed class TxAudioIngest : IDisposable
     public void Dispose()
     {
         _hub.MicPcmReceived -= _handler;
+        _hub.SetMicUplinkExpectation(null);
     }
 
     /// <summary>

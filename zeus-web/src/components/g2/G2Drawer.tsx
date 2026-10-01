@@ -54,6 +54,7 @@ import { useConnectionStore } from '../../state/connection-store';
 import { useTxAudioProfileStore } from '../../state/tx-audio-profile-store';
 import { disconnectAll } from '../../util/disconnect-all';
 import { setReceiverMuted, setTwoTone } from '../../api/client';
+import { useFastTap } from '../../util/fast-tap';
 import { useRadioStore } from '../../state/radio-store';
 import { useTxStore } from '../../state/tx-store';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
@@ -128,16 +129,17 @@ function TwoToneKeyButton() {
   const f1 = useTxStore((s) => s.twoToneFreq1);
   const f2 = useTxStore((s) => s.twoToneFreq2);
   const mag = useTxStore((s) => s.twoToneMag);
+  const tapProps = useFastTap(() => {
+    const next = !on;
+    setOn(next);
+    void setTwoTone({ enabled: next, freq1: f1, freq2: f2, mag }).catch(() => setOn(!next));
+  });
   return (
     <button
       type="button"
       className="btn ghost"
       style={on ? { background: 'var(--tx, #e05252)', color: '#fff' } : undefined}
-      onClick={() => {
-        const next = !on;
-        setOn(next);
-        void setTwoTone({ enabled: next, freq1: f1, freq2: f2, mag }).catch(() => setOn(!next));
-      }}
+      {...tapProps}
       title="Two-tone test generator — KEYS THE TRANSMITTER at the PURESIGNAL tab's tone settings"
     >
       2TON
@@ -569,6 +571,7 @@ export function G2Drawer() {
           text-overflow: ellipsis;
         }
         .g2-drawer .g2-key button {
+          touch-action: manipulation;
           height: 100%;
           min-height: 48px;
           /* .g2-key > * forces display:flex on direct children; a plain

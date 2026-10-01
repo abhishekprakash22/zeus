@@ -499,7 +499,12 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
       scrollSpeed = Number.isFinite(speed) ? Math.max(0.25, Math.min(2.5, speed)) : 1;
     },
     clearHistory() {
-      if (texWidth > 0) resetTextures(texWidth);
+      // O(1): the draw shader returns the seed for every row older than
+      // validRows, so forgetting history is a counter reset. The old path
+      // re-allocated and re-uploaded four 4096-row R32F textures, which ran
+      // synchronously inside the MOX/TUNE store flip and delayed both the key
+      // indicator and the /api/tx request by a visible amount on the Pi.
+      validRows = 0;
     },
     draw(dbMin, dbMax, viewCenterHz = null, viewHzPerPixel = null) {
       // Coalescer flush: the accumulated rebase lands before this frame's

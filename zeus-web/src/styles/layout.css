@@ -5021,7 +5021,7 @@
   color: var(--tx);
   text-shadow: none;
 }
-.tx-btn { font-size: 14px; font-weight: 700; letter-spacing: 0.12em; min-width: 80px; }
+.tx-btn { font-size: 14px; font-weight: 700; letter-spacing: 0.12em; min-width: 80px; touch-action: manipulation; }
 .tx-btn.tx {
   --btn-top-c: #ff7a7a;
   --btn-bot-c: #c41515;

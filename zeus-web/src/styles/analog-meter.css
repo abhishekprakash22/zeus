@@ -177,6 +177,14 @@
   color: var(--fg-0);
   font-variant-numeric: tabular-nums;
 }
+/* Inside a G2 card the readout scales with the card's width (the dial face
+   already does, as SVG): text sizes at the 300 px default card are the
+   desktop sizes above, and grow with the card up to about twice that. */
+.g2-card .am-tile { container-type: inline-size; }
+.g2-card .am-ro { padding: clamp(8px, 2.7cqw, 16px) clamp(12px, 4cqw, 24px); }
+.g2-card .am-ro-label { font-size: clamp(9.5px, 3.17cqw, 19px); }
+.g2-card .am-ro-value { font-size: clamp(14px, 4.67cqw, 30px); }
+
 .am-ro.empty {
   color: var(--fg-3);
   font-size: 11px;

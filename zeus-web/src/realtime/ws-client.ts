@@ -60,6 +60,7 @@ import { AlertKind, useTxStore } from '../state/tx-store';
 import { normalizeState } from '../api/client';
 import { useBandPlanStore } from '../state/bandPlan';
 import { useRxMetersStore } from '../state/rx-meters-store';
+import { rxMetersAccepted } from '../state/rx-meter-gate';
 import { useAudioSuiteStore } from '../state/audio-suite-store';
 import { CW_STATE_FROM_BYTE, useCwStore } from '../state/cw-store';
 import { useSpotStore } from '../state/spot-store';
@@ -753,6 +754,7 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
         );
         return;
       }
+      if (!rxMetersAccepted()) return;
       const dbm = new DataView(ev.data).getFloat32(1, true);
       useTxStore.getState().setRxDbm(dbm);
       return;
@@ -765,6 +767,7 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
         );
         return;
       }
+      if (!rxMetersAccepted()) return;
       const dv = new DataView(ev.data);
       useRxMetersStore.getState().setMeters({
         signalPk: dv.getFloat32(1, true),
@@ -785,6 +788,7 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
         );
         return;
       }
+      if (!rxMetersAccepted()) return;
       const dv = new DataView(ev.data);
       useRxMetersStore.getState().setReceiverMeters(dv.getUint8(1), {
         signalPk: dv.getFloat32(2, true),

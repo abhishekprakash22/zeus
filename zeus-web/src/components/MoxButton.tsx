@@ -45,6 +45,7 @@
 
 import { useCallback } from 'react';
 import { setMox } from '../api/client';
+import { useFastTap } from '../util/fast-tap';
 import { preArmRemoteMicFromGesture } from '../remote/remote-client';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -70,20 +71,24 @@ export function MoxButton() {
     void (async () => {
       // PERF_PASS_3_DEBUG: t0 — operator-initiated MOX edge wall-clock. Uncommitted.
       console.log('mox.client.release', performance.now(), 'next=', next);
+      // Request first, then the optimistic flip: store subscribers run
+      // synchronously on moxOn, and the radio must not wait behind them.
+      const req = setMox(next);
       setMoxOn(next);
       setLocalMicArmed(next);
-      setMox(next).catch(() => {
+      req.catch(() => {
         setMoxOn(!next);
         setLocalMicArmed(!next);
       });
     })();
   }, [moxOn, setMoxOn, setLocalMicArmed]);
+  const tapProps = useFastTap(click);
 
   return (
     <button
       type="button"
       disabled={!connected}
-      onClick={click}
+      {...tapProps}
       className={`btn tx-btn ${moxOn ? 'tx' : ''}`}
       title={moxOn ? 'MOX on — transmitting' : 'MOX off (hold Space to key)'}
     >

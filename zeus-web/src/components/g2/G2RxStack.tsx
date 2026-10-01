@@ -52,6 +52,7 @@ import {
 } from '../../state/receiver-state';
 import { setReceiverMuted, setReceiver } from '../../api/client';
 import { useToolbarFavoritesStore } from '../../state/toolbar-favorites-store';
+import { useG2FlagScaleStore } from '../../state/g2-flag-scale-store';
 
 const RATIO_H = 10;
 
@@ -247,6 +248,18 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
   const stepHz = useToolbarFavoritesStore((s) => s.stepHz);
   const setStepHz = useToolbarFavoritesStore((s) => s.setStepHz);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // Flag scale (shared by both flags), dragged from the flag's corner grip.
+  const flagScale = useG2FlagScaleStore((s) => s.scale);
+  const setFlagScale = useG2FlagScaleStore((s) => s.setScale);
+  const commitFlagScale = useG2FlagScaleStore((s) => s.commit);
+  const seedFlagScale = useG2FlagScaleStore((s) => s.seed);
+  useEffect(() => seedFlagScale(), [seedFlagScale]);
+  const flagGripDrag = useRef<{ x: number; y: number; scale: number } | null>(null);
+  const endFlagGrip = () => {
+    if (!flagGripDrag.current) return;
+    flagGripDrag.current = null;
+    commitFlagScale();
+  };
   // Live value for the AGC-T slider while it is being dragged.
   //
   // The input is bound to the store, and the store only moves when the write
@@ -456,8 +469,18 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
           // edit + per-digit wheel) — nothing left to bury under cards, which
           // retired the keypad and its whole z-order fight (field reports ×2).
           zIndex: popoverOpen ? 60 : 6,
+          transform: flagScale !== 1 ? `scale(${flagScale})` : undefined,
+          transformOrigin: 'top left',
         }}
         onPointerDownCapture={(e) => {
+          // The resize grip is handled here: this capture-phase
+          // stopPropagation keeps pointerdown from ever reaching children.
+          const grip = (e.target as HTMLElement).closest?.('[data-g2-flag-grip]') as HTMLElement | null;
+          if (grip) {
+            flagGripDrag.current = { x: e.clientX, y: e.clientY, scale: flagScale };
+            grip.setPointerCapture(e.pointerId);
+            e.preventDefault();
+          }
           // Flag taps are flag business — they must not tune the pane
           // underneath; they DO activate the receiver so one tap works.
           e.stopPropagation();
@@ -543,6 +566,21 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
             </span>
           ))}
         </div>
+        {/* Resize grip: drag right/down to enlarge the flag (1x-2x). The
+            drag delta is in screen pixels, so divide by the unscaled width. */}
+        <span
+          data-g2-flag-grip
+          style={flagGrip}
+          title="Drag to resize the receiver flag"
+          onPointerMove={(e) => {
+            const d = flagGripDrag.current;
+            if (!d) return;
+            const delta = Math.max(e.clientX - d.x, e.clientY - d.y);
+            setFlagScale(d.scale + delta / FLAG_BASE_W);
+          }}
+          onPointerUp={endFlagGrip}
+          onPointerCancel={endFlagGrip}
+        />
         {popoverOpen ? (
           <div style={popover}>
             <label style={popRow}>
@@ -772,7 +810,7 @@ function G2Card({
     box.x < 0 ? { right: -box.x, top: box.y } : { left: box.x, top: box.y };
 
   return (
-    <div style={{ ...cardShell, ...pos, width: box.w, height: box.h }}>
+    <div className="g2-card" style={{ ...cardShell, ...pos, width: box.w, height: box.h }}>
       <div
         style={cardGrip}
         onPointerDown={begin('move')}
@@ -1123,12 +1161,14 @@ const dividerGrip: CSSProperties = {
   background: 'var(--fg-3, #6a727d)',
 };
 
+const FLAG_BASE_W = 218;
+
 const flag: CSSProperties = {
   position: 'absolute',
   top: 8,
   left: 10,
   zIndex: 6,
-  width: 218,
+  width: FLAG_BASE_W,
   boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
@@ -1137,6 +1177,21 @@ const flag: CSSProperties = {
   borderRadius: 6,
   border: '1px solid var(--line, #32373f)',
   background: 'rgba(27, 30, 35, 0.88)',
+};
+
+// Bottom-right corner grip: a small visible wedge with a finger-sized hit
+// area (the flag itself is scaled, so the grip grows with it).
+const flagGrip: CSSProperties = {
+  position: 'absolute',
+  right: 0,
+  bottom: 0,
+  width: 22,
+  height: 22,
+  cursor: 'nwse-resize',
+  touchAction: 'none',
+  background:
+    'linear-gradient(135deg, transparent 0 58%, var(--fg-3, #6a727d) 58% 66%, transparent 66% 74%, var(--fg-3, #6a727d) 74% 82%, transparent 82%)',
+  borderBottomRightRadius: 6,
 };
 
 const flagActive: CSSProperties = {

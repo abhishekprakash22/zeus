@@ -45,6 +45,7 @@
 
 import { useCallback } from 'react';
 import { setMox } from '../api/client';
+import { useFastTap } from '../util/fast-tap';
 import { preArmRemoteMicFromGesture } from '../remote/remote-client';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -78,12 +79,13 @@ export function MoxButton() {
       });
     })();
   }, [moxOn, setMoxOn, setLocalMicArmed]);
+  const tapProps = useFastTap(click);
 
   return (
     <button
       type="button"
       disabled={!connected}
-      onClick={click}
+      {...tapProps}
       className={`btn tx-btn ${moxOn ? 'tx' : ''}`}
       title={moxOn ? 'MOX on — transmitting' : 'MOX off (hold Space to key)'}
     >

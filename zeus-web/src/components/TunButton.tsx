@@ -45,6 +45,7 @@
 
 import { useCallback } from 'react';
 import { setTun } from '../api/client';
+import { useFastTap } from '../util/fast-tap';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
 
@@ -66,12 +67,13 @@ export function TunButton() {
       setTunOn(!next);
     });
   }, [tunOn, setTunOn]);
+  const tapProps = useFastTap(click);
 
   return (
     <button
       type="button"
       disabled={!connected}
-      onClick={click}
+      {...tapProps}
       className={`btn tx-btn ${tunOn ? 'active' : ''}`}
       title={
         tunOn

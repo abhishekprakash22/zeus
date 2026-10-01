@@ -158,7 +158,10 @@ focused receiver), set 3 **LOCK** (VFO lock), **2TON** (two-tone test
 generator — this keys the transmitter, and its key lights TX red), **CW⌁**
 (the CW decoder), and **FULL SCR**. PRE joins the pool only on the one
 board where the preamp bit does anything. All keys carry the same
-safeguards as their desktop originals, at finger size. A compact
+safeguards as their desktop originals, at finger size. On the touchscreen,
+**MOX**, **TUNE** and **2TON** act the moment your finger lifts, as fast as
+the front-panel buttons; sliding your finger off the key before lifting
+cancels the press. A compact
 FWD / SWR / ALC readout (label, bar, value) sits inline in the transport
 row.
 

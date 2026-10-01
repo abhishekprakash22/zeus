@@ -308,6 +308,38 @@ public sealed class TxEgressHealthDiagnosticsTests
     }
 
     [Fact]
+    public void StreamingHubMicInboundDiagnostics_AgedUplinkIsIdleWhenTxDoesNotExpectMic()
+    {
+        var hub = new StreamingHub(NullLogger<StreamingHub>.Instance);
+        hub.MicPcmReceived += _ => { };
+        hub.SetMicUplinkExpectation(() => false);
+
+        byte[] wire = new byte[1 + 3840];
+        wire[0] = 0x20;
+        hub.DispatchInbound(wire);
+
+        var diag = hub.MicInboundDiagnosticsSnapshot(DateTimeOffset.UtcNow.AddMinutes(18));
+
+        Assert.Equal("idle", diag.Status);
+        Assert.Contains("not a fault", diag.DiagnosticRecommendation);
+    }
+
+    [Fact]
+    public void StreamingHubMicInboundDiagnostics_AgedUplinkExpiresWhenTxExpectsMic()
+    {
+        var hub = new StreamingHub(NullLogger<StreamingHub>.Instance);
+        hub.MicPcmReceived += _ => { };
+        hub.SetMicUplinkExpectation(() => true);
+
+        byte[] wire = new byte[1 + 3840];
+        wire[0] = 0x20;
+        hub.DispatchInbound(wire);
+
+        Assert.Equal("stale", hub.MicInboundDiagnosticsSnapshot(DateTimeOffset.UtcNow.AddSeconds(3)).Status);
+        Assert.Equal("expired", hub.MicInboundDiagnosticsSnapshot(DateTimeOffset.UtcNow.AddMinutes(18)).Status);
+    }
+
+    [Fact]
     public void StreamingHubMicInboundDiagnostics_FlagsMalformedMicPcmFrames()
     {
         var hub = new StreamingHub(NullLogger<StreamingHub>.Instance);

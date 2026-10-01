@@ -531,13 +531,19 @@ function buildTuningMetrics(args: {
     const live = snapshot.micUplinkStatus === 'live';
     const unavailable =
       snapshot.micUplinkStatus === 'unavailable' || snapshot.micUplinkStatus === 'unknown';
+    const resting =
+      snapshot.micUplinkStatus === 'waiting-for-mic' || snapshot.micUplinkStatus === 'idle';
     metrics.push(metric(
       'uplink',
       'UPLINK',
       snapshot.micUplinkStatus.toUpperCase(),
-      live ? 'met' : unavailable || snapshot.micUplinkStatus === 'waiting-for-mic' ? 'idle' : 'warn',
+      live ? 'met' : unavailable || resting ? 'idle' : 'warn',
       'LIVE',
-      live ? 'Mic uplink is live.' : 'Mic uplink is not delivering fresh speech frames.',
+      live
+        ? 'Mic uplink is live.'
+        : resting
+          ? 'Mic uplink is idle until TX keys on the Host mic.'
+          : 'Mic uplink is not delivering fresh speech frames.',
     ));
   }
 

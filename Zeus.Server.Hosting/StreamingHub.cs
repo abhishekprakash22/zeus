@@ -251,7 +251,7 @@ public sealed class StreamingHub
         long frames = System.Threading.Interlocked.Read(ref _micUplinkFrames);
         long invalid = System.Threading.Interlocked.Read(ref _micUplinkInvalidFrames);
         long oversize = System.Threading.Interlocked.Read(ref _micUplinkOversizeMessages);
-        string status = MicUplinkStatus(frames, invalid, oversize, ageMs, MicPcmReceived is not null);
+        string status = MicUplinkStatus(frames, invalid, oversize, ageMs, MicPcmReceived is not null, MicUplinkExpected());
         return new TxMicUplinkDiagnosticsDto(
             SchemaVersion: 1,
             Status: status,
@@ -272,13 +272,14 @@ public sealed class StreamingHub
             DiagnosticRecommendation: MicUplinkRecommendation(status));
     }
 
-    private static string MicUplinkStatus(long frames, long invalidFrames, long oversizeMessages, double? ageMs, bool subscriberAttached)
+    private static string MicUplinkStatus(long frames, long invalidFrames, long oversizeMessages, double? ageMs, bool subscriberAttached, bool txExpectsMic)
     {
         if (!subscriberAttached) return "no-subscriber";
         if (frames <= 0)
             return invalidFrames > 0 || oversizeMessages > 0 ? "invalid-only" : "waiting-for-mic";
         if (ageMs is null) return "unknown";
         if (ageMs <= 1000.0) return "live";
+        if (!txExpectsMic) return "idle";
         if (ageMs <= 5000.0) return "stale";
         return "expired";
     }
@@ -289,8 +290,9 @@ public sealed class StreamingHub
         "invalid-only" => "Mic uplink frames are arriving but have invalid size or were oversized; verify the browser/native worklet is sending 960 f32 samples per frame.",
         "waiting-for-mic" => "No client mic PCM frames have reached the websocket uplink yet; grant mic permission, start native capture, or feed TCI/WAV audio before judging TX fidelity.",
         "live" => "Mic PCM uplink is live; continue through ingest, TXA stage meters, DUC packets, RF power, and PureSignal feedback for end-to-end TX fidelity tuning.",
+        "idle" => "Mic uplink is idle: TX is not keyed on the Host mic source, and clients stream PCM only while keyed or monitoring. Last-frame age is history, not a fault.",
         "stale" => "Mic PCM uplink was recently active but is not fresh; watch for browser sleep, muted capture, websocket stalls, or native audio device changes.",
-        "expired" => "Mic PCM uplink is stale; TX may be keyed without fresh speech samples, so verify client capture before increasing drive or processing density.",
+        "expired" => "Mic PCM uplink is stale while TX is keyed on the Host mic source; TX is running without fresh speech samples, so verify client capture before increasing drive or processing density.",
         _ => "Mic uplink status is unknown; use ingest counters and TXA stage meters to verify whether speech samples are moving.",
     };
 
@@ -315,6 +317,21 @@ public sealed class StreamingHub
     /// WS receive loop and blocking it will stall further uplink.
     /// </summary>
     public event Action<ReadOnlyMemory<byte>>? MicPcmReceived;
+
+    // Whether TX currently wants client mic PCM (keyed, Host source, not owned
+    // by the TUN driver). Clients stream mic only while keyed or monitoring, so
+    // an aging last frame is a fault only when this is true. Set by
+    // TxAudioIngest; null (tests, no ingest) keeps the strict reading.
+    private volatile Func<bool>? _micUplinkExpected;
+
+    internal void SetMicUplinkExpectation(Func<bool>? expected) => _micUplinkExpected = expected;
+
+    private bool MicUplinkExpected()
+    {
+        if (_micUplinkExpected is not { } expected) return true;
+        try { return expected(); }
+        catch { return true; }
+    }
 
     public Task AttachClientAsync(WebSocket ws, CancellationToken ct) => AttachClientAsync(ws, isLocal: false, ct);
 

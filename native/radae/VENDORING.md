@@ -1,5 +1,12 @@
 # native/radae — RADE V1 (Radio Autoencoder) vendoring
 
+> **STATUS (2026-09-30): FALLBACK ONLY.** RADEV1 now runs on the managed
+> RadeSharp engine by default (`external/RadeSharp` submodule, see
+> `Zeus.Server.Hosting/FreeDv/RadeEngine.cs`). This native shim is kept as a
+> fallback, selected with `ZEUS_RADE_ENGINE=native`, until the managed engine
+> has proven itself on air. After that, this directory and `build-rade.yml`
+> can go.
+
 > **STATUS (2026-09-19): BUILT AND WIRED IN.** `zeus_rade` (radae_c + opus_dnn
 > FARGAN/LPCNet + freedv_text + the shim) builds from this directory via
 > `.github/workflows/build-rade.yml`, vendoring the slices from `sv1eia/Thetis-RADE`

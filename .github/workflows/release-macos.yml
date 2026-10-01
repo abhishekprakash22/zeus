@@ -113,6 +113,10 @@ jobs:
           cp docs/manual/build/Zeus-Operator-Manual.pdf Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
           ls -la Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
 
+      # Managed RADE engine (RadeSharp) is a git submodule referenced by
+      # Zeus.Server.Hosting; the .NET build needs its sources.
+      - name: Init RadeSharp submodule (managed RADE engine)
+        run: git submodule update --init external/RadeSharp
       - name: Publish (osx-arm64, self-contained)
         run: |
           dotnet publish OpenhpsdrZeus/OpenhpsdrZeus.csproj \

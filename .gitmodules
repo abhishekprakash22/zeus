@@ -1,3 +1,6 @@
 [submodule "zeus-web/external/deepcw-engine"]
 	path = zeus-web/external/deepcw-engine
 	url = https://github.com/e04/deepcw-engine
+[submodule "external/RadeSharp"]
+	path = external/RadeSharp
+	url = https://github.com/rampa069/RadeSharp.git

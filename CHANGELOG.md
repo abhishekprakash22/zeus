@@ -31,6 +31,19 @@ see the corresponding GitHub Release page.
   radae_c with the Opus FARGAN vocoder, weights compiled in) runs beside the
   classic Codec 2 path (Linux, Windows x64 and macOS), and the End-of-Over
   callsign is decoded. *(#4)*
+- **RADEV1 now runs on a managed engine, on every platform.** RADE V1 uses
+  [RadeSharp](https://github.com/rampa069/RadeSharp) by default: a C# port of
+  rade_c, the FARGAN vocoder, LPCNet and the FreeDV EOO callsign codec whose
+  output matches the C code bit for bit. It needs no native library, so
+  RADEV1 now also works where `libzeus_rade` was never built (macOS x64,
+  Windows arm64). The native shim remains as a fallback: set
+  `ZEUS_RADE_ENGINE=native` to use it. The two engines interoperate on air in
+  both directions.
+- **RADEV2, receive and transmit.** RADE V2 is a new FreeDV submode next to
+  RADEV1, running on RadeSharp. It includes the SSB TX band-pass filter, RX
+  AGC, and FrameSync, and auto-detect scans it right after RADEV1. RADE V2 has
+  no End-of-Over callsign. Upstream V2 may still change incompatibly; the
+  RadeSharp submodule follows it.
 - **FreeDV Reporter is connected.** The stations panel shows the live
   qso.freedv.org station list (view only, no personal data sent). Opt in with
   your callsign and grid and Zeus reports your frequency, your transmissions

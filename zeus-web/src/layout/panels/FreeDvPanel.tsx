@@ -280,9 +280,9 @@ export function FreeDvPanel() {
           </button>
           {FREEDV_SUBMODES.map((m) => {
             const isCurrent = status.submode === m.value;
-            // RADEV1 needs the native RADE library (libzeus_rade); where it isn't
-            // packaged, mark it as not-ready but still selectable so the operator
-            // sees the explanatory notice rather than a silently dead button.
+            // The RADE submodes need a RADE engine; where none can run, mark them
+            // not-ready but still selectable so the operator sees the explanatory
+            // notice rather than a silently dead button.
             const radeUnavailable = m.rade === true && !status.radeAvailable;
             // When scanning, dim the 'active' look on the tried mode so AUTO is
             // visually the engaged control, not the transient submode.
@@ -299,10 +299,12 @@ export function FreeDvPanel() {
                 className={`btn sm ${cls}`}
                 title={
                   radeUnavailable
-                    ? 'RADEV1 — neural Radio Autoencoder (native decoder not packaged for this platform)'
-                    : m.rade === true
+                    ? `${m.label} — neural Radio Autoencoder (decoder not available on this platform)`
+                    : m.value === 'RadeV1'
                       ? 'RADEV1 — neural Radio Autoencoder (RX + TX, LDPC callsign)'
-                      : `FreeDV ${m.label}${isCurrent && status.autoDetect && !status.synced ? ' (scanning)' : ''}`
+                      : m.value === 'RadeV2'
+                        ? 'RADEV2 — neural Radio Autoencoder V2 (RX + TX)'
+                        : `FreeDV ${m.label}${isCurrent && status.autoDetect && !status.synced ? ' (scanning)' : ''}`
                 }
                 style={
                   isCurrent && status.autoDetect && !status.synced
@@ -323,7 +325,7 @@ export function FreeDvPanel() {
       {/* RADEV1 selected but the native RADE binary isn't present for this
           platform — be explicit so the operator understands why it won't decode,
           instead of chasing a "silent" mode the way a missing codec2 would look. */}
-      {status.submode === 'RadeV1' && !status.radeAvailable && (
+      {(status.submode === 'RadeV1' || status.submode === 'RadeV2') && !status.radeAvailable && (
         <div
           className="label-xs"
           style={{
@@ -335,9 +337,9 @@ export function FreeDvPanel() {
             lineHeight: 1.45,
           }}
         >
-          <strong>RADEV1</strong> is FreeDV's neural (Radio Autoencoder) mode. Its
-          native library isn't included in this build for your platform, so this
-          mode won't produce audio. Use <strong>700D / 700E / 1600</strong> instead.
+          <strong>RADE</strong> is FreeDV's neural (Radio Autoencoder) mode. Its
+          decoder isn't available in this build for your platform, so this mode
+          won't produce audio. Use <strong>700D / 700E / 1600</strong> instead.
         </div>
       )}
 

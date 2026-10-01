@@ -71,9 +71,12 @@ export function MoxButton() {
     void (async () => {
       // PERF_PASS_3_DEBUG: t0 — operator-initiated MOX edge wall-clock. Uncommitted.
       console.log('mox.client.release', performance.now(), 'next=', next);
+      // Request first, then the optimistic flip: store subscribers run
+      // synchronously on moxOn, and the radio must not wait behind them.
+      const req = setMox(next);
       setMoxOn(next);
       setLocalMicArmed(next);
-      setMox(next).catch(() => {
+      req.catch(() => {
         setMoxOn(!next);
         setLocalMicArmed(!next);
       });

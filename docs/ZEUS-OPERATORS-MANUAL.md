@@ -233,6 +233,7 @@ and on the waterfall, each receiver's levels fully independent — plus ZOOM and
 multiplier docked bottom-right — each receiver zooms and scrolls
 independently. The flag S-meters carry a peak-hold tick, and the S-meter
 and filter cards can be closed with ✕ (restore pills appear top-right).
+On a keyboard, hold **Space** to transmit; release to return to receive.
 Audio
 follows the active receiver — the inactive pane is muted until you tap
 it (both unmute when you leave the layout). With the drawer on, the whole workspace

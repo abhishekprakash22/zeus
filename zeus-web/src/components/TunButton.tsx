@@ -62,8 +62,10 @@ export function TunButton() {
 
   const click = useCallback(() => {
     const next = !tunOn;
+    // Request first, then the optimistic flip (see MoxButton).
+    const req = setTun(next);
     setTunOn(next);
-    setTun(next).catch(() => {
+    req.catch(() => {
       setTunOn(!next);
     });
   }, [tunOn, setTunOn]);

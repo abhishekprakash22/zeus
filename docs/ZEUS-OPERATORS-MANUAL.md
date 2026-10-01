@@ -233,6 +233,10 @@ and on the waterfall, each receiver's levels fully independent — plus ZOOM and
 multiplier docked bottom-right — each receiver zooms and scrolls
 independently. The flag S-meters carry a peak-hold tick, and the S-meter
 and filter cards can be closed with ✕ (restore pills appear top-right).
+Drag the small wedge at a flag's bottom-right corner to enlarge it, up to
+twice its size; everything on the flag grows together, both flags follow,
+and the radio remembers the size. The S-METER card's corner handle resizes
+the meter, and its S / PO / SWR readouts grow with the card.
 The S-meters ignore the receiver while you transmit (MOX, TUNE or 2TON)
 and for half a second after you unkey, so your own carrier never swings
 the needle or the peak-hold tick on the way back to receive. The analog

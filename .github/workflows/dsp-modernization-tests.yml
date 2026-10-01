@@ -32,6 +32,10 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # Managed RADE engine (RadeSharp) is a git submodule referenced by
+      # Zeus.Server.Hosting; the .NET build needs its sources.
+      - name: Init RadeSharp submodule (managed RADE engine)
+        run: git submodule update --init external/RadeSharp
       - name: Restore .NET dependencies
         run: dotnet restore Zeus.slnx
 

@@ -8038,22 +8038,24 @@ export function setMicGain(
 
 export type FreeDvSubmode =
   | 'RadeV1'
+  | 'RadeV2'
   | 'Mode700D'
   | 'Mode700E'
   | 'Mode700C'
   | 'Mode1600'
   | 'Mode800XA';
 
-// Panel-facing submode order + short labels, matching freedv-gui 2.1.0's
-// selector (RADEV1, 700D, 700E, 1600). 700C/800XA remain valid on the backend
-// and in auto-detect's scan set, but freedv-gui retired them from its UI so we
-// mirror that here. `rade` marks the submode that needs the native RADE library.
+// Panel-facing submode order + short labels: freedv-gui 2.1.0's selector
+// (RADEV1, 700D, 700E, 1600) plus RADEV2. 700C/800XA remain valid on the
+// backend and in auto-detect's scan set, but freedv-gui retired them from its UI
+// so we mirror that here. `rade` marks the RADE (neural) submodes.
 export const FREEDV_SUBMODES: ReadonlyArray<{
   value: FreeDvSubmode;
   label: string;
   rade?: boolean;
 }> = [
   { value: 'RadeV1', label: 'RADEV1', rade: true },
+  { value: 'RadeV2', label: 'RADEV2', rade: true },
   { value: 'Mode700D', label: '700D' },
   { value: 'Mode700E', label: '700E' },
   { value: 'Mode1600', label: '1600' },
@@ -8076,8 +8078,9 @@ export type FreeDvStatusDto = {
   // Auto submode detection: while unsynced the modem cycles submodes until one
   // locks. `submode` reflects the live (possibly scanner-chosen) mode.
   autoDetect: boolean;
-  // True when the native RADE modem (libzeus_rade) loaded on this platform.
-  // When false, RADEV1 runs no decoder and the panel shows a gated state.
+  // True when a RADE engine can run on this platform (always with the managed
+  // RadeSharp engine). When false, the RADE submodes run no decoder and the
+  // panel shows a gated state.
   radeAvailable: boolean;
 };
 
@@ -8100,9 +8103,10 @@ const FREEDV_SUBMODE_NAMES: readonly FreeDvSubmode[] = [
   'Mode1600',
   'Mode800XA',
   'RadeV1',
+  'RadeV2',
 ];
 
-// Indexed by the C# FreeDvSubmode byte value (700D=0 … 800XA=4, RadeV1=5) for the
+// Indexed by the C# FreeDvSubmode byte value (700D=0 … 800XA=4, RadeV1=5, RadeV2=6) for the
 // defensive numeric path. Order here is the wire byte order, NOT the panel order.
 const FREEDV_SUBMODE_BY_BYTE: readonly FreeDvSubmode[] = [
   'Mode700D',
@@ -8111,6 +8115,7 @@ const FREEDV_SUBMODE_BY_BYTE: readonly FreeDvSubmode[] = [
   'Mode1600',
   'Mode800XA',
   'RadeV1',
+  'RadeV2',
 ];
 
 function normalizeFreeDvSubmode(v: unknown): FreeDvSubmode {
@@ -8229,7 +8234,7 @@ export type FreeDvStationDto = {
   callsign: string;
   gridSquare: string | null;
   freqHz: number;
-  mode: string;          // FreeDV submode as advertised, e.g. "1600","700D","700E","RADEV1"
+  mode: string;          // FreeDV submode as advertised, e.g. "1600","700D","700E","RADEV1","RADEV2"
   transmitting: boolean;
   rxOnly: boolean;
   message: string | null;

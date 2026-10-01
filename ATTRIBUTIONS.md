@@ -242,6 +242,19 @@ code; no native library is shipped for them.
   Ported in `Zeus.Server.Hosting/Digital/Wspr/`; licence in
   `Digital/Wspr/LICENSE.wsprd`.
 
+## RadeSharp: managed RADE engine (default)
+
+RADEV1 runs by default on [RadeSharp](https://github.com/rampa069/RadeSharp),
+included as the git submodule [`external/RadeSharp`](external/RadeSharp). It is
+a C# port of [freedv/rade_c](https://github.com/freedv/rade_c) (BSD-2-Clause,
+© David Rowe, Peter B Marks), of the Opus FARGAN vocoder, LPCNet analysis and
+DNN core (BSD-3-Clause, © Xiph.Org and contributors), and of the FreeDV
+reliable-text EOO codec: freedv-gui `rade_text.c` (BSD-2-Clause, © Mooneer
+Salem) plus the codec2 LDPC (**LGPL-2.1**, © David Rowe and contributors). The
+LGPL code sits in its own `RadeSharp.Text` assembly. Weights are embedded as
+exported from the upstream C tables. See the submodule's `NOTICE.md`. The
+native slices below remain as a fallback engine (`ZEUS_RADE_ENGINE=native`).
+
 ## RADE V1 (Radio Autoencoder — radae_c, opus_dnn, freedv_text)
 
 Zeus's RADE V1 (Radio Autoencoder) digital-voice mode builds a single shared

@@ -89,6 +89,10 @@ jobs:
           npm run build
         working-directory: zeus-web
 
+      # Managed RADE engine (RadeSharp) is a git submodule referenced by
+      # Zeus.Server.Hosting; the .NET build needs its sources.
+      - name: Init RadeSharp submodule (managed RADE engine)
+        run: git submodule update --init external/RadeSharp
       - name: Publish OpenhpsdrZeus (win-x64, self-contained)
         # Mirrors release.yml's publish step. Self-contained single binary that
         # serves both launch modes (service + --desktop). Version suffix lands

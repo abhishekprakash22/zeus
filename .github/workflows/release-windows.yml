@@ -112,6 +112,10 @@ jobs:
           cp docs/manual/build/Zeus-Operator-Manual.pdf Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
           ls -la Zeus.Server.Hosting/wwwroot/Zeus-Operator-Manual.pdf
 
+      # Managed RADE engine (RadeSharp) is a git submodule referenced by
+      # Zeus.Server.Hosting; the .NET build needs its sources.
+      - name: Init RadeSharp submodule (managed RADE engine)
+        run: git submodule update --init external/RadeSharp
       - name: Publish (win-x64, self-contained)
         # EXACTLY the dev pipeline's flags (build-windows-dev.yml) — its
         # 'single binary' comment is loose prose; the publish is

@@ -357,6 +357,7 @@ public sealed class FreeDvReporterService : IHostedService, IDisposable
         FreeDvSubmode.Mode1600 => "1600",
         FreeDvSubmode.Mode800XA => "800XA",
         FreeDvSubmode.RadeV1 => "RADEV1",
+        FreeDvSubmode.RadeV2 => "RADEV2",
         _ => m.ToString(),
     };
 

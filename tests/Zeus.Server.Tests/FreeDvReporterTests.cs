@@ -160,6 +160,7 @@ public sealed class FreeDvReporterTests : IDisposable
     public void ModeNames_MatchFreeDvGui()
     {
         Assert.Equal("RADEV1", FreeDvReporterService.ModeName(FreeDvSubmode.RadeV1));
+        Assert.Equal("RADEV2", FreeDvReporterService.ModeName(FreeDvSubmode.RadeV2));
         Assert.Equal("700D", FreeDvReporterService.ModeName(FreeDvSubmode.Mode700D));
         Assert.Equal("1600", FreeDvReporterService.ModeName(FreeDvSubmode.Mode1600));
     }

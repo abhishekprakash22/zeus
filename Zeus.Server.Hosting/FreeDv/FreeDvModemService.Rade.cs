@@ -5,8 +5,10 @@
 //                         Douglas J. Cerrato (KB2UKA),
 //                         Christian Suarez (N9WAR), and contributors.
 //
-// FreeDvModemService — RADE V1 path. RADE is not a freedv_open submode: it
-// has its own library (zeus_rade), complex modem IO and 16 kHz speech, so it
+// FreeDvModemService — RADE V1 / V2 path. RADE is not a freedv_open submode: it
+// has its own engine (IRadeEngine: managed RadeSharp by default, the native
+// zeus_rade shim as fallback — see RadeEngine.cs), complex modem IO and 16 kHz
+// speech, so it
 // runs beside the classic codec2 path rather than through it. Exactly one of
 // _f (codec2) / _rade is open at a time; both are guarded by _state and obey
 // the same realtime contract as the classic path (no allocation, no blocking,
@@ -14,11 +16,12 @@
 //
 // SIGNAL PATH:
 //   RX: 48 kHz demod audio → ÷6 → 8 kHz real → complex {re=x, im=0}
-//       → zeus_rade_rx per nin() → 16 kHz PCM → ×3 → in-place block.
-//   TX: 48 kHz mic → ÷3 → 16 kHz speech → zeus_rade_tx per n_speech frame
+//       → engine Rx per nin() → 16 kHz PCM → ×3 → in-place block.
+//   TX: 48 kHz mic → ÷3 → 16 kHz speech → engine Tx per n_speech frame
 //       → 8 kHz complex modem → real part → ×6 → in-place block.
 //       FinishTx() pads the last frame and appends the End-of-Over frame,
-//       which carries the callsign (first word of the TX text).
+//       which on RADEV1 carries the callsign (first word of the TX text).
+//       RADEV2 has no EOO callsign channel (rade_n_eoo_bits() == 0).
 //
 // LEVELS (freedv-gui 2.1.0 RADEReceiveStep / RADETransmitStep): RX feeds the
 // modem short/32767 — i.e. Zeus's float audio as-is; TX scales the modem's
@@ -28,11 +31,11 @@ using System.Runtime.InteropServices;
 
 namespace Zeus.Server.Hosting.FreeDv;
 
-public sealed unsafe partial class FreeDvModemService
+public sealed partial class FreeDvModemService
 {
     private const float RadeTxScale = 16383f / 32768f;
 
-    private IntPtr _rade;
+    private IRadeEngine? _rade;
     private int _radeNin;
     private readonly float[] _radeRxModemRing = new float[Ring8k];
 
@@ -51,7 +54,7 @@ public sealed unsafe partial class FreeDvModemService
     private int _rxCallsignSeq;
 
     /// <summary>
-    /// The last End-of-Over callsign decoded on RADEV1, if one arrived after
+    /// The last End-of-Over callsign decoded on RADEV1 (RADEV2 carries none), if one arrived after
     /// <paramref name="afterSeq"/>. Control-thread only (takes the state lock);
     /// used by the FreeDV Reporter to send rx_report once per heard over.
     /// </summary>
@@ -60,42 +63,45 @@ public sealed unsafe partial class FreeDvModemService
         lock (_state)
         {
             seq = _rxCallsignSeq;
-            callsign = seq != afterSeq && _rade != IntPtr.Zero ? new string(_rxText, 0, _rxTextLen) : "";
+            callsign = seq != afterSeq && _rade != null ? new string(_rxText, 0, _rxTextLen) : "";
             snrDb = (int)Math.Round(Interlocked.Read(ref _snrMilliDb) / 1000.0);
             return callsign.Length > 0;
         }
     }
 
-    /// <summary>True when libzeus_rade is loadable on this platform.</summary>
-    public static bool RadeAvailable => RadeNative.Available;
+    /// <summary>True when a RADE engine can run on this platform (always, with the managed engine).</summary>
+    public static bool RadeAvailable => RadeEngines.Available;
 
-    private bool OpenRadeLocked()
+    /// <summary>True for the RADE submodes (own engine and signal path).</summary>
+    internal static bool IsRade(FreeDvSubmode s) => s is FreeDvSubmode.RadeV1 or FreeDvSubmode.RadeV2;
+
+    /// <summary>Name of the open RADE engine, or null.</summary>
+    public string? RadeEngineName => Volatile.Read(ref _rade)?.Name;
+
+    private bool OpenRadeLocked(bool v2)
     {
-        if (!RadeNative.Available)
-        {
-            _log.LogInformation("freedv: RADEV1 selected but libzeus_rade is not available on this platform — modem idle");
-            return false;
-        }
-
-        IntPtr z;
-        try { z = RadeNative.Open(); }
+        string label = v2 ? "RADEV2" : "RADEV1";
+        IRadeEngine? z;
+        string? error;
+        try { z = RadeEngines.Open(v2, out error); }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "freedv: zeus_rade_open threw");
+            _log.LogWarning(ex, "freedv: RADE engine open threw");
             return false;
         }
-        if (z == IntPtr.Zero)
+        if (z == null)
         {
-            _log.LogWarning("freedv: zeus_rade_open returned NULL");
+            _log.LogInformation("freedv: {Mode} selected but no RADE engine could be opened ({Error}) — modem idle", label, error);
             return false;
         }
+        if (error != null) _log.LogWarning("freedv: {Error}; using {Engine}", error, z.Name);
 
-        int nin = RadeNative.Nin(z);
-        int ninMax = RadeNative.NinMax(z);
-        int maxPcm = RadeNative.MaxPcmPerRx(z);
-        int nSpeech = RadeNative.NSpeechSamples(z);
-        int nTxOut = RadeNative.NTxOut(z);
-        int nEoo = RadeNative.NTxEooOut(z);
+        int nin = z.Nin;
+        int ninMax = z.NinMax;
+        int maxPcm = z.MaxPcmPerRx;
+        int nSpeech = z.NSpeechSamples;
+        int nTxOut = z.NTxOut;
+        int nEoo = z.NTxEooOut;
         // The rings hold 32768 samples; one call's worth must fit several times
         // over or a steady stream would overflow them. max_pcm_per_rx is only
         // an upper bound (sizes the scratch buffer) — a steady decode yields
@@ -105,9 +111,9 @@ public sealed unsafe partial class FreeDvModemService
             || (nTxOut + nEoo) * 6 > Ring48k / 2)
         {
             _log.LogWarning(
-                "freedv: RADEV1 geometry unsupported (nin={Nin}/{NinMax} pcm={Pcm} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
-                nin, ninMax, maxPcm, nSpeech, nTxOut, nEoo);
-            RadeNative.Close(z);
+                "freedv: {Mode} geometry unsupported (nin={Nin}/{NinMax} pcm={Pcm} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
+                label, nin, ninMax, maxPcm, nSpeech, nTxOut, nEoo);
+            z.Dispose();
             return false;
         }
 
@@ -119,33 +125,33 @@ public sealed unsafe partial class FreeDvModemService
         _rade = z;
         _radeNin = nin;
         _nSpeech = nSpeech;           // RX priming threshold + TX frame size
-        _speechRateHz = RadeNative.SpeechSampleRate;
-        _modemRateHz = RadeNative.ModemSampleRate;
+        _speechRateHz = RadeNative.SpeechSampleRate;   // 16000, the zeus_rade.h / rade_api.h rates
+        _modemRateHz = RadeNative.ModemSampleRate;     // 8000
         ApplyRadeCallsignLocked();
 
         FlushRxLocked();
         FlushTxLocked();
         _log.LogInformation(
-            "freedv: opened RADEV1 (nin={Nin}/{NinMax} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
-            nin, ninMax, nSpeech, nTxOut, nEoo);
+            "freedv: opened {Mode} on {Engine} (nin={Nin}/{NinMax} nSpeech={NSpeech} txOut={TxOut} eoo={Eoo})",
+            label, z.Name, nin, ninMax, nSpeech, nTxOut, nEoo);
         return true;
     }
 
     private void CloseRadeLocked()
     {
-        if (_rade == IntPtr.Zero) return;
+        if (_rade == null) return;
         var z = _rade;
-        _rade = IntPtr.Zero;
-        try { RadeNative.Close(z); }
-        catch (Exception ex) { _log.LogDebug(ex, "freedv: zeus_rade_close threw"); }
+        _rade = null;
+        try { z.Dispose(); }
+        catch (Exception ex) { _log.LogDebug(ex, "freedv: RADE engine close threw"); }
     }
 
     /// <summary>RADE's EOO carries a callsign, not free text: the first word of the TX text.</summary>
     private void ApplyRadeCallsignLocked()
     {
-        if (_rade == IntPtr.Zero) return;
+        if (_rade == null) return;
         var first = _txText.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-        RadeNative.SetTxCallsign(_rade, first.Length == 0 ? "" : first[0].ToUpperInvariant());
+        _rade.SetTxCallsign(first.Length == 0 ? "" : first[0].ToUpperInvariant());
     }
 
     private void RadeProcessRxLocked(Span<float> block48k)
@@ -178,20 +184,18 @@ public sealed unsafe partial class FreeDvModemService
             }
             _rxModemCount -= _radeNin;
 
-            int nout;
-            fixed (float* pIq = _radeIqIn)
-            fixed (short* pPcm = _radePcmOut)
-                nout = RadeNative.Rx(_rade, pIq, pPcm);
-            _radeNin = RadeNative.Nin(_rade);
+            var rade = _rade!;
+            int nout = rade.Rx(_radeIqIn, _radePcmOut);
+            _radeNin = rade.Nin;
 
-            bool syncedNow = RadeNative.Sync(_rade) != 0;
+            bool syncedNow = rade.Sync;
             if (syncedNow && !_synced)
                 Interlocked.Exchange(ref _lastSyncOrSwitchTicks, Environment.TickCount64);
             _synced = syncedNow;
             if (syncedNow)
-                Interlocked.Exchange(ref _snrMilliDb, RadeNative.SnrDb(_rade) * 1000L);
+                Interlocked.Exchange(ref _snrMilliDb, rade.SnrDb * 1000L);
 
-            int csn = RadeNative.GetEooCallsign(_rade, _radeCallsign);
+            int csn = rade.GetEooCallsign(_radeCallsign);
             if (csn > 0)
             {
                 // A decoded callsign replaces the RX text line (it is per over).
@@ -265,9 +269,7 @@ public sealed unsafe partial class FreeDvModemService
         RadeEncodeQueuedSpeechLocked(padPartialFrame: true);
 
         // End-of-Over: carries the callsign so the far end can show who it was.
-        int n;
-        fixed (float* pOut = _radeIqOut)
-            n = RadeNative.TxEoo(_rade, pOut);
+        int n = _rade!.TxEoo(_radeIqOut);
         PushTxModemLocked(Math.Min(n, _radeIqOut.Length / 2));
         return _txOutCount;
     }
@@ -296,10 +298,7 @@ public sealed unsafe partial class FreeDvModemService
             }
             _txSpeechCount -= nSpeech;
 
-            int n;
-            fixed (short* pSpeech = _radeSpeechIn)
-            fixed (float* pOut = _radeIqOut)
-                n = RadeNative.Tx(_rade, pSpeech, pOut);
+            int n = _rade!.Tx(_radeSpeechIn, _radeIqOut);
             if (!PushTxModemLocked(Math.Min(n, _radeIqOut.Length / 2))) return;
         }
     }

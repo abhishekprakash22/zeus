@@ -118,6 +118,14 @@ jobs:
         with:
           ref: refs/tags/${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
 
+      # Managed RADE engine (RadeSharp) is a git submodule referenced by
+      # Zeus.Server.Hosting; the .NET publish needs its sources. Every other
+      # .NET workflow got this init with the RadeSharp merge; this one didn't,
+      # and v1.126 failed with CS0246 RadeSharp on both arches. After the
+      # dispatched-tag checkout so it inits the tag's pinned commit.
+      - name: Init RadeSharp submodule (managed RADE engine)
+        run: git submodule update --init external/RadeSharp
+
       - name: Resolve version from tag
         id: ver
         run: |

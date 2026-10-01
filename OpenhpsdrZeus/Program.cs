@@ -1599,6 +1599,17 @@ public partial class Program
         var lanHttpsPort = LanCertificate.GetHttpsPort();
         var lanIps = LanCertificate.GetLanIps();
         var lanRows = new System.Text.StringBuilder();
+        // Issue #69: rows were href='#' click-to-copy, so the status bar showed
+        // about:blank# and a click opened nothing (the copy could also fail
+        // silently in WebView2's about:blank origin). A row now opens its URL in
+        // the OS browser; the small copy button keeps the old behaviour. Only
+        // URLs this window offered may be opened: the page asks by message and
+        // the host checks the request against this set.
+        var localUrl = $"http://localhost:{httpPort}";
+        var offeredUrls = new HashSet<string>(StringComparer.Ordinal) { localUrl };
+        static string UrlRow(string label, string url, string extra = "") =>
+            $"<li><span class='lbl'>{label}</span><a class='url' href='{url}' data-url='{url}' title='Open in your browser'>{url}</a>{extra}<button class='copy' data-url='{url}' title='Copy address'>copy</button></li>";
+        var localRow = UrlRow("This device", localUrl);
         if (lanIps.Count > 0)
         {
             foreach (var ip in lanIps)
@@ -1610,8 +1621,12 @@ public partial class Program
                 // #844 — operators were landing on http:// and getting "mic
                 // unavailable"). Mirrors the console banner's "use this for
                 // microphone TX" marker.
-                lanRows.Append($"<li><span class='lbl'>LAN HTTPS</span><a class='url' href='#' data-url='https://{ip}:{lanHttpsPort}'>https://{ip}:{lanHttpsPort}</a><span class='tag'>microphone TX</span></li>");
-                lanRows.Append($"<li><span class='lbl'>LAN HTTP</span><a class='url' href='#' data-url='http://{ip}:{httpPort}'>http://{ip}:{httpPort}</a></li>");
+                var httpsUrl = $"https://{ip}:{lanHttpsPort}";
+                var httpUrl = $"http://{ip}:{httpPort}";
+                offeredUrls.Add(httpsUrl);
+                offeredUrls.Add(httpUrl);
+                lanRows.Append(UrlRow("LAN HTTPS", httpsUrl, "<span class='tag'>microphone TX</span>"));
+                lanRows.Append(UrlRow("LAN HTTP", httpUrl));
             }
         }
         else
@@ -1662,13 +1677,17 @@ public partial class Program
   }}
   button:hover {{ filter:brightness(1.1); }}
   .hint {{ font-size:10px; color:var(--fg-3); margin-top:10px; line-height:1.5; }}
+  button.copy {{
+    margin-left:auto; padding:2px 8px; font-size:9px; letter-spacing:0.8px; color:var(--fg-2);
+    background:var(--bg-2); border:1px solid var(--line-2); box-shadow:none;
+  }}
 </style>
 </head><body>
 <div class='panel'>
   <h1>Zeus Server</h1>
   <div class='sub'>Backend is running. Connect from this device or any device on your LAN.</div>
   <ul>
-    <li><span class='lbl'>This device</span><a class='url' href='#' data-url='http://localhost:{httpPort}'>http://localhost:{httpPort}</a></li>
+    {localRow}
     {lanRows}
   </ul>
   <div class='actions'><button id='stop'>Stop Zeus</button></div>
@@ -1679,15 +1698,33 @@ public partial class Program
     if (window.external && window.external.sendMessage) window.external.sendMessage('stop');
     else window.close();
   }});
-  // Click-to-copy on any URL row.
+  // A URL opens in the OS browser, never inside this window.
   document.querySelectorAll('a.url').forEach(a => {{
     a.addEventListener('click', e => {{
       e.preventDefault();
       const u = a.getAttribute('data-url');
-      navigator.clipboard.writeText(u);
-      const prev = a.textContent;
-      a.textContent = 'copied ✓';
-      setTimeout(() => a.textContent = prev, 900);
+      if (window.external && window.external.sendMessage) window.external.sendMessage('open:' + u);
+      else window.open(u, '_blank');
+    }});
+  }});
+  // Copy button: async clipboard where the origin allows it, else the
+  // execCommand fallback (WebView2's about:blank origin may refuse the former).
+  function copyText(u) {{
+    const fallback = () => {{
+      const t = document.createElement('textarea');
+      t.value = u; document.body.appendChild(t); t.select();
+      const ok = document.execCommand('copy'); t.remove(); return ok;
+    }};
+    if (navigator.clipboard && navigator.clipboard.writeText)
+      return navigator.clipboard.writeText(u).then(() => true, () => fallback());
+    return Promise.resolve(fallback());
+  }}
+  document.querySelectorAll('button.copy').forEach(b => {{
+    b.addEventListener('click', () => {{
+      copyText(b.getAttribute('data-url')).then(ok => {{
+        b.textContent = ok ? 'copied ✓' : 'copy failed';
+        setTimeout(() => b.textContent = 'copy', 900);
+      }});
     }});
   }});
 </script>
@@ -1708,6 +1745,11 @@ public partial class Program
             .RegisterWebMessageReceivedHandler((sender, msg) =>
             {
                 if (msg == "stop" && sender is PhotinoWindow w) w.Close();
+                else if (msg is not null && msg.StartsWith("open:", StringComparison.Ordinal))
+                {
+                    var url = msg.Substring("open:".Length);
+                    if (offeredUrls.Contains(url)) OpenExternalUrl(url);
+                }
             })
             .RegisterWindowClosingHandler((_, _) =>
             {

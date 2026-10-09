@@ -43,6 +43,7 @@ public sealed class GanymedeAmpService : BackgroundService
     private static readonly TimeSpan RescanDelay = TimeSpan.FromSeconds(10);
 
     private readonly TxService _tx;
+    private readonly RadioService _radio;
     private readonly ILogger<GanymedeAmpService> _log;
     private readonly object _sync = new();
 
@@ -53,9 +54,10 @@ public sealed class GanymedeAmpService : BackgroundService
     private int _tripMask;
     private DateTime? _lastTripUtc;
 
-    public GanymedeAmpService(TxService tx, ILogger<GanymedeAmpService> log)
+    public GanymedeAmpService(TxService tx, RadioService radio, ILogger<GanymedeAmpService> log)
     {
         _tx = tx;
+        _radio = radio;
         _log = log;
     }
 
@@ -105,6 +107,16 @@ public sealed class GanymedeAmpService : BackgroundService
             string? adopted = null;
             try
             {
+                // Probing opens a port (DTR toggle resets Arduino-class
+                // boards) and writes ZZZS; into it, which disrupts whatever
+                // else lives there — weather stations, hardware CAT, etc.
+                // Only a G2-1K carries a Ganymede, so never touch serial
+                // ports for any other radio unless the operator named one.
+                if (!ShouldProbe())
+                {
+                    await Task.Delay(RescanDelay, ct);
+                    continue;
+                }
                 adopted = await FindControllerAsync(ct);
                 if (adopted is null)
                 {
@@ -128,6 +140,11 @@ public sealed class GanymedeAmpService : BackgroundService
             }
         }
     }
+
+    private bool ShouldProbe() =>
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ZEUS_GANYMEDE_PORT")?.Trim())
+        || (_radio.EffectiveBoardKind == HpsdrBoardKind.OrionMkII
+            && _radio.EffectiveOrionMkIIVariant == OrionMkIIVariant.G2_1K);
 
     private async Task<string?> FindControllerAsync(CancellationToken ct)
     {

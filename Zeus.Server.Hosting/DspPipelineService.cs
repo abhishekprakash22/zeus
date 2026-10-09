@@ -1021,6 +1021,17 @@ public class DspPipelineService : BackgroundService,
     // expects an explicit unity SetTxPanelGain call so the TX chain leaves
     // its uninitialised state in a known place after channel-open).
     private double _appliedTxMicGainLinear = double.NaN;
+
+    // Operator mic gain as a linear factor for audio-modem speech (FreeDV/RADE),
+    // applied by TxAudioIngest before the vocoder. Written on the apply loop,
+    // read on the mic hot path.
+    private float _freeDvTxSpeechGainLinear = 1f;
+    public float FreeDvTxSpeechGainLinear => Volatile.Read(ref _freeDvTxSpeechGainLinear);
+
+    /// <summary>WDSP TX panel gain: the operator's mic gain, except unity in
+    /// FreeDV, where the gain is applied to the speech before the vocoder.</summary>
+    internal static double EffectiveTxPanelGainLinear(bool freeDvMode, int micGainDb) =>
+        freeDvMode ? 1.0 : Math.Pow(10.0, micGainDb / 20.0);
     // Same NaN-first-apply sentinel for the Leveler ceiling so a channel-open
     // with the persisted value matching the 8 dB default still re-pushes it.
     private double _appliedTxLevelerMaxGainDb = double.NaN;
@@ -4317,9 +4328,14 @@ public class DspPipelineService : BackgroundService,
     // (watch outputCrestFactorDb in /api/diagnostics/v2/tx — keep it ~>=8 dB).
     private static readonly TxLevelingConfig FreeDvTxLevelingProfile =
         new(LevelerEnabled: true, CompressorEnabled: false);
-    // Leveler makeup ceiling for FreeDV. ~-20 dBFS modem peak + this should land
-    // OFDM peaks near -6 dBFS — clean, decodable, moderate (not full-SSB) power.
-    private const double FreeDvLevelerMaxGainDb = 14.0;
+    // Leveler makeup ceiling for FreeDV. ~-20 dBFS modem peak + this lands OFDM
+    // peaks near -1 dBFS. Was 14 dB (peaks ~-6 dBFS): PEP a quarter of the drive
+    // setting and a few watts average on a 100 W radio — field: 'FreeDV TX very
+    // low'. The OFDM modes run codec2's clipper + TX BPF (SetClip/SetTxBpf),
+    // which exist to cut the crest factor so FreeDV can be driven near full PEP;
+    // ALC still catches stray peaks. Bench: keep outputCrestFactorDb in
+    // /api/diagnostics/v2/tx ~>=8 dB and confirm decode at the far end.
+    internal const double FreeDvLevelerMaxGainDb = 19.0;
 
     private void OnRadioStateChanged(StateDto s)
     {
@@ -4559,7 +4575,14 @@ public class DspPipelineService : BackgroundService,
         // TX mic gain: dB → linear (10^(db/20)) at the engine seam. Conversion
         // matches the historical /api/mic-gain inline (Math.Pow(10.0, db/20.0));
         // moved here so the operator-friendly dB is what gets stored and broadcast.
-        double micLinear = Math.Pow(10.0, s.MicGainDb / 20.0);
+        // FreeDV: the panel gain would act on the modem tones (TxAudioIngest
+        // replaces the mic block before WDSP sees it), where the leveler absorbs
+        // it — so the slider did nothing. Hold the panel at unity in FreeDV and
+        // apply the operator's gain to the speech before the vocoder instead
+        // (FreeDvTxSpeechGainLinear → TxAudioIngest). Mirrors the RX side, where
+        // AF gain is applied to the decoded speech.
+        double micLinear = EffectiveTxPanelGainLinear(freeDvMode, s.MicGainDb);
+        Volatile.Write(ref _freeDvTxSpeechGainLinear, (float)Math.Pow(10.0, s.MicGainDb / 20.0));
         if (micLinear != _appliedTxMicGainLinear)
         {
             engine.SetTxPanelGain(micLinear);

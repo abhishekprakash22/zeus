@@ -290,7 +290,8 @@ public sealed class TxAudioIngest : IDisposable
                drainTxTransport: pipeline.DrainTxIqTransportTail,
                txOwnedByTuneDriver: () => tx.IsTunOn || tx.IsTwoToneOn,
                preKeyOpenAtTicks: () => tx.PreKeyOpenAtTicks,
-               audioModem: audioModem)
+               audioModem: audioModem,
+               modemSpeechGain: () => pipeline.FreeDvTxSpeechGainLinear)
     {
     }
 
@@ -310,8 +311,10 @@ public sealed class TxAudioIngest : IDisposable
         Action<int>? onWdspConsumed = null,
         Func<bool>? txOwnedByTuneDriver = null,
         Func<long>? preKeyOpenAtTicks = null,
-        AudioModemPluginBridge? audioModem = null)
+        AudioModemPluginBridge? audioModem = null,
+        Func<float>? modemSpeechGain = null)
     {
+        _modemSpeechGain = modemSpeechGain;
         _ring = ring;
         _engineProvider = engineProvider;
         _isMoxOn = isMoxOn;
@@ -343,6 +346,17 @@ public sealed class TxAudioIngest : IDisposable
     /// mic ingest runs on the audio thread — the _sync barrier below quiesces any
     /// in-flight mic block before the drain feeds the ring.
     /// </summary>
+    private readonly Func<float>? _modemSpeechGain;
+
+    /// <summary>Scale a speech block in place by the operator's mic gain, clamped
+    /// to full scale. Unity is a no-op. Applied before an audio modem encodes it.</summary>
+    internal static void ApplySpeechGain(Span<float> block, float gain)
+    {
+        if (gain == 1f || !float.IsFinite(gain)) return;
+        for (int i = 0; i < block.Length; i++)
+            block[i] = Math.Clamp(block[i] * gain, -1f, 1f);
+    }
+
     public void DrainFreeDvTxTail()
     {
         var freeDv = _audioModem?.Current;
@@ -945,7 +959,17 @@ public sealed class TxAudioIngest : IDisposable
                 // No-op unless FreeDV is the active mode.
                 var modem = _audioModem?.Current;
                 if (modem is not null && modem.Active)
-                    modem.ProcessTx(new Span<float>(_scratchMic, 0, blockSize));
+                {
+                    // The operator's mic gain belongs on the SPEECH, before the
+                    // vocoder — WDSP's panel gain (where SSB applies it) runs after
+                    // this block has been replaced by modem tones, so it could only
+                    // scale the tones, and the FreeDV leveler absorbed that. The
+                    // pipeline holds the panel at unity in FreeDV and hands the
+                    // operator's gain here (FreeDvTxSpeechGainLinear).
+                    var speech = new Span<float>(_scratchMic, 0, blockSize);
+                    ApplySpeechGain(speech, _modemSpeechGain?.Invoke() ?? 1f);
+                    modem.ProcessTx(speech);
+                }
                 int produced = engine.ProcessTxBlock(
                     new ReadOnlySpan<float>(_scratchMic, 0, blockSize),
                     new Span<float>(_scratchIq, 0, 2 * iqOut));

@@ -10,6 +10,7 @@ import { Waterfall } from './Waterfall';
 import { _resetDrawBusForTest } from '../realtime/draw-bus';
 import { useSignalEnhanceStore } from '../dsp/signal-estimator';
 import { useTxStore } from '../state/tx-store';
+import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { createEmptyDisplaySlice, useDisplayStore } from '../state/display-store';
 
 const releaseFrameConsumerMock = vi.hoisted(() => vi.fn());
@@ -162,6 +163,53 @@ describe('Waterfall', () => {
     });
 
     expect(loseContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the SPD factor to a running waterfall, not just the mount-time value', () => {
+    const renderer = {
+      caps: { floatLinear: true, colorBufferFloat: true, gpu: 'test-gpu' },
+      resize: vi.fn(),
+      pushFrame: vi.fn(),
+      draw: vi.fn(),
+      setColormap: vi.fn(),
+      setPopMode: vi.fn(),
+      setScrollSpeed: vi.fn(),
+      setTransparent: vi.fn(),
+      debugState: vi.fn(() => ({
+        texWidth: 1024, writeRow: 0, validRows: 0, scrollSpeed: 1, lastViewOffsetUv: 0, contextLost: false,
+      })),
+      clearHistory: vi.fn(),
+      dispose: vi.fn(),
+    };
+    createWfRendererMock.mockReturnValue(renderer);
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: vi.fn(() => ({ getExtension: vi.fn(() => null) })),
+    });
+    vi.stubGlobal('ResizeObserver', class ResizeObserver { observe = vi.fn(); disconnect = vi.fn(); });
+    vi.stubGlobal('IntersectionObserver', class IntersectionObserver { observe = vi.fn(); disconnect = vi.fn(); });
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    useDisplaySettingsStore.setState({ waterfallScrollSpeed: 1 });
+
+    const Wf = Waterfall as unknown as (props: { speedFactor?: number }) => ReturnType<typeof Waterfall>;
+    const { rerender, unmount } = render(createElement(Wf, { speedFactor: 1 }));
+    renderer.setScrollSpeed.mockClear();
+    const builds = createWfRendererMock.mock.calls.length;
+
+    // SPD ×2 on the same, still-mounted waterfall: applied at once …
+    rerender(createElement(Wf, { speedFactor: 2 }));
+    expect(renderer.setScrollSpeed).toHaveBeenLastCalledWith(2);
+    expect(createWfRendererMock.mock.calls.length).toBe(builds); // no remount
+
+    // … and a later global speed change uses the CURRENT factor, not ×1.
+    act(() => {
+      useDisplaySettingsStore.setState({ waterfallScrollSpeed: 1.5 });
+    });
+    expect(renderer.setScrollSpeed).toHaveBeenLastCalledWith(3);
+
+    unmount();
+    useDisplaySettingsStore.setState({ waterfallScrollSpeed: 1 });
   });
 
   it('clears normalized Pop waterfall history when TX changes the value domain', () => {

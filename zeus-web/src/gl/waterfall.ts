@@ -143,6 +143,16 @@ export type WfRenderer = {
   dispose: () => void;
 };
 
+// Scroll speed = rows-per-screen divisor in the draw shader (ageRows =
+// visibleRows / speed): above 1 each row is drawn taller and history moves
+// faster. The floor stays 0.25 (history depth); the ceiling covers the
+// Display-settings speed max (2.5) times SPD ×4 — it was 2.5, so ×4 never
+// took effect and ×2 capped whenever the global speed was above 1.25.
+export const MAX_SCROLL_SPEED = 10;
+export function clampScrollSpeed(speed: number): number {
+  return Number.isFinite(speed) ? Math.max(0.25, Math.min(MAX_SCROLL_SPEED, speed)) : 1;
+}
+
 export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
   instrumentGlForStats(gl);   // render meter: no-op without ?renderstats=1
   // R32F as a color attachment requires EXT_color_buffer_float; LINEAR
@@ -496,7 +506,7 @@ export function createWfRenderer(gl: WebGL2RenderingContext): WfRenderer {
       smoothness = Number.isFinite(nextSmoothness) ? Math.max(0, Math.min(1, nextSmoothness)) : 0;
     },
     setScrollSpeed(speed) {
-      scrollSpeed = Number.isFinite(speed) ? Math.max(0.25, Math.min(2.5, speed)) : 1;
+      scrollSpeed = clampScrollSpeed(speed);
     },
     clearHistory() {
       // O(1): the draw shader returns the seed for every row older than

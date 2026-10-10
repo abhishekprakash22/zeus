@@ -110,6 +110,17 @@ export function Waterfall({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cursorRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<ReturnType<typeof createWfRenderer> | null>(null);
+  // SPD (×½/1/2/4) changes speedFactor without remounting the renderer, whose
+  // effect only re-runs on receiver/stitched — read it through a ref so the
+  // draw loop and the settings subscription see the current factor (they
+  // captured the mount-time value, so SPD did nothing).
+  const speedFactorRef = useRef(speedFactor);
+  speedFactorRef.current = speedFactor;
+  useEffect(() => {
+    rendererRef.current?.setScrollSpeed(
+      useDisplaySettingsStore.getState().waterfallScrollSpeed * speedFactor,
+    );
+  }, [speedFactor]);
   const rxIndex = rxIndexOf(receiver);
   const popEnabled = useSignalEnhanceStore((s) => s.popEnabled);
   const popRenderIntensity = useSignalEnhanceStore((s) => s.popRenderIntensity);
@@ -192,7 +203,7 @@ export function Waterfall({
       const reliefDepth = rxRenderable ? Math.max(0, Math.min(1, signalEnhance.waterfallReliefDepth / 100)) : 0;
       const smoothness = rxRenderable ? Math.max(0, Math.min(1, signalEnhance.waterfallSmoothness / 100)) : 0;
       const colormap: RenderColormapId = active ? 'pop' : useDisplaySettingsStore.getState().colormap;
-      renderer.setScrollSpeed(useDisplaySettingsStore.getState().waterfallScrollSpeed * speedFactor);
+      renderer.setScrollSpeed(useDisplaySettingsStore.getState().waterfallScrollSpeed * speedFactorRef.current);
       renderer.setPopMode(active, intensity, reliefDepth, smoothness);
       renderer.setColormap(colormap);
     };
@@ -287,9 +298,9 @@ export function Waterfall({
       const popIntensity = popOn ? Math.max(0, Math.min(1, pop.popRenderIntensity / 100)) : 0;
       const reliefDepth = rxRenderable ? Math.max(0, Math.min(1, pop.waterfallReliefDepth / 100)) : 0;
       const smoothness = rxRenderable ? Math.max(0, Math.min(1, pop.waterfallSmoothness / 100)) : 0;
-      if (waterfallScrollSpeed * speedFactor !== lastScrollSpeed) {
-        renderer.setScrollSpeed(waterfallScrollSpeed * speedFactor);
-        lastScrollSpeed = waterfallScrollSpeed * speedFactor;
+      if (waterfallScrollSpeed * speedFactorRef.current !== lastScrollSpeed) {
+        renderer.setScrollSpeed(waterfallScrollSpeed * speedFactorRef.current);
+        lastScrollSpeed = waterfallScrollSpeed * speedFactorRef.current;
       }
       // Mirror DbScale.tsx — keyed (MOX/TUN) renders the TX waterfall window so
       // the operator's RX noise-floor view stays put.
@@ -541,7 +552,7 @@ export function Waterfall({
         state.waterfallScrollSpeed !== prev.waterfallScrollSpeed
       ) {
         if (state.waterfallScrollSpeed !== prev.waterfallScrollSpeed) {
-          renderer.setScrollSpeed(state.waterfallScrollSpeed * speedFactor);
+          renderer.setScrollSpeed(state.waterfallScrollSpeed * speedFactorRef.current);
         }
         requestRedraw();
       }

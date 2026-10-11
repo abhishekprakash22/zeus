@@ -1261,6 +1261,22 @@ export function usePanTuneGesture(
     };
 
     canvas.style.cursor = idleCursor();
+    // Every single-finger gesture on this surface is ours (tune, drag, loupe,
+    // pinch), so the browser must not start a native pan/scroll on it. With
+    // touch-action left at auto, a finger that moved after resting (the loupe
+    // aim) was claimed by the browser as a pan after a few tens of px and the
+    // pointer was revoked (pointercancel) — the loupe shut mid-aim, roughly a
+    // kHz in. Pinch-only surfaces (the phone layout) keep auto so one finger
+    // still scrolls the page.
+    const prevTouchAction = canvas.style.getPropertyValue('touch-action');
+    if (!touchPinchOnly) canvas.style.setProperty('touch-action', 'none');
+    // Belt and braces for engines that decide on touchstart before reading
+    // touch-action: while a loupe hold is pending or the loupe is open, the
+    // finger's touch stream is not the browser's to scroll with.
+    const onTouchMove = (e: TouchEvent) => {
+      if ((holdTimer !== 0 || loupe) && e.cancelable) e.preventDefault();
+    };
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
@@ -1286,6 +1302,11 @@ export function usePanTuneGesture(
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('touchmove', onTouchMove);
+      if (!touchPinchOnly) {
+        if (prevTouchAction) canvas.style.setProperty('touch-action', prevTouchAction);
+        else canvas.style.removeProperty('touch-action');
+      }
     };
   }, [canvasRef, receiver, wheelActions, options.touchMode, options.tuneReceiver, options.dragMode]);
 }

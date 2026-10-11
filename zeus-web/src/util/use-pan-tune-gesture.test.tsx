@@ -1039,6 +1039,55 @@ describe('usePanTuneGesture mobile touch mode', () => {
       unmount();
     });
 
+    it('claims the touch stream so the browser cannot revoke an aim mid-drag', async () => {
+      // jsdom's CSSOM drops touch-action, so watch the write itself.
+      const setProp = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty');
+      const removeProp = vi.spyOn(CSSStyleDeclaration.prototype, 'removeProperty');
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      // No native pan may start on a tuning surface (it fired pointercancel
+      // about a kHz into the aim and shut the loupe).
+      expect(setProp).toHaveBeenCalledWith('touch-action', 'none');
+
+      const touchMove = () => {
+        const ev = new Event('touchmove', { bubbles: true, cancelable: true });
+        canvas.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      expect(touchMove()).toBe(false);
+      await act(async () => {
+        pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 50 });
+      });
+      expect(touchMove()).toBe(true); // hold pending
+      await act(async () => {
+        vi.advanceTimersByTime(LOUPE_HOLD);
+      });
+      expect(touchMove()).toBe(true); // aiming
+      // A long aim — 60 px is 6 kHz in this view — keeps the loupe open and
+      // tunes on release.
+      await act(async () => {
+        for (let x = 100; x <= 160; x += 5) {
+          pointer(canvas, 'pointermove', { pointerId: 1, clientX: x, clientY: 50 });
+        }
+        await flush();
+      });
+      expect(loupeVisible()).toBe(true);
+      await act(async () => {
+        pointer(canvas, 'pointerup', { pointerId: 1, clientX: 160, clientY: 50 });
+        await flush();
+      });
+      expect(setVfoMock).toHaveBeenCalledWith(14_206_000, undefined);
+      unmount();
+      expect(removeProp).toHaveBeenCalledWith('touch-action');
+    });
+
+    it('leaves touch-action alone on pinch-only (phone) surfaces', () => {
+      const setProp = vi.spyOn(CSSStyleDeclaration.prototype, 'setProperty');
+      const { unmount } = render(createElement(GestureProbe, { touchMode: 'pinch-only' }));
+      expect(setProp).not.toHaveBeenCalledWith('touch-action', expect.anything());
+      unmount();
+    });
+
     it('does not open for a mouse press-and-hold', async () => {
       const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
       const canvas = container.querySelector('canvas') as HTMLCanvasElement;

@@ -38,6 +38,7 @@ import {
   type Hl2FlashStatusDto,
   type Hl2ImageDto,
 } from '../api/client';
+import { LOCAL_ONLY_NOTE, maintenanceLocalOnly } from '../remote/local-only';
 
 const PHASE_LABEL: Record<string, string> = {
   downloading: 'downloading gateware',
@@ -111,6 +112,7 @@ export function Hl2FlashSection() {
   // before the button exists rather than after it is pressed.
   const armed = source && cmp?.ok === true;
 
+  const localOnly = maintenanceLocalOnly();
   return (
     <div className="fpga-flash">
       <div className="fpga-head">HL2 GATEWARE</div>
@@ -122,7 +124,9 @@ export function Hl2FlashSection() {
         streaming, and its gateware cannot be rewritten mid-stream.
       </div>
 
-      {!busy && (
+      {!busy && localOnly && <div className="fpga-note fpga-dim">{LOCAL_ONLY_NOTE}</div>}
+
+      {!busy && !localOnly && (
         <>
           {images === null ? (
             <button type="button" className="cwdec-btn" onClick={loadImages}>

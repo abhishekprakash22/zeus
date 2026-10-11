@@ -20,6 +20,7 @@ import {
   type FpgaFlashStatusDto,
   type FpgaImageDto,
 } from '../api/client';
+import { LOCAL_ONLY_NOTE, maintenanceLocalOnly } from '../remote/local-only';
 
 const PHASE_LABEL: Record<string, string> = {
   downloading: 'downloading bitstream',
@@ -73,6 +74,7 @@ export function FpgaFlashSection() {
   };
 
   const present = status?.saturnPresent === true;
+  const localOnly = maintenanceLocalOnly();
 
   return (
     <div className="fpga-flash">
@@ -90,7 +92,9 @@ export function FpgaFlashSection() {
         </div>
       )}
 
-      {present && !busy && (
+      {present && !busy && localOnly && <div className="fpga-note fpga-dim">{LOCAL_ONLY_NOTE}</div>}
+
+      {present && !busy && !localOnly && (
         <>
           {images === null ? (
             <button type="button" className="cwdec-btn" onClick={loadImages}>

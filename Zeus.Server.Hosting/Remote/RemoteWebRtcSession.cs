@@ -218,6 +218,25 @@ public sealed class RemoteWebRtcSession
     ///   /api/app               — process-control endpoints such as restart,
     ///                            quit, and uninstall. These are local-only;
     ///                            tunneled requests reach Kestrel as loopback.
+    ///
+    /// LOCAL-ONLY MAINTENANCE — every action below can remove the very path a
+    /// remote operator would need to recover, so it is done at the radio,
+    /// whatever role a remote session holds (status reads stay open, so the
+    /// remote still SEES versions, progress and "update available"):
+    ///   /api/system/update/apply — ANAN Core self-update. Restarts the process
+    ///                            hosting this session; on the G2 nothing
+    ///                            supervises a failed relaunch (desktop-file
+    ///                            autostart), so a remote could never reconnect.
+    ///   /api/p2app             — update / stop / start. Pauses the P2 data
+    ///                            plane; a failed build leaves the radio deaf
+    ///                            and mute with no remote way to fix it.
+    ///   /api/fpga              — Saturn and HL2 gateware flash, compare and
+    ///                            file upload. A bad primary recovers only via
+    ///                            golden + power cycle at the radio, and a new
+    ///                            image loads only after a power cycle anyway.
+    ///   /api/xdma              — raw register / native RX / TX-arm bench
+    ///                            routes. They bypass the MOX path, and with it
+    ///                            the remote TX lease and dead-man unkey.
     /// </summary>
     private static readonly string[] WriteDeniedPrefixes =
     {
@@ -230,6 +249,10 @@ public sealed class RemoteWebRtcSession
         // it OFF stays a desk decision, because whoever does that should be
         // able to see and smell the consequences.
         "/api/prefs/databases",
+        "/api/system/update/apply",
+        "/api/p2app",
+        "/api/fpga",
+        "/api/xdma",
     };
 
     public RemoteWebRtcSession(
@@ -1099,7 +1122,7 @@ public sealed class RemoteWebRtcSession
         return true;
     }
 
-    private static bool IsDenied(string path, bool mutating)
+    internal static bool IsDenied(string path, bool mutating)
     {
         // Compare on the path only (strip any query string) so a denied prefix
         // can't be smuggled past with a "?..." suffix.

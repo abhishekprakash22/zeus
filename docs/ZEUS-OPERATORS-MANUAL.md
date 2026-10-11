@@ -487,6 +487,16 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Maintenance is done at the radio.** A remote session can see versions,
+progress and "update available", but it cannot install an ANAN Core update,
+update, stop or start p2app, flash or compare FPGA gateware (Saturn or HL2),
+or use the native PCIe (XDMA) bench controls. Each of these can take away the
+link you would need to recover — an update restarts the program carrying your
+session, a failed p2app build leaves the radio deaf, and gateware recovery
+needs a power cycle at the radio. Those screens say *Done at the radio* in
+place of the buttons, and the radio refuses the requests over remote even if
+they are sent some other way.
+
 ## G2-1K amplifier protection (Ganymede)
 
 On a G2-1K, the amplifier's protection controller trips in hardware —

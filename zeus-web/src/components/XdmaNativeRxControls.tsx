@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchXdmaRx, startXdmaRx, stopXdmaRx } from '../api/client';
 import type { XdmaRxStatus } from '../api/client';
 import { getAudioClient } from '../audio/audio-client';
+import { LOCAL_ONLY_NOTE, maintenanceLocalOnly } from '../remote/local-only';
 
 const START_RATE_KHZ = 48;
 const START_HZ = 7_100_000;
@@ -105,7 +106,12 @@ export function XdmaNativeRxControls({ statusLine }: { statusLine?: string }) {
       <span className="label-xs" style={{ color: 'var(--accent, #6fc3ff)' }}>
         PCIe · DETECTED
       </span>
-      {!running ? (
+      {maintenanceLocalOnly() ? (
+        <span className="label-xs" style={{ opacity: 0.85 }}>
+          {running ? `● ${status?.effectiveKsps?.toFixed(1) ?? '—'} kS/s · ` : ''}
+          {LOCAL_ONLY_NOTE}
+        </span>
+      ) : !running ? (
         !NATIVE_RX_START_UI ? null : (
         <>
           <button

@@ -15,6 +15,7 @@ import {
   type P2AppStatusDto,
   type P2AppUpdateStatusDto,
 } from '../api/client';
+import { LOCAL_ONLY_NOTE, maintenanceLocalOnly } from '../remote/local-only';
 
 const labelStyle: CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', color: 'var(--fg-2)' };
 const valueStyle: CSSProperties = { fontSize: 12, color: 'var(--fg-1)', fontFamily: 'monospace' };
@@ -49,6 +50,7 @@ export function P2AppUpdateSection() {
   }, [refresh]);
 
   const active = upd != null && (upd.running || ACTIVE_PHASES.includes(upd.phase));
+  const localOnly = maintenanceLocalOnly();
 
   // Poll while a run is active.
   useEffect(() => {
@@ -89,6 +91,7 @@ export function P2AppUpdateSection() {
           } as Record<string, string>)[sup.mode] ?? sup.mode}
           {sup.pid != null ? ` · pid ${sup.pid}` : ''}
           {' '}
+          {!localOnly && (
           <button
             type="button"
             style={{ marginLeft: 10, fontSize: 10, padding: '1px 8px' }}
@@ -116,6 +119,7 @@ export function P2AppUpdateSection() {
           >
             {sup.mode !== 'Paused' ? 'STOP' : 'START'}
           </button>
+          )}
           {ctrlError ? (
             <div style={{ fontSize: 10, color: 'var(--warn, #e0a050)', marginTop: 3 }}>
               {ctrlError}
@@ -136,6 +140,11 @@ export function P2AppUpdateSection() {
         </div>
       )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        {localOnly ? (
+          <span style={{ fontSize: 11, opacity: 0.85 }}>
+            {active ? `${upd?.phase.toUpperCase()}...` : LOCAL_ONLY_NOTE}
+          </span>
+        ) : (
         <button
           type="button"
           className="btn sm active"
@@ -145,6 +154,7 @@ export function P2AppUpdateSection() {
         >
           {active ? `${upd?.phase.toUpperCase()}...` : 'UPDATE P2APP'}
         </button>
+        )}
         {upd?.phase === 'done' && !active && (
           <span style={{ fontSize: 11, color: 'var(--ok, #6c6)' }} title={upd?.head ?? undefined}>
             {upd?.log?.some((l) => l.startsWith('already up to date')) ? 'already up to date ✓' : 'updated ✓'}

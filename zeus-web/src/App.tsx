@@ -1771,7 +1771,11 @@ export default function App() {
         </ConfirmDialog>
       )}
       <StartupUpdatePrompt
-        status={!startupUpdateDismissed ? startupUpdate : null}
+        status={
+          // ANAN Core updates are installed at the radio; a remote client
+          // never offers UPDATE NOW (the server refuses the apply anyway).
+          !remoteMode && !startupUpdateDismissed ? startupUpdate : null
+        }
         onDismiss={() => setStartupUpdateDismissed(true)}
         onOpenSettings={() => setSettingsView(true, 'updates')}
       />

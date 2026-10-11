@@ -51,6 +51,25 @@ public static class UiPrefsEndpoints
         return Path.Combine(dir, "ui-flag-scale.json");
     }
 
+    private static string WfSpeedPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-wf-speed.json");
+    }
+
+    // The G2 pane's SPD key cycles ×½ ×1 ×2 ×4; anything else (stale or
+    // hand-edited) reads back as ×1.
+    internal static readonly double[] WfSpeedFactors = { 0.5, 1.0, 2.0, 4.0 };
+
+    internal static double NormalizeWfSpeedFactor(double factor)
+    {
+        foreach (var f in WfSpeedFactors)
+        {
+            if (f == factor) return f;
+        }
+        return 1.0;
+    }
+
     internal static double ClampFlagScale(double scale) =>
         double.IsFinite(scale) ? Math.Clamp(scale, 1.0, 2.0) : 1.0;
 
@@ -119,6 +138,49 @@ public static class UiPrefsEndpoints
         // G2 receiver-flag scale (field request: flag text and mini S-meter
         // too small on the 8-inch panel). One value for both flags; same
         // durable-directory pattern as spec-frac so the kiosk keeps it.
+        // Per-pane waterfall speed (G2 SPD key), per receiver. Server-side for
+        // the same reason as spec-frac: the kiosk's browser profile is
+        // throwaway, so localStorage alone forgot the setting every launch.
+        app.MapGet("/api/ui/wf-speed", () =>
+        {
+            try
+            {
+                var path = WfSpeedPath();
+                if (!File.Exists(path)) return Results.Ok(new Dictionary<string, double>());
+                var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(
+                    File.ReadAllText(path)) ?? new Dictionary<string, double>();
+                var clean = new Dictionary<string, double>();
+                foreach (var kv in map) clean[kv.Key] = NormalizeWfSpeedFactor(kv.Value);
+                return Results.Ok(clean);
+            }
+            catch { return Results.Ok(new Dictionary<string, double>()); }
+        });
+        app.MapPost("/api/ui/wf-speed", (WfSpeedRequest req) =>
+        {
+            var factor = NormalizeWfSpeedFactor(req.Factor);
+            try
+            {
+                var path = WfSpeedPath();
+                Dictionary<string, double> map;
+                try
+                {
+                    map = File.Exists(path)
+                        ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(
+                              File.ReadAllText(path)) ?? new()
+                        : new();
+                }
+                catch { map = new(); }
+                map[req.Rx.ToString()] = factor;
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(map));
+                return Results.Ok(new { rx = req.Rx, factor });
+            }
+            catch (Exception)
+            {
+                return Results.Ok(new { rx = req.Rx, factor, persisted = false });
+            }
+        });
+
         app.MapGet("/api/ui/flag-scale", () =>
         {
             try
@@ -205,4 +267,6 @@ public static class UiPrefsEndpoints
 public sealed record SpecFracRequest(int Rx, double Frac);
 
 public sealed record FlagScaleRequest(double Scale);
+
+public sealed record WfSpeedRequest(int Rx, double Factor);
 }

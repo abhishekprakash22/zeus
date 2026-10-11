@@ -8,6 +8,7 @@
 - **Signal Pop:** weak-signal enhancement that lifts marginal traces out of the noise floor visually (DSP tab → Signal Intelligence: Pop / Snap / Markers). **Snap-to-signal** pulls a click onto the nearest carrier; **peak markers** flag the strongest signals.
 - **Notch:** manual notch filters are placed and dragged directly on the display; the auto-notch (ANF) lives with the DSP controls.
 - **Band overlay:** a licence-class band overlay shades where you may transmit, and an audible band-edge alert warns as you tune out. The **BAND PLAN** settings tab is the editor, and the transmit **band guard** refuses TX outside your plan.
+- **Waterfall speed (SPD):** each G2 pane has an **SPD** pill that cycles that receiver's waterfall speed ×½ → ×1 → ×2 → ×4. The choice is remembered per receiver by the radio itself, so it survives a restart of ANAN Core or the radio.
 - **3D panadapter:** each G2 pane carries a **3D** pill (beside SPD) toggling the WebGPU heightfield renderer. On machines whose browser can't complete WebGPU init (including the Pi's own screen today), the pill shows **3D✕** with an explanatory tooltip and the proven 2D display keeps running — displays never gamble at boot.
 - **Wideband display:** the wideband (full-ADC) spectrum panel with its own viewport controls is available on Protocol-2 boards (DISPLAY tab hosts its settings).
 - **Backgrounds:** plain, **Beam Map** (world map with QRZ contacts and rotator heading behind the trace), or your own image (Fit/Fill/Stretch) — DISPLAY tab, §21.

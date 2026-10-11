@@ -53,6 +53,7 @@ import {
 import { setReceiverMuted, setReceiver } from '../../api/client';
 import { useToolbarFavoritesStore } from '../../state/toolbar-favorites-store';
 import { useG2FlagScaleStore } from '../../state/g2-flag-scale-store';
+import { fetchServerWfSpeed, nextWfSpeed, readLocalWfSpeed, saveWfSpeed, type WfSpeedFactor } from './wf-speed';
 
 const RATIO_H = 10;
 
@@ -338,10 +339,24 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
       return 0.44;
     }
   });
-  // Per-pane waterfall speed multiplier (field request): ×½ ×1 ×2 ×4 cycle.
-  const [speedFactor, setSpeedFactor] = useState(1);
-  const cycleSpeed = () =>
-    setSpeedFactor((f) => (f === 0.5 ? 1 : f === 1 ? 2 : f === 2 ? 4 : 0.5));
+  // Per-pane waterfall speed multiplier (field request): ×½ ×1 ×2 ×4 cycle,
+  // remembered per receiver across restarts (see wf-speed.ts).
+  const [speedFactor, setSpeedFactor] = useState<WfSpeedFactor>(() => readLocalWfSpeed(rxIndex));
+  const cycleSpeed = () => {
+    const next = nextWfSpeed(speedFactor);
+    setSpeedFactor(next);
+    saveWfSpeed(rxIndex, next);
+  };
+  // Server seed: the kiosk starts with empty localStorage every launch.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchServerWfSpeed(rxIndex).then((f) => {
+      if (!cancelled && f !== null) setSpeedFactor(f);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [rxIndex]);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const ratioDrag = useRef(false);
   const onRatioDown = useCallback((e: ReactPointerEvent) => {

@@ -11,11 +11,16 @@ import {
   LOUPE_LIFT_PX,
   LOUPE_WIDTH_PX,
   loupeCommitHz,
-  loupeLevels,
+  loupePanWindow,
+  loupeWfWindow,
   placeLoupe,
   sampleRowDb,
+  traceRgba,
+  wfLutIndex,
 } from './tuning-loupe';
+import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { pushLoupeRow, type LoupeRow } from '../state/loupe-history';
+import { useRxDbWindowStore } from '../state/rx-db-window-store';
 
 describe('placeLoupe', () => {
   it('sits centred above the finger, clear of it', () => {
@@ -78,16 +83,32 @@ describe('sampleRowDb', () => {
   });
 });
 
-describe('loupeLevels', () => {
-  it('spans the noise floor to the strongest signal, at least 30 dB', () => {
-    const v = [...new Array(80).fill(-120), -60];
-    const { floorDb, topDb } = loupeLevels(v);
-    expect(floorDb).toBe(-120);
-    expect(topDb).toBe(-60);
-    expect(loupeLevels(new Array(10).fill(-110)).topDb).toBe(-80);
+describe('loupe colour and scale follow the receiver displays', () => {
+  it('waterfall: the shader mapping over the receiver window, not the slice floor..peak', () => {
+    useDisplaySettingsStore.setState({ wfDbMin: -140, wfDbMax: -50, wfTxDbMin: -70, wfTxDbMax: 30 });
+    useRxDbWindowStore.setState({ overrides: {} });
+    const rx1 = loupeWfWindow(0, false);
+    expect(rx1).toEqual({ dbMin: -140, dbMax: -50 });
+    // A -120 dB noise floor lands at ~22% of the palette — the same colour
+    // the waterfall gives it — instead of the palette's black bottom.
+    expect(wfLutIndex(-120, rx1.dbMin, rx1.dbMax)).toBe(57);
+    expect(wfLutIndex(-200, rx1.dbMin, rx1.dbMax)).toBe(0);
+    expect(wfLutIndex(0, rx1.dbMin, rx1.dbMax)).toBe(255);
+    expect(loupeWfWindow(0, true)).toEqual({ dbMin: -70, dbMax: 30 });
   });
-  it('ignores missing samples', () => {
-    expect(loupeLevels([Number.NaN, Number.NaN]).topDb).toBeGreaterThan(-130);
+
+  it('trace: the panadapter window per receiver, TX range while keyed', () => {
+    useDisplaySettingsStore.setState({
+      dbMin: -135, dbMax: -55, rx2DbMin: -128, rx2DbMax: -48, txDbMin: -80, txDbMax: 20,
+    });
+    expect(loupePanWindow(0, false)).toEqual({ dbMin: -135, dbMax: -55 });
+    expect(loupePanWindow(1, false)).toEqual({ dbMin: -128, dbMax: -48 });
+    expect(loupePanWindow(0, true)).toEqual({ dbMin: -80, dbMax: 20 });
+  });
+
+  it('draws the trace in the operator colour', () => {
+    expect(traceRgba('#FFA028', 1)).toBe('rgba(255,160,40,1)');
+    expect(traceRgba('junk', 0.5)).toBe('rgba(255,160,40,0.5)');
   });
 });
 

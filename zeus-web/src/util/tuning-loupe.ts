@@ -25,12 +25,15 @@ import { useConnectionStore } from '../state/connection-store';
 import { selectDisplaySlice, useDisplayStore, type SpectrumReceiver } from '../state/display-store';
 import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { loupeRows, type LoupeRow } from '../state/loupe-history';
+import { effectiveRxWfWindow } from '../state/rx-db-window-store';
+import { useTxStore } from '../state/tx-store';
 import {
   displayFilterEdgesHz,
   getReceiverFilterHighHz,
   getReceiverFilterLowHz,
   getReceiverMode,
   getReceiverVfoHz,
+  rxIndexOf,
 } from '../state/receiver-state';
 import { roundToStep } from './number';
 
@@ -48,7 +51,6 @@ export const LOUPE_HEIGHT_PX = 176;
 export const LOUPE_LIFT_PX = 72;
 const EDGE_GAP_PX = 6;
 const SPECTRUM_FRACTION = 0.42;
-const MIN_RANGE_DB = 30;
 
 const MAX_HZ = 10_000_000_000;
 
@@ -117,18 +119,49 @@ export function sampleRowDb(bins: Float32Array, centerHz: number, hzPerPixel: nu
   return a + (b - a) * f;
 }
 
-/** Contrast window for the magnified slice: noise floor up to the strongest bin. */
-export function loupeLevels(values: ArrayLike<number>): { floorDb: number; topDb: number } {
-  const finite: number[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i]!;
-    if (Number.isFinite(v)) finite.push(v);
+/**
+ * The dB window the loupe's trace is drawn with — the SAME window the
+ * receiver's panadapter uses (RX1 range, a standalone RX2 pane's own range,
+ * the TX range while keyed), so the noise floor sits at the same height in
+ * the loupe as on the display under it. Autoscaling the magnified slice to
+ * its own floor..peak exaggerated the noise.
+ */
+export function loupePanWindow(rxIndex: number, keyed: boolean): { dbMin: number; dbMax: number } {
+  const ds = useDisplaySettingsStore.getState();
+  if (keyed) return { dbMin: ds.txDbMin, dbMax: ds.txDbMax };
+  if (rxIndex === 1) return { dbMin: ds.rx2DbMin, dbMax: ds.rx2DbMax };
+  return { dbMin: ds.dbMin, dbMax: ds.dbMax };
+}
+
+/**
+ * The dB window the loupe's waterfall is coloured with — the SAME window the
+ * receiver's own waterfall uses (operator's WF range, per-RX override or
+ * floor normalisation; the TX window while keyed). The colormaps keep their
+ * lowest ~40% black and their top end white, so stretching the palette over
+ * the magnified slice's own floor..peak painted the noise black and the
+ * signals white — a black-and-white loupe beside a coloured waterfall.
+ */
+export function loupeWfWindow(rxIndex: number, keyed: boolean): { dbMin: number; dbMax: number } {
+  if (keyed) {
+    const ds = useDisplaySettingsStore.getState();
+    return { dbMin: ds.wfTxDbMin, dbMax: ds.wfTxDbMax };
   }
-  if (finite.length === 0) return { floorDb: -130, topDb: -130 + MIN_RANGE_DB };
-  finite.sort((a, b) => a - b);
-  const floorDb = finite[Math.floor(finite.length * 0.2)]!;
-  const topDb = Math.max(finite[finite.length - 1]!, floorDb + MIN_RANGE_DB);
-  return { floorDb, topDb };
+  const w = effectiveRxWfWindow(rxIndex);
+  return { dbMin: w.wfDbMin, dbMax: w.wfDbMax };
+}
+
+/** LUT index for a dB value in a window — the waterfall shader's own mapping. */
+export function wfLutIndex(db: number, dbMin: number, dbMax: number): number {
+  if (!Number.isFinite(db)) return 0;
+  const n = (db - dbMin) / Math.max(0.0001, dbMax - dbMin);
+  return Math.min(255, Math.max(0, Math.round(n * 255)));
+}
+
+/** "#RRGGBB" → "rgba(r,g,b,a)"; anything else falls back to the default trace amber. */
+export function traceRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const v = parseInt(m ? m[1]! : 'FFA028', 16);
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${alpha})`;
 }
 
 /** 14074010 → "14.074.010" (the VFO's own grouping). */
@@ -280,11 +313,23 @@ export class LoupeOverlay {
     } else {
       trace.fill(Number.NaN);
     }
-    const { floorDb, topDb } = loupeLevels(trace);
-    const yOf = (db: number) =>
-      place.top + specH - 6 - ((db - floorDb) / (topDb - floorDb)) * (specH - 14);
+    const txState = useTxStore.getState();
+    const keyed = txState.moxOn || txState.tunOn;
+    const rxIdx = rxIndexOf(this.receiver);
+    const pan = loupePanWindow(rxIdx, keyed);
+    const panSpan = Math.max(0.0001, pan.dbMax - pan.dbMin);
+    const yOf = (db: number) => {
+      const n = Math.min(1, Math.max(0, (db - pan.dbMin) / panSpan));
+      return place.top + specH - 1 - n * (specH - 3);
+    };
+    // The trace in the operator's panadapter colour, filled underneath like
+    // the panadapter itself.
+    const traceColor = useDisplaySettingsStore.getState().rxTraceColor;
+    const base = place.top + specH;
     ctx.beginPath();
     let started = false;
+    let firstX = 0;
+    let lastX = 0;
     for (let x = 0; x < w; x++) {
       const v = trace[x]!;
       if (!Number.isFinite(v)) continue;
@@ -293,14 +338,24 @@ export class LoupeOverlay {
       else {
         ctx.moveTo(place.left + x, y);
         started = true;
+        firstX = x;
       }
+      lastX = x;
     }
-    ctx.strokeStyle = '#d6ecfa';
-    ctx.lineWidth = 1.25;
-    ctx.stroke();
+    if (started) {
+      ctx.strokeStyle = traceRgba(traceColor, 1);
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+      ctx.lineTo(place.left + lastX, base);
+      ctx.lineTo(place.left + firstX, base);
+      ctx.closePath();
+      ctx.fillStyle = traceRgba(traceColor, 0.22);
+      ctx.fill();
+    }
 
     // Waterfall rows underneath, newest at the top.
-    this.drawWaterfall(ctx, loupeRows(this.receiver), place.left, place.top + specH, w, wfH, loHz, spanHz, floorDb, topDb, dpr);
+    const win = loupeWfWindow(rxIdx, keyed);
+    this.drawWaterfall(ctx, loupeRows(this.receiver), place.left, place.top + specH, w, wfH, loHz, spanHz, win.dbMin, win.dbMax, dpr);
 
     // Where the passband sits now (faint) and where it will land (accent).
     const conn = useConnectionStore.getState();
@@ -370,8 +425,8 @@ export class LoupeOverlay {
     h: number,
     loHz: number,
     spanHz: number,
-    floorDb: number,
-    topDb: number,
+    dbMin: number,
+    dbMax: number,
     dpr: number,
   ): void {
     if (rows.length === 0) return;
@@ -382,9 +437,6 @@ export class LoupeOverlay {
     }
     const data = this.image.data;
     const lut = lutFor(useDisplaySettingsStore.getState().colormap);
-    // The waterfall sits a few dB under the trace's top so weak signals show.
-    const lo = floorDb - 3;
-    const range = Math.max(1, topDb - 6 - lo);
     const shown = Math.min(rows.length, 48);
     const line = new Uint8Array(pw * 4);
     let lastRow = -1;
@@ -395,7 +447,7 @@ export class LoupeOverlay {
         const row = rows[r]!;
         for (let x = 0; x < pw; x++) {
           const db = sampleRowDb(row.bins, row.centerHz, row.hzPerPixel, loHz + ((x + 0.5) / pw) * spanHz);
-          const t = Number.isFinite(db) ? Math.min(255, Math.max(0, Math.round(((db - lo) / range) * 255))) : 0;
+          const t = wfLutIndex(db, dbMin, dbMax);
           line[x * 4] = lut[t * 4]!;
           line[x * 4 + 1] = lut[t * 4 + 1]!;
           line[x * 4 + 2] = lut[t * 4 + 2]!;

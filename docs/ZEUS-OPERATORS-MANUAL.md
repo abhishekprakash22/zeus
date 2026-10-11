@@ -100,6 +100,8 @@ Connect, then operate from the workspace:
   below it) until the readout says *Release to cancel*, then lift. A second
   finger also cancels. Moving before the hold opens is an ordinary drag, as
   always; the loupe never opens with a mouse or while the VFO is locked.
+  It is drawn in your own panadapter trace colour and waterfall palette,
+  on the same dB ranges as the display under it.
 - **Modes:** LSB / USB / CW / AM / FM / DIGI, with per-mode filter presets
   and adjustable edges.
 - **AGC** (with AGC-T gain), **squelch**, **attenuation** (S-ATT can also run

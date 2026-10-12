@@ -93,6 +93,41 @@ export type PanRenderer = {
 export const PHOS_DECAY = 0.965;
 export const PHOS_HIT = 0.09;
 const PHOS_GAIN = 1.6;
+
+// Noise-floor gate for the phosphor splat. The floor is the median of the
+// frame (a sparse sample — signals rarely cover half the span), smoothed
+// across frames so the gate doesn't breathe. Hits start PHOS_GATE_LO_DB above
+// it and reach full weight at PHOS_GATE_HI_DB: ordinary noise excursions leave
+// at most a faint sparkle, anything genuinely above the floor glows as before.
+export const PHOS_GATE_LO_DB = 4;
+export const PHOS_GATE_HI_DB = 10;
+const FLOOR_SAMPLES = 256;
+const FLOOR_SMOOTH = 0.85;
+
+/** Median of a sparse, evenly spaced sample of the frame (NaN-safe). */
+export function estimateFloorDb(panDb: Float32Array): number {
+  const n = panDb.length;
+  if (n === 0) return Number.NaN;
+  const stride = Math.max(1, Math.floor(n / FLOOR_SAMPLES));
+  const pick: number[] = [];
+  for (let i = 0; i < n; i += stride) {
+    const v = panDb[i]!;
+    if (Number.isFinite(v)) pick.push(v);
+  }
+  if (pick.length === 0) return Number.NaN;
+  pick.sort((a, b) => a - b);
+  return pick[Math.floor(pick.length / 2)]!;
+}
+
+/** The gate as pan-normalised levels for the splat shader. */
+export function phosphorGate(floorDb: number, dbMin: number, dbMax: number): { lo: number; hi: number } {
+  const span = dbMax - dbMin;
+  if (!Number.isFinite(floorDb) || !(span > 0)) return { lo: 0, hi: 0 };
+  return {
+    lo: (floorDb + PHOS_GATE_LO_DB - dbMin) / span,
+    hi: (floorDb + PHOS_GATE_HI_DB - dbMin) / span,
+  };
+}
 // Linear-light floor so an 8-bit fallback target still decays to zero.
 const PHOS_FLOOR_8BIT = 1.5 / 255;
 
@@ -246,12 +281,15 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
     w: number;
     h: number;
     float: boolean;
+    floorDb: number;
     last: { offsetPx: number; scaleX: number; dbMin: number; dbMax: number; w: number; h: number } | null;
     u: {
       decayPrev: WebGLUniformLocation | null;
       decayDecay: WebGLUniformLocation | null;
       decayFloor: WebGLUniformLocation | null;
       splatHit: WebGLUniformLocation | null;
+      splatGateLo: WebGLUniformLocation | null;
+      splatGateHi: WebGLUniformLocation | null;
       splatWidth: WebGLUniformLocation | null;
       splatDbMin: WebGLUniformLocation | null;
       splatDbMax: WebGLUniformLocation | null;
@@ -327,12 +365,15 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       w: 0,
       h: 0,
       float: floatTargets,
+      floorDb: Number.NaN,
       last: null,
       u: {
         decayPrev: gl.getUniformLocation(decayProg, 'uPrev'),
         decayDecay: gl.getUniformLocation(decayProg, 'uDecay'),
         decayFloor: gl.getUniformLocation(decayProg, 'uFloor'),
         splatHit: gl.getUniformLocation(splatProg, 'uHit'),
+        splatGateLo: gl.getUniformLocation(splatProg, 'uGateLo'),
+        splatGateHi: gl.getUniformLocation(splatProg, 'uGateHi'),
         splatWidth: gl.getUniformLocation(splatProg, 'uWidth'),
         splatDbMin: gl.getUniformLocation(splatProg, 'uDbMin'),
         splatDbMax: gl.getUniformLocation(splatProg, 'uDbMax'),
@@ -484,6 +525,8 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
         if (p.w !== pw || p.h !== ph) allocPhosTargets(p, pw, ph);
         const geom = { offsetPx, scaleX: sx, dbMin, dbMax, w: pw, h: ph };
         if (phosphorNeedsReset(p.last, geom)) {
+          // New view (often a new band): let the floor estimate snap, not glide.
+          p.floorDb = Number.NaN;
           for (let i = 0; i < 2; i++) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, p.fbo[i]!);
             gl.viewport(0, 0, pw, ph);
@@ -512,7 +555,14 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
           gl.blendFunc(gl.ONE, gl.ONE);
           gl.useProgram(p.splatProg);
           gl.bindVertexArray(traceVao);
+          const f = estimateFloorDb(panDb);
+          if (Number.isFinite(f)) {
+            p.floorDb = Number.isFinite(p.floorDb) ? p.floorDb * FLOOR_SMOOTH + f * (1 - FLOOR_SMOOTH) : f;
+          }
+          const gate = phosphorGate(p.floorDb, dbMin, dbMax);
           gl.uniform1f(p.u.splatHit, PHOS_HIT);
+          gl.uniform1f(p.u.splatGateLo, gate.lo);
+          gl.uniform1f(p.u.splatGateHi, gate.hi);
           gl.uniform1f(p.u.splatWidth, panDb.length);
           gl.uniform1f(p.u.splatDbMin, dbMin);
           gl.uniform1f(p.u.splatDbMax, dbMax);

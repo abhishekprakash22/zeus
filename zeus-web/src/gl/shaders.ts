@@ -201,11 +201,23 @@ void main() {
   fragColor = vec4(max(0.0, d * uDecay - uFloor), 0.0, 0.0, 1.0);
 }`;
 
+// The splat is GATED at the noise floor: the noise trace crosses the same few
+// pixels every frame, so ungated it out-collects every real signal and burns
+// a thick hot band along the floor that buries weak signals. Hits fade in
+// between uGateLo and uGateHi (pan-normalised levels a few dB above the
+// estimated floor), so signals keep their persistence and the floor leaves
+// none — the live trace still draws it.
 export const PHOS_SPLAT_FS = /* glsl */ `#version 300 es
 precision highp float;
+in float vLevel;
 uniform float uHit;
+uniform float uGateLo;
+uniform float uGateHi;
 out vec4 fragColor;
-void main() { fragColor = vec4(uHit, 0.0, 0.0, 1.0); }`;
+void main() {
+  float w = smoothstep(uGateLo, max(uGateLo + 0.0001, uGateHi), vLevel);
+  fragColor = vec4(uHit * w, 0.0, 0.0, 1.0);
+}`;
 
 export const PHOS_DISPLAY_FS = /* glsl */ `#version 300 es
 precision highp float;

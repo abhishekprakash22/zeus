@@ -4,9 +4,17 @@
 // Copyright (C) 2026 Apache Labs.
 
 import { describe, expect, it } from 'vitest';
-import { PHOS_DECAY, PHOS_HIT, phosphorNeedsReset } from './panadapter';
+import {
+  estimateFloorDb,
+  PHOS_DECAY,
+  PHOS_GATE_HI_DB,
+  PHOS_GATE_LO_DB,
+  PHOS_HIT,
+  phosphorGate,
+  phosphorNeedsReset,
+} from './panadapter';
 import { spotlightExtents } from '../components/PassbandOverlay';
-import { PAN_FS, PAN_FILL_FS, PHOS_DISPLAY_FS } from './shaders';
+import { PAN_FS, PAN_FILL_FS, PHOS_DISPLAY_FS, PHOS_SPLAT_FS } from './shaders';
 
 describe('phosphor persistence', () => {
   const g = { offsetPx: 0, scaleX: 1, dbMin: -140, dbMax: -60, w: 640, h: 120 };
@@ -48,5 +56,49 @@ describe('passband spotlight', () => {
   it('clamps a passband that runs off either edge', () => {
     expect(spotlightExtents(-5, 3)).toEqual({ leftW: 0, rightL: 3 });
     expect(spotlightExtents(97, 120)).toEqual({ leftW: 97, rightL: 100 });
+  });
+});
+
+describe('phosphor noise-floor gate', () => {
+  // A band of noise around -120 dB with ±3 dB wobble and two signals.
+  const noisy = () => {
+    const a = new Float32Array(2048);
+    let seed = 3;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < a.length; i++) a[i] = -120 + (rnd() - 0.5) * 6;
+    for (let i = 700; i < 720; i++) a[i] = -95; // strong carrier
+    for (let i = 1500; i < 1504; i++) a[i] = -112; // weak signal, +8 dB
+    return a;
+  };
+
+  it('finds the floor under the signals', () => {
+    expect(estimateFloorDb(noisy())).toBeCloseTo(-120, 0);
+    expect(Number.isNaN(estimateFloorDb(new Float32Array(0)))).toBe(true);
+  });
+
+  it('leaves the noise band out and lets real signals through', () => {
+    const dbMin = -140;
+    const dbMax = -60;
+    const g = phosphorGate(-120, dbMin, dbMax);
+    const level = (db: number) => (db - dbMin) / (dbMax - dbMin);
+    const weight = (db: number) => {
+      const t = Math.min(1, Math.max(0, (level(db) - g.lo) / (g.hi - g.lo)));
+      return t * t * (3 - 2 * t);
+    };
+    // Noise up to its +3 dB excursions deposits nothing.
+    expect(weight(-120)).toBe(0);
+    expect(weight(-117)).toBe(0);
+    // A weak +8 dB signal still glows; a strong carrier is at full weight.
+    expect(weight(-112)).toBeGreaterThan(0.4);
+    expect(weight(-95)).toBe(1);
+    expect(PHOS_GATE_HI_DB).toBeGreaterThan(PHOS_GATE_LO_DB);
+  });
+
+  it('opens fully when there is no floor estimate yet', () => {
+    expect(phosphorGate(Number.NaN, -140, -60)).toEqual({ lo: 0, hi: 0 });
+  });
+
+  it('the splat shader applies the gate', () => {
+    expect(PHOS_SPLAT_FS).toContain('smoothstep(uGateLo');
   });
 });

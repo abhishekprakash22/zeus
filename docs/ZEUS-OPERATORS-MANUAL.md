@@ -107,7 +107,8 @@ Connect, then operate from the workspace:
   the waterfall palette's colour per signal (noise keeps your trace colour),
   the waterfall dims outside the receive filter, and the VFO digits roll
   like an odometer. Full adds phosphor persistence on the panadapter —
-  steady carriers burn in, bursts glow and fade over about a second; it
+  steady carriers burn in, bursts glow and fade over about a second; the
+  noise floor itself leaves no glow, so weak signals are never buried; it
   restarts whenever you tune, zoom or change the dB range. Reduced-motion
   devices never roll the digits.
 - **Waterfall speed (SPD, G2 panes):** the SPD pill cycles a receiver's

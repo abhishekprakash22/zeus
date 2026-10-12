@@ -30,14 +30,18 @@ namespace OpenhpsdrZeus;
 internal static class SupportSidecarLauncher
 {
     /// <summary>
-    /// Same broker default + override as <c>RemoteBrokerClient</c>: a <c>wss</c>
-    /// signaling URL. The sidecar derives the <c>https</c> origin for its
-    /// presence/crash POSTs from it. Honour <c>ZEUS_REMOTE_BROKER_URL</c> so a
-    /// staging broker can be pointed at without a rebuild.
+    /// The support broker as a <c>wss</c> signaling URL (the sidecar derives the
+    /// <c>https</c> origin for its presence/crash POSTs from it), or null for none.
+    /// <c>ZEUS_REMOTE_BROKER_URL</c> always wins. STANDALONE builds (the default)
+    /// otherwise have no broker: upstream's remote.openhpsdrzeus.com no longer
+    /// resolves, and this sidecar was launched unconditionally, so it dialled a
+    /// dead host. With no broker the agent runs its local-only crash capturer
+    /// (SupportAgent Program.cs: null endpoints).
     /// </summary>
-    private static string BrokerUrl() =>
-        Environment.GetEnvironmentVariable("ZEUS_REMOTE_BROKER_URL")
-            ?? "wss://remote.openhpsdrzeus.com/signal?role=host";
+    internal static string? BrokerUrl(string? envUrl, bool standalone) =>
+        !string.IsNullOrWhiteSpace(envUrl) ? envUrl.Trim()
+        : standalone ? null
+        : "wss://remote.openhpsdrzeus.com/signal?role=host";
 
     /// <param name="services">
     /// The running host's service provider, used to resolve the operator's QRZ
@@ -90,12 +94,20 @@ internal static class SupportSidecarLauncher
             // table). Availability + crash auto-share START OFF — the backend turns
             // them on at runtime via the SupportStateChanged IPC, so presence never
             // advertises and crashes never upload until the operator opts in.
-            Add("--broker-url", BrokerUrl());
-            var identity = TryResolveQrzIdentity(services);
-            if (identity is not null)
+            var broker = BrokerUrl(
+                Environment.GetEnvironmentVariable("ZEUS_REMOTE_BROKER_URL"),
+                Zeus.Server.Hosting.ZeusStandalone.Enabled);
+            if (broker is not null)
             {
-                Add("--operator-callsign", identity.Value.Callsign);
-                psi.Environment[SupportIpc.SidecarQrzSessionEnvVar] = identity.Value.SessionKey;
+                Add("--broker-url", broker);
+                // The QRZ session key only authenticates broker calls — with no
+                // broker it is not handed to the sidecar at all.
+                var identity = TryResolveQrzIdentity(services);
+                if (identity is not null)
+                {
+                    Add("--operator-callsign", identity.Value.Callsign);
+                    psi.Environment[SupportIpc.SidecarQrzSessionEnvVar] = identity.Value.SessionKey;
+                }
             }
             Add("--remote-diagnostics", "off");
             Add("--auto-share-crash", "off");

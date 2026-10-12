@@ -80,7 +80,7 @@ export interface RemoteConnectOptions {
 export interface BrokerConnectOptions {
   callsign: string;
   password: string;
-  /** Broker origin; defaults to remote.openhpsdrzeus.com. */
+  /** Broker origin; defaults to ananremote.com. */
   brokerOrigin?: string;
   onFrame?: (data: ArrayBuffer) => void;
   onStage?: (stage: string) => void;

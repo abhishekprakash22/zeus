@@ -32,7 +32,7 @@ public static class RemoteQr
 
     /// <summary>
     /// Canonical remote address for a callsign, e.g.
-    /// <c>https://openhpsdrzeus.com/go/EI6LF</c>. The callsign is uppercased and
+    /// <c>https://ananremote.com/go/EI6LF</c>. The callsign is uppercased and
     /// URL-escaped so portable/special calls (<c>EI6LF/P</c>) stay a single path
     /// segment. Returns null when no callsign is available.
     /// </summary>

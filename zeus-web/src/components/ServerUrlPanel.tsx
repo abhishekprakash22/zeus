@@ -30,7 +30,9 @@ import {
 // already reach the same-origin server.
 
 // Origin that hosts the operator's /go/<callsign> remote vanity address.
-const REMOTE_GO_ORIGIN = 'https://openhpsdrzeus.com';
+// The fork's remote address — same origin as the server's QR (RemoteDefaults
+// .BrokerOrigin) and the manual. Upstream's openhpsdrzeus.com no longer resolves.
+const REMOTE_GO_ORIGIN = 'https://ananremote.com';
 
 export function ServerUrlPanel() {
   const [value, setValue] = useState(() => getServerBaseUrl());
@@ -940,7 +942,7 @@ function RemotePasswordSection() {
   );
 }
 
-// Remote-access QR: encodes the operator's openhpsdrzeus.com/go/<callsign>
+// Remote-access QR: encodes the operator's ananremote.com/go/<callsign>
 // address so a phone camera opens the remote client directly. The callsign comes
 // from the QRZ sign-in (Settings → QRZ); access still requires the session
 // password — the link alone is useless (ADR-0007/0008).
@@ -1019,7 +1021,7 @@ function RemoteQrSection() {
           Sign in to QRZ (Settings → QRZ) so Zeus knows your callsign. Your remote
           address will be{' '}
           <code style={{ fontFamily: 'monospace', color: 'var(--fg-1)' }}>
-            openhpsdrzeus.com/go/&lt;your-callsign&gt;
+            ananremote.com/go/&lt;your-callsign&gt;
           </code>
           .
         </div>

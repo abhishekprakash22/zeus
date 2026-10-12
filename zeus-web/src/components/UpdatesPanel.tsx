@@ -9,8 +9,8 @@
 // statement and per-component attribution.
 //
 // UpdatesPanel — Settings -> Updates. Reports the latest PRODUCTION build from
-// the Zeus download domain (downloads.openhpsdrzeus.com, published from `main`
-// only) and opens the matching installer / package / AppImage / tarball for this
+// the fork's GitHub releases (latest.json on the newest release; see
+// RepoUpdateService.DefaultManifestUrl) and opens the matching installer / package / AppImage / tarball for this
 // platform. Source checkouts see the same domain status; they update their
 // source manually with scripts/update.*.
 

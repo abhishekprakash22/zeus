@@ -22,6 +22,11 @@ namespace Zeus.Server.Hosting;
 ///   downloads.openhpsdrzeus.com/latest.json                       (update manifest)
 ///                              /vst-engine/latest.json            (VST engine manifest)
 ///   openhpsdrzeus.com          /download, /go/CALLSIGN            (links, remote QR)
+///   chat.openhpsdrzeus.com     /chat                              (operator chat relay)
+///
+/// The fork replaces the links: updates come from its GitHub releases, and the
+/// remote address is ananremote.com/go/CALLSIGN. Chat has no fork relay, so in
+/// STANDALONE it stays off with a reason shown unless ZEUSCHAT_RELAY_URL is set.
 ///
 /// None of these are needed to operate a radio. When the project's
 /// infrastructure is unavailable, the background clients above still spin —

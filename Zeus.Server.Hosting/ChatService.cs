@@ -118,7 +118,9 @@ public sealed class ChatService : BackgroundService
         _log = log;
 
         var url = Environment.GetEnvironmentVariable("ZEUSCHAT_RELAY_URL");
-        _relayUrl = string.IsNullOrWhiteSpace(url) ? DefaultRelayUrl : url.Trim();
+        var resolved = ResolveRelayUrl(url, Zeus.Server.Hosting.ZeusStandalone.Enabled);
+        _relayAvailable = resolved is not null;
+        _relayUrl = resolved ?? DefaultRelayUrl;
         var secret = Environment.GetEnvironmentVariable("ZEUSCHAT_RELAY_SECRET");
         _relaySecret = string.IsNullOrWhiteSpace(secret) ? null : secret.Trim();
 
@@ -134,6 +136,23 @@ public sealed class ChatService : BackgroundService
     // ── Public API surface (used by ZeusEndpoints) ─────────────────────────
 
     public bool Enabled => _store.GetEnabled();
+
+    /// <summary>Shown in the chat panel when no relay exists for this build.</summary>
+    internal const string NoRelayError =
+        "Chat isn't available in this build — no chat relay is configured.";
+
+    private readonly bool _relayAvailable;
+
+    /// <summary>
+    /// The relay to connect to, or null for none. An explicit ZEUSCHAT_RELAY_URL
+    /// always wins. Otherwise upstream's relay — but not in STANDALONE builds
+    /// (the default), where upstream's infrastructure is gone: chat.openhpsdrzeus.com
+    /// no longer resolves, and enabling chat only spun a reconnect loop against it.
+    /// </summary>
+    internal static string? ResolveRelayUrl(string? envUrl, bool standalone) =>
+        !string.IsNullOrWhiteSpace(envUrl) ? envUrl.Trim()
+        : standalone ? null
+        : DefaultRelayUrl;
 
     public ChatStatusDto GetStatus() => new(
         Enabled: _store.GetEnabled(),
@@ -423,6 +442,19 @@ public sealed class ChatService : BackgroundService
             // timer stalls look like operators connecting/disconnecting.
             if (!_store.GetEnabled())
             {
+                await WaitForWakeAsync(Timeout.InfiniteTimeSpan, stoppingToken);
+                continue;
+            }
+
+            // No relay for this build: say so once in the panel and never dial
+            // a dead host. A later ZEUSCHAT_RELAY_URL needs a restart anyway.
+            if (!_relayAvailable)
+            {
+                if (_lastError != NoRelayError)
+                {
+                    _lastError = NoRelayError;
+                    PushStatus();
+                }
                 await WaitForWakeAsync(Timeout.InfiniteTimeSpan, stoppingToken);
                 continue;
             }

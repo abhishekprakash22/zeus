@@ -44,6 +44,8 @@
 // License for details.
 
 import { useTransverterStore, transverterFor, transverterIfHz } from '../state/transverter-store';
+import { useEffectsStore } from '../state/effects-store';
+import { OdometerDigit, odometerMotion, type OdometerMotion } from './OdometerDigit';
 import {
   Fragment,
   type CSSProperties,
@@ -167,6 +169,23 @@ export function VfoDisplay({
     [targetIndex],
   );
   const receiverFilterColor = receiverColorByIndex(targetIndex);
+
+  // Odometer digits (Effects ≥ Subtle, never under reduced motion): one
+  // motion — direction + tick/roll/spin — for the whole readout per change,
+  // so every digit rolls the same way.
+  const odometer = useEffectsStore((st) => st.flags.odometer);
+  const prevHzRef = useRef(vfoHz);
+  const motionRef = useRef<{ dir: 1 | -1; kind: OdometerMotion }>({ dir: 1, kind: 'tick' });
+  if (prevHzRef.current !== vfoHz) {
+    const prevHz = prevHzRef.current;
+    let changed = 0;
+    for (const place of digitPlacesFor(Math.max(prevHz, vfoHz))) {
+      if (digitAt(prevHz, place.decade) !== digitAt(vfoHz, place.decade)) changed++;
+    }
+    motionRef.current = { dir: vfoHz >= prevHz ? 1 : -1, kind: odometerMotion(vfoHz - prevHz, changed) };
+    prevHzRef.current = vfoHz;
+  }
+  const motion = motionRef.current;
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -383,11 +402,11 @@ export function VfoDisplay({
             return (
               <Fragment key={place.decade}>
                 <span
-                  className={`digit ${isLeading ? 'leading' : ''}`}
+                  className={`digit ${isLeading ? 'leading' : ''}${odometer ? ' odo' : ''}`}
                   data-decade={place.decade}
                   style={{ cursor: locked ? 'not-allowed' : 'ns-resize' }}
                 >
-                  {d}
+                  {odometer ? <OdometerDigit value={d} dir={motion.dir} motion={motion.kind} /> : d}
                 </span>
                 {place.separatorAfter && (
                   <span aria-hidden className="sep">

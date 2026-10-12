@@ -16,6 +16,7 @@
 
 import { BackgroundSettingsPanel } from './BackgroundSettingsPanel';
 import { PalettePicker } from './PalettePicker';
+import { EffectsSettingsPanel } from './EffectsSettingsPanel';
 import { DisplayPerformancePanel } from './DisplayPerformancePanel';
 import { PanadapterOverlaySettingsPanel } from './PanadapterOverlaySettingsPanel';
 import { SpectrumScaleSettingsPanel } from './SpectrumScaleSettingsPanel';
@@ -28,6 +29,7 @@ export function DisplayPanel() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <PalettePicker />
+      <EffectsSettingsPanel />
       <ThemeSettingsPanel />
       <BackgroundSettingsPanel />
       <TraceColorPanel />

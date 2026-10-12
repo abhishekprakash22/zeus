@@ -778,7 +778,7 @@ export function Waterfall({
       {/* Passband + hover crosshair on BOTH halves (RX2), each tracking its own
           receiver's geometry, so a click lands wherever the operator points.
           Parity with the WebGPU heightfield and the panadapter. */}
-      {!widebandDisplay && <PassbandOverlay receiver={receiver} />}
+      {!widebandDisplay && <PassbandOverlay receiver={receiver} spotlight />}
       <FilterCursorOverlay containerRef={containerRef} receiver={receiver} />
       {rxIndex === 0 && !widebandDisplay && (!stitched || foreground) && (
         <>

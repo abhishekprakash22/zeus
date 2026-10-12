@@ -53,20 +53,44 @@ uniform float uOffsetPx;
 // no zoom; <1 packs bins toward centre (mid-glide of a zoom-in), easing to 1
 // as the displayed span catches up to the server span. See view-zoom.ts.
 uniform float uScaleX;
+// Waterfall dB window — the palette-coloured trace picks its colour from the
+// SAME level the waterfall gives this bin, so trace and waterfall agree.
+uniform float uWfDbMin;
+uniform float uWfDbMax;
 out float vLevel;
+out float vWfLevel;
 void main() {
   float x = (float(gl_VertexID) + 0.5 + uOffsetPx) / uWidth;
   x = 0.5 + (x - 0.5) * uScaleX;
   float n = clamp((aDb - uDbMin) / (uDbMax - uDbMin), 0.0, 1.0);
   vLevel = n;
+  vWfLevel = clamp((aDb - uWfDbMin) / max(0.0001, uWfDbMax - uWfDbMin), 0.0, 1.0);
   gl_Position = vec4(x * 2.0 - 1.0, n * 2.0 - 1.0, 0.0, 1.0);
 }`;
+
+// Palette lookup shared by the trace, the fill and the phosphor display: the
+// waterfall's own 256-entry LUT as a 256x1 RGBA8 texture. The palettes keep
+// their lowest ~40% near black, so the trace only takes palette colour where
+// a bin rises above the floor (PALETTE_GATE); the noise floor keeps the
+// operator's trace colour and stays readable.
+const PAN_LUT_GLSL = /* glsl */ `
+uniform sampler2D uLut;
+uniform float uLutMix;
+vec3 lutColor(float n) {
+  return texture(uLut, vec2((clamp(n, 0.0, 1.0) * 255.0 + 0.5) / 256.0, 0.5)).rgb;
+}
+float paletteWeight(float wfLevel) {
+  return uLutMix * smoothstep(0.46, 0.70, wfLevel);
+}
+`;
 
 export const PAN_FS = /* glsl */ `#version 300 es
 precision highp float;
 in float vLevel;
+in float vWfLevel;
 uniform vec3 uColor;
 uniform float uPopIntensity;
+${PAN_LUT_GLSL}
 out vec4 fragColor;
 vec3 popRamp(float n) {
   vec3 low = vec3(0.02, 0.20, 0.34);
@@ -79,7 +103,8 @@ vec3 popRamp(float n) {
 }
 void main() {
   float popI = clamp(uPopIntensity, 0.0, 1.0);
-  vec3 c = mix(uColor, popRamp(vLevel), popI);
+  vec3 baseColor = mix(uColor, lutColor(vWfLevel), paletteWeight(vWfLevel));
+  vec3 c = mix(baseColor, popRamp(vLevel), popI);
   c += vec3(0.08, 0.12, 0.06) * smoothstep(0.58, 1.0, vLevel) * popI;
   c = min(c, vec3(1.0));
   fragColor = vec4(c, 1.0);
@@ -100,8 +125,11 @@ uniform float uOffsetPx;
 // under the trace mid-glide. See view-zoom.ts.
 uniform float uScaleX;
 uniform float uFillAlphaTop;
+uniform float uWfDbMin;
+uniform float uWfDbMax;
 out float v_alpha;
 out float v_level;
+out float v_wf;
 void main() {
   int binIdx = gl_VertexID >> 1;
   bool isTop = (gl_VertexID & 1) == 1;
@@ -112,6 +140,7 @@ void main() {
   float y = isTop ? (n * 2.0 - 1.0) : -1.0;
   v_alpha = isTop ? uFillAlphaTop : 0.0;
   v_level = n;
+  v_wf = clamp((aDb - uWfDbMin) / max(0.0001, uWfDbMax - uWfDbMin), 0.0, 1.0);
   gl_Position = vec4(x * 2.0 - 1.0, y, 0.0, 1.0);
 }`;
 
@@ -119,8 +148,10 @@ export const PAN_FILL_FS = /* glsl */ `#version 300 es
 precision highp float;
 in float v_alpha;
 in float v_level;
+in float v_wf;
 uniform vec3 uColor;
 uniform float uPopIntensity;
+${PAN_LUT_GLSL}
 out vec4 fragColor;
 vec3 popRamp(float n) {
   vec3 floorGlow = vec3(0.00, 0.10, 0.18);
@@ -132,12 +163,64 @@ vec3 popRamp(float n) {
   return mix(c, peak, smoothstep(0.72, 1.0, n));
 }
 void main() {
-  vec4 base = vec4(uColor * v_alpha, v_alpha);
+  vec3 baseColor = mix(uColor, lutColor(v_wf), paletteWeight(v_wf));
+  vec4 base = vec4(baseColor * v_alpha, v_alpha);
   float popI = clamp(uPopIntensity, 0.0, 1.0);
   float lift = smoothstep(0.04, 0.92, v_level);
   float alpha = v_alpha * mix(0.42, 0.86, lift);
   vec3 c = popRamp(v_level) * alpha;
   fragColor = mix(base, vec4(c, alpha), popI);
+}`;
+
+// Phosphor persistence (Effects: Full). A screen-space density texture at
+// half the panadapter's resolution, ping-ponged between two framebuffers:
+//   decay   every new frame first fades the whole density (multiply, then a
+//           small subtract so 8-bit fallbacks still reach zero);
+//   splat   the new trace is drawn into it as a LINE_STRIP with additive
+//           blending, so each pixel the trace crosses gains one hit;
+//   display the density is coloured through the waterfall palette and laid
+//           under the live trace.
+// Steady carriers saturate (hot), bursts glow and fade, noise stays a haze.
+export const PHOS_QUAD_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUv;
+void main() {
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+export const PHOS_DECAY_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uPrev;
+uniform float uDecay;
+uniform float uFloor;
+out vec4 fragColor;
+void main() {
+  float d = texture(uPrev, vUv).r;
+  fragColor = vec4(max(0.0, d * uDecay - uFloor), 0.0, 0.0, 1.0);
+}`;
+
+export const PHOS_SPLAT_FS = /* glsl */ `#version 300 es
+precision highp float;
+uniform float uHit;
+out vec4 fragColor;
+void main() { fragColor = vec4(uHit, 0.0, 0.0, 1.0); }`;
+
+export const PHOS_DISPLAY_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uDensity;
+uniform float uGain;
+${PAN_LUT_GLSL}
+out vec4 fragColor;
+void main() {
+  float d = texture(uDensity, vUv).r;
+  float n = 1.0 - exp(-d * uGain);
+  // Start the palette above its black foot so a single hit is still visible.
+  vec3 c = lutColor(mix(0.48, 1.0, n));
+  float a = smoothstep(0.0, 0.06, d) * mix(0.55, 0.95, n) * uLutMix;
+  fragColor = vec4(c * a, a);
 }`;
 
 export const CURSOR_VS = /* glsl */ `#version 300 es

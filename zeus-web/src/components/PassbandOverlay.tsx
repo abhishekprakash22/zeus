@@ -59,6 +59,23 @@ import * as viewCenter from '../state/view-center';
 import { settledDialOffsetHz } from '../util/settled-dial-offset';
 import * as viewZoom from '../state/view-zoom';
 import { resolveSpectrumViewport } from '../util/wideband-view';
+import { useEffectsStore } from '../state/effects-store';
+
+/** Width of the soft edge between the lit passband and the dimmed rest (px). */
+export const SPOTLIGHT_FEATHER_PX = 16;
+
+/** Left/right dim extents (percent of width) for a passband [leftPct, rightPct]. */
+export function spotlightExtents(leftPct: number, rightPct: number): { leftW: number; rightL: number } {
+  const clamp = (v: number) => Math.min(100, Math.max(0, v));
+  return { leftW: clamp(leftPct), rightL: clamp(rightPct) };
+}
+
+function dimBackground(side: 'left' | 'right', dim: number): string {
+  const a = `rgba(0,0,0,${dim})`;
+  return side === 'left'
+    ? `linear-gradient(to right, ${a} calc(100% - ${SPOTLIGHT_FEATHER_PX}px), rgba(0,0,0,0))`
+    : `linear-gradient(to left, ${a} calc(100% - ${SPOTLIGHT_FEATHER_PX}px), rgba(0,0,0,0))`;
+}
 
 // Translucent rectangle drawn inside the panadapter container to show the
 // active receive filter passband, mapped from [filterLowHz, filterHighHz]
@@ -78,11 +95,23 @@ import { resolveSpectrumViewport } from '../util/wideband-view';
 // reintroduce pointer handlers here.
 type PassbandOverlayProps = {
   receiver?: ReceiverKey;
+  /**
+   * Passband spotlight (Effects ≥ Subtle): everything outside the receive
+   * filter is dimmed, with a feathered edge, so the eye lands on what is
+   * being heard. Two plain gradient layers — compositor work, no GL pass.
+   * Used on the waterfall.
+   */
+  spotlight?: boolean;
 };
 
 export function PassbandOverlay({
   receiver = 'A',
+  spotlight = false,
 }: PassbandOverlayProps = {}) {
+  const spotOn = useEffectsStore((st) => st.flags.spotlight) && spotlight;
+  const spotDim = useEffectsStore((st) => st.flags.spotlightDim);
+  const leftDimRef = useRef<HTMLDivElement | null>(null);
+  const rightDimRef = useRef<HTMLDivElement | null>(null);
   const centerHz = useDisplayStore((s) => selectDisplaySlice(s, receiver).centerHz);
   const hzPerPixel = useDisplayStore((s) => selectDisplaySlice(s, receiver).hzPerPixel);
   // Header width — survives frames whose pan payload is invalid.
@@ -157,6 +186,14 @@ export function PassbandOverlay({
         rect.style.left = `${leftPct}%`;
         rect.style.width = `${widthPct}%`;
       }
+      const ld = leftDimRef.current;
+      const rd = rightDimRef.current;
+      if (ld && rd) {
+        // Passband off-screen: the whole view is "outside" — dim it all.
+        const { leftW, rightL } = visible ? spotlightExtents(leftPct, rightPct) : { leftW: 100, rightL: 100 };
+        ld.style.width = `${leftW}%`;
+        rd.style.left = `${rightL}%`;
+      }
     };
     const schedule = () => requestDrawBusFrame(update);
     const unsubVc = vc.subscribe(schedule);
@@ -223,15 +260,36 @@ export function PassbandOverlay({
 
   if (widthPct <= 0) return null;
 
+  const initialSpot = spotlightExtents(leftPct, rightPct);
   return (
-    <div
-      ref={rectRef}
-      aria-hidden
-      className="passband-overlay pointer-events-none absolute inset-y-0 z-[5]"
-      style={{
-        left: `${leftPct}%`,
-        width: `${widthPct}%`,
-      }}
-    />
+    <>
+      {spotOn && (
+        <>
+          <div
+            ref={leftDimRef}
+            aria-hidden
+            data-testid="passband-spotlight-left"
+            className="pointer-events-none absolute inset-y-0 z-[5]"
+            style={{ left: 0, width: `${initialSpot.leftW}%`, background: dimBackground('left', spotDim) }}
+          />
+          <div
+            ref={rightDimRef}
+            aria-hidden
+            data-testid="passband-spotlight-right"
+            className="pointer-events-none absolute inset-y-0 z-[5]"
+            style={{ left: `${initialSpot.rightL}%`, right: 0, background: dimBackground('right', spotDim) }}
+          />
+        </>
+      )}
+      <div
+        ref={rectRef}
+        aria-hidden
+        className="passband-overlay pointer-events-none absolute inset-y-0 z-[5]"
+        style={{
+          left: `${leftPct}%`,
+          width: `${widthPct}%`,
+        }}
+      />
+    </>
   );
 }

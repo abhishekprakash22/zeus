@@ -102,6 +102,14 @@ Connect, then operate from the workspace:
   always; the loupe never opens with a mouse or while the VFO is locked.
   It is drawn in your own panadapter trace colour and waterfall palette,
   on the same dB ranges as the display under it.
+- **Display effects (Settings → Display → EFFECTS):** Off / **Subtle**
+  (default) / Full, remembered by the radio. Subtle: the trace and fill take
+  the waterfall palette's colour per signal (noise keeps your trace colour),
+  the waterfall dims outside the receive filter, and the VFO digits roll
+  like an odometer. Full adds phosphor persistence on the panadapter —
+  steady carriers burn in, bursts glow and fade over about a second; it
+  restarts whenever you tune, zoom or change the dB range. Reduced-motion
+  devices never roll the digits.
 - **Waterfall speed (SPD, G2 panes):** the SPD pill cycles a receiver's
   waterfall speed ×½ → ×1 → ×2 → ×4 and is remembered per receiver by the
   radio, so it survives restarts.

@@ -90,6 +90,13 @@ function wrap<T extends object>(
   };
 }
 
+// One extra overlay line supplied by the app (the display effects level), so
+// every before/after photo states what was running when it was taken.
+let statsTag: (() => string) | null = null;
+export function setRenderStatsTag(fn: () => string): void {
+  statsTag = fn;
+}
+
 function startOverlay(): void {
   if (overlayStarted || typeof document === 'undefined') return;
   overlayStarted = true;
@@ -141,7 +148,8 @@ function startOverlay(): void {
       `gl-span ${glPerFrame.toFixed(2)} ms/frame (${glSpanFrames} gl-frames/s)\n` +
       `longtask ${longTasks}/s  ${longTaskMs.toFixed(0)} ms/s\n` +
       `upload ${mb.toFixed(2)} MB/s  ${uploadCalls} calls/s\n` +
-      `draws  ${drawCalls}/s`;
+      `draws  ${drawCalls}/s` +
+      (statsTag ? `\n${statsTag()}` : '');
     uploadBytes = 0;
     uploadCalls = 0;
     drawCalls = 0;

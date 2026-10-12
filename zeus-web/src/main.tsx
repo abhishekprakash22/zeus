@@ -96,6 +96,7 @@ import { installFetchInterceptor } from './serverUrl';
 // Side-effect import: registers the `beforeinstallprompt` capture before the
 // lazily-loaded mobile shell mounts, so the install banner can replay it.
 import './pwa/pwa-install';
+import { startEffectsSync } from './state/effects-store';
 
 // Capacitor / standalone-host builds set localStorage["zeus.serverUrl"]
 // to a LAN address; on plain web this is a no-op (relative paths).
@@ -152,6 +153,9 @@ if (!rootEl) throw new Error('root element missing');
 // src/dev/Pan3dHarness.tsx. Never reachable by accident — it is a query
 // parameter, not a route — and it never talks to a radio.
 const harness = new URLSearchParams(window.location.search).has('pan3dharness');
+
+// Display effects level: adopt the radio's copy, follow reduced-motion live.
+startEffectsSync();
 
 createRoot(rootEl).render(
   <StrictMode>

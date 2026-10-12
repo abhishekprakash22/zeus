@@ -5711,3 +5711,29 @@
 /* XIT moves the TRANSMITTED carrier, so it reads in TX red, not RIT amber. */
 .xit-toggle.engaged { color: #ff6b6b; border-color: #8f2c2c; }
 .xit-chip .rit-val { color: #ff6b6b; }
+
+/* Odometer VFO digits (Effects ≥ Subtle; see OdometerDigit.tsx). The ghost
+   numeral holds the digit's exact width and baseline; the rolling column is
+   an overlay clipped to the same box, so layout never moves. */
+.freq-digits .digit.odo { position: relative; display: inline-block; }
+.freq-digits .digit.odo .odo-ghost { color: transparent; text-shadow: none; }
+.freq-digits .digit.odo .odo-win {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.freq-digits .digit.odo .odo-col {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
+  will-change: transform;
+}
+.freq-digits .digit.odo .odo-cell {
+  display: block;
+  height: 100%;
+  line-height: inherit;
+  text-align: center;
+}

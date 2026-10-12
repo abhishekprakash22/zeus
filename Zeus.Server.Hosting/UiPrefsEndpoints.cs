@@ -70,6 +70,17 @@ public static class UiPrefsEndpoints
         return 1.0;
     }
 
+    private static string EffectsPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-effects.json");
+    }
+
+    // Display effects level (Off / Subtle / Full). Anything else reads as the
+    // default, Subtle.
+    internal static string NormalizeEffectsLevel(string? level) =>
+        level is "off" or "subtle" or "full" ? level! : "subtle";
+
     internal static double ClampFlagScale(double scale) =>
         double.IsFinite(scale) ? Math.Clamp(scale, 1.0, 2.0) : 1.0;
 
@@ -181,6 +192,37 @@ public static class UiPrefsEndpoints
             }
         });
 
+        // Display effects level, radio-wide. Server-side for the same reason
+        // as spec-frac and wf-speed: the kiosk's browser profile is throwaway.
+        // GET answers level:null until an operator has chosen one, so the
+        // client keeps its own default instead of being overruled by ours.
+        app.MapGet("/api/ui/effects", () =>
+        {
+            try
+            {
+                var path = EffectsPath();
+                if (!File.Exists(path)) return Results.Ok(new { level = (string?)null });
+                var doc = System.Text.Json.JsonSerializer.Deserialize<EffectsRequest>(File.ReadAllText(path));
+                return Results.Ok(new { level = (string?)NormalizeEffectsLevel(doc?.Level) });
+            }
+            catch { return Results.Ok(new { level = (string?)null }); }
+        });
+        app.MapPost("/api/ui/effects", (EffectsRequest req) =>
+        {
+            var level = NormalizeEffectsLevel(req.Level);
+            try
+            {
+                var path = EffectsPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new EffectsRequest(level)));
+                return Results.Ok(new { level });
+            }
+            catch (Exception)
+            {
+                return Results.Ok(new { level, persisted = false });
+            }
+        });
+
         app.MapGet("/api/ui/flag-scale", () =>
         {
             try
@@ -269,4 +311,6 @@ public sealed record SpecFracRequest(int Rx, double Frac);
 public sealed record FlagScaleRequest(double Scale);
 
 public sealed record WfSpeedRequest(int Rx, double Factor);
+
+public sealed record EffectsRequest(string? Level);
 }

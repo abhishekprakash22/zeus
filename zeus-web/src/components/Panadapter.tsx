@@ -61,6 +61,8 @@ import { getReceiverVfoHz, receiverLabel, rxIndexOf, type ReceiverKey } from '..
 import * as viewCenter from '../state/view-center';
 import * as viewZoom from '../state/view-zoom';
 import { useTxStore } from '../state/tx-store';
+import { useEffectsStore } from '../state/effects-store';
+import { effectiveRxWfWindow } from '../state/rx-db-window-store';
 import { usePanTuneGesture, type PanTuneGestureOptions } from '../util/use-pan-tune-gesture';
 import { isWidebandDisplayGeometry } from '../util/wideband-view';
 import { BandOverlay } from './BandOverlay';
@@ -278,6 +280,17 @@ export function Panadapter({
       const { r, g, b } = hexToRgbFloats(s.rxTraceColor);
       renderer.setTraceColor(r, g, b);
       renderer.setPopMode(popOn, popIntensity);
+      // Effects (Subtle+): trace and fill take the waterfall's palette colour
+      // for each bin, read through the waterfall's own dB window so a signal
+      // is the same colour on both. Full adds phosphor persistence. Pop owns
+      // its own colouring, so both stand aside while it is on.
+      const fx = useEffectsStore.getState().flags;
+      renderer.setPalette(s.colormap);
+      const wfWin = keyed
+        ? { wfDbMin: s.wfTxDbMin, wfDbMax: s.wfTxDbMax }
+        : effectiveRxWfWindow(rxIndex);
+      renderer.setPaletteTrace(fx.lutTrace && !popOn ? 1 : 0, wfWin.wfDbMin, wfWin.wfDbMax);
+      renderer.setPhosphor(fx.phosphor && !popOn);
       // Fractional offset — the shaders take a float uOffsetPx, so the
       // glide is sub-pixel-smooth for free (issue #597).
       const offsetPx =
@@ -475,10 +488,16 @@ export function Panadapter({
         state.rx2DbMax !== prev.rx2DbMax ||
         state.txDbMin !== prev.txDbMin ||
         state.txDbMax !== prev.txDbMax ||
-        state.rxTraceColor !== prev.rxTraceColor
+        state.rxTraceColor !== prev.rxTraceColor ||
+        state.colormap !== prev.colormap ||
+        state.wfDbMin !== prev.wfDbMin ||
+        state.wfDbMax !== prev.wfDbMax
       ) {
         requestRedraw();
       }
+    });
+    const unsubEffects = useEffectsStore.subscribe((state, prev) => {
+      if (state.flags !== prev.flags) requestRedraw();
     });
 
     // Repaint when MOX / TUN flips so the RX-vs-TX dB range swap is
@@ -513,6 +532,7 @@ export function Panadapter({
       unsubViewZoom();
       unsubConn();
       unsubSettings();
+      unsubEffects();
       unsubTx();
       unsubEnhance();
       ro.disconnect();

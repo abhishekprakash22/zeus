@@ -45,6 +45,7 @@
 
 import { instrumentGlForStats } from './render-stats';
 import { buildProgram } from './util';
+import { lutFor, type ColormapId } from './colormap';
 import {
   PAN_VS,
   PAN_FS,
@@ -52,6 +53,10 @@ import {
   PAN_FILL_FS,
   CURSOR_VS,
   CURSOR_FS,
+  PHOS_QUAD_VS,
+  PHOS_DECAY_FS,
+  PHOS_SPLAT_FS,
+  PHOS_DISPLAY_FS,
 } from './shaders';
 
 export type PanRenderer = {
@@ -69,8 +74,47 @@ export type PanRenderer = {
   setTraceColor: (r: number, g: number, b: number) => void;
   /** Enables and tunes the high-contrast Signal Pop visual treatment. */
   setPopMode: (active: boolean, intensity?: number) => void;
+  /** The waterfall palette the trace / fill / phosphor colour through. */
+  setPalette: (id: ColormapId) => void;
+  /**
+   * Palette-coloured trace (Effects ≥ Subtle). mix 0 = the classic single
+   * colour. wfDbMin/Max = the waterfall's window, so a bin takes the colour
+   * the waterfall gives it.
+   */
+  setPaletteTrace: (mix: number, wfDbMin: number, wfDbMax: number) => void;
+  /** Phosphor persistence (Effects: Full). Off releases nothing; it just stops. */
+  setPhosphor: (on: boolean) => void;
   dispose: () => void;
 };
+
+// Phosphor tuning. Per NEW display frame (not per redraw): density decays by
+// PHOS_DECAY then each pixel the trace crosses gains PHOS_HIT. At ~30 frames/s
+// a burst fades over roughly a second; a steady carrier saturates.
+export const PHOS_DECAY = 0.965;
+export const PHOS_HIT = 0.09;
+const PHOS_GAIN = 1.6;
+// Linear-light floor so an 8-bit fallback target still decays to zero.
+const PHOS_FLOOR_8BIT = 1.5 / 255;
+
+/**
+ * Whether accumulated persistence must be thrown away: the view moved (tune,
+ * glide, zoom), the dB window changed, or the canvas resized — density is in
+ * screen space, so old hits would sit on the wrong frequencies.
+ */
+export function phosphorNeedsReset(
+  prev: { offsetPx: number; scaleX: number; dbMin: number; dbMax: number; w: number; h: number } | null,
+  next: { offsetPx: number; scaleX: number; dbMin: number; dbMax: number; w: number; h: number },
+): boolean {
+  if (!prev) return true;
+  return (
+    Math.abs(prev.offsetPx - next.offsetPx) > 0.5 ||
+    Math.abs(prev.scaleX - next.scaleX) > 1e-4 ||
+    prev.dbMin !== next.dbMin ||
+    prev.dbMax !== next.dbMax ||
+    prev.w !== next.w ||
+    prev.h !== next.h
+  );
+}
 
 // Deferred WebGL context teardown — mirrors Waterfall.tsx (#629). Each WebGL2
 // canvas holds a scarce ANGLE/driver context slot; freeing GL objects in
@@ -159,6 +203,162 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
   const uFillAlphaTop = gl.getUniformLocation(fillProg, 'uFillAlphaTop');
   const uFillPan = gl.getUniformLocation(fillProg, 'uPan');
   const uFillPopIntensity = gl.getUniformLocation(fillProg, 'uPopIntensity');
+  const uTraceWfMin = gl.getUniformLocation(traceProg, 'uWfDbMin');
+  const uTraceWfMax = gl.getUniformLocation(traceProg, 'uWfDbMax');
+  const uTraceLut = gl.getUniformLocation(traceProg, 'uLut');
+  const uTraceLutMix = gl.getUniformLocation(traceProg, 'uLutMix');
+  const uFillWfMin = gl.getUniformLocation(fillProg, 'uWfDbMin');
+  const uFillWfMax = gl.getUniformLocation(fillProg, 'uWfDbMax');
+  const uFillLut = gl.getUniformLocation(fillProg, 'uLut');
+  const uFillLutMix = gl.getUniformLocation(fillProg, 'uLutMix');
+
+  // Palette LUT on texture unit 1 (unit 0 is the pan row, unit 2 phosphor).
+  const lutTex = gl.createTexture()!;
+  let paletteId: ColormapId | null = null;
+  let lutMix = 0;
+  let wfDbMin = -140;
+  let wfDbMax = -60;
+  const uploadPalette = (id: ColormapId) => {
+    if (id === paletteId) return;
+    paletteId = id;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, lutTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, lutFor(id));
+    gl.activeTexture(gl.TEXTURE0);
+  };
+  uploadPalette('blue');
+
+  // Phosphor persistence: built lazily on first use, so Off/Subtle pay nothing.
+  let phosphorOn = false;
+  type Phos = {
+    quadVao: WebGLVertexArrayObject;
+    quadVbo: WebGLBuffer;
+    decayProg: WebGLProgram;
+    splatProg: WebGLProgram;
+    displayProg: WebGLProgram;
+    tex: [WebGLTexture, WebGLTexture];
+    fbo: [WebGLFramebuffer, WebGLFramebuffer];
+    cur: 0 | 1;
+    w: number;
+    h: number;
+    float: boolean;
+    last: { offsetPx: number; scaleX: number; dbMin: number; dbMax: number; w: number; h: number } | null;
+    u: {
+      decayPrev: WebGLUniformLocation | null;
+      decayDecay: WebGLUniformLocation | null;
+      decayFloor: WebGLUniformLocation | null;
+      splatHit: WebGLUniformLocation | null;
+      splatWidth: WebGLUniformLocation | null;
+      splatDbMin: WebGLUniformLocation | null;
+      splatDbMax: WebGLUniformLocation | null;
+      splatOffsetPx: WebGLUniformLocation | null;
+      splatScaleX: WebGLUniformLocation | null;
+      dispDensity: WebGLUniformLocation | null;
+      dispGain: WebGLUniformLocation | null;
+      dispLut: WebGLUniformLocation | null;
+      dispLutMix: WebGLUniformLocation | null;
+    };
+  };
+  let phos: Phos | null = null;
+  const floatTargets = !!gl.getExtension('EXT_color_buffer_float');
+
+  const allocPhosTargets = (p: Phos, w: number, h: number) => {
+    // Phosphor textures live on unit 2 — never disturb the pan row on unit 0.
+    gl.activeTexture(gl.TEXTURE2);
+    for (let i = 0; i < 2; i++) {
+      gl.bindTexture(gl.TEXTURE_2D, p.tex[i]!);
+      if (p.float) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, w, h, 0, gl.RED, gl.HALF_FLOAT, null);
+      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, p.fbo[i]!);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, p.tex[i]!, 0);
+      if (p.float && gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        // Half-float target refused by this driver — fall back to 8-bit.
+        p.float = false;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        allocPhosTargets(p, w, h);
+        return;
+      }
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.activeTexture(gl.TEXTURE0);
+    p.w = w;
+    p.h = h;
+    p.last = null;
+  };
+
+  const buildPhos = (): Phos => {
+    const quadVao = gl.createVertexArray()!;
+    const quadVbo = gl.createBuffer()!;
+    gl.bindVertexArray(quadVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+    const decayProg = buildProgram(gl, PHOS_QUAD_VS, PHOS_DECAY_FS);
+    const splatProg = buildProgram(gl, PAN_VS, PHOS_SPLAT_FS);
+    const displayProg = buildProgram(gl, PHOS_QUAD_VS, PHOS_DISPLAY_FS);
+    gl.activeTexture(gl.TEXTURE2);
+    const mkTex = () => {
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return t;
+    };
+    const p: Phos = {
+      quadVao,
+      quadVbo,
+      decayProg,
+      splatProg,
+      displayProg,
+      tex: [mkTex(), mkTex()],
+      fbo: [gl.createFramebuffer()!, gl.createFramebuffer()!],
+      cur: 0,
+      w: 0,
+      h: 0,
+      float: floatTargets,
+      last: null,
+      u: {
+        decayPrev: gl.getUniformLocation(decayProg, 'uPrev'),
+        decayDecay: gl.getUniformLocation(decayProg, 'uDecay'),
+        decayFloor: gl.getUniformLocation(decayProg, 'uFloor'),
+        splatHit: gl.getUniformLocation(splatProg, 'uHit'),
+        splatWidth: gl.getUniformLocation(splatProg, 'uWidth'),
+        splatDbMin: gl.getUniformLocation(splatProg, 'uDbMin'),
+        splatDbMax: gl.getUniformLocation(splatProg, 'uDbMax'),
+        splatOffsetPx: gl.getUniformLocation(splatProg, 'uOffsetPx'),
+        splatScaleX: gl.getUniformLocation(splatProg, 'uScaleX'),
+        dispDensity: gl.getUniformLocation(displayProg, 'uDensity'),
+        dispGain: gl.getUniformLocation(displayProg, 'uGain'),
+        dispLut: gl.getUniformLocation(displayProg, 'uLut'),
+        dispLutMix: gl.getUniformLocation(displayProg, 'uLutMix'),
+      },
+    };
+    gl.activeTexture(gl.TEXTURE0);
+    return p;
+  };
+
+  const disposePhos = (p: Phos) => {
+    gl.deleteFramebuffer(p.fbo[0]);
+    gl.deleteFramebuffer(p.fbo[1]);
+    gl.deleteTexture(p.tex[0]);
+    gl.deleteTexture(p.tex[1]);
+    gl.deleteProgram(p.decayProg);
+    gl.deleteProgram(p.splatProg);
+    gl.deleteProgram(p.displayProg);
+    gl.deleteBuffer(p.quadVbo);
+    gl.deleteVertexArray(p.quadVao);
+  };
 
   // Trace VBO: one float per bin, rendered as LINE_STRIP for the sharp
   // top edge. Fill reuses the same data via a 1-row R32F texture sampled
@@ -258,7 +458,93 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
         }
       }
 
+      // Make sure the trace VBO holds this frame before any pass reads it.
+      gl.bindBuffer(gl.ARRAY_BUFFER, traceVbo);
+      const traceBytes = panDb.byteLength;
+      if (traceBytes > traceCapacity) {
+        gl.bufferData(gl.ARRAY_BUFFER, traceBytes, gl.STREAM_DRAW);
+        traceCapacity = traceBytes;
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, panDb);
+      } else if (dataDirty) {
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, panDb);
+      }
+      lastUploadedPan = panDb;
+
+      // Palette LUT stays bound on unit 1 for every pass that reads it.
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, lutTex);
+      gl.activeTexture(gl.TEXTURE0);
+
+      const phosphorActive = phosphorOn && canvasW > 1 && canvasH > 1;
+      if (phosphorActive) {
+        phos ??= buildPhos();
+        const p = phos;
+        const pw = Math.max(1, Math.floor(canvasW / 2));
+        const ph = Math.max(1, Math.floor(canvasH / 2));
+        if (p.w !== pw || p.h !== ph) allocPhosTargets(p, pw, ph);
+        const geom = { offsetPx, scaleX: sx, dbMin, dbMax, w: pw, h: ph };
+        if (phosphorNeedsReset(p.last, geom)) {
+          for (let i = 0; i < 2; i++) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, p.fbo[i]!);
+            gl.viewport(0, 0, pw, ph);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+          }
+        }
+        p.last = geom;
+        if (dataDirty) {
+          const src = p.cur;
+          const dst: 0 | 1 = src === 0 ? 1 : 0;
+          gl.bindFramebuffer(gl.FRAMEBUFFER, p.fbo[dst]);
+          gl.viewport(0, 0, pw, ph);
+          // Decay src → dst.
+          gl.disable(gl.BLEND);
+          gl.useProgram(p.decayProg);
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_2D, p.tex[src]);
+          gl.uniform1i(p.u.decayPrev, 2);
+          gl.uniform1f(p.u.decayDecay, PHOS_DECAY);
+          gl.uniform1f(p.u.decayFloor, p.float ? 0.0005 : PHOS_FLOOR_8BIT);
+          gl.bindVertexArray(p.quadVao);
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+          // Splat the new trace, additively.
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE);
+          gl.useProgram(p.splatProg);
+          gl.bindVertexArray(traceVao);
+          gl.uniform1f(p.u.splatHit, PHOS_HIT);
+          gl.uniform1f(p.u.splatWidth, panDb.length);
+          gl.uniform1f(p.u.splatDbMin, dbMin);
+          gl.uniform1f(p.u.splatDbMax, dbMax);
+          gl.uniform1f(p.u.splatOffsetPx, offsetPx);
+          gl.uniform1f(p.u.splatScaleX, sx);
+          gl.drawArrays(gl.LINE_STRIP, 0, panDb.length);
+          p.cur = dst;
+          gl.activeTexture(gl.TEXTURE0);
+        }
+        // Display the density under everything else.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvasW, canvasH);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.useProgram(p.displayProg);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, p.tex[p.cur]);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.uniform1i(p.u.dispDensity, 2);
+        gl.uniform1i(p.u.dispLut, 1);
+        gl.uniform1f(p.u.dispGain, PHOS_GAIN);
+        gl.uniform1f(p.u.dispLutMix, 1);
+        gl.bindVertexArray(p.quadVao);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, panTex);
+      } else if (phos) {
+        phos.last = null;
+      }
+
       // Fill (premultiplied alpha to avoid halo on the glowing top edge).
+      // Under phosphor the density IS the fill — drawing both muddies it.
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.useProgram(fillProg);
@@ -272,22 +558,16 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.uniform3f(uFillColor, traceR, traceG, traceB);
       gl.uniform1f(uFillAlphaTop, FILL_ALPHA_TOP);
       gl.uniform1f(uFillPopIntensity, popIntensity);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, panDb.length * 2);
+      gl.uniform1i(uFillLut, 1);
+      gl.uniform1f(uFillLutMix, popIntensity > 0 ? 0 : lutMix);
+      gl.uniform1f(uFillWfMin, wfDbMin);
+      gl.uniform1f(uFillWfMax, wfDbMax);
+      if (!phosphorActive) gl.drawArrays(gl.TRIANGLE_STRIP, 0, panDb.length * 2);
 
       // Sharp trace line on top.
       gl.disable(gl.BLEND);
       gl.useProgram(traceProg);
       gl.bindVertexArray(traceVao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, traceVbo);
-      const traceBytes = panDb.byteLength;
-      if (traceBytes > traceCapacity) {
-        gl.bufferData(gl.ARRAY_BUFFER, traceBytes, gl.STREAM_DRAW);
-        traceCapacity = traceBytes;
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, panDb);
-      } else if (dataDirty) {
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, panDb);
-      }
-      lastUploadedPan = panDb;
       gl.uniform1f(uTraceWidth, panDb.length);
       gl.uniform1f(uTraceDbMin, dbMin);
       gl.uniform1f(uTraceDbMax, dbMax);
@@ -295,6 +575,10 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.uniform1f(uTraceScaleX, sx);
       gl.uniform3f(uTraceColor, traceR, traceG, traceB);
       gl.uniform1f(uTracePopIntensity, popIntensity);
+      gl.uniform1i(uTraceLut, 1);
+      gl.uniform1f(uTraceLutMix, popIntensity > 0 ? 0 : lutMix);
+      gl.uniform1f(uTraceWfMin, wfDbMin);
+      gl.uniform1f(uTraceWfMax, wfDbMax);
       gl.drawArrays(gl.LINE_STRIP, 0, panDb.length);
 
       gl.useProgram(cursorProg);
@@ -312,10 +596,26 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
     setPopMode(active, intensity = active ? 1 : 0) {
       popIntensity = Math.max(0, Math.min(1, intensity));
     },
+    setPalette(id) {
+      uploadPalette(id);
+    },
+    setPaletteTrace(mix, min, max) {
+      lutMix = Number.isFinite(mix) ? Math.max(0, Math.min(1, mix)) : 0;
+      if (Number.isFinite(min) && Number.isFinite(max) && max > min) {
+        wfDbMin = min;
+        wfDbMax = max;
+      }
+    },
+    setPhosphor(on) {
+      phosphorOn = on;
+    },
     dispose() {
       gl.deleteBuffer(traceVbo);
       gl.deleteBuffer(cursorVbo);
       gl.deleteTexture(panTex);
+      gl.deleteTexture(lutTex);
+      if (phos) disposePhos(phos);
+      phos = null;
       gl.deleteVertexArray(traceVao);
       gl.deleteVertexArray(fillVao);
       gl.deleteVertexArray(cursorVao);

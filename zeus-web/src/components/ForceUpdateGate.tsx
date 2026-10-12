@@ -12,7 +12,8 @@ import { Download } from 'lucide-react';
 import type { RepoUpdateStatus } from '../api/client';
 import { openExternalUrl } from './report-problem/openExternalUrl';
 
-const DOWNLOADS_PAGE = 'https://openhpsdrzeus.com/download';
+// The fork's releases page (upstream's openhpsdrzeus.com no longer resolves).
+const DOWNLOADS_PAGE = 'https://github.com/abhishekprakash22/zeus/releases/latest';
 
 function updateUrl(status: RepoUpdateStatus): string | null {
   return status.releaseDownloadUrl ?? status.releaseUrl;

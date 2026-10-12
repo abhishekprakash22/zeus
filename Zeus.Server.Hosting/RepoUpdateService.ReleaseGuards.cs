@@ -73,7 +73,7 @@ public sealed partial class RepoUpdateService
         if (status.IsGitRepo) return status;
 
         // STANDALONE: the force-update wall (App.tsx -> <ForceUpdateGate/>) sends the
-        // operator to DownloadsPageUrl (openhpsdrzeus.com/download) and offers no way
+        // operator to DownloadsPageUrl (the fork's GitHub releases page) and offers no way
         // past it. The "downgrade" reason is decided purely from a locally stored
         // version high-water mark, so installing an older build than one previously
         // run on this machine is enough to trigger it. With the download host

@@ -51,7 +51,10 @@ public sealed partial class RepoUpdateService
 
     // Operator-facing landing page used when no platform asset is present in the
     // manifest (e.g. an arch we don't yet build) — "Update now" then opens this.
-    internal const string DownloadsPageUrl = "https://openhpsdrzeus.com/download";
+    // The fork's own releases page: upstream's openhpsdrzeus.com no longer
+    // resolves, so every Windows/macOS "Update now" was a dead link (field,
+    // v1.130 Win 11) while their installers sat on the GitHub release.
+    internal const string DownloadsPageUrl = "https://github.com/abhishekprakash22/zeus/releases/latest";
 
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 

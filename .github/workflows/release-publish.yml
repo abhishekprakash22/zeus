@@ -57,6 +57,55 @@ jobs:
           echo "Draft ${{ inputs.tag }} carries $n asset(s)."
           echo "$view" | jq -r '.assets[].name' | sed 's/^/  /'
 
+      # latest.json is first written by release-appimage, before the Windows
+      # and macOS builds attach their installers — so it listed only the
+      # AppImages, and every Windows/macOS "Update now" fell back to a download
+      # page (field: v1.130, Win 11). Rebuild it here from EVERY asset on the
+      # draft, with the same tool, before the release goes public. This adds
+      # no new bytes to what was reviewed: the manifest is metadata computed
+      # from the reviewed files (names, sizes, SHA-256).
+      - name: Check out the tagged tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 1
+
+      - name: Rebuild latest.json from every asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/rel && mkdir -p /tmp/rel
+          gh release download "$TAG" --repo "${{ github.repository }}" --dir /tmp/rel \
+            --pattern '*.AppImage' --pattern '*.exe' --pattern '*.pkg'
+          ls -la /tmp/rel
+          echo '{}' > /tmp/empty-manifest.json
+          ZEUS_DOWNLOAD_VERSION="${TAG#v}" \
+          ZEUS_DOWNLOAD_BRANCH="$TAG" \
+          GITHUB_SHA="$(git rev-parse HEAD)" \
+          DOWNLOAD_BASE_URL="https://github.com/${{ github.repository }}/releases/download/$TAG" \
+            node tools/update-download-manifest.mjs /tmp/rel /tmp/empty-manifest.json /tmp/rel/latest.json
+          # Release assets are flat under the tag (the tool emits upstream's
+          # CDN layout, .../versions/X.Y.Z/<file>), as release-appimage does.
+          DOWNLOAD_BASE_URL="https://github.com/${{ github.repository }}/releases/download/$TAG" node -e '
+            const fs = require("fs");
+            const p = "/tmp/rel/latest.json";
+            const m = JSON.parse(fs.readFileSync(p, "utf8"));
+            const base = process.env.DOWNLOAD_BASE_URL.replace(/\/$/, "");
+            for (const a of m.assets) a.url = base + "/" + a.filename;
+            fs.writeFileSync(p, JSON.stringify(m, null, 2));
+            // Every downloaded installer must be in the manifest, or that
+            // platform silently loses in-app updates again.
+            const files = fs.readdirSync("/tmp/rel").filter(f => /\.(AppImage|exe|pkg)$/.test(f));
+            const listed = new Set(m.assets.map(a => a.filename));
+            const missing = files.filter(f => !listed.has(f));
+            if (missing.length) { console.error("not in manifest: " + missing.join(", ")); process.exit(1); }
+            for (const a of m.assets) console.log(a.platform, a.arch, a.kind, a.filename);
+          '
+          gh release upload "$TAG" /tmp/rel/latest.json --repo "${{ github.repository }}" --clobber
+          echo "latest.json rebuilt with $(jq '.assets | length' /tmp/rel/latest.json) assets." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

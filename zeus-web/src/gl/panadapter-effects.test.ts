@@ -6,6 +6,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   estimateFloorDb,
+  PAL_GATE_HI_DB,
+  PAL_GATE_LO_DB,
+  paletteGateDb,
+  trackFloorDb,
   PHOS_DECAY,
   PHOS_GATE_HI_DB,
   PHOS_GATE_LO_DB,
@@ -100,5 +104,43 @@ describe('phosphor noise-floor gate', () => {
 
   it('the splat shader applies the gate', () => {
     expect(PHOS_SPLAT_FS).toContain('smoothstep(uGateLo');
+  });
+});
+
+describe('palette trace follows the noise floor, not the waterfall window', () => {
+  const ss = (lo: number, hi: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
+    return t * t * (3 - 2 * t);
+  };
+
+  it('keeps the floor in the trace colour on a quiet band and a noisy one', () => {
+    // 20 m floor near -128 dB, 40 m floor near -112 dB (photos): with a fixed
+    // waterfall-window gate the 40 m floor fell inside the palette (blue).
+    for (const floor of [-128, -112, -100]) {
+      const g = paletteGateDb(floor);
+      expect(ss(g.lo, g.hi, floor)).toBe(0);
+      expect(ss(g.lo, g.hi, floor + 3)).toBe(0);
+      expect(ss(g.lo, g.hi, floor + 20)).toBe(1);
+    }
+  });
+
+  it('is shut until the first floor estimate', () => {
+    const g = paletteGateDb(Number.NaN);
+    expect(ss(g.lo, g.hi, -20)).toBe(0);
+    expect(PAL_GATE_HI_DB).toBeGreaterThan(PAL_GATE_LO_DB);
+  });
+
+  it('eases on drift and snaps on a band change', () => {
+    expect(trackFloorDb(Number.NaN, -120)).toBe(-120);
+    const eased = trackFloorDb(-120, -118);
+    expect(eased).toBeGreaterThan(-120);
+    expect(eased).toBeLessThan(-118);
+    expect(trackFloorDb(-128, -112)).toBe(-112);
+    expect(trackFloorDb(-120, Number.NaN)).toBe(-120);
+  });
+
+  it('the trace and fill shaders take their palette weight from the floor gate', () => {
+    expect(PAN_FS).toContain('paletteWeight(vPal)');
+    expect(PAN_FILL_FS).toContain('paletteWeight(v_pal)');
   });
 });

@@ -103,6 +103,30 @@ export const PHOS_GATE_LO_DB = 4;
 export const PHOS_GATE_HI_DB = 10;
 const FLOOR_SAMPLES = 256;
 const FLOOR_SMOOTH = 0.85;
+// A jump this big between frames is a new band / antenna / preamp, not drift:
+// snap instead of easing so colours are right on the first frames.
+const FLOOR_SNAP_DB = 6;
+
+// Palette-trace gate above the tracked floor (dB): the trace takes palette
+// colour from floor + PAL_GATE_LO_DB, fully by floor + PAL_GATE_HI_DB.
+export const PAL_GATE_LO_DB = 4;
+export const PAL_GATE_HI_DB = 12;
+
+/** One step of the noise-floor tracker: ease, or snap on a big jump. */
+export function trackFloorDb(prev: number, sample: number): number {
+  if (!Number.isFinite(sample)) return prev;
+  if (!Number.isFinite(prev) || Math.abs(sample - prev) > FLOOR_SNAP_DB) return sample;
+  return prev * FLOOR_SMOOTH + sample * (1 - FLOOR_SMOOTH);
+}
+
+/**
+ * Absolute-dB palette gate for the trace and fill. Before the first floor
+ * estimate the gate is shut (classic single colour) rather than guessed.
+ */
+export function paletteGateDb(floorDb: number): { lo: number; hi: number } {
+  if (!Number.isFinite(floorDb)) return { lo: 1e9, hi: 1e9 + 1 };
+  return { lo: floorDb + PAL_GATE_LO_DB, hi: floorDb + PAL_GATE_HI_DB };
+}
 
 /** Median of a sparse, evenly spaced sample of the frame (NaN-safe). */
 export function estimateFloorDb(panDb: Float32Array): number {
@@ -246,6 +270,13 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
   const uFillWfMax = gl.getUniformLocation(fillProg, 'uWfDbMax');
   const uFillLut = gl.getUniformLocation(fillProg, 'uLut');
   const uFillLutMix = gl.getUniformLocation(fillProg, 'uLutMix');
+  const uTracePalLo = gl.getUniformLocation(traceProg, 'uPalLoDb');
+  const uTracePalHi = gl.getUniformLocation(traceProg, 'uPalHiDb');
+  const uFillPalLo = gl.getUniformLocation(fillProg, 'uPalLoDb');
+  const uFillPalHi = gl.getUniformLocation(fillProg, 'uPalHiDb');
+  // Noise floor tracked from the trace itself, shared by the palette gate and
+  // the phosphor gate.
+  let floorDb = Number.NaN;
 
   // Palette LUT on texture unit 1 (unit 0 is the pan row, unit 2 phosphor).
   const lutTex = gl.createTexture()!;
@@ -281,7 +312,6 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
     w: number;
     h: number;
     float: boolean;
-    floorDb: number;
     last: { offsetPx: number; scaleX: number; dbMin: number; dbMax: number; w: number; h: number } | null;
     u: {
       decayPrev: WebGLUniformLocation | null;
@@ -365,7 +395,6 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       w: 0,
       h: 0,
       float: floatTargets,
-      floorDb: Number.NaN,
       last: null,
       u: {
         decayPrev: gl.getUniformLocation(decayProg, 'uPrev'),
@@ -511,6 +540,10 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       }
       lastUploadedPan = panDb;
 
+      // Track the noise floor once per NEW frame (motion-only redraws reuse it).
+      if (dataDirty) floorDb = trackFloorDb(floorDb, estimateFloorDb(panDb));
+      const palGate = paletteGateDb(floorDb);
+
       // Palette LUT stays bound on unit 1 for every pass that reads it.
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, lutTex);
@@ -525,8 +558,6 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
         if (p.w !== pw || p.h !== ph) allocPhosTargets(p, pw, ph);
         const geom = { offsetPx, scaleX: sx, dbMin, dbMax, w: pw, h: ph };
         if (phosphorNeedsReset(p.last, geom)) {
-          // New view (often a new band): let the floor estimate snap, not glide.
-          p.floorDb = Number.NaN;
           for (let i = 0; i < 2; i++) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, p.fbo[i]!);
             gl.viewport(0, 0, pw, ph);
@@ -555,11 +586,7 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
           gl.blendFunc(gl.ONE, gl.ONE);
           gl.useProgram(p.splatProg);
           gl.bindVertexArray(traceVao);
-          const f = estimateFloorDb(panDb);
-          if (Number.isFinite(f)) {
-            p.floorDb = Number.isFinite(p.floorDb) ? p.floorDb * FLOOR_SMOOTH + f * (1 - FLOOR_SMOOTH) : f;
-          }
-          const gate = phosphorGate(p.floorDb, dbMin, dbMax);
+          const gate = phosphorGate(floorDb, dbMin, dbMax);
           gl.uniform1f(p.u.splatHit, PHOS_HIT);
           gl.uniform1f(p.u.splatGateLo, gate.lo);
           gl.uniform1f(p.u.splatGateHi, gate.hi);
@@ -612,6 +639,8 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.uniform1f(uFillLutMix, popIntensity > 0 ? 0 : lutMix);
       gl.uniform1f(uFillWfMin, wfDbMin);
       gl.uniform1f(uFillWfMax, wfDbMax);
+      gl.uniform1f(uFillPalLo, palGate.lo);
+      gl.uniform1f(uFillPalHi, palGate.hi);
       if (!phosphorActive) gl.drawArrays(gl.TRIANGLE_STRIP, 0, panDb.length * 2);
 
       // Sharp trace line on top.
@@ -629,6 +658,8 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.uniform1f(uTraceLutMix, popIntensity > 0 ? 0 : lutMix);
       gl.uniform1f(uTraceWfMin, wfDbMin);
       gl.uniform1f(uTraceWfMax, wfDbMax);
+      gl.uniform1f(uTracePalLo, palGate.lo);
+      gl.uniform1f(uTracePalHi, palGate.hi);
       gl.drawArrays(gl.LINE_STRIP, 0, panDb.length);
 
       gl.useProgram(cursorProg);

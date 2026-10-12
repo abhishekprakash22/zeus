@@ -57,14 +57,21 @@ uniform float uScaleX;
 // SAME level the waterfall gives this bin, so trace and waterfall agree.
 uniform float uWfDbMin;
 uniform float uWfDbMax;
+// Palette gate in absolute dB, set from the tracked noise floor: the trace
+// keeps the operator's colour at the floor and takes palette colour only as
+// a bin rises above it — on a quiet 20 m and a noisy 40 m alike.
+uniform float uPalLoDb;
+uniform float uPalHiDb;
 out float vLevel;
 out float vWfLevel;
+out float vPal;
 void main() {
   float x = (float(gl_VertexID) + 0.5 + uOffsetPx) / uWidth;
   x = 0.5 + (x - 0.5) * uScaleX;
   float n = clamp((aDb - uDbMin) / (uDbMax - uDbMin), 0.0, 1.0);
   vLevel = n;
   vWfLevel = clamp((aDb - uWfDbMin) / max(0.0001, uWfDbMax - uWfDbMin), 0.0, 1.0);
+  vPal = smoothstep(uPalLoDb, max(uPalLoDb + 0.001, uPalHiDb), aDb);
   gl_Position = vec4(x * 2.0 - 1.0, n * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
@@ -72,15 +79,18 @@ void main() {
 // waterfall's own 256-entry LUT as a 256x1 RGBA8 texture. The palettes keep
 // their lowest ~40% near black, so the trace only takes palette colour where
 // a bin rises above the floor (PALETTE_GATE); the noise floor keeps the
-// operator's trace colour and stays readable.
+// operator's trace colour and stays readable. Where the floor is is decided
+// per frame from the trace itself (uPalLoDb/uPalHiDb, see panadapter.ts),
+// not from the waterfall window — a fixed window point put a noisy band's
+// whole floor inside the palette (a blue floor line on 40 m).
 const PAN_LUT_GLSL = /* glsl */ `
 uniform sampler2D uLut;
 uniform float uLutMix;
 vec3 lutColor(float n) {
   return texture(uLut, vec2((clamp(n, 0.0, 1.0) * 255.0 + 0.5) / 256.0, 0.5)).rgb;
 }
-float paletteWeight(float wfLevel) {
-  return uLutMix * smoothstep(0.46, 0.70, wfLevel);
+float paletteWeight(float gate) {
+  return uLutMix * gate;
 }
 `;
 
@@ -88,6 +98,7 @@ export const PAN_FS = /* glsl */ `#version 300 es
 precision highp float;
 in float vLevel;
 in float vWfLevel;
+in float vPal;
 uniform vec3 uColor;
 uniform float uPopIntensity;
 ${PAN_LUT_GLSL}
@@ -103,7 +114,7 @@ vec3 popRamp(float n) {
 }
 void main() {
   float popI = clamp(uPopIntensity, 0.0, 1.0);
-  vec3 baseColor = mix(uColor, lutColor(vWfLevel), paletteWeight(vWfLevel));
+  vec3 baseColor = mix(uColor, lutColor(vWfLevel), paletteWeight(vPal));
   vec3 c = mix(baseColor, popRamp(vLevel), popI);
   c += vec3(0.08, 0.12, 0.06) * smoothstep(0.58, 1.0, vLevel) * popI;
   c = min(c, vec3(1.0));
@@ -127,9 +138,12 @@ uniform float uScaleX;
 uniform float uFillAlphaTop;
 uniform float uWfDbMin;
 uniform float uWfDbMax;
+uniform float uPalLoDb;
+uniform float uPalHiDb;
 out float v_alpha;
 out float v_level;
 out float v_wf;
+out float v_pal;
 void main() {
   int binIdx = gl_VertexID >> 1;
   bool isTop = (gl_VertexID & 1) == 1;
@@ -141,6 +155,7 @@ void main() {
   v_alpha = isTop ? uFillAlphaTop : 0.0;
   v_level = n;
   v_wf = clamp((aDb - uWfDbMin) / max(0.0001, uWfDbMax - uWfDbMin), 0.0, 1.0);
+  v_pal = smoothstep(uPalLoDb, max(uPalLoDb + 0.001, uPalHiDb), aDb);
   gl_Position = vec4(x * 2.0 - 1.0, y, 0.0, 1.0);
 }`;
 
@@ -149,6 +164,7 @@ precision highp float;
 in float v_alpha;
 in float v_level;
 in float v_wf;
+in float v_pal;
 uniform vec3 uColor;
 uniform float uPopIntensity;
 ${PAN_LUT_GLSL}
@@ -163,7 +179,7 @@ vec3 popRamp(float n) {
   return mix(c, peak, smoothstep(0.72, 1.0, n));
 }
 void main() {
-  vec3 baseColor = mix(uColor, lutColor(v_wf), paletteWeight(v_wf));
+  vec3 baseColor = mix(uColor, lutColor(v_wf), paletteWeight(v_pal));
   vec4 base = vec4(baseColor * v_alpha, v_alpha);
   float popI = clamp(uPopIntensity, 0.0, 1.0);
   float lift = smoothstep(0.04, 0.92, v_level);

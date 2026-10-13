@@ -109,6 +109,21 @@ public class AssistantToolsTests
     }
 
     [Fact]
+    public void Numeric_arguments_work_whether_parsed_or_built_in_code()
+    {
+        var t = Make();
+        // Built in code (JsonValue<int>) and parsed from model JSON, plus a
+        // number sent as a string — all read the same.
+        var built = t.Execute(AssistantTools.GetRecentLog, new JsonObject { ["lines"] = 50 });
+        var parsed = t.Execute(AssistantTools.GetRecentLog, JsonNode.Parse("{\"lines\":50}"));
+        var asText = t.Execute(AssistantTools.GetRecentLog, JsonNode.Parse("{\"lines\":\"50\"}"));
+        Assert.Equal("get_recent_log(50)", built.Summary);
+        Assert.Equal(built.Content, parsed.Content);
+        Assert.Equal(built.Content, asText.Content);
+        Assert.DoesNotContain("failed", built.Summary);
+    }
+
+    [Fact]
     public void Results_are_capped()
     {
         var big = new string('x', AssistantTools.MaxResultChars * 2);

@@ -127,9 +127,12 @@ public sealed class SettingsFacts
     private static double? ToNum(JsonNode? n)
     {
         if (n is not JsonValue v) return null;
-        if (v.GetValueKind() == JsonValueKind.Number) return v.GetValue<double>();
-        if (v.GetValueKind() == JsonValueKind.String &&
-            double.TryParse(v.GetValue<string>(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d)) return d;
-        return null;
+        // Through the JSON text, never GetValue<double>(): that only converts for
+        // nodes parsed from JSON and throws for a typed JsonValue<int>/<long>.
+        var kind = v.GetValueKind();
+        var text = kind == JsonValueKind.Number ? v.ToJsonString()
+            : kind == JsonValueKind.String ? v.GetValue<string>()
+            : null;
+        return text is not null && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
     }
 }

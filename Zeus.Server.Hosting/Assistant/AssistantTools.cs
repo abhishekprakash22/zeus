@@ -208,7 +208,13 @@ public sealed class AssistantTools
     private static int? Int(JsonNode? input, string key)
     {
         if (input is not JsonObject o || !o.TryGetPropertyValue(key, out var v) || v is null) return null;
-        if (v.GetValueKind() == JsonValueKind.Number) return (int)Math.Round(v.GetValue<double>());
-        return int.TryParse(v.ToString(), out var i) ? i : null;
+        // Read through the JSON text: GetValue<double>() only converts when the
+        // node came from parsed JSON — a node built in code (JsonValue<int>)
+        // throws InvalidOperationException. ToJsonString() works for both.
+        var text = v.GetValueKind() == JsonValueKind.String ? v.GetValue<string>() : v.ToJsonString();
+        return double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var d) && double.IsFinite(d)
+            ? (int)Math.Round(Math.Clamp(d, int.MinValue, int.MaxValue))
+            : null;
     }
 }

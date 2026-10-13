@@ -153,6 +153,20 @@ public class SettingsCheckCatalogTests
         Assert.DoesNotContain(rs, r => r.CheckId == "rx.agcT" || r.CheckId == "tx.drive");
     }
 
+    [Fact]
+    public void Facts_read_numbers_from_typed_nodes_too()
+    {
+        // A state node built in code (JsonValue<int>, not parsed text) must read
+        // as a number, not throw — the same trap that broke get_recent_log.
+        var state = new JsonObject { ["drivePct"] = 5, ["driveMaxPct"] = 100L, ["micGainDb"] = -3.5 };
+        var f = new SettingsFacts(state, new Dictionary<string, string>(), Array.Empty<string>());
+        Assert.Equal(5, f.Num("drivePct"));
+        Assert.Equal(100, f.Num("driveMaxPct"));
+        Assert.Equal(-3.5, f.Num("micGainDb"));
+        var drive = One(SettingsCheckCatalog.Evaluate("no-tx-power", f), "tx.drive");
+        Assert.Equal(SettingsVerdict.Likely, drive.Verdict);
+    }
+
     [Theory]
     [InlineData("0x50005", "true", "true")]
     [InlineData("throttled=0x0", "false", "false")]

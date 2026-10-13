@@ -110,8 +110,9 @@ Connect, then operate from the workspace:
   steady carriers burn in, bursts glow and fade within half a second, and a
   clear gap keeps the live trace crisp on top of its glow; the
   noise floor itself leaves no glow, so weak signals are never buried; it
-  restarts whenever you tune, zoom or change the dB range. Reduced-motion
-  devices never roll the digits.
+  restarts whenever you tune, zoom or change the dB range. The filter
+  displays follow the same setting. Reduced-motion devices never roll the
+  digits.
 - **Waterfall speed (SPD, G2 panes):** the SPD pill cycles a receiver's
   waterfall speed ×½ → ×1 → ×2 → ×4 and is remembered per receiver by the
   radio, so it survives restarts.

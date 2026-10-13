@@ -53,6 +53,20 @@ import {
 import { useConnectionStore } from '../../state/connection-store';
 import { useThemeStore } from '../../state/theme-store';
 import { useDisplaySettingsStore } from '../../state/display-settings-store';
+import { useEffectsStore } from '../../state/effects-store';
+import { effectiveRxWfWindow } from '../../state/rx-db-window-store';
+import { useTxStore } from '../../state/tx-store';
+import { lutFor } from '../../gl/colormap';
+import {
+  MINI_PHOSPHOR_FILL_SCALE,
+  MiniPhosphor,
+  PHOS_GATE_HI_DB,
+  PHOS_GATE_LO_DB,
+  columnPaletteWeight,
+  lutRgb,
+  mixRgb,
+  type Rgb as FxRgb,
+} from './mini-pan-effects';
 import { cancelDrawBusFrame, requestDrawBusFrame } from '../../realtime/draw-bus';
 import {
   detectPeaks,
@@ -549,6 +563,12 @@ function FilterMiniPanSurface({
     let activeReceiver: SpectrumReceiver = 'A';
     let themePalette = readMiniPanThemePalette(receiver);
     let traceRgb = parseRgb(useDisplaySettingsStore.getState().rxTraceColor || '#FFA028');
+    // Display effects (Off / Subtle / Full) — see mini-pan-effects.ts.
+    const phos = new MiniPhosphor();
+    let colDb: Float32Array | null = null; // per-column level (dB) for palette colour
+    let colFloor: Float32Array | null = null; // per-column noise floor (dB)
+    let gateLoY: Float32Array | null = null; // per-column phosphor gate (Y)
+    let gateHiY: Float32Array | null = null;
 
     const draw = () => {
       const now = performance.now();
@@ -955,7 +975,15 @@ function FilterMiniPanSurface({
         // it (modern filled-spectrum look) without re-scanning the bins.
         if (traceY === null || traceY.length !== w) traceY = new Float32Array(w);
         if (traceSm === null || traceSm.length !== w) traceSm = new Float32Array(w);
+        if (colDb === null || colDb.length !== w) colDb = new Float32Array(w);
+        if (colFloor === null || colFloor.length !== w) colFloor = new Float32Array(w);
+        if (gateLoY === null || gateLoY.length !== w) gateLoY = new Float32Array(w);
+        if (gateHiY === null || gateHiY.length !== w) gateHiY = new Float32Array(w);
         const ty = traceY;
+        const cdb = colDb;
+        const cfl = colFloor;
+        const gLoY = gateLoY;
+        const gHiY = gateHiY;
         for (let x = 0; x < w; x++) {
           const colLoHz = loHz + (x / w) * spanHz;
           const colHiHz = loHz + ((x + 1) / w) * spanHz;
@@ -998,7 +1026,12 @@ function FilterMiniPanSurface({
               ? interpDb
               : (range && range[1] - range[0] > 1 ? 0.6 * peak + 0.4 * (interpDb ?? peak) : (interpDb ?? peak));
             y = v === null ? plotBottom : signalDbToY(v, floorAtHz);
+            cdb[x] = v === null ? Number.NaN : v;
           }
+          if (popOn) cdb[x] = Number.NaN;
+          cfl[x] = floorAtHz;
+          gLoY[x] = signalDbToY(floorAtHz + PHOS_GATE_LO_DB, floorAtHz);
+          gHiY[x] = signalDbToY(floorAtHz + PHOS_GATE_HI_DB, floorAtHz);
           ty[x] = y;
         }
 
@@ -1014,6 +1047,35 @@ function FilterMiniPanSurface({
 
         const baseY = plotBottom;
 
+        // Effects. Pop owns its own colouring, so both stand aside under it.
+        const fx = useEffectsStore.getState().flags;
+        const fxPalette = fx.lutTrace && !popOn;
+        const fxPhosphor = fx.phosphor && !popOn;
+        const lut = fxPalette || fxPhosphor ? lutFor(useDisplaySettingsStore.getState().colormap) : null;
+        const txs = useTxStore.getState();
+        const keyedNow = txs.moxOn || txs.tunOn;
+        const dsNow = useDisplaySettingsStore.getState();
+        const wfWin = keyedNow
+          ? { wfDbMin: dsNow.wfTxDbMin, wfDbMax: dsNow.wfTxDbMax }
+          : effectiveRxWfWindow(rxIndexOf(receiver));
+        // Per-column colour: the operator's trace colour at the floor, the
+        // waterfall palette's colour as the column rises above it (Subtle).
+        const colRgb = (x: number): FxRgb => {
+          if (!fxPalette || !lut || fxPhosphor) return traceRgb as FxRgb;
+          const db = cdb[x]!;
+          const wgt = columnPaletteWeight(db, cfl[x]!);
+          if (wgt <= 0) return traceRgb as FxRgb;
+          return mixRgb(traceRgb as FxRgb, lutRgb(lut, db, wfWin.wfDbMin, wfWin.wfDbMax), wgt);
+        };
+        const rgbaOf = (c: FxRgb, a: number) => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${Math.max(0, Math.min(1, a))})`;
+
+        // Full: phosphor glow first, so the fill and the live trace sit on it.
+        if (fxPhosphor && lut) {
+          phos.ensure(w, h, `${receiver}:${vfo}:${spanHz}:${winLoOffHz}:${w}:${h}`);
+          phos.step(sm, gLoY, gHiY, plotTop, plotBottom);
+          phos.render(ctx, lut, sm, dpr);
+        }
+
         // Heat trace — each column is filled from the baseline up to the trace
         // with the signal colour, its alpha scaled by how high the trace sits in
         // the (auto-ranged) panel. Strong signals glow bright; noise stays a dim
@@ -1023,8 +1085,8 @@ function FilterMiniPanSurface({
           const normH = (baseY - top) / plotH; // 0 at floor, 1 at panel top
           const level = Math.max(0, Math.min(1, normH));
           if (level <= 0.002) continue;
-          const a = 0.035 + 0.74 * level ** 1.45;
-          ctx.fillStyle = signal(a);
+          const a = (0.035 + 0.74 * level ** 1.45) * (fxPhosphor ? MINI_PHOSPHOR_FILL_SCALE : 1);
+          ctx.fillStyle = fxPalette && !fxPhosphor ? rgbaOf(colRgb(x), a) : signal(a);
           ctx.fillRect(x, top, 1, baseY - top);
         }
 
@@ -1044,22 +1106,48 @@ function FilterMiniPanSurface({
             ph[x] = decayed < sm[x]! ? decayed : sm[x]!; // hold the higher (smaller Y)
           }
         }
-        ctx.strokeStyle = signal(0.5);
-        ctx.lineWidth = 1 * dpr;
-        ctx.beginPath();
-        for (let x = 0; x < w; x++) {
-          if (x === 0) ctx.moveTo(x, ph[x]!); else ctx.lineTo(x, ph[x]!);
+        // Under phosphor the glow already remembers recent maxima — the
+        // peak-hold ghost would just draw a second, competing memory.
+        if (!fxPhosphor) {
+          ctx.strokeStyle = signal(0.5);
+          ctx.lineWidth = 1 * dpr;
+          ctx.beginPath();
+          for (let x = 0; x < w; x++) {
+            if (x === 0) ctx.moveTo(x, ph[x]!); else ctx.lineTo(x, ph[x]!);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
 
-        // Live trace line on top — bright, crisp.
+        // Live trace line on top — bright, crisp. Subtle colours it per
+        // column through the palette; Off and Full keep the single colour.
         ctx.lineWidth = 1.25 * dpr;
-        ctx.strokeStyle = signal(0.95);
-        ctx.beginPath();
-        for (let x = 0; x < w; x++) {
-          if (x === 0) ctx.moveTo(x, sm[x]!); else ctx.lineTo(x, sm[x]!);
+        if (fxPalette && !fxPhosphor) {
+          let runStart = 0;
+          let runRgb = colRgb(0);
+          const flush = (end: number) => {
+            ctx.strokeStyle = rgbaOf(runRgb, 0.95);
+            ctx.beginPath();
+            ctx.moveTo(runStart, sm[runStart]!);
+            for (let x = runStart + 1; x <= end; x++) ctx.lineTo(x, sm[x]!);
+            ctx.stroke();
+          };
+          for (let x = 1; x < w; x++) {
+            const c = colRgb(x);
+            if (c[0] !== runRgb[0] || c[1] !== runRgb[1] || c[2] !== runRgb[2]) {
+              flush(x);
+              runStart = x;
+              runRgb = c;
+            }
+          }
+          flush(w - 1);
+        } else {
+          ctx.strokeStyle = signal(0.95);
+          ctx.beginPath();
+          for (let x = 0; x < w; x++) {
+            if (x === 0) ctx.moveTo(x, sm[x]!); else ctx.lineTo(x, sm[x]!);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
 
         // Pop-mode floor baseline: a faint flat rail at SNR=0 with an "NF" tag.
         if (popOn) {

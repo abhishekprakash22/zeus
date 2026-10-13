@@ -164,6 +164,7 @@ import {
 } from './plugins/updates';
 import { useDigitalPluginStore } from './state/digital-plugin-store';
 import { useFreeDvPluginStore } from './state/freedv-plugin-store';
+import { AssistantDrawer } from './assistant/AssistantDrawer';
 
 const SettingsView = lazy(async () => {
   const module = await import('./components/SettingsMenu');
@@ -1770,6 +1771,8 @@ export default function App() {
           <p>This cannot be undone. QSOs already uploaded to QRZ or a cloud logger are not retracted there.</p>
         </ConfirmDialog>
       )}
+      {/* Built-in assistant (read-only): opened by the ASK key or Settings → Assistant. */}
+      <AssistantDrawer />
       <StartupUpdatePrompt
         status={
           // ANAN Core updates are installed at the radio; a remote client

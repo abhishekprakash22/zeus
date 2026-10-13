@@ -19,6 +19,9 @@
   <!-- AD1C's DXCC prefix list (Dxcc/DxccTable.cs; MIT, Dxcc/LICENSE.cty). -->
   <ItemGroup>
     <EmbeddedResource Include="Dxcc\cty.csv" LogicalName="Zeus.Dxcc.cty.csv" />
+    <!-- Operator manual chapters for the built-in assistant's manual search
+         (Assistant/ManualIndex.cs). Same source the PDF is built from. -->
+    <EmbeddedResource Include="..\docs\manual\chapters\*.md" LogicalName="Zeus.Manual.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- Mirror the implicit usings that Microsoft.NET.Sdk.Web injects automatically.

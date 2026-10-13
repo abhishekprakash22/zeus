@@ -498,6 +498,16 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Ask ANAN Core (built-in assistant).** Off by default; turn it on at the
+radio in Settings → Assistant with your own Anthropic API key or a model
+server on your network. Open it with the ASK deck key (add it with ✎) or
+Settings → Assistant → Open assistant. It answers from the manual and the
+radio's live state, shows the lookups it made and the manual sections it
+used, and can only read — it cannot change settings or transmit. Sent: your
+question, a state snapshot and redacted log lines; never audio, IQ,
+passwords or your remote key. Its settings (and key) can be changed only at
+the radio; asking works over remote too.
+
 **Maintenance is done at the radio.** A remote session can see versions,
 progress and "update available", but it cannot install an ANAN Core update,
 update, stop or start p2app, flash or compare FPGA gateware (Saturn or HL2),

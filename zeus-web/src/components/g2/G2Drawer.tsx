@@ -61,6 +61,7 @@ import { useTxStore } from '../../state/tx-store';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
 import { G2_THEMES, useG2ThemeStore } from '../../state/g2-theme-store';
 import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
+import { useAssistantStore } from '../../assistant/assistant-store';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
@@ -171,6 +172,22 @@ function FullscreenKeyButton() {
       title={full ? 'Exit full screen (Esc also works)' : 'Full screen — hide the browser chrome'}
     >
       {full ? 'EXIT FS' : 'FULL SCR'}
+    </button>
+  );
+}
+
+// ASK — opens the built-in assistant (read-only). Assignable via ✎.
+function AskKeyButton() {
+  const open = useAssistantStore((s) => s.open);
+  const toggle = useAssistantStore((s) => s.toggle);
+  return (
+    <button
+      type="button"
+      className={`btn ghost${open ? ' engaged' : ''}`}
+      onClick={toggle}
+      title="Ask ANAN Core — explains the radio and diagnoses problems (read-only)"
+    >
+      ASK
     </button>
   );
 }
@@ -899,6 +916,7 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   fs: { node: <FullscreenKeyButton /> },
   nr: { node: <NrKeyButton /> },
   pre: { node: <PreampButton />, boardOnly: 'Metis' },
+  ask: { node: <AskKeyButton /> },
 };
 
 // Twelve default keys in twelve slots: no duplicates, no blanks, on every

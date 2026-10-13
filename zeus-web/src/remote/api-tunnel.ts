@@ -42,6 +42,10 @@ const LAN_PROXY_TIMEOUT_MS = 60_000;
 // drop and replay — but past this it fails no matter what, preserving the
 // file's invariant that a never-connecting session cannot hang a caller.
 const HARD_CAP_MS = 45_000;
+// The assistant's ask waits on a model (bounded at 60 s on the radio). It gets
+// one long deadline and no silent re-send: a retry would ask the model twice.
+const ASSISTANT_ASK_PREFIX = '/api/assistant/ask';
+const ASSISTANT_TIMEOUT_MS = 75_000;
 
 interface TunnelResponse {
   id: number;
@@ -190,14 +194,17 @@ function tunnel(
   // radio host); everything else is small chrome JSON on the default deadline.
   // The dispatch deadline runs from SEND, not from creation — time spent
   // queued waiting for the session only counts against the hard cap.
-  const dispatchTimeoutMs = path.startsWith(LAN_PROXY_PREFIX)
-    ? LAN_PROXY_TIMEOUT_MS
-    : REQUEST_TIMEOUT_MS;
+  const slowAsk = path.startsWith(ASSISTANT_ASK_PREFIX);
+  const dispatchTimeoutMs = slowAsk
+    ? ASSISTANT_TIMEOUT_MS
+    : path.startsWith(LAN_PROXY_PREFIX)
+      ? LAN_PROXY_TIMEOUT_MS
+      : REQUEST_TIMEOUT_MS;
   return new Promise<TunnelResponse>((resolve, reject) => {
     const req: QueuedRequest = { id, path, method, body, contentType };
     const p: Pending = {
       resolve, reject, timer: null, req,
-      attempt: 0, hardDeadline: Date.now() + HARD_CAP_MS, dispatchTimeoutMs,
+      attempt: 0, hardDeadline: Date.now() + (slowAsk ? ASSISTANT_TIMEOUT_MS : HARD_CAP_MS), dispatchTimeoutMs,
     };
     pending.set(id, p);
     if (channel && channel.readyState === 'open') {

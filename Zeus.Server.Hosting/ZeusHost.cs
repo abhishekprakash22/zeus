@@ -429,6 +429,9 @@ public static class ZeusHost
             Zeus.Server.Hosting.Remote.RemoteWebRtcSession.LoopbackHttpClientName,
             c => c.Timeout = TimeSpan.FromSeconds(10));
         builder.Services.AddHttpClient(
+            Zeus.Server.Hosting.Remote.RemoteWebRtcSession.SlowLoopbackHttpClientName,
+            c => c.Timeout = TimeSpan.FromSeconds(75));
+        builder.Services.AddHttpClient(
             Zeus.Server.Hosting.Remote.BrokerIceServers.TurnHttpClientName,
             c => c.Timeout = TimeSpan.FromSeconds(5));
         builder.Services.AddHttpClient(
@@ -719,6 +722,13 @@ public static class ZeusHost
         // QRZ.com XML client. HttpClient default timeout is 100 s — cap at 10 s so a
         // hung login surfaces quickly in the UI.
         builder.Services.AddHttpClient("Qrz", c => c.Timeout = TimeSpan.FromSeconds(10));
+        // Built-in assistant (phase 1, read-only): the model call is the only
+        // egress, off by default, and bounded per request.
+        builder.Services.AddHttpClient(Zeus.Server.Assistant.AssistantService.HttpClientName,
+            c => c.Timeout = TimeSpan.FromSeconds(60));
+        builder.Services.AddSingleton(_ => new Zeus.Server.Assistant.AssistantSettingsStore());
+        builder.Services.AddSingleton(_ => Zeus.Server.Assistant.ManualIndex.LoadEmbedded());
+        builder.Services.AddSingleton<Zeus.Server.Assistant.AssistantService>();
         builder.Services.AddHttpClient(LotwService.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(60));
         // Per-QSO HTTP cloud-log uploaders (Wavelog/Cloudlog + Club Log realtime).
         // SEND-ONLY, default OFF. Tight timeouts so a slow/blocked endpoint never
@@ -1816,6 +1826,8 @@ public static class ZeusHost
         Zeus.Server.Hosting.FreeDv.FreeDvEndpoints.MapFreeDvEndpoints(app);
         // Window-chrome prefs the kiosk launcher reads (fullscreen marker).
         Zeus.Server.UiPrefsEndpoints.MapUiPrefsEndpoints(app);
+        // Built-in assistant: settings + ask (read-only tools).
+        Zeus.Server.Assistant.AssistantEndpoints.MapAssistantEndpoints(app);
 
         Zeus.Plugins.Host.PluginEndpoints.MapAll(app, pluginManager);
 

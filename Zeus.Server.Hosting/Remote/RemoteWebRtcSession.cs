@@ -141,6 +141,15 @@ public sealed class RemoteWebRtcSession
 
     // Named HttpClient used for the loopback REST tunnel (see ZeusHost.cs).
     internal const string LoopbackHttpClientName = "RemoteApiLoopback";
+    /// <summary>
+    /// Loopback client for the few tunnelled calls that legitimately take
+    /// longer than the default deadline — the assistant's ask waits on a model
+    /// (bounded server-side at 60 s).
+    /// </summary>
+    internal const string SlowLoopbackHttpClientName = "RemoteApiLoopbackSlow";
+
+    internal static bool IsSlowApiPath(string path) =>
+        path.StartsWith("/api/assistant/ask", StringComparison.OrdinalIgnoreCase);
 
     // Cap on a tunnelled request/response body (1 MiB). Larger replies are
     // refused with 502 and larger requests with 413 — the chrome/control
@@ -253,6 +262,9 @@ public sealed class RemoteWebRtcSession
         "/api/p2app",
         "/api/fpga",
         "/api/xdma",
+        // The assistant's settings hold the operator's model API key: set at the
+        // radio, never from a remote session (asking works remotely).
+        "/api/assistant/settings",
     };
 
     public RemoteWebRtcSession(
@@ -1036,7 +1048,8 @@ public sealed class RemoteWebRtcSession
                 ? HttpMethod.Get
                 : new HttpMethod(method.ToUpperInvariant());
 
-            var client = _httpFactory.CreateClient(LoopbackHttpClientName);
+            var client = _httpFactory.CreateClient(
+                IsSlowApiPath(target.AbsolutePath) ? SlowLoopbackHttpClientName : LoopbackHttpClientName);
             using var req = new HttpRequestMessage(httpMethod, target);
             if (mutating && !string.IsNullOrEmpty(body))
             {

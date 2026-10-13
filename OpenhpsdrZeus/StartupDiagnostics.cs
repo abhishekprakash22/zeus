@@ -815,6 +815,15 @@ internal static class StartupDiagnostics
         // Self-contained publishes flatten these next to the exe; framework-
         // dependent (dev) builds keep them under runtimes/<rid>/native. Check the
         // flat location first, then the RID path, then the whole runtimes tree.
+        // These are Windows DLLs (Photino's .dll host, the WebView2 loader). On
+        // macOS / Linux the fallback search used to find the win-x64 copies in
+        // a portable build and report a dlopen "FAILED to load" — noise in a
+        // support report, not a fault.
+        if (!OperatingSystem.IsWindows() && fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            Kv(fileName, "n/a (Windows-only library)");
+            return;
+        }
         var flat = Path.Combine(AppContext.BaseDirectory, fileName);
         var rid = Path.Combine(AppContext.BaseDirectory, "runtimes",
             RuntimeInformation.RuntimeIdentifier, "native", fileName);
@@ -886,13 +895,37 @@ internal static class StartupDiagnostics
         return "lib" + libName + ".so";
     }
 
+    /// <summary>"win", "osx" or "linux" for the running OS (empty if none).</summary>
+    internal static string CurrentOsRidPrefix() =>
+        OperatingSystem.IsWindows() ? "win"
+        : OperatingSystem.IsMacOS() ? "osx"
+        : OperatingSystem.IsLinux() ? "linux"
+        : "";
+
+    /// <summary>
+    /// Whether a runtimes/&lt;rid&gt; folder belongs to an OS: "win-x64" and
+    /// "win" for "win", "osx-arm64" for "osx", "linux-musl-x64" for "linux".
+    /// </summary>
+    internal static bool RidMatchesOs(string rid, string osPrefix) =>
+        osPrefix.Length > 0 &&
+        (rid.Equals(osPrefix, StringComparison.OrdinalIgnoreCase) ||
+         rid.StartsWith(osPrefix + "-", StringComparison.OrdinalIgnoreCase));
+
     private static string? FindUnderRuntimes(string fileName)
     {
         try
         {
             var root = Path.Combine(AppContext.BaseDirectory, "runtimes");
             if (!Directory.Exists(root)) return null;
-            return Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories).FirstOrDefault();
+            // Only this OS's RIDs: a win-x64 file found on a Mac is not "ours".
+            var os = CurrentOsRidPrefix();
+            foreach (var ridDir in Directory.EnumerateDirectories(root))
+            {
+                if (!RidMatchesOs(Path.GetFileName(ridDir), os)) continue;
+                var hit = Directory.EnumerateFiles(ridDir, fileName, SearchOption.AllDirectories).FirstOrDefault();
+                if (hit is not null) return hit;
+            }
+            return null;
         }
         catch { return null; }
     }

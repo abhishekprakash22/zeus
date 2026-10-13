@@ -414,10 +414,11 @@ public sealed class RemoteWebRtcSessionTests
         // The remote operator is the authenticated station owner, so QRZ lookup
         // and chat are 1:1 with the desk — formerly denied, now tunnelled. Only
         // the credential/secret exfil paths above stay refused.
-        var seen = new List<string>();
+        // Written from the server's handler threads — keep it thread-safe.
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var factory = new StubHttpClientFactory((req) =>
         {
-            seen.Add(req.RequestUri!.AbsolutePath);
+            seen.Enqueue(req.RequestUri!.AbsolutePath);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"ok\":true}", Encoding.UTF8, "application/json"),
@@ -437,10 +438,13 @@ public sealed class RemoteWebRtcSessionTests
         using (var d = JsonDocument.Parse(chat))
             Assert.Equal(200, d.RootElement.GetProperty("status").GetInt32());
 
-        Assert.Contains("/api/qrz/lookup", seen);
-        Assert.Contains("/api/chat/send", seen);
-        Assert.Equal(2, seen.Count(path =>
-            path is "/api/qrz/lookup" or "/api/chat/send"));
+        // SendApiUntilReply re-fires every 250 ms until a reply lands, so on a
+        // slow runner the same request can reach loopback more than once (it
+        // did: 3 hits on macOS arm64). What matters is WHICH paths were
+        // tunnelled — both of these, and nothing else — not how many times.
+        Assert.Equal(
+            new[] { "/api/chat/send", "/api/qrz/lookup" },
+            seen.Distinct().OrderBy(p => p, StringComparer.Ordinal).ToArray());
 
         server.Close();
     }

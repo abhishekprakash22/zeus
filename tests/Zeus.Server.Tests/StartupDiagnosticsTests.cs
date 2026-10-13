@@ -212,3 +212,31 @@ Exception Info: System.InvalidOperationException: boom
     private static DateTime Minutes(int value) =>
         new(2026, 7, 3, 12, value, 0, DateTimeKind.Utc);
 }
+
+public class StartupDiagnosticsRidTests
+{
+    [Theory]
+    [InlineData("win-x64", "win", true)]
+    [InlineData("win", "win", true)]
+    [InlineData("win-arm64", "win", true)]
+    [InlineData("osx-arm64", "osx", true)]
+    [InlineData("linux-x64", "linux", true)]
+    [InlineData("linux-musl-x64", "linux", true)]
+    [InlineData("win-x64", "osx", false)]   // the macOS CI report found the Windows DLLs
+    [InlineData("osx-arm64", "linux", false)]
+    [InlineData("winx", "win", false)]
+    [InlineData("linux-x64", "", false)]
+    public void RidMatchesOs_OnlyTheRunningOsFolders(string rid, string os, bool expected)
+    {
+        Assert.Equal(expected, StartupDiagnostics.RidMatchesOs(rid, os));
+    }
+
+    [Fact]
+    public void CurrentOsRidPrefix_NamesThisOs()
+    {
+        var os = StartupDiagnostics.CurrentOsRidPrefix();
+        if (OperatingSystem.IsWindows()) Assert.Equal("win", os);
+        else if (OperatingSystem.IsMacOS()) Assert.Equal("osx", os);
+        else if (OperatingSystem.IsLinux()) Assert.Equal("linux", os);
+    }
+}

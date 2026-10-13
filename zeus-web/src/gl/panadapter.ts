@@ -89,9 +89,15 @@ export type PanRenderer = {
 
 // Phosphor tuning. Per NEW display frame (not per redraw): density decays by
 // PHOS_DECAY then each pixel the trace crosses gains PHOS_HIT. At ~30 frames/s
-// a burst fades over roughly a second; a steady carrier saturates.
-export const PHOS_DECAY = 0.965;
-export const PHOS_HIT = 0.09;
+// a burst halves in about a quarter of a second and is gone in well under a
+// second (field: the first 0.965 lingered too long); a steady carrier still
+// saturates (equilibrium PHOS_HIT / (1 - PHOS_DECAY) ≈ 1.4).
+export const PHOS_DECAY = 0.92;
+export const PHOS_HIT = 0.11;
+// Clean halo around the live trace (device px): no glow within IN, full glow
+// from OUT, so the trace never dissolves into its own persistence.
+export const PHOS_HALO_IN_PX = 2;
+export const PHOS_HALO_OUT_PX = 9;
 const PHOS_GAIN = 1.6;
 
 // Noise-floor gate for the phosphor splat. The floor is the median of the
@@ -329,6 +335,15 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       dispGain: WebGLUniformLocation | null;
       dispLut: WebGLUniformLocation | null;
       dispLutMix: WebGLUniformLocation | null;
+      dispPan: WebGLUniformLocation | null;
+      dispWidth: WebGLUniformLocation | null;
+      dispDbMin: WebGLUniformLocation | null;
+      dispDbMax: WebGLUniformLocation | null;
+      dispOffsetPx: WebGLUniformLocation | null;
+      dispScaleX: WebGLUniformLocation | null;
+      dispCanvasH: WebGLUniformLocation | null;
+      dispHaloIn: WebGLUniformLocation | null;
+      dispHaloOut: WebGLUniformLocation | null;
     };
   };
   let phos: Phos | null = null;
@@ -412,6 +427,15 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
         dispGain: gl.getUniformLocation(displayProg, 'uGain'),
         dispLut: gl.getUniformLocation(displayProg, 'uLut'),
         dispLutMix: gl.getUniformLocation(displayProg, 'uLutMix'),
+        dispPan: gl.getUniformLocation(displayProg, 'uPan'),
+        dispWidth: gl.getUniformLocation(displayProg, 'uWidth'),
+        dispDbMin: gl.getUniformLocation(displayProg, 'uDbMin'),
+        dispDbMax: gl.getUniformLocation(displayProg, 'uDbMax'),
+        dispOffsetPx: gl.getUniformLocation(displayProg, 'uOffsetPx'),
+        dispScaleX: gl.getUniformLocation(displayProg, 'uScaleX'),
+        dispCanvasH: gl.getUniformLocation(displayProg, 'uCanvasH'),
+        dispHaloIn: gl.getUniformLocation(displayProg, 'uHaloInPx'),
+        dispHaloOut: gl.getUniformLocation(displayProg, 'uHaloOutPx'),
       },
     };
     gl.activeTexture(gl.TEXTURE0);
@@ -612,6 +636,18 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
         gl.uniform1i(p.u.dispLut, 1);
         gl.uniform1f(p.u.dispGain, PHOS_GAIN);
         gl.uniform1f(p.u.dispLutMix, 1);
+        // The pan row on unit 0 locates the live trace for the halo.
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, panTex);
+        gl.uniform1i(p.u.dispPan, 0);
+        gl.uniform1f(p.u.dispWidth, panDb.length);
+        gl.uniform1f(p.u.dispDbMin, dbMin);
+        gl.uniform1f(p.u.dispDbMax, dbMax);
+        gl.uniform1f(p.u.dispOffsetPx, offsetPx);
+        gl.uniform1f(p.u.dispScaleX, sx);
+        gl.uniform1f(p.u.dispCanvasH, canvasH);
+        gl.uniform1f(p.u.dispHaloIn, PHOS_HALO_IN_PX);
+        gl.uniform1f(p.u.dispHaloOut, PHOS_HALO_OUT_PX);
         gl.bindVertexArray(p.quadVao);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.activeTexture(gl.TEXTURE0);

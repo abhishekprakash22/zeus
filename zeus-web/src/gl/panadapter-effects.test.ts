@@ -19,6 +19,7 @@ import {
 } from './panadapter';
 import { spotlightExtents } from '../components/PassbandOverlay';
 import { PAN_FS, PAN_FILL_FS, PHOS_DISPLAY_FS, PHOS_SPLAT_FS } from './shaders';
+import { PHOS_HALO_IN_PX, PHOS_HALO_OUT_PX } from './panadapter';
 
 describe('phosphor persistence', () => {
   const g = { offsetPx: 0, scaleX: 1, dbMin: -140, dbMax: -60, w: 640, h: 120 };
@@ -36,11 +37,14 @@ describe('phosphor persistence', () => {
     expect(phosphorNeedsReset(g, { ...g, w: 320 })).toBe(true);
   });
 
-  it('a steady carrier saturates while a single burst fades within about a second', () => {
-    // Equilibrium of d = d*decay + hit.
-    expect(PHOS_HIT / (1 - PHOS_DECAY)).toBeGreaterThan(2);
-    // One hit after 30 frames (~1 s) is a small fraction of itself.
-    expect(Math.pow(PHOS_DECAY, 30)).toBeLessThan(0.4);
+  it('a steady carrier still saturates while a burst fades fast', () => {
+    // Equilibrium of d = d*decay + hit, through the display's 1 - exp(-1.6 d).
+    const eq = PHOS_HIT / (1 - PHOS_DECAY);
+    expect(1 - Math.exp(-1.6 * eq)).toBeGreaterThan(0.85);
+    // A burst halves within ~10 frames (~1/3 s at 30 fps)…
+    expect(Math.pow(PHOS_DECAY, 10)).toBeLessThan(0.5);
+    // …and is under a tenth of itself within a second.
+    expect(Math.pow(PHOS_DECAY, 30)).toBeLessThan(0.1);
   });
 });
 
@@ -142,5 +146,14 @@ describe('palette trace follows the noise floor, not the waterfall window', () =
   it('the trace and fill shaders take their palette weight from the floor gate', () => {
     expect(PAN_FS).toContain('paletteWeight(vPal)');
     expect(PAN_FILL_FS).toContain('paletteWeight(v_pal)');
+  });
+});
+
+describe('phosphor keeps the live trace readable', () => {
+  it('cuts the glow away around the live trace, measured to the segment span', () => {
+    expect(PHOS_DISPLAY_FS).toContain('smoothstep(uHaloInPx, uHaloOutPx, dy)');
+    expect(PHOS_DISPLAY_FS).toContain('levelAt(b0 + 1)');
+    expect(PHOS_HALO_OUT_PX).toBeGreaterThan(PHOS_HALO_IN_PX);
+    expect(PHOS_HALO_IN_PX).toBeGreaterThanOrEqual(1);
   });
 });

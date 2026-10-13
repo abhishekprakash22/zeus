@@ -240,14 +240,43 @@ precision highp float;
 in vec2 vUv;
 uniform sampler2D uDensity;
 uniform float uGain;
+// Live-trace halo: the glow is cut away within a few pixels of the line being
+// drawn this frame, so the trace always sits on clean background instead of
+// dissolving into its own (same-coloured) persistence at a peak. The trace
+// position is re-derived here from the pan row exactly as PAN_VS places it.
+uniform sampler2D uPan;
+uniform float uWidth;
+uniform float uDbMin;
+uniform float uDbMax;
+uniform float uOffsetPx;
+uniform float uScaleX;
+uniform float uCanvasH;
+uniform float uHaloInPx;
+uniform float uHaloOutPx;
 ${PAN_LUT_GLSL}
 out vec4 fragColor;
+float levelAt(int i) {
+  int c = clamp(i, 0, int(uWidth) - 1);
+  float db = texelFetch(uPan, ivec2(c, 0), 0).r;
+  return clamp((db - uDbMin) / (uDbMax - uDbMin), 0.0, 1.0);
+}
 void main() {
   float d = texture(uDensity, vUv).r;
   float n = 1.0 - exp(-d * uGain);
   // Start the palette above its black foot so a single hit is still visible.
   vec3 c = lutColor(mix(0.48, 1.0, n));
-  float a = smoothstep(0.0, 0.06, d) * mix(0.55, 0.95, n) * uLutMix;
+  float a = smoothstep(0.0, 0.06, d) * mix(0.50, 0.85, n) * uLutMix;
+  // Inverse of PAN_VS's x mapping: which bin's segment passes this column.
+  float binF = ((vUv.x - 0.5) / max(0.0001, uScaleX) + 0.5) * uWidth - 0.5 - uOffsetPx;
+  int b0 = int(floor(binF));
+  float l0 = levelAt(b0);
+  float l1 = levelAt(b0 + 1);
+  // The LINE_STRIP covers every level between neighbouring bins, so measure
+  // the distance to that vertical span, not just one point.
+  float lo = min(l0, l1);
+  float hi = max(l0, l1);
+  float dy = max(0.0, max(lo - vUv.y, vUv.y - hi)) * uCanvasH;
+  a *= smoothstep(uHaloInPx, uHaloOutPx, dy);
   fragColor = vec4(c * a, a);
 }`;
 

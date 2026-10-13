@@ -58,30 +58,44 @@ public sealed class BoundedShutdownTests
     }
 
     [Fact]
-    public void Run_WaitsForCompletingTimedStepBeforeNextStep()
+    public async Task Run_WaitsForCompletingTimedStepBeforeNextStep()
     {
-        var delay = TimeSpan.FromMilliseconds(50);
-        var order = new List<string>();
+        // Deterministic: the timed step finishes only when the test releases
+        // it, so "Run is still waiting" is checked against a gate, not a clock.
+        // (The first version asserted Stopwatch >= Task.Delay(50); the two run
+        // on different clocks and a CI runner measured 49.9984 ms.)
+        using var started = new ManualResetEventSlim();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var shutdown = new BoundedShutdown(
             new[]
             {
                 BoundedShutdownStep.WaitFor("delayed", () => Task.Run(async () =>
                 {
-                    order.Add("delayed-start");
-                    await Task.Delay(delay).ConfigureAwait(false);
-                    order.Add("delayed-complete");
-                }), TimeSpan.FromSeconds(1)),
-                BoundedShutdownStep.Run("later", () => order.Add("later")),
+                    order.Enqueue("delayed-start");
+                    started.Set();
+                    await release.Task.ConfigureAwait(false);
+                    order.Enqueue("delayed-complete");
+                }), TimeSpan.FromSeconds(30)),
+                BoundedShutdownStep.Run("later", () => order.Enqueue("later")),
             },
-            () => order.Add("final"));
+            () => order.Enqueue("final"));
 
-        var sw = Stopwatch.StartNew();
-        var first = shutdown.Run();
-        sw.Stop();
+        var run = Task.Run(() => shutdown.Run());
+
+        Assert.True(started.Wait(TimeSpan.FromSeconds(30)), "the timed step never started");
+        // The step is parked on the gate, so Run must still be inside it:
+        // nothing after it may have run yet.
+        await Task.Delay(50);
+        Assert.False(run.IsCompleted, "Run returned before its timed step completed");
+        Assert.DoesNotContain("later", order);
+        Assert.DoesNotContain("final", order);
+
+        release.SetResult();
+        var first = await run.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.True(first);
-        Assert.True(sw.Elapsed >= delay, $"elapsed {sw.Elapsed} was shorter than {delay}");
-        Assert.Equal(new[] { "delayed-start", "delayed-complete", "later", "final" }, order);
+        Assert.Equal(new[] { "delayed-start", "delayed-complete", "later", "final" }, order.ToArray());
     }
 
     [Fact]

@@ -20,6 +20,8 @@ Open it with the **ASK** key (add it to a deck with ✎ on the G2) or **Settings
 - *What does AGC-T do?* — it answers from the manual and names the section.
 - *Draft a problem report.* — it gathers the version, state and redacted log lines into a draft you can copy into **Report a problem**. Nothing is sent until you send it there.
 
+For "something is wrong" questions it first runs the same **Check my settings** catalog (see Troubleshooting) for the matching problem, so a setting such as a very low AGC-T, drive or mic gain is named reliably whichever model you use. The ASK drawer also has a **Check my settings** link that works even with the assistant off.
+
 Every answer shows the lookups the assistant made (for example `get_radio_state()` or `run_diagnostic(rx-no-audio)`) and the manual sections it used, so you can check where an answer came from.
 
 ## What is sent, and what is not

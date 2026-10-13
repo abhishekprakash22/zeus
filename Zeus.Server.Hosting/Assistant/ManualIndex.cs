@@ -117,7 +117,9 @@ public sealed partial class ManualIndex
                 if (body.ToString().Trim().Length > 0) yield return Make(chapter, heading, body.ToString());
                 body.Clear();
                 var title = m.Groups[2].Value.Trim();
-                if (!titled && m.Groups[1].Value.Length == 1)
+                // The chapter's title is its first heading (most chapters use #,
+                // a few open with ##).
+                if (!titled)
                 {
                     chapter = title;
                     titled = true;

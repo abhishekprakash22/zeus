@@ -776,6 +776,9 @@ public static class ZeusHost
         builder.Services.AddSingleton<IKnownIssueRule, PsStartupArmedRule>();
         builder.Services.AddSingleton<SymptomRegistry>();
         builder.Services.AddSingleton<DiagnosticReportBuilder>();
+        // Settings check catalog — shared by the report, the "Check my settings"
+        // button and the assistant's check_settings tool.
+        builder.Services.AddSingleton<SettingsCheckService>();
 
         builder.Services.AddSingleton<DspSettingsStore>();
         // NR3 (RNNoise) operator-installed model store. Auto-injected into

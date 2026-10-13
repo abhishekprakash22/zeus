@@ -28,6 +28,7 @@ import { CalibrationPanel } from './CalibrationPanel';
 import { DisplayPanel } from './DisplayPanel';
 import { QrzSettingsPanel } from './QrzSettingsPanel';
 import { AssistantSettingsPanel } from '../assistant/AssistantSettingsPanel';
+import { SettingsCheckPanel } from './SettingsCheckPanel';
 import { RadioOptionsPanel } from './RadioOptionsPanel';
 import { RadioSettingsPanel } from './RadioSettingsPanel';
 import { ReceiversPanel } from './ReceiversPanel';
@@ -75,6 +76,7 @@ export type SettingsTabId =
   | 'calibration'
   | 'updates'
   | 'assistant'
+  | 'troubleshoot'
   | 'about';
 
 const TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
@@ -101,6 +103,7 @@ const TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
   { id: 'calibration', label: 'CALIBRATION' },
   { id: 'updates', label: 'UPDATES' },
   { id: 'assistant', label: 'ASSISTANT' },
+  { id: 'troubleshoot', label: 'TROUBLESHOOT' },
   { id: 'about', label: 'ABOUT' },
 ];
 
@@ -221,6 +224,7 @@ export function SettingsView({ initialTab, onClose }: Props) {
           {activeTab === 'bandplan' && <BandPlanEditor />}
           {activeTab === 'qrz' && <QrzSettingsPanel />}
           {activeTab === 'assistant' && <AssistantSettingsPanel />}
+          {activeTab === 'troubleshoot' && <SettingsCheckPanel />}
           {activeTab === 'rotator' && <RotatorSettingsPanel />}
           {activeTab === 'midi' && <MidiSettingsPanel />}
           {activeTab === 'network' && <NetworkSettingsPanel />}

@@ -54,7 +54,8 @@ public sealed class AssistantService
         "over-drive refusal) or to exceed licensed power or band limits.\n" +
         "- For questions about controls, settings or procedures, call search_manual first and answer from it. " +
         "Name the section you used. If the manual has nothing, say so instead of guessing.\n" +
-        "- For 'something is wrong' questions, read the state and run the matching diagnostic before answering. " +
+        "- For 'something is wrong' questions, call check_settings with the matching symptom FIRST, then the " +
+        "diagnostic or state if you need more. Lead with any LIKELY CAUSE it reports and give its fix. " +
         "Report what you found as facts with the actual values, then the likely cause, then the fix.\n" +
         "- Keep answers short: they are read on an 8-inch screen. Lead with the answer. Plain text, short " +
         "paragraphs, no tables.\n" +
@@ -75,6 +76,7 @@ public sealed class AssistantService
         RadioService radio,
         DiagnosticReportBuilder diagnostics,
         DiagnosticLogBuffer logBuffer,
+        SettingsCheckService settingsChecks,
         IHttpClientFactory http,
         ILogger<AssistantService> log)
     {
@@ -86,7 +88,8 @@ public sealed class AssistantService
             manual,
             () => JsonSerializer.Serialize(radio.Snapshot(), StateJson),
             id => diagnostics.Build(new DiagnosticRequest(id, null)).Markdown,
-            n => logBuffer.Snapshot(n));
+            n => logBuffer.Snapshot(n),
+            id => SettingsCheckService.ToText(settingsChecks.Run(id)));
     }
 
     public int ManualSections => _manual.Count;

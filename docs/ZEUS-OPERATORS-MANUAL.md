@@ -498,6 +498,14 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Check my settings.** Settings → TROUBLESHOOT (or the ASK drawer's
+Check my settings link): pick the problem — no RX audio, weak signals, low
+TX power, TX audio, PureSignal, won't connect, remote can't connect or is
+choppy, FT8/digital — and the radio lists the settings and conditions that
+commonly cause it, each with its value, a LIKELY CAUSE / CHECK / OK verdict
+and the fix. Runs on the radio with no AI; also included in every Report a
+problem and used first by the assistant.
+
 **Ask ANAN Core (built-in assistant).** Off by default; turn it on at the
 radio in Settings → Assistant with your own Anthropic API key or a model
 server on your network. Open it with the ASK deck key (add it with ✎) or

@@ -126,6 +126,26 @@ public sealed class DiagnosticReportBuilder
             }
         }
 
+        // 3b. The settings check catalog over the same probe sections: a
+        // "Settings check" section listing every relevant setting with its
+        // verdict, and a finding (with the fix) for each likely cause.
+        if (_services.GetService(typeof(SettingsCheckService)) is SettingsCheckService checks)
+        {
+            try
+            {
+                var results = checks.Run(req.SymptomId, sections);
+                if (results.Count > 0)
+                {
+                    findings.AddRange(SettingsCheckService.ToFindings(results));
+                    sections.Add(SettingsCheckService.ToSection(results));
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "diagnostics.report settings check failed");
+            }
+        }
+
         // Order: most urgent first, then title for stability.
         findings.Sort((a, b) =>
         {

@@ -144,6 +144,8 @@ export const useAssistantStore = create<State>((set, get) => ({
 /** Starter questions shown in an empty conversation. */
 export const ASSISTANT_SUGGESTIONS: readonly string[] = [
   "I can't hear anything",
+  'My output power is low',
+  'I can\u2019t connect remotely',
   'PureSignal won\u2019t converge',
   'What does AGC-T do?',
   'What do the display effects levels do?',

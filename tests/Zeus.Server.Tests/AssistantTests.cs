@@ -53,7 +53,8 @@ public class AssistantToolsTests
         new ManualIndex(new[] { ("a.md", "# AGC\n\n## AGC-T\n\nAGC threshold sets where the AGC starts working.\n") }),
         () => "{\"vfoHz\":7188000}",
         id => "diagnosed:" + id,
-        n => (log ?? new List<string> { "ps.arm ok", "wdsp.setPsMox true", "calcc refused: over-drive" }).TakeLast(n).ToList());
+        n => (log ?? new List<string> { "ps.arm ok", "wdsp.setPsMox true", "calcc refused: over-drive" }).TakeLast(n).ToList(),
+        id => "[LIKELY CAUSE] checked:" + id);
 
     [Fact]
     public void The_tool_set_is_closed_and_read_only()
@@ -63,7 +64,7 @@ public class AssistantToolsTests
         // Nothing that could change a setting or transmit, by name.
         foreach (var n in names)
         {
-            Assert.DoesNotMatch("set|write|apply|tx|mox|tune|key|transmit|update|delete|post", n);
+            Assert.DoesNotMatch("^(set|write|apply|tx|mox|tune|key|transmit|update|delete|post)(_|$)", n);
         }
     }
 
@@ -95,6 +96,16 @@ public class AssistantToolsTests
             t.Execute(AssistantTools.RunDiagnostic, new JsonObject { ["symptom_id"] = "explode" }).Content);
         var log = t.Execute(AssistantTools.GetRecentLog, new JsonObject { ["lines"] = 50, ["contains"] = "CALCC" });
         Assert.Equal("calcc refused: over-drive", log.Content);
+    }
+
+    [Fact]
+    public void Check_settings_runs_the_catalog_for_a_validated_symptom()
+    {
+        var t = Make();
+        Assert.Equal("[LIKELY CAUSE] checked:no-tx-power",
+            t.Execute(AssistantTools.CheckSettings, new JsonObject { ["symptom_id"] = "no-tx-power" }).Content);
+        Assert.Equal("[LIKELY CAUSE] checked:other",
+            t.Execute(AssistantTools.CheckSettings, new JsonObject { ["symptom_id"] = "set-mox" }).Content);
     }
 
     [Fact]

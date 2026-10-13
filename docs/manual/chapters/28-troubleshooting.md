@@ -1,5 +1,25 @@
 ## Troubleshooting
 
+### Check my settings
+
+Before working through the table below, let the radio check itself: **Settings → TROUBLESHOOT** (or **Check my settings** in the ASK drawer). Pick what's wrong and press **CHECK**. The radio looks at the settings and conditions that most often cause that problem and lists each with its actual value and a verdict — **LIKELY CAUSE**, **CHECK** or **OK** — plus the exact fix. It runs entirely on the radio: no AI, nothing is sent anywhere. The same check is included in every **Report a problem**, and the assistant uses it too.
+
+What it looks at, by problem:
+
+- **No or quiet receive audio:** each receiver's mute, AF gain and AGC-T (and whether Auto AGC-T is on), AGC mode, squelch, the attenuator, filter width, the audio output being muted or playing on a different device, the radio connection and p2app.
+- **Weak signals / high noise:** AGC-T, attenuator, filter width, ADC overload.
+- **Receive audio distorted:** ADC overload, AGC mode, noise reduction strength.
+- **Low or no transmit power:** drive, the drive limit, TUN power, mic gain (voice modes), TX audio source, TX filter width, p2app.
+- **Transmit audio problems:** mic gain too low or too high, TX audio source, TX filter, leveler gain, PureSignal state.
+- **PureSignal won't calibrate:** PS armed, calibration stalled, feedback level (too hot or too weak) and auto-attenuate, HW peak changed from default.
+- **Radio won't connect:** connection state, p2app not installed / stopped / restarting, another program holding a network port.
+- **Can't connect remotely:** remote password and callsign set, the callsign claimed by another radio, the radio losing its connection to the remote service, clock sync.
+- **Remote audio choppy or laggy:** the network path (wired vs Wi-Fi, direct vs relayed), host temperature and power.
+- **FT8 / digital modes:** clock sync, mode, receive filter width, drive, TX audio source.
+- **Every problem:** the radio computer's power supply (under-voltage), CPU temperature and throttling, and free storage.
+
+The thresholds behind the verdicts are conservative defaults; a **CHECK** means "worth a look", not "wrong".
+
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | No Saturn row on Discover | p2app not running yet | Wait one 10 s cycle; check Settings → UPDATES → P2APP. `NoBinary` → run UPDATE P2APP once |

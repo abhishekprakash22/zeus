@@ -10,15 +10,16 @@ public sealed class SymptomRegistryTests
     private readonly SymptomRegistry _reg = new();
 
     [Fact]
-    public void All_HasEightSymptoms_WithExpectedIds()
+    public void All_HasTwelveSymptoms_WithExpectedIds()
     {
         var ids = _reg.All.Select(s => s.Id).ToArray();
-        Assert.Equal(8, ids.Length);
+        Assert.Equal(12, ids.Length);
         Assert.Equal(
             new[]
             {
                 "wont-connect", "no-tx-power", "ps-not-working", "tx-audio",
-                "rx-no-audio", "rx-audio-quality", "ui-display", "other",
+                "rx-no-audio", "rx-audio-quality", "ui-display", "rx-weak",
+                "digital-modes", "remote-cant-connect", "remote-poor", "other",
             },
             ids);
     }

@@ -116,6 +116,11 @@ public static class ZeusEndpoints
         app.MapGet("/api/diagnostics/streaming",
             (StreamingHub hub) => Results.Ok(hub.DiagnosticsSnapshot()));
 
+        // "Check my settings": the settings check catalog for a symptom, run
+        // locally — no AI, nothing leaves the radio. Read-only.
+        app.MapGet("/api/diagnostics/check", (string? symptom, SettingsCheckService checks) =>
+            Results.Ok(checks.Run(string.IsNullOrWhiteSpace(symptom) ? null : symptom.Trim())));
+
         app.MapPost("/api/diagnostics/report",
             (DiagnosticRequest req, DiagnosticReportBuilder diag) =>
             {

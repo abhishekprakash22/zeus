@@ -30,15 +30,17 @@ public sealed class AssistantTools
     public const string GetRadioState = "get_radio_state";
     public const string RunDiagnostic = "run_diagnostic";
     public const string GetRecentLog = "get_recent_log";
+    public const string CheckSettings = "check_settings";
 
     /// <summary>The complete, closed tool set. Nothing outside it can run.</summary>
     public static readonly IReadOnlyList<string> ReadOnlyToolNames =
-        new[] { SearchManual, GetRadioState, RunDiagnostic, GetRecentLog };
+        new[] { SearchManual, CheckSettings, GetRadioState, RunDiagnostic, GetRecentLog };
 
     public static readonly IReadOnlyList<string> SymptomIds = new[]
     {
         "wont-connect", "no-tx-power", "ps-not-working", "tx-audio",
-        "rx-no-audio", "rx-audio-quality", "ui-display", "other",
+        "rx-no-audio", "rx-audio-quality", "ui-display", "rx-weak",
+        "digital-modes", "remote-cant-connect", "remote-poor", "other",
     };
 
     public const int MaxResultChars = 12_000;
@@ -47,17 +49,20 @@ public sealed class AssistantTools
     private readonly Func<string> _stateJson;
     private readonly Func<string, string> _diagnose;
     private readonly Func<int, IReadOnlyList<string>> _logTail;
+    private readonly Func<string, string> _checkSettings;
 
     public AssistantTools(
         ManualIndex manual,
         Func<string> stateJson,
         Func<string, string> diagnose,
-        Func<int, IReadOnlyList<string>> logTail)
+        Func<int, IReadOnlyList<string>> logTail,
+        Func<string, string>? checkSettings = null)
     {
         _manual = manual;
         _stateJson = stateJson;
         _diagnose = diagnose;
         _logTail = logTail;
+        _checkSettings = checkSettings ?? (_ => "Settings checks are not available on this radio.");
     }
 
     public static IReadOnlyList<AssistantToolDef> Definitions() => new[]
@@ -71,6 +76,20 @@ public sealed class AssistantTools
             {
                 ["query"] = new JsonObject { ["type"] = "string", ["description"] = "Keywords or a short question." },
             }, "query")),
+        new AssistantToolDef(
+            CheckSettings,
+            "Check the radio's settings against the common causes of a problem (e.g. drive, mic gain, AGC-T, mute, " +
+            "attenuator, filters, PureSignal feedback, connection, remote setup, clock sync, power and temperature). " +
+            "Returns each relevant setting with its value and a verdict (LIKELY CAUSE / CHECK / OK) plus the fix. " +
+            "Call this FIRST for any 'something is wrong' question. Read-only.",
+            Schema(new JsonObject
+            {
+                ["symptom_id"] = new JsonObject
+                {
+                    ["type"] = "string",
+                    ["enum"] = new JsonArray(SymptomIds.Select(s => (JsonNode)JsonValue.Create(s)!).ToArray()),
+                },
+            }, "symptom_id")),
         new AssistantToolDef(
             GetRadioState,
             "Read the radio's current state: frequencies, modes, filters, receivers, AF/AGC/NR, mute, TX and " +
@@ -129,6 +148,12 @@ public sealed class AssistantTools
                 }
                 case GetRadioState:
                     return new AssistantToolResult(name, "get_radio_state()", Cap(_stateJson()), Array.Empty<string>());
+                case CheckSettings:
+                {
+                    var id = Str(input, "symptom_id") ?? "other";
+                    if (!SymptomIds.Contains(id)) id = "other";
+                    return new AssistantToolResult(name, $"check_settings({id})", Cap(_checkSettings(id)), Array.Empty<string>());
+                }
                 case RunDiagnostic:
                 {
                     var id = Str(input, "symptom_id") ?? "other";

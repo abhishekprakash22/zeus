@@ -38,10 +38,14 @@ public sealed class SymptomRegistry
         new Symptom("rx-no-audio", "No receive audio", "Receive"),
         new Symptom("rx-audio-quality", "Receive audio crackles or distorts", "Receive"),
         new Symptom("ui-display", "Display, waterfall, or panadapter problem", "Display"),
+        new Symptom("rx-weak", "Weak signals or a noisy, high noise floor", "Receive"),
+        new Symptom("digital-modes", "FT8 / digital modes won't decode or transmit", "Digital modes"),
+        new Symptom("remote-cant-connect", "Can't connect to the radio remotely", "Remote"),
+        new Symptom("remote-poor", "Remote audio choppy or laggy", "Remote"),
         new Symptom("other", "Something else or not sure", "Other"),
     ];
 
-    /// <summary>The eight selectable symptoms, in picker order.</summary>
+    /// <summary>The selectable symptoms, in picker order.</summary>
     public IReadOnlyList<Symptom> All => _all;
 
     /// <summary>
@@ -67,8 +71,13 @@ public sealed class SymptomRegistry
 
             case "rx-no-audio":
             case "rx-audio-quality":
+            case "rx-weak":
             case "ui-display":
                 return [.. BaseProbes, ProbeDspAudio];
+
+            case "remote-cant-connect":
+            case "remote-poor":
+                return BaseProbes;
 
             // "other", null, or anything we don't recognise → cast the widest net.
             default:

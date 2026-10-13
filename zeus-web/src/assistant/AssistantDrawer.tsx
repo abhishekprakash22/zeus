@@ -16,6 +16,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ASSISTANT_SUGGESTIONS, useAssistantStore, type AssistantMessage } from './assistant-store';
+import { SettingsCheckPanel } from '../components/SettingsCheckPanel';
 
 export function AssistantDrawer() {
   const open = useAssistantStore((s) => s.open);
@@ -27,6 +28,7 @@ export function AssistantDrawer() {
   const clear = useAssistantStore((s) => s.clear);
   const [draft, setDraft] = useState('');
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showCheck, setShowCheck] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -49,6 +51,9 @@ export function AssistantDrawer() {
         <span style={{ color: '#cfe8f8', fontWeight: 600, letterSpacing: '0.06em' }}>ASK ANAN CORE</span>
         <span style={chip}>Read-only</span>
         <span style={{ flex: 1 }} />
+        <button type="button" style={linkBtn} onClick={() => setShowCheck((v) => !v)}>
+          Check my settings
+        </button>
         <button type="button" style={linkBtn} onClick={() => setShowPrivacy((v) => !v)}>
           What gets sent?
         </button>
@@ -74,7 +79,13 @@ export function AssistantDrawer() {
         {!ready && (
           <div style={bubbleA} data-testid="assistant-setup">
             The assistant is off. An operator can turn it on at the radio in <b>Settings → Assistant</b> by
-            choosing a model: your own Anthropic API key, or a model server on your network.
+            choosing a model: your own Anthropic API key, or a model server on your network. You can still
+            check the usual causes of a problem right here:
+          </div>
+        )}
+        {(!ready || showCheck) && (
+          <div style={{ ...bubbleA, maxWidth: '100%', alignSelf: 'stretch' }}>
+            <SettingsCheckPanel compact />
           </div>
         )}
         {ready && messages.length === 0 && (

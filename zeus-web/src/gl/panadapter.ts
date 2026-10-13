@@ -236,6 +236,23 @@ export function hexToRgbFloats(hex: string): { r: number; g: number; b: number }
 
 // Fade at the trace edge; fragment alpha drops to 0 at the floor.
 const FILL_ALPHA_TOP = 0.55;
+// Under phosphor the glow carries the palette, so the live trace and its fill
+// go back to the operator's single trace colour — the line must always read
+// as THE line (field: a palette-coloured trace inside an SSB signal blended
+// into its own persistence and looked broken). A faint fill keeps signals
+// anchored to the floor instead of floating above the noise gate's gap.
+export const PHOSPHOR_FILL_ALPHA_TOP = 0.22;
+
+/** Trace/fill palette mix and fill strength for the current mode. */
+export function traceStyle(
+  lutMix: number,
+  popIntensity: number,
+  phosphorActive: boolean,
+): { traceLutMix: number; fillLutMix: number; fillAlphaTop: number } {
+  if (popIntensity > 0) return { traceLutMix: 0, fillLutMix: 0, fillAlphaTop: FILL_ALPHA_TOP };
+  if (phosphorActive) return { traceLutMix: 0, fillLutMix: 0, fillAlphaTop: PHOSPHOR_FILL_ALPHA_TOP };
+  return { traceLutMix: lutMix, fillLutMix: lutMix, fillAlphaTop: FILL_ALPHA_TOP };
+}
 
 export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
   instrumentGlForStats(gl);   // render meter: no-op without ?renderstats=1
@@ -574,6 +591,33 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.activeTexture(gl.TEXTURE0);
 
       const phosphorActive = phosphorOn && canvasW > 1 && canvasH > 1;
+
+      // Fill (premultiplied alpha to avoid halo on the glowing top edge).
+      // Drawn FIRST so the phosphor glow and the live trace sit on top; under
+      // phosphor it is faint and single-coloured (see traceStyle), just enough
+      // to keep a signal anchored to the floor.
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(fillProg);
+      gl.bindVertexArray(fillVao);
+      gl.uniform1i(uFillPan, 0);
+      gl.uniform1f(uFillWidth, panDb.length);
+      gl.uniform1f(uFillDbMin, dbMin);
+      gl.uniform1f(uFillDbMax, dbMax);
+      gl.uniform1f(uFillOffsetPx, offsetPx);
+      gl.uniform1f(uFillScaleX, sx);
+      gl.uniform3f(uFillColor, traceR, traceG, traceB);
+      const style = traceStyle(lutMix, popIntensity, phosphorActive);
+      gl.uniform1f(uFillAlphaTop, style.fillAlphaTop);
+      gl.uniform1f(uFillPopIntensity, popIntensity);
+      gl.uniform1i(uFillLut, 1);
+      gl.uniform1f(uFillLutMix, style.fillLutMix);
+      gl.uniform1f(uFillWfMin, wfDbMin);
+      gl.uniform1f(uFillWfMax, wfDbMax);
+      gl.uniform1f(uFillPalLo, palGate.lo);
+      gl.uniform1f(uFillPalHi, palGate.hi);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, panDb.length * 2);
+
       if (phosphorActive) {
         phos ??= buildPhos();
         const p = phos;
@@ -656,28 +700,6 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
         phos.last = null;
       }
 
-      // Fill (premultiplied alpha to avoid halo on the glowing top edge).
-      // Under phosphor the density IS the fill — drawing both muddies it.
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      gl.useProgram(fillProg);
-      gl.bindVertexArray(fillVao);
-      gl.uniform1i(uFillPan, 0);
-      gl.uniform1f(uFillWidth, panDb.length);
-      gl.uniform1f(uFillDbMin, dbMin);
-      gl.uniform1f(uFillDbMax, dbMax);
-      gl.uniform1f(uFillOffsetPx, offsetPx);
-      gl.uniform1f(uFillScaleX, sx);
-      gl.uniform3f(uFillColor, traceR, traceG, traceB);
-      gl.uniform1f(uFillAlphaTop, FILL_ALPHA_TOP);
-      gl.uniform1f(uFillPopIntensity, popIntensity);
-      gl.uniform1i(uFillLut, 1);
-      gl.uniform1f(uFillLutMix, popIntensity > 0 ? 0 : lutMix);
-      gl.uniform1f(uFillWfMin, wfDbMin);
-      gl.uniform1f(uFillWfMax, wfDbMax);
-      gl.uniform1f(uFillPalLo, palGate.lo);
-      gl.uniform1f(uFillPalHi, palGate.hi);
-      if (!phosphorActive) gl.drawArrays(gl.TRIANGLE_STRIP, 0, panDb.length * 2);
 
       // Sharp trace line on top.
       gl.disable(gl.BLEND);
@@ -691,7 +713,7 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
       gl.uniform3f(uTraceColor, traceR, traceG, traceB);
       gl.uniform1f(uTracePopIntensity, popIntensity);
       gl.uniform1i(uTraceLut, 1);
-      gl.uniform1f(uTraceLutMix, popIntensity > 0 ? 0 : lutMix);
+      gl.uniform1f(uTraceLutMix, style.traceLutMix);
       gl.uniform1f(uTraceWfMin, wfDbMin);
       gl.uniform1f(uTraceWfMax, wfDbMax);
       gl.uniform1f(uTracePalLo, palGate.lo);

@@ -19,7 +19,7 @@ import {
 } from './panadapter';
 import { spotlightExtents } from '../components/PassbandOverlay';
 import { PAN_FS, PAN_FILL_FS, PHOS_DISPLAY_FS, PHOS_SPLAT_FS } from './shaders';
-import { PHOS_HALO_IN_PX, PHOS_HALO_OUT_PX } from './panadapter';
+import { PHOS_HALO_IN_PX, PHOS_HALO_OUT_PX, PHOSPHOR_FILL_ALPHA_TOP, traceStyle } from './panadapter';
 
 describe('phosphor persistence', () => {
   const g = { offsetPx: 0, scaleX: 1, dbMin: -140, dbMax: -60, w: 640, h: 120 };
@@ -155,5 +155,22 @@ describe('phosphor keeps the live trace readable', () => {
     expect(PHOS_DISPLAY_FS).toContain('levelAt(b0 + 1)');
     expect(PHOS_HALO_OUT_PX).toBeGreaterThan(PHOS_HALO_IN_PX);
     expect(PHOS_HALO_IN_PX).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('the live trace stays THE line under phosphor', () => {
+  it('Subtle: trace and fill take the palette, full fill', () => {
+    expect(traceStyle(1, 0, false)).toEqual({ traceLutMix: 1, fillLutMix: 1, fillAlphaTop: 0.55 });
+  });
+  it('Full (phosphor): single trace colour and a faint anchoring fill', () => {
+    const s = traceStyle(1, 0, true);
+    expect(s.traceLutMix).toBe(0);
+    expect(s.fillLutMix).toBe(0);
+    expect(s.fillAlphaTop).toBe(PHOSPHOR_FILL_ALPHA_TOP);
+    expect(PHOSPHOR_FILL_ALPHA_TOP).toBeGreaterThan(0);
+    expect(PHOSPHOR_FILL_ALPHA_TOP).toBeLessThan(0.55);
+  });
+  it('Signal Pop keeps owning its colouring', () => {
+    expect(traceStyle(1, 1, true)).toEqual({ traceLutMix: 0, fillLutMix: 0, fillAlphaTop: 0.55 });
   });
 });

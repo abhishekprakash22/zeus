@@ -73,10 +73,13 @@ public sealed class DiagnosticReportBuilderTests
             NullLogger<DiagnosticReportBuilder>.Instance);
 
     [Fact]
-    public void Symptoms_ExposesAllEight()
+    public void Symptoms_ExposesTheWholeRegistry()
     {
+        // Pinned to the registry rather than a number: the picker grows as
+        // problem areas are added (rx-weak, digital-modes, remote-*).
         var builder = NewBuilder([], [], new DiagnosticLogBuffer());
-        Assert.Equal(8, builder.Symptoms().Count);
+        Assert.Equal(new SymptomRegistry().All.Count, builder.Symptoms().Count);
+        Assert.Equal(12, builder.Symptoms().Count);
     }
 
     [Fact]

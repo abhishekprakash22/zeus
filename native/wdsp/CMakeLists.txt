@@ -31,12 +31,13 @@ project(wdsp
 
 option(WDSP_WITH_NR3 "Build with RNNoise (NR3) support — xiph/rnnoise vendored under native/rnnoise/" ON)
 option(WDSP_WITH_NR4 "Build with libspecbleach (NR4 / SBNR) support — vendored under native/libspecbleach/" ON)
-# NNR (upstream deep-neural-network noise reduction, WDSP 2.1.0) always builds
-# the Standard model (nnr_model_0.c, ~2.1 MB of weights). The Premium model
-# (nnr_model_1.c, ~5.9 MB) is optional: when OFF, slot 1 reports itself empty
-# and SetRXANNRModel(ch, 1) returns 0 — the discovery mechanism the WDSP Guide
-# documents for consoles. See docs/designs/wdsp-2.1.0-upgrade-plan.md.
-option(WDSP_WITH_NNR_PREMIUM "Compile the Premium NNR model (nnr_model_1.c) into libwdsp" ON)
+# NNR (upstream deep-neural-network noise reduction) has four model slots as of
+# WDSP 2.11: 0 = SSB Standard, 1 = SSB Premium, 2 = CW Standard, 3 = CW Premium.
+# The two Standard models always build. The two Premium models are optional:
+# when OFF, slots 1 and 3 report themselves empty and SetRXANNRModel(ch, slot)
+# keeps the current slot — the discovery mechanism the WDSP Guide documents for
+# consoles. See docs/designs/wdsp-2.1.0-upgrade-plan.md.
+option(WDSP_WITH_NNR_PREMIUM "Compile the Premium NNR models (nnr_model_1.c, nnr_model_3.c) into libwdsp" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
@@ -47,9 +48,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # -----------------------------------------------------------------------------
-# Source list: every upstream WDSP 2.1.0 .c file (see native/wdsp/ZEUS-PATCHES.md
+# Source list: every upstream WDSP 2.11 .c file (see native/wdsp/ZEUS-PATCHES.md
 # for the exact vendoring rules) plus the Zeus-owned linux_port.c and
-# zeus_compat.c. rnnr.c / sbnr.c / nnr_model_1.c are gated below per-flag.
+# zeus_compat.c. rnnr.c / sbnr.c / nnr_model_1.c / nnr_model_3.c are gated below.
 # -----------------------------------------------------------------------------
 set(WDSP_SOURCES
     amd.c ammod.c amsq.c analyzer.c anf.c anr.c apfshadow.c bandpass.c
@@ -58,18 +59,20 @@ set(WDSP_SOURCES
     fcurve.c fir.c firmin.c fmd.c fmmod.c fmsq.c gain.c gaussian.c gen.c
     icfir.c iir.c impulse_cache.c iobuffs.c iqc.c linux_port.c lmath.c main.c
     matchedCW.c meter.c meterlog10.c nbp.c nnet.c nnio.c nnr.c nnr_model_0.c
+    nnr_model_2.c nnrbypass.c
     nob.c nobII.c nurbs.c nurbs_fit.c nurbs_spline.c osctrl.c patchpanel.c
     phrot.c resample.c reshb.c rmatch.c RXA.c sender.c shift.c siphon.c slew.c
     snb.c snoop.c ssql.c syncbuffs.c TXA.c utilities.c varsamp.c version.c
     wbfm.c wcpAGC.c wisdom.c zetaHat.c zeus_compat.c
 )
 
-# NNR Premium model gate. Without nnr_model_1.c the slot-1 symbols still have
-# to exist (nnet.c references them unconditionally), so provide an empty model.
+# NNR Premium models gate. Without nnr_model_1.c / nnr_model_3.c the slot
+# symbols still have to exist (nnet.c references them unconditionally), so
+# provide empty models.
 if(WDSP_WITH_NNR_PREMIUM)
-    list(APPEND WDSP_SOURCES nnr_model_1.c)
+    list(APPEND WDSP_SOURCES nnr_model_1.c nnr_model_3.c)
 else()
-    list(APPEND WDSP_SOURCES stubs/nnr/nnr_model_1_stub.c)
+    list(APPEND WDSP_SOURCES stubs/nnr/nnr_model_1_stub.c stubs/nnr/nnr_model_3_stub.c)
 endif()
 
 # NR3 — RNNoise gate.

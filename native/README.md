@@ -3,7 +3,7 @@
 This directory vendors the WDSP DSP engine (Warren Pratt, GPLv3) and builds it
 as a shared library that `Zeus.Dsp` loads via P/Invoke.
 
-Source baseline: **upstream WDSP 2.1.0** (Warren Pratt, 2026-09-04) plus a
+Source baseline: **upstream WDSP 2.11** (Warren Pratt, 2026-10-15) plus a
 `linux_port.{c,h}` portability shim, `#ifdef _WIN32` guards to get WDSP off
 MSVC, the Thetis-lineage NR3/NR4 blocks, and a `psccF` compatibility export.
 The complete, replayable patch list lives in
@@ -14,12 +14,12 @@ Layout:
 
 ```
 native/
-  wdsp/                  # vendored upstream WDSP 2.1.0 .c/.h
+  wdsp/                  # vendored upstream WDSP 2.11 .c/.h
   wdsp/ZEUS-PATCHES.md   # every Zeus-owned file and every edited upstream file
   wdsp/zeus_compat.{c,h} # psccF compatibility export (upstream 2.x dropped it)
   wdsp/stubs/nr3/        # no-op rnnr_stub.c + rnnoise.h (used when WDSP_WITH_NR3=OFF)
   wdsp/stubs/nr4/        # no-op sbnr_stub.c + specbleach_adenoiser.h (used when WDSP_WITH_NR4=OFF)
-  wdsp/stubs/nnr/        # empty Premium NNR model (used when WDSP_WITH_NNR_PREMIUM=OFF)
+  wdsp/stubs/nnr/        # empty Premium NNR models, slots 1 + 3 (used when WDSP_WITH_NNR_PREMIUM=OFF)
   wdsp/wdsp_export.h     # WDSP_EXPORT visibility macro (replaces PORT)
   wdsp/CMakeLists.txt    # the real build
   libspecbleach/         # vendored libspecbleach for NR4 (Phase 1a of #162)
@@ -38,11 +38,13 @@ native/
 - `WDSP_WITH_NR4` — libspecbleach / SBNR support. **ON by default** since
   libspecbleach is vendored at `native/libspecbleach/`. When OFF,
   `stubs/nr4/sbnr_stub.c` is compiled instead.
-- `WDSP_WITH_NNR_PREMIUM` — upstream WDSP 2.1.0 ships two compiled-in neural
-  noise reduction (NNR) models. The Standard model (`nnr_model_0.c`, 2.1 MB of
-  weights) always builds; this flag (**ON by default**) adds the Premium model
-  (`nnr_model_1.c`, 4.5 MB). When OFF, `stubs/nnr/nnr_model_1_stub.c` makes
-  slot 1 report itself empty, so `SetRXANNRModel(ch, 1)` returns 0.
+- `WDSP_WITH_NNR_PREMIUM` — upstream WDSP 2.11 ships four compiled-in neural
+  noise reduction (NNR) models: slot 0 SSB Standard (`nnr_model_0.c`), slot 1
+  SSB Premium (`nnr_model_1.c`), slot 2 CW Standard (`nnr_model_2.c`), slot 3
+  CW Premium (`nnr_model_3.c`). The Standard models always build; this flag
+  (**ON by default**) adds the two Premium models. When OFF,
+  `stubs/nnr/nnr_model_{1,3}_stub.c` make those slots report themselves empty,
+  so `SetRXANNRModel` keeps the current slot.
 
 libspecbleach is built as a `STATIC` sub-target with hidden symbol visibility
 and embedded into `libwdsp.{so,dylib,dll}` — no extra runtime library to ship.

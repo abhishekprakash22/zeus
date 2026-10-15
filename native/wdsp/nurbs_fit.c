@@ -45,22 +45,12 @@ warren@pratt.one
 #include "nurbs_fit.h"
 #include <math.h>
 #include <stdlib.h>
-
-/* Zeus: prototypes for the MSVC CRT aligned-allocation pair. Off Windows the
-   definitions live in linux_port.c; WITHOUT these declarations C's
-   implicit-int rule makes the compiler truncate the returned pointer to its
-   low 32 bits (aarch64: `sxtw x3, w0` after the call) and the first TXA open
-   segfaults in this file once the heap sits above 4 GB. On Windows the UCRT's
-   <stdlib.h> pulls <corecrt_malloc.h>, which declares them — hence upstream
-   never sees this. */
-#ifndef _WIN32
-#include <stddef.h>
-extern void* _aligned_malloc(size_t size, size_t alignment);
-extern void  _aligned_free(void* memblock);
-#endif
 #include <string.h>
 #include <stdio.h>
 #include <float.h>
+#include <stdint.h>
+#include <limits.h>
+#include "wdsp_align.h"
 
 #ifndef NAN
 #  define NAN (0.0/0.0)
@@ -1569,7 +1559,11 @@ NF_Curve *nf_curve_read(const char *path)
     char key[64];
     if (fscanf(f, "%63s %d", key, &c->degree)  != 2) goto err;
     if (fscanf(f, "%63s %d", key, &c->n_ctrl)  != 2) goto err;
+    if (c->degree < 1 || c->n_ctrl <= c->degree ||
+        c->n_ctrl > INT_MAX - c->degree - 1 ||
+        (size_t)c->n_ctrl > SIZE_MAX / sizeof(double)) goto err;
     int nk = c->n_ctrl + c->degree + 1;
+    if ((size_t)nk > SIZE_MAX / sizeof(double)) goto err;
     c->knots   = (double*)xmalloc(nk * sizeof(double));
     c->ctrl_wx = (double*)xmalloc(c->n_ctrl * sizeof(double));
     c->ctrl_wy = (double*)xmalloc(c->n_ctrl * sizeof(double));
@@ -1627,6 +1621,7 @@ static int outlier_mask_direct(const NF_Curve   *c,
         if (res[i] > thr) { inlier_mask[i] = 0; n_outliers++; }
         else              { inlier_mask[i] = 1; }
     }
+    free(res);
     return n_outliers;
 }
 

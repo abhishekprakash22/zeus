@@ -45,22 +45,11 @@ warren@pratt.one
 
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 #include <stdlib.h>
-
-/* Zeus: prototypes for the MSVC CRT aligned-allocation pair. Off Windows the
-   definitions live in linux_port.c; WITHOUT these declarations C's
-   implicit-int rule makes the compiler truncate the returned pointer to its
-   low 32 bits (aarch64: `sxtw x3, w0` after the call) and the first TXA open
-   segfaults in this file once the heap sits above 4 GB. On Windows the UCRT's
-   <stdlib.h> pulls <corecrt_malloc.h>, which declares them — hence upstream
-   never sees this. */
-#ifndef _WIN32
-#include <stddef.h>
-extern void* _aligned_malloc(size_t size, size_t alignment);
-extern void  _aligned_free(void* memblock);
-#endif
 #include <string.h>
 #include <stdio.h>
+#include "wdsp_align.h"
 
 #ifndef NAN
 #  define NAN (0.0/0.0)
@@ -812,9 +801,12 @@ static NS_Spline *read_spline(FILE *f, double *cksum)
     NS_Spline *s = (NS_Spline*)ns_calloc(1, sizeof(NS_Spline));
     char key[64];
 
-    if (fscanf(f, "%63s %d", key, &s->n_branches) != 2) goto err;
+    int n_branches;
+    if (fscanf(f, "%63s %d", key, &n_branches) != 2) goto err;
+    if (n_branches < 1 || n_branches > NS_MAX_BRANCHES) goto err;
+    s->n_branches = n_branches;
     *cksum += s->n_branches;
-    s->branches = (NS_Branch*)ns_calloc(s->n_branches, sizeof(NS_Branch));
+    s->branches = (NS_Branch*)ns_calloc((size_t)s->n_branches, sizeof(NS_Branch));
 
     for (int b = 0; b < s->n_branches; b++) {
         NS_Branch *br = &s->branches[b];
@@ -822,6 +814,9 @@ static NS_Spline *read_spline(FILE *f, double *cksum)
         if (fscanf(f, "%63s %d %63s %d %63s %lf",
                    key, &bnum, key, &br->n_pts, key, &br->t_mid) != 6)
             goto err;
+        if (bnum != b || br->n_pts < 0 ||
+            (size_t)br->n_pts > SIZE_MAX / sizeof(double) ||
+            (br->n_pts > 0 && (size_t)(br->n_pts - 1) > SIZE_MAX / sizeof(NS_Seg))) goto err;
         *cksum += br->n_pts + br->t_mid;
 
         if (br->n_pts == 0) {
@@ -966,7 +961,7 @@ double get_mag_correction_ema(const CurveEMA *e, double x, double *prev_y)
     return ema_interp(e, x);
 }
 
-double get_phase_correction_ema(const CurveEMA* e, double x, double* prev_y)
+double get_phase_correction_ema(const CurveEMA *e, double x, double *prev_y)
 {
     (void)prev_y;
     if (!e) return 0.0;

@@ -43,7 +43,6 @@ warren@wpratt.com
 #endif
 #include <math.h>
 #include <stdint.h>
-#include <limits.h>   // Zeus: INT_MAX (wbfm.c) — MSVC gets it transitively, glibc/clang do not
 #include <time.h>
 #ifdef _WIN32
   #include <avrt.h>
@@ -106,6 +105,7 @@ warren@wpratt.com
 #include "meterlog10.h"
 #include "nbp.h"
 #include "nnr.h"
+#include "nnrbypass.h"
 #include "nob.h"
 #include "nobII.h"
 #include "nurbs.h"

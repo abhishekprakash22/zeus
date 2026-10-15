@@ -645,6 +645,7 @@ WDSP_API void xnobEXTF (int id, float *I, float *Q);
 /*  ---- osctrl.c ---------------------------------------------------------- */
 
 WDSP_API void SetTXAosctrlRun (int channel, int run);
+WDSP_API void SetTXAosctrlBandwidth (int channel, double bandwidth);
 
 /*  ---- patchpanel.c ------------------------------------------------------ */
 

@@ -149,3 +149,25 @@ void SetTXAosctrlRun (int channel, int run)
 		LeaveCriticalSection (&ch[channel].csDSP);
 	}
 }
+
+// ANAN Core: the overshoot controller's design bandwidth. create_osctrl fixes
+// it at 3000 Hz; its only use is the peak-stretcher window
+// (pn = 0.3 / bw * rate), which should match the transmitted audio bandwidth
+// so the look-ahead spans the overshoot the TX filters actually produce.
+// Clamped to 300..12000 Hz; rebuilds the delay lines under the DSP lock only
+// when the value changes.
+PORT
+void SetTXAosctrlBandwidth (int channel, double bandwidth)
+{
+	OSCTRL a = txa[channel].osctrl.p;
+	if (bandwidth < 300.0)   bandwidth = 300.0;
+	if (bandwidth > 12000.0) bandwidth = 12000.0;
+	if (a->bw != bandwidth)
+	{
+		EnterCriticalSection (&ch[channel].csDSP);
+		decalc_osctrl (a);
+		a->bw = bandwidth;
+		calc_osctrl (a);
+		LeaveCriticalSection (&ch[channel].csDSP);
+	}
+}

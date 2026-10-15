@@ -91,6 +91,7 @@ public sealed class WdspWisdomInitializer
     private readonly Func<string> _getWisdomStatus;
     private readonly Func<string> _getWisdomDirectory;
     private readonly Func<string> _getStamp;
+    private readonly Func<bool> _shouldSkip;
     private readonly object _gate = new();
     private readonly object _statusGate = new();
     private Task? _task;
@@ -112,7 +113,8 @@ public sealed class WdspWisdomInitializer
         Func<string, int> runWisdom,
         Func<string> getWisdomStatus,
         Func<string>? getWisdomDirectory = null,
-        Func<string>? getStamp = null)
+        Func<string>? getStamp = null,
+        Func<bool>? shouldSkip = null)
     {
         _log = logger ?? NullLogger<WdspWisdomInitializer>.Instance;
         _ensureResolverRegistered = ensureResolverRegistered ?? throw new ArgumentNullException(nameof(ensureResolverRegistered));
@@ -120,6 +122,7 @@ public sealed class WdspWisdomInitializer
         _getWisdomStatus = getWisdomStatus ?? throw new ArgumentNullException(nameof(getWisdomStatus));
         _getWisdomDirectory = getWisdomDirectory ?? GetDefaultWisdomDirectory;
         _getStamp = getStamp ?? ResolveCurrentStamp;
+        _shouldSkip = shouldSkip ?? ShouldSkipWisdom;
         RegisterAmbient(this);
     }
 
@@ -170,7 +173,7 @@ public sealed class WdspWisdomInitializer
         {
             if (_task is not null) return _task;
 
-            if (ShouldSkipWisdom())
+            if (_shouldSkip())
             {
                 _log.LogInformation(
                     "wdsp.wisdom skipped via {Variable}; FFT plans will build on demand",

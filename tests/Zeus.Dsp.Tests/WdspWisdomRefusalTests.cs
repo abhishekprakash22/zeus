@@ -28,7 +28,10 @@ public sealed class WdspWisdomRefusalTests
                 runWisdom: _ => -1,
                 getWisdomStatus: () => string.Empty,
                 getWisdomDirectory: () => dir,
-                getStamp: () => "test-stamp");
+                getStamp: () => "test-stamp",
+                // CI sets ZEUS_WISDOM_SKIP=1, which would short-circuit to Ready
+                // without calling runWisdom at all.
+                shouldSkip: () => false);
             await init.EnsureInitializedAsync();
 
             Assert.Equal(WisdomPhase.Failed, init.Phase);
@@ -55,7 +58,10 @@ public sealed class WdspWisdomRefusalTests
                 runWisdom: _ => nativeResult,
                 getWisdomStatus: () => string.Empty,
                 getWisdomDirectory: () => dir,
-                getStamp: () => "test-stamp");
+                getStamp: () => "test-stamp",
+                // CI sets ZEUS_WISDOM_SKIP=1, which would short-circuit to Ready
+                // without calling runWisdom at all.
+                shouldSkip: () => false);
             await init.EnsureInitializedAsync();
 
             Assert.Equal(WisdomPhase.Ready, init.Phase);

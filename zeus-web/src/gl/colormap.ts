@@ -60,7 +60,11 @@
 // continuous form for our use case.
 
 export type ColormapId = 'blue' | 'inferno' | 'viridis' | 'amber' | 'grey' | 'rainbow';
-export type RenderColormapId = ColormapId | 'pop';
+// 'paper' is the light theme's waterfall palette: its floor IS the chosen
+// paper surface (setPaperFloor), so the noise blends into the background and
+// signals run blue -> violet -> crimson. Never operator-selectable — the light
+// theme substitutes it (theme/paper-display.ts).
+export type RenderColormapId = ColormapId | 'pop' | 'paper';
 
 export type ColormapSpec = {
   id: ColormapId;
@@ -212,9 +216,51 @@ function buildLut(anchors: Anchor[]): Uint8Array {
 // Lazy-cached so palette swaps at runtime don't re-interpolate each time.
 const CACHE: Partial<Record<RenderColormapId, Uint8Array>> = {};
 
+let paperFloor: [number, number, number] = [219, 219, 219];
+let paperVersion = 0;
+
+/** Set the paper palette's floor (the light theme's surface). Bumps the version. */
+export function setPaperFloor(rgb: [number, number, number]): void {
+  if (rgb[0] === paperFloor[0] && rgb[1] === paperFloor[1] && rgb[2] === paperFloor[2]) return;
+  paperFloor = [rgb[0], rgb[1], rgb[2]];
+  paperVersion++;
+  delete CACHE.paper;
+}
+
+/** Changes whenever the paper LUT changes — renderers key their upload on it. */
+export function paperLutVersion(): number {
+  return paperVersion;
+}
+
+function paperAnchors(): Anchor[] {
+  const f = paperFloor;
+  const mix = (b: [number, number, number], t: number): [number, number, number] => [
+    Math.round(f[0] + (b[0] - f[0]) * t),
+    Math.round(f[1] + (b[1] - f[1]) * t),
+    Math.round(f[2] + (b[2] - f[2]) * t),
+  ];
+  // Same stretched low end as the dark palettes: the bottom ~42% sits on the
+  // floor so a noisy band reads as paper, not as a coloured haze.
+  return [
+    [0.0, f],
+    [0.42, f],
+    [0.52, mix([150, 182, 226], 0.45)],
+    [0.62, [150, 182, 226]],
+    [0.72, [70, 122, 200]],
+    [0.84, [95, 50, 150]],
+    [0.93, [180, 20, 80]],
+    [1.0, [110, 0, 20]],
+  ];
+}
+
 export function lutFor(id: RenderColormapId): Uint8Array {
   const cached = CACHE[id];
   if (cached) return cached;
+  if (id === 'paper') {
+    const lut = buildLut(paperAnchors());
+    CACHE.paper = lut;
+    return lut;
+  }
   const anchors =
     id === 'pop'
       ? POP_ANCHORS

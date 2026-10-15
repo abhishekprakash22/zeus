@@ -203,7 +203,8 @@ export function WfDbScale({ master = false }: WfDbScaleProps = {}) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className={`absolute left-0 top-0 bottom-0 z-10 w-10 select-none bg-neutral-950/60 ${levelsLocked ? '' : 'cursor-ns-resize touch-none'}`}
+      className={`absolute left-0 top-0 bottom-0 z-10 w-10 select-none ${levelsLocked ? '' : 'cursor-ns-resize touch-none'}`}
+      style={{ background: 'var(--scale-bg)' }}
     >
       {ticks.map((t) => (
         <div
@@ -211,8 +212,8 @@ export function WfDbScale({ master = false }: WfDbScaleProps = {}) {
           className="absolute left-0 right-0 flex items-center gap-1"
           style={{ top: `${t.topPct}%`, transform: 'translateY(-50%)' }}
         >
-          <div className="h-px w-1.5 bg-neutral-500" />
-          <div className="font-mono text-[9px] leading-none text-neutral-400">
+          <div className="h-px w-1.5" style={{ background: 'var(--scale-tick)' }} />
+          <div className="font-mono text-[9px] leading-none" style={{ color: 'var(--scale-ink)' }}>
             {relativeToFloor && t.label > 0 ? `+${t.label}` : t.label}
           </div>
         </div>
@@ -222,7 +223,7 @@ export function WfDbScale({ master = false }: WfDbScaleProps = {}) {
           context. */}
       {relativeToFloor && (
         <div
-          className="absolute bottom-1 left-0 right-0 text-center font-mono text-[8px] leading-tight text-neutral-500"
+          className="absolute bottom-1 left-0 right-0 text-center font-mono text-[8px] leading-tight" style={{ color: 'var(--scale-tick)' }}
           title="Median noise floor across all RX (the 0 dB reference)"
         >
           flr

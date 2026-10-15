@@ -83,6 +83,20 @@
 
   /* ----- Spectrum + waterfall ----- */
   --spec-bg:     #151a20;   /* dark nearly-black blue */
+  /* Display / card surfaces that used to be hard-coded dark. Defaults equal
+     the old literals (dark theme unchanged); the light theme's paper slider
+     re-derives them all (theme/paper.ts). */
+  --disp-dim-rgb:  0, 0, 0;                    /* passband spotlight wash */
+  --disp-chip-bg:  rgba(8, 10, 14, 0.78);      /* RX label chip on the pan */
+  --disp-chip-line: rgba(255, 255, 255, 0.16);
+  --scale-bg:      rgba(10, 10, 10, 0.6);      /* dB scales */
+  --scale-ink:     #a3a3a3;
+  --scale-tick:    #737373;
+  --axis-bg:       rgba(10, 10, 10, 0.7);      /* frequency axis strip */
+  --axis-ink:      #d4d4d4;
+  --axis-tick:     #a3a3a3;
+  --card-bg:       rgba(20, 23, 28, 0.92);     /* G2 floating cards */
+  --card-shadow:   0 8px 28px rgba(0, 0, 0, 0.55);
   --spec-grid:   rgba(255,255,255,0.08);
   --spec-line:   #7fd4ff;
   --spec-fill:   rgba(100,180,255,0.25);

@@ -12,6 +12,7 @@ import {
   type TweakableToken,
 } from '../state/theme-store';
 import { G2_THEMES, useG2ThemeStore } from '../state/g2-theme-store';
+import { PaperSurfaceControl } from './PaperSurfaceControl';
 
 // Operator-facing label + group per tweakable token. "group" controls which
 // section of the panel renders the row — accent tokens get the friendly
@@ -154,8 +155,8 @@ const THEME_OPTIONS: ReadonlyArray<{
   {
     id: 'light',
     label: 'Light',
-    blurb: 'Brushed-silver chassis with dark display wells. Day-shack mode.',
-    swatch: '#c4c8ce',
+    blurb: 'Paper: one grey you choose — chassis, cards and the spectrum displays together. Day-shack mode.',
+    swatch: '#dbdbdb',
   },
 ];
 
@@ -232,8 +233,9 @@ export function ThemeSettingsPanel() {
         <div style={sectionHead}>
           <h3 style={sectionH3}>Theme</h3>
           <p style={sectionP}>
-            Pick the workspace look. Display surfaces (panadapter, gauges,
-            VFO) stay dark in both themes so signals stay readable.
+            Pick the workspace look. Dark keeps lit display wells; Light turns
+            the whole radio — panadapter and waterfall included — to a paper
+            grey you set below.
           </p>
         </div>
 
@@ -257,6 +259,7 @@ export function ThemeSettingsPanel() {
             );
           })}
         </div>
+        {theme === 'light' && <PaperSurfaceControl />}
       </div>
 
       <div>

@@ -7,6 +7,8 @@
 import { useEffect, useMemo } from 'react';
 import { useThemeStore } from '../state/theme-store';
 import { useConnectionStore } from '../state/connection-store';
+import { paperTokens, rgbOf } from '../theme/paper';
+import { setPaperFloor } from '../gl/colormap';
 
 // ThemeApplier — single mounted instance (in App.tsx) that:
 //   1. sets `data-theme` on <html> when the operator picks Dark / Light;
@@ -21,6 +23,7 @@ export function ThemeApplier(): null {
   const theme = useThemeStore((s) => s.theme);
   const overrides = useThemeStore((s) => s.overrides);
   const hydrate = useThemeStore((s) => s.hydrate);
+  const paperSurface = useThemeStore((s) => s.paperSurface);
 
   // Pull the authoritative theme + overrides from the backend on mount.
   // The store's initial values come from localStorage (synchronous, so
@@ -48,6 +51,34 @@ export function ThemeApplier(): null {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  // Light theme = paper: every chassis / card / display token derived from
+  // the one surface grey (theme/paper.ts), at the light block's specificity
+  // and later in the cascade so it wins over the fixed silver values. The
+  // waterfall's paper palette takes the same grey as its floor.
+  const paperCss = useMemo(() => {
+    if (theme !== 'light') return '';
+    const decls = Object.entries(paperTokens(paperSurface))
+      .map(([k, v]) => `  ${k}: ${v};`)
+      .join('\n');
+    return `:root[data-theme="light"] {\n${decls}\n}\n`;
+  }, [theme, paperSurface]);
+
+  useEffect(() => {
+    const rgb = rgbOf(paperSurface);
+    if (rgb) setPaperFloor(rgb);
+  }, [paperSurface]);
+
+  useEffect(() => {
+    const id = 'zeus-paper-tokens';
+    let tag = document.getElementById(id) as HTMLStyleElement | null;
+    if (!tag) {
+      tag = document.createElement('style');
+      tag.id = id;
+      document.head.appendChild(tag);
+    }
+    tag.textContent = paperCss;
+  }, [paperCss]);
 
   // Build the override CSS body once per change. Empty overrides → empty
   // rule, which is harmless. We keep this as a memoised string so React

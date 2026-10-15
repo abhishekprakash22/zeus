@@ -59,6 +59,7 @@ External-software integration: **TCI** (ExpertSDR3 Transceiver Control Interface
 ### DISPLAY
 
 - **Theme** — Dark / Light with per-token color overrides (grouped by purpose, per-color Reset).
+  - **Light = paper.** The whole radio turns to one grey you choose: the chassis, the floating cards (VFO, S-meter, filters), and the panadapter and waterfall too. Under Light, **Paper surface** offers presets (Silver, Pearl, Ash — the default —, Pewter, Slate, Graphite), a **Lightness** slider from very light to mid-grey, and a **Tint** (cool / neutral / warm). The waterfall switches to a paper palette whose floor is your grey, so the noise blends into the background and signals run blue → violet → crimson; the trace keeps your trace colour's hue, darkened until it reads on the paper. Text, the VFO digits and the scales darken automatically to stay readable at any setting — the readout under the slider shows the contrast actually achieved. The choice is stored on the radio, so the G2 screen keeps it across restarts.
 - **Panadapter Background** — Basic / **Beam Map** (needs QRZ) / **Image** (drop a photo; Fit/Fill/Stretch; auto-shrunk to 1920 px).
 - **RX Trace Color**, **Spectrum Scale** (separate dB min/max for RX/TX panadapter and waterfalls), **Waterfall colormap** and scroll speed.
 - **Wideband display** settings for the full-ADC spectrum.

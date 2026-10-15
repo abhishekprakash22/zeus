@@ -6,6 +6,8 @@
 
 import { create } from 'zustand';
 import { fetchThemeSettings, updateThemeSettings } from '../api/themeSettings';
+import { PAPER_DEFAULT_LIGHTNESS, PAPER_DEFAULT_TINT, PAPER_SURFACE_KEY, paperSurface, rgbOf } from '../theme/paper';
+import { setPaperFloor } from '../gl/colormap';
 
 // Theme + per-token colour overrides for the Zeus UI.
 //
@@ -69,6 +71,12 @@ type ThemeState = {
   // True once `hydrate()` has reconciled local cache with the server. Stays
   // false on offline / first-launch failures so we don't keep flapping.
   hydrated: boolean;
+  // The light theme's paper surface — one grey hex from the lightness slider
+  // and tint (theme/paper.ts). Persisted with the overrides under
+  // --paper-surface so /api/theme-settings keeps it (the kiosk's localStorage
+  // does not survive a launch).
+  paperSurface: string;
+  setPaperSurface: (hex: string) => void;
   setTheme: (t: ThemeId) => void;
   setOverride: (token: TweakableToken, hex: string | null) => void;
   resetOverrides: () => void;
@@ -80,6 +88,33 @@ type ThemeState = {
 
 const THEME_KEY = 'zeus.theme';
 const OVERRIDES_KEY = 'zeus.theme.overrides';
+const PAPER_KEY = 'zeus.theme.paper';
+export const DEFAULT_PAPER_SURFACE = paperSurface(PAPER_DEFAULT_LIGHTNESS, PAPER_DEFAULT_TINT);
+
+// The paper palette's floor moves with the surface synchronously, before any
+// renderer re-uploads its LUT in response to the store change.
+function syncPaperFloor(hex: string): void {
+  const rgb = rgbOf(hex);
+  if (rgb) setPaperFloor(rgb);
+}
+
+function readPaper(): string {
+  try {
+    if (typeof localStorage === 'undefined') return DEFAULT_PAPER_SURFACE;
+    const raw = localStorage.getItem(PAPER_KEY);
+    return isHexColor(raw) ? raw.toUpperCase() : DEFAULT_PAPER_SURFACE;
+  } catch {
+    return DEFAULT_PAPER_SURFACE;
+  }
+}
+
+function writePaper(hex: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(PAPER_KEY, hex);
+  } catch {
+    /* quota / private mode — accept silently */
+  }
+}
 
 function isThemeId(v: unknown): v is ThemeId {
   return v === 'dark' || v === 'light';
@@ -137,11 +172,19 @@ function writeOverrides(o: Partial<Record<TweakableToken, string>>): void {
 // stream into ~one write every 300 ms while still flushing the final value.
 // Fire-and-forget; persistence failures are logged but never block the UI.
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
-function schedulePush(state: { theme: ThemeId; overrides: Partial<Record<TweakableToken, string>> }) {
+function schedulePush(state: {
+  theme: ThemeId;
+  overrides: Partial<Record<TweakableToken, string>>;
+  paperSurface?: string;
+}) {
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     pushTimer = null;
-    updateThemeSettings({ theme: state.theme, overrides: state.overrides as Record<string, string> })
+    // The paper surface rides along as one extra override key — the server
+    // keeps any "--name": "#rrggbb" pair, so no new endpoint is needed.
+    const payload: Record<string, string> = { ...(state.overrides as Record<string, string>) };
+    if (state.paperSurface) payload[PAPER_SURFACE_KEY] = state.paperSurface;
+    updateThemeSettings({ theme: state.theme, overrides: payload })
       .catch((err) => {
         // Server unreachable / 5xx — keep the local change, retry on next mutation.
         // Cast to keep this file lint-clean without pulling a logger.
@@ -155,10 +198,24 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   theme: readTheme(),
   overrides: readOverrides(),
   hydrated: false,
+  paperSurface: (() => {
+    const p = readPaper();
+    syncPaperFloor(p);
+    return p;
+  })(),
+  setPaperSurface: (hex) => {
+    if (!isHexColor(hex)) return;
+    const v = hex.toUpperCase();
+    if (v === get().paperSurface) return;
+    writePaper(v);
+    syncPaperFloor(v);
+    set({ paperSurface: v });
+    schedulePush({ theme: get().theme, overrides: get().overrides, paperSurface: v });
+  },
   setTheme: (theme) => {
     writeTheme(theme);
     set({ theme });
-    schedulePush({ theme, overrides: get().overrides });
+    schedulePush({ theme, overrides: get().overrides, paperSurface: get().paperSurface });
   },
   setOverride: (token, hex) => {
     const next = { ...get().overrides };
@@ -170,12 +227,12 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     }
     writeOverrides(next);
     set({ overrides: next });
-    schedulePush({ theme: get().theme, overrides: next });
+    schedulePush({ theme: get().theme, overrides: next, paperSurface: get().paperSurface });
   },
   resetOverrides: () => {
     writeOverrides({});
     set({ overrides: {} });
-    schedulePush({ theme: get().theme, overrides: {} });
+    schedulePush({ theme: get().theme, overrides: {}, paperSurface: get().paperSurface });
   },
   hydrate: async () => {
     if (get().hydrated) return;
@@ -192,9 +249,13 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       // Apply server values to local state + cache. If they match what we
       // already had, this is a no-op — but we mark hydrated either way so
       // subsequent mutations push through schedulePush.
+      const serverPaper = server.overrides[PAPER_SURFACE_KEY];
+      const paper = isHexColor(serverPaper) ? serverPaper.toUpperCase() : get().paperSurface;
       writeTheme(server.theme);
       writeOverrides(serverOverrides);
-      set({ theme: server.theme, overrides: serverOverrides, hydrated: true });
+      writePaper(paper);
+      syncPaperFloor(paper);
+      set({ theme: server.theme, overrides: serverOverrides, paperSurface: paper, hydrated: true });
     } catch (err) {
       // Backend unreachable — stay on the localStorage cache. Mark hydrated
       // so we don't loop forever; the next mutation will attempt a PUT and

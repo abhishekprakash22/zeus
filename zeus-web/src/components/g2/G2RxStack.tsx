@@ -606,7 +606,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 // The OS-native dropdown popup ignores the app theme unless
                 // the select AND its options carry explicit colors — without
                 // them, Linux Chromium renders white-on-white (field photo).
-                style={{ flex: 1, minWidth: 0, background: '#0d1526', color: '#cfe6ff' }}
+                style={{ flex: 1, minWidth: 0, background: 'var(--select-bg, #0d1526)', color: 'var(--select-ink, #cfe6ff)' }}
                 onChange={(e) => {
                   const mode = e.currentTarget.value as import('../../api/client').RxMode; // options below are the RxMode union verbatim
                   void setReceiver(rxIndex, { mode }).then(applyState).catch((err) =>
@@ -614,7 +614,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
                 }}
               >
                 {['LSB', 'USB', 'CWL', 'CWU', 'AM', 'SAM', 'FM', 'DIGL', 'DIGU'].map((m) => (
-                  <option key={m} value={m} style={{ background: '#0d1526', color: '#cfe6ff' }}>{m}</option>
+                  <option key={m} value={m} style={{ background: 'var(--select-bg, #0d1526)', color: 'var(--select-ink, #cfe6ff)' }}>{m}</option>
                 ))}
               </select>
             </label>
@@ -867,8 +867,8 @@ const cardShell: CSSProperties = {
   overflow: 'hidden',
   borderRadius: 8,
   border: '1px solid var(--line, #32373f)',
-  background: 'rgba(20, 23, 28, 0.92)',
-  boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+  background: 'var(--card-bg, rgba(20, 23, 28, 0.92))',
+  boxShadow: 'var(--card-shadow, 0 8px 28px rgba(0,0,0,0.55))',
 };
 
 const cardGrip: CSSProperties = {
@@ -982,8 +982,8 @@ const popover: CSSProperties = {
   gap: 8,
   borderRadius: 8,
   border: '1px solid var(--line, #263041)',
-  background: 'rgba(10, 14, 20, 0.96)',
-  boxShadow: '0 6px 20px rgba(0, 0, 0, 0.45)',
+  background: 'var(--card-bg-solid, rgba(10, 14, 20, 0.96))',
+  boxShadow: 'var(--card-shadow, 0 6px 20px rgba(0, 0, 0, 0.45))',
 };
 
 const popRow: CSSProperties = {
@@ -1045,7 +1045,7 @@ const restorePill: CSSProperties = {
   padding: '4px 9px',
   borderRadius: 10,
   border: '1px solid var(--line, #263041)',
-  background: 'rgba(13, 18, 26, 0.9)',
+  background: 'var(--card-bg, rgba(13, 18, 26, 0.9))',
   color: 'var(--fg-2, #9aa3ae)',
   fontSize: 10,
   fontWeight: 700,
@@ -1076,7 +1076,7 @@ const zoomDock: CSSProperties = {
   padding: '4px 8px',
   borderRadius: 7,
   border: '1px solid var(--line, #263041)',
-  background: 'rgba(13, 18, 26, 0.88)',
+  background: 'var(--card-bg, rgba(13, 18, 26, 0.88))',
 };
 
 const ratioBar: CSSProperties = {
@@ -1159,7 +1159,7 @@ const sBarShell: CSSProperties = {
   position: 'relative',
   height: 7,
   borderRadius: 3,
-  background: 'rgba(8, 12, 18, 0.9)',
+  background: 'var(--card-sunk, rgba(8, 12, 18, 0.9))',
   border: '1px solid var(--line, #263041)',
   overflow: 'hidden',
 };
@@ -1192,7 +1192,7 @@ const flag: CSSProperties = {
   padding: '5px 10px',
   borderRadius: 6,
   border: '1px solid var(--line, #32373f)',
-  background: 'rgba(27, 30, 35, 0.88)',
+  background: 'var(--card-bg, rgba(27, 30, 35, 0.88))',
 };
 
 // Bottom-right corner grip: a small visible wedge with a finger-sized hit
@@ -1218,7 +1218,7 @@ const flagBadge: CSSProperties = {
   padding: '1px 7px',
   borderRadius: 3,
   background: 'var(--fg-3, #6a727d)',
-  color: '#141414',
+  color: 'var(--flag-badge-ink, #141414)',
   fontSize: 11,
   fontWeight: 800,
   letterSpacing: '0.04em',

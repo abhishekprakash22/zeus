@@ -114,6 +114,13 @@
 :root[data-theme="light"] .am-tile .analog-meter-face {
   filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.12));
 }
+/* Paper: the active readout keeps dark ink (an amber or cyan accent as TEXT
+   fails contrast on a light surface) and shows the accent as a tint + bar. */
+:root[data-theme="light"] .am-ro.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-1));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+:root[data-theme="light"] .am-ro.active .am-ro-label { color: var(--fg-1); }
 
 /* ── Zeus mode overlay ────────────────────────────────────── */
 .am-tile .am-zeus-overlay {

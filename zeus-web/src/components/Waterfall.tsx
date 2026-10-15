@@ -74,6 +74,8 @@ import { PassbandOverlay } from './PassbandOverlay';
 import { WfDbScale } from './WfDbScale';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
 import { WidebandViewportControls } from './WidebandViewportControls';
+import { useThemeStore } from '../state/theme-store';
+import { displayColormap } from '../theme/paper-display';
 
 type WaterfallProps = {
   /** When true, noise floor fades to transparent so the QRZ-mode map shows through. */
@@ -202,7 +204,10 @@ export function Waterfall({
       const intensity = active ? Math.max(0, Math.min(1, signalEnhance.popRenderIntensity / 100)) : 0;
       const reliefDepth = rxRenderable ? Math.max(0, Math.min(1, signalEnhance.waterfallReliefDepth / 100)) : 0;
       const smoothness = rxRenderable ? Math.max(0, Math.min(1, signalEnhance.waterfallSmoothness / 100)) : 0;
-      const colormap: RenderColormapId = active ? 'pop' : useDisplaySettingsStore.getState().colormap;
+      // Light (paper) theme: the paper palette, whose floor is the surface.
+      const colormap: RenderColormapId = active
+        ? 'pop'
+        : displayColormap(useDisplaySettingsStore.getState().colormap);
       renderer.setScrollSpeed(useDisplaySettingsStore.getState().waterfallScrollSpeed * speedFactorRef.current);
       renderer.setPopMode(active, intensity, reliefDepth, smoothness);
       renderer.setColormap(colormap);
@@ -537,6 +542,19 @@ export function Waterfall({
     // used to fire (and redraw) on every store mutation, which during
     // ordinary RX traffic pulled the waterfall rAF floor above the
     // spectrum-tick rate.
+    // Theme / paper surface change: re-select (and re-upload) the palette.
+    const unsubTheme = useThemeStore.subscribe((state, prev) => {
+      if (contextLost || !renderer) return;
+      if (state.theme !== prev.theme || state.paperSurface !== prev.paperSurface) {
+        // Let ThemeApplier move the paper floor first, then upload.
+        queueMicrotask(() => {
+          if (contextLost || !renderer) return;
+          applyRenderLook();
+          requestRedraw();
+        });
+      }
+    });
+
     const unsubSettings = useDisplaySettingsStore.subscribe((state, prev) => {
       if (contextLost || !renderer) return;
       if (state.colormap !== prev.colormap) {
@@ -608,6 +626,7 @@ export function Waterfall({
       unsubConn();
       unsubRxWin();
       unsubSettings();
+      unsubTheme();
       unsubTx();
       unsubEnhance();
       ro.disconnect();

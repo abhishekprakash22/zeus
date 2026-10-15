@@ -80,6 +80,8 @@ import { CwSkimmerLanes } from './CwSkimmerLanes';
 import { NotchOverlay } from './NotchOverlay';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
 import { WidebandViewportControls } from './WidebandViewportControls';
+import { useThemeStore } from '../state/theme-store';
+import { displayColormap, displayTraceFloats } from '../theme/paper-display';
 
 type PanadapterProps = {
   receiver?: ReceiverKey;
@@ -277,7 +279,9 @@ export function Panadapter({
       const ownRange = rxIndex === 1 && !stitched;
       const dbMin = popOn ? 0 : keyed ? s.txDbMin : ownRange ? s.rx2DbMin : s.dbMin;
       const dbMax = popOn ? 1 : keyed ? s.txDbMax : ownRange ? s.rx2DbMax : s.dbMax;
-      const { r, g, b } = hexToRgbFloats(s.rxTraceColor);
+      // On the light (paper) theme the operator's hue is darkened until it
+      // reads on the surface; the dark theme uses it as-is.
+      const { r, g, b } = displayTraceFloats(s.rxTraceColor, hexToRgbFloats(s.rxTraceColor));
       renderer.setTraceColor(r, g, b);
       renderer.setPopMode(popOn, popIntensity);
       // Effects (Subtle+): trace and fill take the waterfall's palette colour
@@ -285,7 +289,7 @@ export function Panadapter({
       // is the same colour on both. Full adds phosphor persistence. Pop owns
       // its own colouring, so both stand aside while it is on.
       const fx = useEffectsStore.getState().flags;
-      renderer.setPalette(s.colormap);
+      renderer.setPalette(displayColormap(s.colormap));
       const wfWin = keyed
         ? { wfDbMin: s.wfTxDbMin, wfDbMax: s.wfTxDbMax }
         : effectiveRxWfWindow(rxIndex);
@@ -499,6 +503,10 @@ export function Panadapter({
     const unsubEffects = useEffectsStore.subscribe((state, prev) => {
       if (state.flags !== prev.flags) requestRedraw();
     });
+    // Theme / paper surface: palette, trace ink and background all follow.
+    const unsubTheme = useThemeStore.subscribe((state, prev) => {
+      if (state.theme !== prev.theme || state.paperSurface !== prev.paperSurface) requestRedraw();
+    });
 
     // Repaint when MOX / TUN flips so the RX-vs-TX dB range swap is
     // reflected immediately, even if no fresh pan frame arrived yet.
@@ -533,6 +541,7 @@ export function Panadapter({
       unsubConn();
       unsubSettings();
       unsubEffects();
+      unsubTheme();
       unsubTx();
       unsubEnhance();
       ro.disconnect();
@@ -577,9 +586,9 @@ export function Panadapter({
           style={{
             top: 24,
             left: 8,
-            background: 'rgba(8, 10, 14, 0.78)',
+            background: 'var(--disp-chip-bg)',
             color: receiverFilterColor,
-            border: '1px solid rgba(255,255,255,0.16)',
+            border: '1px solid var(--disp-chip-line)',
           }}
         >
           {rxLabel} · {(vfoHz / 1e6).toFixed(6)}

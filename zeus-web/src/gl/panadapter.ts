@@ -45,7 +45,7 @@
 
 import { instrumentGlForStats } from './render-stats';
 import { buildProgram } from './util';
-import { lutFor, type ColormapId } from './colormap';
+import { lutFor, paperLutVersion, type RenderColormapId } from './colormap';
 import {
   PAN_VS,
   PAN_FS,
@@ -75,7 +75,7 @@ export type PanRenderer = {
   /** Enables and tunes the high-contrast Signal Pop visual treatment. */
   setPopMode: (active: boolean, intensity?: number) => void;
   /** The waterfall palette the trace / fill / phosphor colour through. */
-  setPalette: (id: ColormapId) => void;
+  setPalette: (id: RenderColormapId) => void;
   /**
    * Palette-coloured trace (Effects ≥ Subtle). mix 0 = the classic single
    * colour. wfDbMin/Max = the waterfall's window, so a bin takes the colour
@@ -303,13 +303,16 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
 
   // Palette LUT on texture unit 1 (unit 0 is the pan row, unit 2 phosphor).
   const lutTex = gl.createTexture()!;
-  let paletteId: ColormapId | null = null;
+  // Upload key: the id, plus the paper LUT's version for 'paper' (its floor
+  // follows the light theme's surface slider, so the same id can change).
+  let paletteKey: string | null = null;
   let lutMix = 0;
   let wfDbMin = -140;
   let wfDbMax = -60;
-  const uploadPalette = (id: ColormapId) => {
-    if (id === paletteId) return;
-    paletteId = id;
+  const uploadPalette = (id: RenderColormapId) => {
+    const key = id === 'paper' ? `paper#${paperLutVersion()}` : id;
+    if (key === paletteKey) return;
+    paletteKey = key;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, lutTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);

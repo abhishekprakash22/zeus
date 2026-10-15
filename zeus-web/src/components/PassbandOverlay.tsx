@@ -71,7 +71,8 @@ export function spotlightExtents(leftPct: number, rightPct: number): { leftW: nu
 }
 
 function dimBackground(side: 'left' | 'right', dim: number): string {
-  const a = `rgba(0,0,0,${dim})`;
+  // Dark theme: dims toward black. Paper: washes toward the surface.
+  const a = `rgba(var(--disp-dim-rgb, 0, 0, 0), ${dim})`;
   return side === 'left'
     ? `linear-gradient(to right, ${a} calc(100% - ${SPOTLIGHT_FEATHER_PX}px), rgba(0,0,0,0))`
     : `linear-gradient(to left, ${a} calc(100% - ${SPOTLIGHT_FEATHER_PX}px), rgba(0,0,0,0))`;

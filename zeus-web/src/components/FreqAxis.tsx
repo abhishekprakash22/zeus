@@ -243,18 +243,18 @@ export function FreqAxis({ receiver = 'A', stitched = false }: FreqAxisProps = {
           never moves and overscanned ticks scroll in from the edges. */}
       <div
         ref={rulerRef}
-        className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-5 overflow-hidden bg-neutral-950/70"
-        style={{ touchAction: 'none', userSelect: 'none' }}
+        className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-5 overflow-hidden"
+        style={{ background: 'var(--axis-bg)', touchAction: 'none', userSelect: 'none' }}
         title="Drag to pan the frequency view"
       >
         <div ref={tickStripRef} className="pointer-events-none absolute inset-0">
           {ticks.map((t) => (
             <div
               key={t.hz}
-              className="absolute top-0 -translate-x-1/2 font-mono text-[10px] leading-none text-neutral-300"
-              style={{ left: `${t.pct}%` }}
+              className="absolute top-0 -translate-x-1/2 font-mono text-[10px] leading-none"
+              style={{ left: `${t.pct}%`, color: 'var(--axis-ink)' }}
             >
-              <div className="mx-auto h-1.5 w-px bg-neutral-400" />
+              <div className="mx-auto h-1.5 w-px" style={{ background: 'var(--axis-tick)' }} />
               <div className="mt-0.5 px-1 whitespace-nowrap">
                 {formatMHz(t.hz, stride)}
               </div>

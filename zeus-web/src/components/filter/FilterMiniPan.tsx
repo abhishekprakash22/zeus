@@ -97,6 +97,7 @@ import {
   miniPanSignalLevel,
   sampleSpectrumAtHz,
 } from './miniPanMath';
+import { displayColormap } from '../../theme/paper-display';
 
 const DEFAULT_SPAN_HZ = 12_000;       // initial visible window around VFO
 const MIN_SPAN_HZ = 3_000;            // wheel zoom-in floor
@@ -1051,7 +1052,7 @@ function FilterMiniPanSurface({
         const fx = useEffectsStore.getState().flags;
         const fxPalette = fx.lutTrace && !popOn;
         const fxPhosphor = fx.phosphor && !popOn;
-        const lut = fxPalette || fxPhosphor ? lutFor(useDisplaySettingsStore.getState().colormap) : null;
+        const lut = fxPalette || fxPhosphor ? lutFor(displayColormap(useDisplaySettingsStore.getState().colormap)) : null;
         const txs = useTxStore.getState();
         const keyedNow = txs.moxOn || txs.tunOn;
         const dsNow = useDisplaySettingsStore.getState();

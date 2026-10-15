@@ -498,6 +498,13 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Light theme (paper).** Settings → Theme → Light turns the whole radio —
+chassis, cards, panadapter and waterfall — to one grey you pick: presets
+from Silver to Graphite, a Lightness slider and a cool / neutral / warm
+Tint. The waterfall uses a paper palette whose floor is your grey; the
+trace keeps its hue, darkened to read on paper; text darkens automatically
+so every setting stays readable. Stored on the radio.
+
 **Speech processor (compressor + CESSB).** Settings → TX Leveling: turn
 the compressor on (about 6–10 dB) for more SSB talk power; CESSB (on by
 default) runs with it, trimming the peaks the filters push back up, so the

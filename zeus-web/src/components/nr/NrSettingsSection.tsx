@@ -46,6 +46,7 @@ import {
   NNR_MASK_FLOOR_MAX_DB,
   NNR_MASK_FLOOR_MIN_DB,
   NNR_MODEL_LABELS,
+  NNR_SLOT_LABELS,
   setNr2Core,
   setNr2Post2,
   setNr4,
@@ -531,9 +532,10 @@ function Nr2Panel() {
 // ---------- NR5 (NNR, WDSP 2.1.0 neural noise reduction) tunables. -------
 //
 // Two controls, per the WDSP Guide §5.3.20: the mask floor (how much genuine
-// received noise is allowed through) and the model slot. The slot buttons show
-// the request; the caption shows what WDSP actually kept, because a build
-// without the Premium model silently stays on Standard.
+// received noise is allowed through) and the model grade. The buttons show the
+// request (Standard / Premium); the caption shows what WDSP actually runs —
+// in CW the engine swaps to the CW model of that grade (WDSP 2.11), and a
+// build without the Premium models silently stays on Standard.
 
 function NnrPanel() {
   const nr = useConnectionStore((s) => s.nr);
@@ -589,7 +591,7 @@ function NnrPanel() {
   };
 
   const inUseLabel =
-    slotInUse == null ? 'not running' : (NNR_MODEL_LABELS[slotInUse] ?? `slot ${slotInUse}`);
+    slotInUse == null ? 'not running' : (NNR_SLOT_LABELS[slotInUse] ?? `slot ${slotInUse}`);
 
   return (
     <div>
@@ -598,7 +600,7 @@ function NnrPanel() {
 
       <div
         className="nr-settings__row"
-        title="Standard: ~10% of one core. Premium: measurably better, about three times the processor time. Both add 51 ms; switching is immediate."
+        title="Standard: ~10% of one core. Premium: measurably better, about three times the processor time. Both add 51 ms; switching is immediate. In CW the CW model of the same grade runs automatically."
       >
         <span className="nr-settings__label">Model</span>
         <div className="btn-row" role="radiogroup" aria-label="NNR model">

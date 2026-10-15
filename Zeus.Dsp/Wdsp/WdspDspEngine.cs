@@ -288,6 +288,9 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         public volatile NrMode CurrentNrMode = NrMode.Off;
         // NR5: slot WDSP reported in use after the last SetRXANNRModel; -1 = never applied.
         public volatile int NnrModelSlotInUse = -1;
+        // NR5: the operator's model choice (0 = Standard, 1 = Premium). The WDSP
+        // slot actually selected also depends on the RX mode — see NnrWdspSlot.
+        public volatile int NnrModelChoice = 0;
         // Zoom level (1..32). Changing it re-calls SetAnalyzer with shifted
         // fscLin/fscHin; the worker's Spectrum0 and the pixel drain's GetPixels
         // take this lock so they never interleave with an in-flight reconfig.
@@ -681,6 +684,17 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             action();
     }
 
+    // SetChannelState(id, 0, 1): off, and wait (WDSP caps it at 100 ms) for any
+    // turn-off still in flight. Required before CloseChannel from WDSP 2.11.
+    private void TryQuiesceNativeChannel(int id)
+    {
+        try { NativeMethods.SetChannelState(id, 0, 1); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "wdsp.channel.quiesce failed channel={Id}", id);
+        }
+    }
+
     private void ReleaseNativeSlot(int id)
     {
         lock (_nativeSlotLock)
@@ -716,7 +730,10 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             if (nobExtOpened)
                 TryCleanupNativeResource(id, nameof(NativeMethods.DestroyNobEXT), NativeMethods.DestroyNobEXT);
             if (nativeChannelOpened)
+            {
+                TryQuiesceNativeChannel(id);
                 TryCleanupNativeResource(id, nameof(NativeMethods.CloseChannel), NativeMethods.CloseChannel);
+            }
         });
         ReleaseNativeSlot(id);
     }
@@ -1098,6 +1115,11 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
         state.CurrentMode = mapped;
         _log.LogInformation("wdsp.setMode channel={Id} mode={Mode}", channelId, mapped);
         ApplyBandpassForMode(state);
+        // WDSP 2.11: NR5 has separate SSB and CW models; moving into or out of
+        // CW swaps which one runs. SetRXANNRModel also re-evaluates the NNR
+        // bypass for the new mode.
+        if (state.CurrentNrMode == NrMode.Nnr)
+            SelectNnrModel(channelId, state);
         // Re-assert squelch on the stage matching the new mode and clear the
         // old one — squelch is mode-aware (SSQL/AMSQ/FMSQ) per Thetis §5.
         ApplySquelchLocked(state);
@@ -1626,10 +1648,8 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     }
 
     // NR5 (NNR) parameter push + Run=1. Mask floor is clamped to the range the
-    // WDSP Guide documents (-50..-10 dB); the model slot request goes through
-    // SetRXANNRModel, whose return value is the slot WDSP actually kept — a
-    // build without the Premium model answers 0 for a request of 1, and that
-    // answer (not the request) is what we record and surface.
+    // WDSP Guide documents (-50..-10 dB). The operator picks Standard or
+    // Premium; SelectNnrModel turns that into a WDSP slot for the current mode.
     private void ApplyNr5Nnr(int channelId, NrConfig cfg, ChannelState state)
     {
         try
@@ -1637,17 +1657,12 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             double floor = Math.Clamp(
                 cfg.NnrMaskFloorDb ?? NrDefaults.NnrMaskFloorDb,
                 NrDefaults.NnrMaskFloorMinDb, NrDefaults.NnrMaskFloorMaxDb);
-            int requestedSlot = Math.Clamp(cfg.NnrModelSlot ?? NrDefaults.NnrModelSlot, 0, 1);
+            state.NnrModelChoice = Math.Clamp(cfg.NnrModelSlot ?? NrDefaults.NnrModelSlot, 0, 1);
+            // No-op since WDSP 2.11 (NNR position follows the bypass); kept so a
+            // 2.10 binary still gets the position it expects.
             NativeMethods.SetRXANNRPosition(channelId, NrDefaults.Position);
             NativeMethods.SetRXANNRMaskFloor(channelId, floor);
-            int slot = NativeMethods.SetRXANNRModel(channelId, requestedSlot);
-            state.NnrModelSlotInUse = slot;
-            if (slot != requestedSlot)
-            {
-                _log.LogInformation(
-                    "wdsp.nnr.model channel={Id} requested={Req} inUse={Slot} reason=\"slot holds no model in this libwdsp build\"",
-                    channelId, requestedSlot, slot);
-            }
+            SelectNnrModel(channelId, state);
             NativeMethods.SetRXANNRRun(channelId, 1);
         }
         catch (EntryPointNotFoundException ex)
@@ -1656,6 +1671,35 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             _log.LogWarning(
                 "wdsp.nnr.unavailable channel={Id} reason=\"libwdsp build pre-dates WDSP 2.1.0 (no NNR exports)\" detail={Msg}",
                 channelId, ex.Message);
+        }
+    }
+
+    // WDSP 2.11 NNR slots: 0 SSB Standard, 1 SSB Premium, 2 CW Standard,
+    // 3 CW Premium. CW modes take the CW model of the same grade.
+    internal static int NnrWdspSlot(int choice, bool cwMode) => cwMode ? choice + 2 : choice;
+
+    // SetRXANNRModel returns the slot WDSP actually kept: a build without a
+    // Premium model, or a pre-2.11 build without CW models, stays where it
+    // was. That answer (not the request) is what is recorded and surfaced.
+    private void SelectNnrModel(int channelId, ChannelState state)
+    {
+        bool cw = state.CurrentMode is RxaMode.CWL or RxaMode.CWU;
+        int requested = NnrWdspSlot(state.NnrModelChoice, cw);
+        int slot;
+        try { slot = NativeMethods.SetRXANNRModel(channelId, requested); }
+        catch (EntryPointNotFoundException) { return; }
+        if (slot != requested && cw)
+        {
+            // CW model absent (pre-2.11 libwdsp): run the SSB model of that grade.
+            int fallback = NnrWdspSlot(state.NnrModelChoice, cwMode: false);
+            slot = NativeMethods.SetRXANNRModel(channelId, fallback);
+        }
+        state.NnrModelSlotInUse = slot;
+        if (slot != requested)
+        {
+            _log.LogInformation(
+                "wdsp.nnr.model channel={Id} requested={Req} inUse={Slot} reason=\"slot holds no model in this libwdsp build\"",
+                channelId, requested, slot);
         }
     }
 
@@ -4314,7 +4358,11 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                             _txDispZoomLevel = 1;
                             _txDispScratchPixels = null;
                         }
-                        RunNativeLifecycleCriticalSection(() => NativeMethods.CloseChannel(txa));
+                        RunNativeLifecycleCriticalSection(() =>
+                        {
+                            TryQuiesceNativeChannel(txa);
+                            NativeMethods.CloseChannel(txa);
+                        });
                     }
                 }
                 finally
@@ -4507,6 +4555,11 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
     {
         try
         {
+            // WDSP 2.11: the host turns a channel off, waiting for the turn-off
+            // to finish, before CloseChannel. Done while the worker can still
+            // feed fexchange0 — the down-slew completes on live IQ; with the
+            // feed already gone WDSP waits out its 100 ms timeout instead.
+            TryQuiesceNativeChannel(state.Id);
             state.Stopped = true;
             state.InQueue.CompleteAdding();
             state.Cts.Cancel();
@@ -4533,6 +4586,7 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
                     // slot in panb[]/pnob[] and outlive CloseChannel unless destroyed here.
                     NativeMethods.DestroyAnbEXT(state.Id);
                     NativeMethods.DestroyNobEXT(state.Id);
+                    TryQuiesceNativeChannel(state.Id); // no wait unless a turn-off is still flushing
                     NativeMethods.CloseChannel(state.Id);
                 });
             }

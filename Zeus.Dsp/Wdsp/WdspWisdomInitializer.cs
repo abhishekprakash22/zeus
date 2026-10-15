@@ -246,9 +246,9 @@ public sealed class WdspWisdomInitializer
                 }
             }
 
-            // WDSP's wisdom.c does a plain strcat of "wdspWisdom01" onto the
-            // directory without inserting a path separator (see native/wdsp/
-            // wisdom.c:49-50). Pass the directory with a trailing separator so
+            // WDSP's wisdom.c appends "wdspWisdom01" to the directory without
+            // inserting a path separator (snprintf "%s%s" since 2.11; strcat
+            // before). Pass the directory with a trailing separator so
             // the native side produces a valid "<dir>/wdspWisdom01" path
             // instead of "<dir>wdspWisdom01" which lands the wisdom file one
             // level up.
@@ -256,6 +256,12 @@ public sealed class WdspWisdomInitializer
 
             _log.LogInformation("wdsp.wisdom initialising dir={Dir}", dirForNative);
             int result = _runWisdom(dirForNative);
+            // WDSP 2.11: -1 = the path was refused (NULL, or "<dir>wdspWisdom01"
+            // longer than its 1024-byte buffer) and nothing was planned. Fail the
+            // phase and leave the stamp unwritten so the next launch retries.
+            if (result < 0)
+                throw new InvalidOperationException(
+                    $"WDSPwisdom refused the wisdom directory (returned {result}; path length {dirForNative.Length})");
             var status = _getWisdomStatus();
             _log.LogInformation(
                 "wdsp.wisdom ready result={Result} ({Source}) status={Status}",

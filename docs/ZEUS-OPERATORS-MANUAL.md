@@ -120,6 +120,11 @@ Connect, then operate from the workspace:
   and adjustable edges.
 - **AGC** (with AGC-T gain), **squelch**, **attenuation** (S-ATT can also run
   predictively), **NR** (classic, RNNoise NR3, spectral NR4, neural NR5), **NB**, notch.
+- **NR5 in CW (WDSP 2.11):** NR5's Standard / Premium choice carries into
+  CW, where the CW-trained model of the same grade runs automatically
+  (Settings → NR5 *In use* shows "CW Standard" / "CW Premium"). With a CW
+  model running, NR/NR2/ANF/SNB, the RX EQ and pre-AGC NR3/NR4 are bypassed
+  ahead of the demodulator by design; switch NR5 off to get them back.
 - **Multi-RX:** additional receivers share the panadapter; each has its own
   audio and settings.
 - **Diversity:** two-antenna phasing pad for null steering (hardware

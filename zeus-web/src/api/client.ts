@@ -281,6 +281,8 @@ export const NNR_DEFAULTS = {
 export const NNR_MASK_FLOOR_MIN_DB = -50;
 export const NNR_MASK_FLOOR_MAX_DB = -10;
 export const NNR_MODEL_LABELS = ['Standard', 'Premium'] as const;
+// What runs, by WDSP 2.11 slot: CW modes swap to the CW model of the chosen grade.
+export const NNR_SLOT_LABELS = ['Standard', 'Premium', 'CW Standard', 'CW Premium'] as const;
 
 // Integer 1..32. Matches the backend cap (SyntheticDspEngine.MaxZoomLevel).
 // At 32× the WDSP analyzer's centre-clipped bin count drops below typical

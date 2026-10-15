@@ -545,7 +545,13 @@ export function Waterfall({
     // Theme / paper surface change: re-select (and re-upload) the palette.
     const unsubTheme = useThemeStore.subscribe((state, prev) => {
       if (contextLost || !renderer) return;
-      if (state.theme !== prev.theme || state.paperSurface !== prev.paperSurface) {
+      if (
+        state.theme !== prev.theme ||
+        state.paperSurface !== prev.paperSurface ||
+        state.lightDisplays !== prev.lightDisplays ||
+        state.displayDepthLight !== prev.displayDepthLight ||
+        state.displayDepthDark !== prev.displayDepthDark
+      ) {
         // Let ThemeApplier move the paper floor first, then upload.
         queueMicrotask(() => {
           if (contextLost || !renderer) return;

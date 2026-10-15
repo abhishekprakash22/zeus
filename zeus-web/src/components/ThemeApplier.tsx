@@ -8,6 +8,7 @@ import { useEffect, useMemo } from 'react';
 import { useThemeStore } from '../state/theme-store';
 import { useConnectionStore } from '../state/connection-store';
 import { paperTokens, rgbOf } from '../theme/paper';
+import { blueDisplayTokens } from '../theme/display-surface';
 import { setPaperFloor } from '../gl/colormap';
 
 // ThemeApplier — single mounted instance (in App.tsx) that:
@@ -24,6 +25,9 @@ export function ThemeApplier(): null {
   const overrides = useThemeStore((s) => s.overrides);
   const hydrate = useThemeStore((s) => s.hydrate);
   const paperSurface = useThemeStore((s) => s.paperSurface);
+  const lightDisplays = useThemeStore((s) => s.lightDisplays);
+  const depthLight = useThemeStore((s) => s.displayDepthLight);
+  const depthDark = useThemeStore((s) => s.displayDepthDark);
 
   // Pull the authoritative theme + overrides from the backend on mount.
   // The store's initial values come from localStorage (synchronous, so
@@ -56,13 +60,23 @@ export function ThemeApplier(): null {
   // the one surface grey (theme/paper.ts), at the light block's specificity
   // and later in the cascade so it wins over the fixed silver values. The
   // waterfall's paper palette takes the same grey as its floor.
+  // Light: paper chrome from the grey; displays either paper (all from the
+  // grey) or blue (the display tokens override the paper's display keys).
+  // Dark: only the display surface, and only when a depth above black is set.
   const paperCss = useMemo(() => {
-    if (theme !== 'light') return '';
-    const decls = Object.entries(paperTokens(paperSurface))
-      .map(([k, v]) => `  ${k}: ${v};`)
-      .join('\n');
-    return `:root[data-theme="light"] {\n${decls}\n}\n`;
-  }, [theme, paperSurface]);
+    const block = (sel: string, tokens: Record<string, string>) =>
+      `${sel} {\n${Object.entries(tokens)
+        .map(([k, v]) => `  ${k}: ${v};`)
+        .join('\n')}\n}\n`;
+    if (theme === 'light') {
+      const tokens = {
+        ...paperTokens(paperSurface),
+        ...(lightDisplays === 'blue' ? blueDisplayTokens(depthLight) : {}),
+      };
+      return block(':root[data-theme="light"]', tokens);
+    }
+    return depthDark > 0 ? block(':root:not([data-theme="light"])', blueDisplayTokens(depthDark)) : '';
+  }, [theme, paperSurface, lightDisplays, depthLight, depthDark]);
 
   useEffect(() => {
     const rgb = rgbOf(paperSurface);

@@ -24,7 +24,15 @@ let mounted: RenderResult | null = null;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   localStorage.clear();
-  useThemeStore.setState({ theme: 'light', overrides: {}, paperSurface: DEFAULT_PAPER_SURFACE, hydrated: true });
+  useThemeStore.setState({
+    theme: 'light',
+    overrides: {},
+    paperSurface: DEFAULT_PAPER_SURFACE,
+    lightDisplays: 'blue',
+    displayDepthLight: 22,
+    displayDepthDark: 0,
+    hydrated: true,
+  });
 });
 afterEach(() => {
   mounted?.unmount();
@@ -74,6 +82,7 @@ describe('paper surface control', () => {
 
 describe('theme applier', () => {
   it('writes the paper tokens only in the light theme', () => {
+    useThemeStore.setState({ lightDisplays: 'paper' });
     act(() => {
       mounted = render(createElement(ThemeApplier));
     });

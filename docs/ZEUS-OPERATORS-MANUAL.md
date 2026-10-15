@@ -498,12 +498,14 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
-**Light theme (paper).** Settings → Theme → Light turns the whole radio —
-chassis, cards, panadapter and waterfall — to one grey you pick: presets
-from Silver to Graphite, a Lightness slider and a cool / neutral / warm
-Tint. The waterfall uses a paper palette whose floor is your grey; the
-trace keeps its hue, darkened to read on paper; text darkens automatically
-so every setting stays readable. Stored on the radio.
+**Light theme (paper) and display backgrounds.** Settings → Theme → Light
+turns the chassis and cards to one grey you pick (Silver to Graphite, a
+Lightness slider, cool / neutral / warm Tint; text darkens automatically
+to stay readable). The spectrum displays — panadapter, waterfall and the
+filter displays — have their own background: Blue (default Navy; Midnight
+to Steel with a Depth slider, your palette's floor lifted to match) or
+Paper. In Dark, the same Depth slider runs from Black (classic, default) to
+Ocean. All stored on the radio.
 
 **Speech processor (compressor + CESSB).** Settings → TX Leveling: turn
 the compressor on (about 6–10 dB) for more SSB talk power; CESSB (on by

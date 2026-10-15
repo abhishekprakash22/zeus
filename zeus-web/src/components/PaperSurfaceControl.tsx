@@ -110,8 +110,8 @@ export function PaperSurfaceControl() {
         <b>{contrast(traceInk, S).toFixed(1)}:1</b>
       </div>
       <p style={hint}>
-        Chassis, cards, the panadapter and the waterfall all follow this grey; the waterfall uses a paper palette
-        whose floor is the surface. Text and the trace darken automatically to stay readable at any setting.
+        The chassis and cards follow this grey (and the displays too, with Displays: Paper). Text darkens
+        automatically to stay readable at any setting.
       </p>
     </div>
   );

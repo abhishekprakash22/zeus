@@ -165,7 +165,9 @@
   height: 100%;
   min-height: 0;
   isolation: isolate;
-  background: rgba(2, 4, 7, 0.48);
+  /* Matches the panadapter / waterfall surface (theme/display-surface.ts,
+     theme/paper.ts); the old translucent well when no surface is set. */
+  background: var(--minipan-bg, rgba(2, 4, 7, 0.48));
 }
 .filter-minipan-wrap--split {
   overflow: hidden;

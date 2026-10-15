@@ -272,10 +272,14 @@ type MiniPanThemePalette = {
 
 function readMiniPanThemePalette(receiver: SpectrumReceiver): MiniPanThemePalette {
   const cs = getComputedStyle(document.documentElement);
-  const fg0 = cs.getPropertyValue('--fg-0').trim() || '#edeef1';
-  const fg1 = cs.getPropertyValue('--fg-1').trim() || '#cccccc';
-  const fg2 = cs.getPropertyValue('--fg-2').trim() || '#7c8088';
-  const fg3 = cs.getPropertyValue('--fg-3').trim() || '#5a5a60';
+  // Display ink first (light on a blue/black display, dark on paper), the
+  // chassis ink only when no display surface tokens are set.
+  const ink = (disp: string, chassis: string, fallback: string) =>
+    cs.getPropertyValue(disp).trim() || cs.getPropertyValue(chassis).trim() || fallback;
+  const fg0 = ink('--disp-ink-0', '--fg-0', '#edeef1');
+  const fg1 = ink('--disp-ink-1', '--fg-1', '#cccccc');
+  const fg2 = ink('--disp-ink-2', '--fg-2', '#7c8088');
+  const fg3 = ink('--disp-ink-3', '--fg-3', '#5a5a60');
   const accent =
     typeof receiver === 'number' && receiver >= 2
       ? receiverColorByIndex(receiver)
@@ -1588,9 +1592,19 @@ function FilterMiniPanSurface({
       }
     });
     const unsubTheme = useThemeStore.subscribe((s, p) => {
-      if (s.theme !== p.theme || s.overrides !== p.overrides) {
-        themePalette = readMiniPanThemePalette(receiver);
-        requestRedraw();
+      if (
+        s.theme !== p.theme ||
+        s.overrides !== p.overrides ||
+        s.paperSurface !== p.paperSurface ||
+        s.lightDisplays !== p.lightDisplays ||
+        s.displayDepthLight !== p.displayDepthLight ||
+        s.displayDepthDark !== p.displayDepthDark
+      ) {
+        // Re-read the ink after ThemeApplier has written the new tokens.
+        requestAnimationFrame(() => {
+          themePalette = readMiniPanThemePalette(receiver);
+          requestRedraw();
+        });
       }
     });
     // Toggling Pop/Snap (or the marker colour) changes what we draw even when

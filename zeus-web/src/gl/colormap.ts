@@ -232,6 +232,47 @@ export function paperLutVersion(): number {
   return paperVersion;
 }
 
+// Display floor (theme/display-surface.ts): when the spectrum displays sit on
+// a blue background, the operator's palette keeps its colours but its black
+// foot is lifted to that blue, so the noise blends into the background.
+// null = the palettes' own black floor (the classic look).
+let displayFloor: [number, number, number] | null = null;
+let displayFloorVersion = 0;
+const LIFTED: Partial<Record<RenderColormapId, Uint8Array>> = {};
+
+export function setDisplayFloor(rgb: [number, number, number] | null): void {
+  const same =
+    rgb === null
+      ? displayFloor === null
+      : displayFloor !== null && rgb[0] === displayFloor[0] && rgb[1] === displayFloor[1] && rgb[2] === displayFloor[2];
+  if (same) return;
+  displayFloor = rgb === null ? null : [rgb[0], rgb[1], rgb[2]];
+  displayFloorVersion++;
+  for (const k of Object.keys(LIFTED)) delete LIFTED[k as RenderColormapId];
+}
+
+/** Changes whenever the display floor changes — part of every LUT upload key. */
+export function displayFloorLutVersion(): number {
+  return displayFloorVersion;
+}
+
+/**
+ * Lift a palette's floor: below t = 0.42 the colour IS the floor (the stretched
+ * near-black foot every palette shares), above t = 0.58 it is the palette's
+ * own colour, smoothstep between. Pure; exported for tests.
+ */
+export function liftFloor(base: Uint8Array, floor: [number, number, number]): Uint8Array {
+  const out = new Uint8Array(base.length);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    const u = Math.min(1, Math.max(0, (t - 0.42) / 0.16));
+    const w = u * u * (3 - 2 * u);
+    for (let j = 0; j < 3; j++) out[i * 4 + j] = Math.round(floor[j]! + (base[i * 4 + j]! - floor[j]!) * w);
+    out[i * 4 + 3] = base[i * 4 + 3]!;
+  }
+  return out;
+}
+
 function paperAnchors(): Anchor[] {
   const f = paperFloor;
   const mix = (b: [number, number, number], t: number): [number, number, number] => [
@@ -254,6 +295,19 @@ function paperAnchors(): Anchor[] {
 }
 
 export function lutFor(id: RenderColormapId): Uint8Array {
+  // Pop owns its colouring and paper has its own floor; every other palette
+  // takes the display floor when one is set.
+  if (displayFloor !== null && id !== 'pop' && id !== 'paper') {
+    const lifted = LIFTED[id];
+    if (lifted) return lifted;
+    const out = liftFloor(baseLutFor(id), displayFloor);
+    LIFTED[id] = out;
+    return out;
+  }
+  return baseLutFor(id);
+}
+
+function baseLutFor(id: RenderColormapId): Uint8Array {
   const cached = CACHE[id];
   if (cached) return cached;
   if (id === 'paper') {

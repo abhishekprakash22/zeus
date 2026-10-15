@@ -13,6 +13,7 @@ import {
 } from '../state/theme-store';
 import { G2_THEMES, useG2ThemeStore } from '../state/g2-theme-store';
 import { PaperSurfaceControl } from './PaperSurfaceControl';
+import { DisplaySurfaceControl } from './DisplaySurfaceControl';
 
 // Operator-facing label + group per tweakable token. "group" controls which
 // section of the panel renders the row — accent tokens get the friendly
@@ -233,9 +234,9 @@ export function ThemeSettingsPanel() {
         <div style={sectionHead}>
           <h3 style={sectionH3}>Theme</h3>
           <p style={sectionP}>
-            Pick the workspace look. Dark keeps lit display wells; Light turns
-            the whole radio — panadapter and waterfall included — to a paper
-            grey you set below.
+            Pick the workspace look. Light turns the chassis and cards to a
+            paper grey you set below. The spectrum displays have their own
+            background — blue shades in either theme, or paper under Light.
           </p>
         </div>
 
@@ -260,6 +261,7 @@ export function ThemeSettingsPanel() {
           })}
         </div>
         {theme === 'light' && <PaperSurfaceControl />}
+        <DisplaySurfaceControl />
       </div>
 
       <div>

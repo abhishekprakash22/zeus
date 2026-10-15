@@ -45,7 +45,7 @@
 
 import { instrumentGlForStats } from './render-stats';
 import { buildProgram } from './util';
-import { lutFor, paperLutVersion, type RenderColormapId } from './colormap';
+import { displayFloorLutVersion, lutFor, paperLutVersion, type RenderColormapId } from './colormap';
 import {
   PAN_VS,
   PAN_FS,
@@ -310,7 +310,12 @@ export function createPanRenderer(gl: WebGL2RenderingContext): PanRenderer {
   let wfDbMin = -140;
   let wfDbMax = -60;
   const uploadPalette = (id: RenderColormapId) => {
-    const key = id === 'paper' ? `paper#${paperLutVersion()}` : id;
+    const key =
+      id === 'paper'
+        ? `paper#${paperLutVersion()}`
+        : id === 'pop'
+          ? id
+          : `${id}#${displayFloorLutVersion()}`;
     if (key === paletteKey) return;
     paletteKey = key;
     gl.activeTexture(gl.TEXTURE1);

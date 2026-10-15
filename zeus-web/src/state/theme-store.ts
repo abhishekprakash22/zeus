@@ -7,7 +7,15 @@
 import { create } from 'zustand';
 import { fetchThemeSettings, updateThemeSettings } from '../api/themeSettings';
 import { PAPER_DEFAULT_LIGHTNESS, PAPER_DEFAULT_TINT, PAPER_SURFACE_KEY, paperSurface, rgbOf } from '../theme/paper';
-import { setPaperFloor } from '../gl/colormap';
+import { setDisplayFloor, setPaperFloor } from '../gl/colormap';
+import {
+  DARK_DEFAULT_DEPTH,
+  LIGHT_DEFAULT_DEPTH,
+  clampDepth,
+  depthHex,
+  depthOf,
+  depthRgb,
+} from '../theme/display-surface';
 
 // Theme + per-token colour overrides for the Zeus UI.
 //
@@ -77,6 +85,15 @@ type ThemeState = {
   // does not survive a launch).
   paperSurface: string;
   setPaperSurface: (hex: string) => void;
+  // Spectrum displays (panadapter, waterfall, filter mini-pan). Light: blue
+  // (default) or paper; dark: always the blue path, where depth 0 = black.
+  // Depths per theme along theme/display-surface.ts's path. Persisted with
+  // the overrides as --light-displays / --display-bg-light / --display-bg-dark.
+  lightDisplays: 'blue' | 'paper';
+  displayDepthLight: number;
+  displayDepthDark: number;
+  setLightDisplays: (mode: 'blue' | 'paper') => void;
+  setDisplayDepth: (theme: ThemeId, depth: number) => void;
   setTheme: (t: ThemeId) => void;
   setOverride: (token: TweakableToken, hex: string | null) => void;
   resetOverrides: () => void;
@@ -89,6 +106,76 @@ type ThemeState = {
 const THEME_KEY = 'zeus.theme';
 const OVERRIDES_KEY = 'zeus.theme.overrides';
 const PAPER_KEY = 'zeus.theme.paper';
+const DISPLAYS_KEY = 'zeus.theme.displays';
+export const LIGHT_DISPLAYS_KEY = '--light-displays';
+export const DISPLAY_BG_LIGHT_KEY = '--display-bg-light';
+export const DISPLAY_BG_DARK_KEY = '--display-bg-dark';
+// The server keeps "--name": "#rrggbb" pairs only, so the mode is a colour:
+// black = blue displays, white = paper displays.
+const MODE_BLUE = '#000000';
+const MODE_PAPER = '#FFFFFF';
+
+type DisplayPrefs = { lightDisplays: 'blue' | 'paper'; displayDepthLight: number; displayDepthDark: number };
+const DEFAULT_DISPLAYS: DisplayPrefs = {
+  lightDisplays: 'blue',
+  displayDepthLight: LIGHT_DEFAULT_DEPTH,
+  displayDepthDark: DARK_DEFAULT_DEPTH,
+};
+
+function readDisplays(): DisplayPrefs {
+  try {
+    if (typeof localStorage === 'undefined') return DEFAULT_DISPLAYS;
+    const raw = JSON.parse(localStorage.getItem(DISPLAYS_KEY) ?? 'null') as Partial<DisplayPrefs> | null;
+    if (!raw) return DEFAULT_DISPLAYS;
+    return {
+      lightDisplays: raw.lightDisplays === 'paper' ? 'paper' : 'blue',
+      displayDepthLight: clampDepth(Number(raw.displayDepthLight ?? LIGHT_DEFAULT_DEPTH), 'light'),
+      displayDepthDark: clampDepth(Number(raw.displayDepthDark ?? DARK_DEFAULT_DEPTH), 'dark'),
+    };
+  } catch {
+    return DEFAULT_DISPLAYS;
+  }
+}
+
+function writeDisplays(d: DisplayPrefs): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(DISPLAYS_KEY, JSON.stringify(d));
+  } catch {
+    /* quota / private mode — accept silently */
+  }
+}
+
+/** The display prefs as theme-settings override entries. Exported for tests. */
+export function displayOverrideEntries(d: DisplayPrefs): Record<string, string> {
+  return {
+    [LIGHT_DISPLAYS_KEY]: d.lightDisplays === 'paper' ? MODE_PAPER : MODE_BLUE,
+    [DISPLAY_BG_LIGHT_KEY]: depthHex(d.displayDepthLight),
+    [DISPLAY_BG_DARK_KEY]: depthHex(d.displayDepthDark),
+  };
+}
+
+/** Display prefs back from theme-settings overrides (missing keys → current). */
+export function displaysFromOverrides(o: Record<string, string>, cur: DisplayPrefs): DisplayPrefs {
+  const mode = o[LIGHT_DISPLAYS_KEY]?.toUpperCase();
+  return {
+    lightDisplays: mode === MODE_PAPER ? 'paper' : mode === MODE_BLUE ? 'blue' : cur.lightDisplays,
+    displayDepthLight: o[DISPLAY_BG_LIGHT_KEY] ? clampDepth(depthOf(o[DISPLAY_BG_LIGHT_KEY]), 'light') : cur.displayDepthLight,
+    displayDepthDark: o[DISPLAY_BG_DARK_KEY] ? clampDepth(depthOf(o[DISPLAY_BG_DARK_KEY]), 'dark') : cur.displayDepthDark,
+  };
+}
+
+/**
+ * Point the palettes' floor at the active display surface, synchronously with
+ * the store change (renderers re-upload in response): light + blue → that
+ * blue; dark with a depth → that blue; dark at 0, or paper → none.
+ */
+function syncDisplayFloor(theme: ThemeId, d: DisplayPrefs): void {
+  if (theme === 'light') {
+    setDisplayFloor(d.lightDisplays === 'blue' ? depthRgb(d.displayDepthLight) : null);
+  } else {
+    setDisplayFloor(d.displayDepthDark > 0 ? depthRgb(d.displayDepthDark) : null);
+  }
+}
 export const DEFAULT_PAPER_SURFACE = paperSurface(PAPER_DEFAULT_LIGHTNESS, PAPER_DEFAULT_TINT);
 
 // The paper palette's floor moves with the surface synchronously, before any
@@ -176,6 +263,7 @@ function schedulePush(state: {
   theme: ThemeId;
   overrides: Partial<Record<TweakableToken, string>>;
   paperSurface?: string;
+  displays?: DisplayPrefs;
 }) {
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
@@ -184,6 +272,7 @@ function schedulePush(state: {
     // keeps any "--name": "#rrggbb" pair, so no new endpoint is needed.
     const payload: Record<string, string> = { ...(state.overrides as Record<string, string>) };
     if (state.paperSurface) payload[PAPER_SURFACE_KEY] = state.paperSurface;
+    if (state.displays) Object.assign(payload, displayOverrideEntries(state.displays));
     updateThemeSettings({ theme: state.theme, overrides: payload })
       .catch((err) => {
         // Server unreachable / 5xx — keep the local change, retry on next mutation.
@@ -194,8 +283,39 @@ function schedulePush(state: {
   }, 300);
 }
 
+function displaysOf(s: DisplayPrefs): DisplayPrefs {
+  return {
+    lightDisplays: s.lightDisplays,
+    displayDepthLight: s.displayDepthLight,
+    displayDepthDark: s.displayDepthDark,
+  };
+}
+
+const initialTheme = readTheme();
+const initialDisplays = readDisplays();
+syncDisplayFloor(initialTheme, initialDisplays);
+
 export const useThemeStore = create<ThemeState>((set, get) => ({
-  theme: readTheme(),
+  theme: initialTheme,
+  ...initialDisplays,
+  setLightDisplays: (mode) => {
+    const next = { ...displaysOf(get()), lightDisplays: mode };
+    writeDisplays(next);
+    syncDisplayFloor(get().theme, next);
+    set({ lightDisplays: mode });
+    schedulePush({ theme: get().theme, overrides: get().overrides, paperSurface: get().paperSurface, displays: next });
+  },
+  setDisplayDepth: (theme, depth) => {
+    const d = clampDepth(depth, theme);
+    const next = {
+      ...displaysOf(get()),
+      ...(theme === 'light' ? { displayDepthLight: d } : { displayDepthDark: d }),
+    };
+    writeDisplays(next);
+    syncDisplayFloor(get().theme, next);
+    set(theme === 'light' ? { displayDepthLight: d } : { displayDepthDark: d });
+    schedulePush({ theme: get().theme, overrides: get().overrides, paperSurface: get().paperSurface, displays: next });
+  },
   overrides: readOverrides(),
   hydrated: false,
   paperSurface: (() => {
@@ -210,12 +330,13 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     writePaper(v);
     syncPaperFloor(v);
     set({ paperSurface: v });
-    schedulePush({ theme: get().theme, overrides: get().overrides, paperSurface: v });
+    schedulePush({ theme: get().theme, overrides: get().overrides, paperSurface: v, displays: displaysOf(get()) });
   },
   setTheme: (theme) => {
     writeTheme(theme);
+    syncDisplayFloor(theme, displaysOf(get()));
     set({ theme });
-    schedulePush({ theme, overrides: get().overrides, paperSurface: get().paperSurface });
+    schedulePush({ theme, overrides: get().overrides, paperSurface: get().paperSurface, displays: displaysOf(get()) });
   },
   setOverride: (token, hex) => {
     const next = { ...get().overrides };
@@ -227,12 +348,12 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     }
     writeOverrides(next);
     set({ overrides: next });
-    schedulePush({ theme: get().theme, overrides: next, paperSurface: get().paperSurface });
+    schedulePush({ theme: get().theme, overrides: next, paperSurface: get().paperSurface, displays: displaysOf(get()) });
   },
   resetOverrides: () => {
     writeOverrides({});
     set({ overrides: {} });
-    schedulePush({ theme: get().theme, overrides: {}, paperSurface: get().paperSurface });
+    schedulePush({ theme: get().theme, overrides: {}, paperSurface: get().paperSurface, displays: displaysOf(get()) });
   },
   hydrate: async () => {
     if (get().hydrated) return;
@@ -255,7 +376,10 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       writeOverrides(serverOverrides);
       writePaper(paper);
       syncPaperFloor(paper);
-      set({ theme: server.theme, overrides: serverOverrides, paperSurface: paper, hydrated: true });
+      const displays = displaysFromOverrides(server.overrides, displaysOf(get()));
+      writeDisplays(displays);
+      syncDisplayFloor(server.theme, displays);
+      set({ theme: server.theme, overrides: serverOverrides, paperSurface: paper, ...displays, hydrated: true });
     } catch (err) {
       // Backend unreachable — stay on the localStorage cache. Mark hydrated
       // so we don't loop forever; the next mutation will attempt a PUT and

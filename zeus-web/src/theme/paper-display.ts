@@ -18,8 +18,10 @@ import type { ColormapId, RenderColormapId } from '../gl/colormap';
 import { useThemeStore } from '../state/theme-store';
 import { paperTraceRgb, type Rgb } from './paper';
 
+/** Paper displays: the light theme with Displays = Paper (Blue is the default). */
 export function paperActive(): boolean {
-  return useThemeStore.getState().theme === 'light';
+  const s = useThemeStore.getState();
+  return s.theme === 'light' && s.lightDisplays === 'paper';
 }
 
 /** The palette the displays should render with right now. */

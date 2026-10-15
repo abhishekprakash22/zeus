@@ -505,7 +505,14 @@ export function Panadapter({
     });
     // Theme / paper surface: palette, trace ink and background all follow.
     const unsubTheme = useThemeStore.subscribe((state, prev) => {
-      if (state.theme !== prev.theme || state.paperSurface !== prev.paperSurface) requestRedraw();
+      if (
+        state.theme !== prev.theme ||
+        state.paperSurface !== prev.paperSurface ||
+        state.lightDisplays !== prev.lightDisplays ||
+        state.displayDepthLight !== prev.displayDepthLight ||
+        state.displayDepthDark !== prev.displayDepthDark
+      )
+        requestRedraw();
     });
 
     // Repaint when MOX / TUN flips so the RX-vs-TX dB range swap is

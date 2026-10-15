@@ -78,8 +78,22 @@ echo "Native binaries vs their source, at ${REF}:"
 echo
 
 # (native/ft8 and native/wspr are gone: FT8/FT4 and WSPR are managed code in
-# Digital/Ft8 and Digital/Wspr. No hand-committed library is built from
-# in-tree source any more; add a check_lib line here if one ever is again.)
+# Digital/Ft8 and Digital/Wspr.)
+
+# WDSP. The AppImage ships the committed libwdsp, so a native/wdsp change that
+# is not followed by a "Build Native Libraries" run + commit never reaches the
+# radio (9f9594f's osctrl export sat unshipped this way). libspecbleach (NR4)
+# and rnnoise (NR3) are linked statically into the same binaries.
+WDSP_BINS=(
+    Zeus.Dsp/runtimes/linux-arm64/native/libwdsp.so
+    Zeus.Dsp/runtimes/linux-x64/native/libwdsp.so
+    Zeus.Dsp/runtimes/osx-arm64/native/libwdsp.dylib
+    Zeus.Dsp/runtimes/win-arm64/native/wdsp.dll
+    Zeus.Dsp/runtimes/win-x64/native/wdsp.dll
+)
+check_lib native/wdsp          "${WDSP_BINS[@]}"
+check_lib native/libspecbleach "${WDSP_BINS[@]}"
+check_lib native/rnnoise       "${WDSP_BINS[@]}"
 
 echo
 if [ "$rc" -ne 0 ]; then

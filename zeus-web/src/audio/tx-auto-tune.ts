@@ -239,6 +239,8 @@ function clampLeveling(c: TxLevelingConfigDto): TxLevelingConfigDto {
     levelerDecayMs: roundInt(clamp(c.levelerDecayMs, LEVELER_DECAY_MIN, LEVELER_DECAY_MAX)),
     compressorEnabled: c.compressorEnabled,
     compressorGainDb: roundTenth(clamp(c.compressorGainDb, COMP_GAIN_HARD_MIN, COMP_GAIN_HARD_MAX)),
+    // Auto-tune never decides CESSB — carry the operator's choice through.
+    cessbEnabled: c.cessbEnabled ?? true,
   };
 }
 

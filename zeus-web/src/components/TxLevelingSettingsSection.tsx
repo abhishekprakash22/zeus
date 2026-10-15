@@ -280,6 +280,31 @@ export function TxLevelingSettingsSection() {
         disabled={false}
         onCommit={(v) => send({ ...txLeveling, compressorGainDb: v })}
       />
+
+      {/* CESSB — the second half of the speech processor. Runs only while the
+          compressor runs (COMP -> filter -> CESSB -> filter); independent of
+          PureSignal; bypassed with COMP in digital modes. */}
+      <div className="dsp-row" style={{ gap: 8 }}>
+        <span className="label-xs" style={{ minWidth: 86 }}>
+          CESSB
+        </span>
+        <button
+          type="button"
+          data-testid="cessb-toggle"
+          onClick={() => send({ ...txLeveling, cessbEnabled: !txLeveling.cessbEnabled })}
+          className={`btn sm ${txLeveling.cessbEnabled && txLeveling.compressorEnabled ? 'active' : ''}`}
+          title="Controlled-envelope SSB: keeps the compressor's peaks in check after filtering, for more average power without extra splatter"
+        >
+          {txLeveling.cessbEnabled ? 'ON' : 'OFF'}
+        </button>
+        <span className="label-xs" style={{ opacity: 0.75 }} data-testid="cessb-note">
+          {!txLeveling.cessbEnabled
+            ? 'off'
+            : txLeveling.compressorEnabled
+              ? 'active with the compressor'
+              : 'waits for the compressor — turn COMP on'}
+        </span>
+      </div>
     </div>
   );
 }

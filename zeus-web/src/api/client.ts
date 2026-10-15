@@ -132,6 +132,8 @@ export const SQUELCH_CONFIG_DEFAULT: SquelchConfigDto = {
 // Ranges/defaults mirror Thetis: alcMaxGainDb 0..120 (3), alcDecayMs 1..50
 // (10), levelerEnabled default true, levelerDecayMs 1..5000 (100),
 // compressorEnabled default false, compressorGainDb 0..20 (0).
+// cessbEnabled default true: CESSB runs only with the compressor (COMP ->
+// filter -> CESSB -> filter); with COMP off it has no effect.
 export type TxLevelingConfigDto = {
   alcMaxGainDb: number;
   alcDecayMs: number;
@@ -139,6 +141,7 @@ export type TxLevelingConfigDto = {
   levelerDecayMs: number;
   compressorEnabled: boolean;
   compressorGainDb: number;
+  cessbEnabled: boolean;
 };
 
 export const TX_LEVELING_CONFIG_DEFAULT: TxLevelingConfigDto = {
@@ -148,6 +151,7 @@ export const TX_LEVELING_CONFIG_DEFAULT: TxLevelingConfigDto = {
   levelerDecayMs: 100,
   compressorEnabled: false,
   compressorGainDb: 0,
+  cessbEnabled: true,
 };
 
 // TX phase rotator — WDSP all-pass speech phase redistribution plus explicit
@@ -2363,6 +2367,10 @@ export function normalizeTxLeveling(raw: unknown): TxLevelingConfigDto {
         ? r.compressorEnabled
         : TX_LEVELING_CONFIG_DEFAULT.compressorEnabled,
     compressorGainDb: num(r.compressorGainDb, TX_LEVELING_CONFIG_DEFAULT.compressorGainDb, 0, 20),
+    cessbEnabled:
+      typeof r.cessbEnabled === 'boolean'
+        ? r.cessbEnabled
+        : TX_LEVELING_CONFIG_DEFAULT.cessbEnabled,
   };
 }
 

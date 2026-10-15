@@ -2962,6 +2962,7 @@ describe('POST helpers', () => {
       levelerDecayMs: 250,
       compressorEnabled: true,
       compressorGainDb: 9,
+      cessbEnabled: true,
     };
     await setTxLeveling(cfg);
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -3232,6 +3233,7 @@ describe('normalizeTxLeveling', () => {
       levelerDecayMs: 250,
       compressorEnabled: true,
       compressorGainDb: 9,
+      cessbEnabled: true,
     });
   });
 

@@ -25,6 +25,7 @@ function makeProfile(id: string, name: string, mode: 'native' | 'vst' = 'native'
       levelerDecayMs: 100,
       compressorEnabled: false,
       compressorGainDb: 0,
+      cessbEnabled: true,
     },
     cfcConfig: { enabled: false, postEqEnabled: false, preCompDb: 0, prePeqDb: 0, bands: [] },
     txPhaseRotator: { enabled: false, cornerHz: 338, stages: 8, reverse: false },

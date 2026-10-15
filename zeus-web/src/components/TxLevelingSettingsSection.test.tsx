@@ -51,4 +51,26 @@ describe('TxLevelingSettingsSection', () => {
     expect(controls.length).toBeGreaterThan(0);
     expect(controls.every((control) => !control.disabled)).toBe(true);
   });
+
+  it('shows CESSB waiting for the compressor, and active once COMP is on', () => {
+    act(() => {
+      root.render(<TxLevelingSettingsSection />);
+    });
+    const note = () => container.querySelector('[data-testid="cessb-note"]')?.textContent;
+    expect(note()).toBe('waits for the compressor — turn COMP on');
+    act(() => {
+      useConnectionStore.setState({
+        txLeveling: { ...TX_LEVELING_CONFIG_DEFAULT, compressorEnabled: true },
+      });
+    });
+    expect(note()).toBe('active with the compressor');
+    expect(container.querySelector('[data-testid="cessb-toggle"]')?.className).toContain('active');
+  });
+
+  it('defaults CESSB on, and older payloads without the field normalise to on', async () => {
+    const { normalizeTxLeveling } = await import('../api/client');
+    expect(TX_LEVELING_CONFIG_DEFAULT.cessbEnabled).toBe(true);
+    expect(normalizeTxLeveling({ compressorEnabled: true }).cessbEnabled).toBe(true);
+    expect(normalizeTxLeveling({ compressorEnabled: true, cessbEnabled: false }).cessbEnabled).toBe(false);
+  });
 });

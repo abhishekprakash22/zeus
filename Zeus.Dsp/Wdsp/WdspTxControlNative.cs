@@ -17,6 +17,8 @@ internal interface IWdspTxControlNative
     void SetTXAPHROTAutoMode(int channel, int autoMode);
     void SetTXAPHROTReverse(int channel, int reverse);
     void SetTXALevelerSt(int channel, int state);
+    void SetTXAosctrlRun(int channel, int run);
+    void SetTXAosctrlBandwidth(int channel, double bandwidth);
 }
 
 internal sealed class WdspTxControlNative : IWdspTxControlNative
@@ -66,4 +68,10 @@ internal sealed class WdspTxControlNative : IWdspTxControlNative
 
     public void SetTXALevelerSt(int channel, int state) =>
         NativeMethods.SetTXALevelerSt(channel, state);
+
+    public void SetTXAosctrlRun(int channel, int run) =>
+        NativeMethods.SetTXAosctrlRun(channel, run);
+
+    public void SetTXAosctrlBandwidth(int channel, double bandwidth) =>
+        NativeMethods.SetTXAosctrlBandwidth(channel, bandwidth);
 }

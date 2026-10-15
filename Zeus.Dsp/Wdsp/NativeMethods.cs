@@ -870,6 +870,12 @@ internal static partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void SetTXAosctrlRun(int channel, int run);
 
+    // ANAN Core export (native/wdsp/osctrl.c). Absent from libwdsp binaries
+    // built before it — callers probe and fall back to the native 3000 Hz.
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial void SetTXAosctrlBandwidth(int channel, double bandwidth);
+
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial void SetTXAEQRun(int channel, int run);

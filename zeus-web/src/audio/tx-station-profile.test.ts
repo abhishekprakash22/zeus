@@ -44,6 +44,7 @@ describe('Studio SSB TX station profile', () => {
       levelerDecayMs: 100,
       compressorEnabled: false,
       compressorGainDb: 0,
+      cessbEnabled: true,
     });
   });
 
@@ -138,6 +139,7 @@ describe('ESSB TX station profile', () => {
       levelerDecayMs: 180,
       compressorEnabled: false,
       compressorGainDb: 0,
+      cessbEnabled: true,
     });
   });
 

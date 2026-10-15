@@ -892,13 +892,21 @@ public sealed record SquelchConfig(
 // default on, LevelerDecayMs 1..5000 (default 100), CompressorEnabled default
 // off, CompressorGainDb 0..20 (default 0). Persisted globally via
 // DspSettingsStore — same pattern as Agc/Squelch.
+//
+// CessbEnabled (default true): CESSB — WDSP's overshoot controller (W9GR,
+// QEX 2014) — as the second half of the speech processor. It only RUNS while
+// the compressor runs (COMP -> filter -> CESSB -> filter, WDSP's design; the
+// Thetis / piHPSDR / upstream Zeus coupling), so with COMP off this flag has
+// no effect. Independent of PureSignal. Bypassed with the compressor in
+// digital modes.
 public sealed record TxLevelingConfig(
     double AlcMaxGainDb = 3.0,
     int AlcDecayMs = 10,
     bool LevelerEnabled = true,
     int LevelerDecayMs = 100,
     bool CompressorEnabled = false,
-    double CompressorGainDb = 0.0);
+    double CompressorGainDb = 0.0,
+    bool CessbEnabled = true);
 
 // Operator-facing TX phase rotator. WDSP implements this as a cascade of
 // first-order all-pass stages in the TXA audio path (Thetis DSP->CFC->PhaseRot).

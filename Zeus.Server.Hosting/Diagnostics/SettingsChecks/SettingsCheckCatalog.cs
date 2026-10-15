@@ -318,6 +318,30 @@ public static class SettingsCheckCatalog
                 "Use a 2.4–2.8 kHz TX filter for normal SSB.", "Transmit audio") };
         }),
 
+        new("tx.processor", ["no-tx-power", "tx-audio"], f =>
+        {
+            var mode = f.Str("mode");
+            var comp = f.Bool("txLeveling.compressorEnabled");
+            if (comp is null || (mode is not null && !VoiceModes.Contains(mode))) return Array.Empty<SettingsCheckResult>();
+            var cessb = f.Bool("txLeveling.cessbEnabled") ?? true;
+            var gain = f.Num("txLeveling.compressorGainDb") ?? 0;
+            if (comp == false)
+            {
+                return new[] { R("tx.processor", "Speech processor", SettingsVerdict.Check, "off",
+                    "Without the speech processor, voice peaks limit the average power — SSB talk power stays low even at full drive.",
+                    "Turn the compressor on (Settings → TX, about 6–10 dB) with CESSB on, which keeps the peaks clean.",
+                    "Transmit audio › Speech processor") };
+            }
+            if (!cessb)
+            {
+                return new[] { R("tx.processor", "Speech processor", SettingsVerdict.Check, $"COMP {gain:0} dB · CESSB off",
+                    "The compressor is running without CESSB, so its peaks overshoot after filtering and the ALC has to hold the level down.",
+                    "Turn CESSB on next to the compressor.", "Transmit audio › Speech processor") };
+            }
+            return new[] { R("tx.processor", "Speech processor", SettingsVerdict.Ok, $"COMP {gain:0} dB · CESSB on",
+                "The compressor and CESSB are both running.", "—", "Transmit audio › Speech processor") };
+        }),
+
         new("tx.leveler", TxAudio, f =>
         {
             var g = f.Num("levelerMaxGainDb");

@@ -51,6 +51,7 @@ export const STUDIO_SSB_TX_LEVELING: TxLevelingConfigDto = {
   levelerDecayMs: 100,
   compressorEnabled: false,
   compressorGainDb: 0,
+  cessbEnabled: true,
 };
 
 export const ESSB_TX_LEVELING: TxLevelingConfigDto = {
@@ -60,6 +61,7 @@ export const ESSB_TX_LEVELING: TxLevelingConfigDto = {
   levelerDecayMs: 180,
   compressorEnabled: false,
   compressorGainDb: 0,
+  cessbEnabled: true,
 };
 
 export const DX_TX_LEVELING: TxLevelingConfigDto = {
@@ -69,6 +71,7 @@ export const DX_TX_LEVELING: TxLevelingConfigDto = {
   levelerDecayMs: 70,
   compressorEnabled: false,
   compressorGainDb: 0,
+  cessbEnabled: true,
 };
 
 // Gentle controlled-presence CFC curve for clean SSB speech. Post-EQ is on so
@@ -411,6 +414,7 @@ export function sanitizeTxStationProfile(
       levelerDecayMs: clampInt(raw.txLeveling?.levelerDecayMs ?? fallback.txLeveling.levelerDecayMs, 1, 5000),
       compressorEnabled: raw.txLeveling?.compressorEnabled ?? fallback.txLeveling.compressorEnabled,
       compressorGainDb: round1(clamp(raw.txLeveling?.compressorGainDb ?? fallback.txLeveling.compressorGainDb, 0, 20)),
+      cessbEnabled: raw.txLeveling?.cessbEnabled ?? fallback.txLeveling.cessbEnabled ?? true,
     },
     cfcConfig: {
       enabled: raw.cfcConfig?.enabled ?? fallback.cfcConfig.enabled,

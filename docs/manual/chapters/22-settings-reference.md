@@ -28,7 +28,7 @@ Cards, each mapping to a Thetis-style Setup ▸ DSP family — operating control
 - **AGC** — mode, max-gain, custom knee shaping.
 - **ADC Protection** — P2 overload / max-magnitude **auto-ATT** policy.
 - **RX Squelch** — mode-aware SSB/AM/FM behaviour.
-- **TX Leveling** — ALC / leveler / compressor targets.
+- **TX Leveling** — ALC / leveler / compressor targets, and **CESSB** (on by default; runs only with the compressor).
 - **Signal Intelligence** — signal **Pop**, click **Snap**, peak **Markers**.
 - **Smart NR Automation** — panadapter-driven NR policy.
 

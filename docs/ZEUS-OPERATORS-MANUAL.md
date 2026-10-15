@@ -498,6 +498,15 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Speech processor (compressor + CESSB).** Settings → TX Leveling: turn
+the compressor on (about 6–10 dB) for more SSB talk power; CESSB (on by
+default) runs with it, trimming the peaks the filters push back up, so the
+average rises without extra splatter. CESSB only runs while the compressor
+runs, stays active with PureSignal, follows the TX filter width, and is
+bypassed with the compressor in digital modes. (Earlier versions ran CESSB
+alone and dropped it under PureSignal — turn the compressor on to get that
+talk power back.)
+
 **Check my settings.** Settings → TROUBLESHOOT (or the ASK drawer's
 Check my settings link): pick the problem — no RX audio, weak signals, low
 TX power, TX audio, PureSignal, won't connect, remote can't connect or is

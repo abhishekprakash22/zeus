@@ -9,8 +9,8 @@ What it looks at, by problem:
 - **No or quiet receive audio:** each receiver's mute, AF gain and AGC-T (and whether Auto AGC-T is on), AGC mode, squelch, the attenuator, filter width, the audio output being muted or playing on a different device, the radio connection and p2app.
 - **Weak signals / high noise:** AGC-T, attenuator, filter width, ADC overload.
 - **Receive audio distorted:** ADC overload, AGC mode, noise reduction strength.
-- **Low or no transmit power:** drive, the drive limit, TUN power, mic gain (voice modes), TX audio source, TX filter width, p2app.
-- **Transmit audio problems:** mic gain too low or too high, TX audio source, TX filter, leveler gain, PureSignal state.
+- **Low or no transmit power:** drive, the drive limit, TUN power, mic gain (voice modes), the speech processor (compressor + CESSB), TX audio source, TX filter width, p2app.
+- **Transmit audio problems:** mic gain too low or too high, the speech processor (compressor running without CESSB), TX audio source, TX filter, leveler gain, PureSignal state.
 - **PureSignal won't calibrate:** PS armed, calibration stalled, feedback level (too hot or too weak) and auto-attenuate, HW peak changed from default.
 - **Radio won't connect:** connection state, p2app not installed / stopped / restarting, another program holding a network port.
 - **Can't connect remotely:** remote password and callsign set, the callsign claimed by another radio, the radio losing its connection to the remote service, clock sync.

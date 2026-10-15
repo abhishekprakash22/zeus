@@ -73,6 +73,27 @@ public class SettingsCheckCatalogTests
         Assert.Equal(SettingsVerdict.Ok, One(rs, "tx.filter").Verdict);
     }
 
+    [Theory]
+    [InlineData("false", "true", "Check", "off")]
+    [InlineData("true", "false", "Check", "COMP 8 dB · CESSB off")]
+    [InlineData("true", "true", "Ok", "COMP 8 dB · CESSB on")]
+    public void Speech_processor_reports_COMP_and_CESSB(string comp, string cessb, string verdict, string value)
+    {
+        var state = "{\"mode\":\"USB\",\"txLeveling\":{\"compressorEnabled\":" + comp +
+                    ",\"compressorGainDb\":8,\"cessbEnabled\":" + cessb + "}}";
+        var r = One(SettingsCheckCatalog.Evaluate("no-tx-power", Facts(state)), "tx.processor");
+        Assert.Equal(Enum.Parse<SettingsVerdict>(verdict), r.Verdict);
+        Assert.Equal(value, r.Value);
+    }
+
+    [Fact]
+    public void Speech_processor_is_not_judged_in_digital_modes()
+    {
+        var rs = SettingsCheckCatalog.Evaluate("no-tx-power",
+            Facts("{\"mode\":\"DIGU\",\"txLeveling\":{\"compressorEnabled\":false}}"));
+        Assert.DoesNotContain(rs, r => r.CheckId == "tx.processor");
+    }
+
     [Fact]
     public void Mic_gain_is_not_judged_in_CW_or_digital_modes()
     {

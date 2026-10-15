@@ -69,6 +69,19 @@ public class TxLevelingSettingsPersistenceTests : IDisposable
         Assert.Equal(12.0, back.CompressorGainDb);
     }
 
+    [Fact]
+    public void SetTxLeveling_CessbChoice_PersistsAcrossReopen()
+    {
+        using (var store = BuildStore())
+            store.SetTxLeveling(new TxLevelingConfig(CompressorEnabled: true, CompressorGainDb: 8, CessbEnabled: false));
+
+        using var fresh = BuildStore();
+        var back = fresh.GetTxLeveling();
+        Assert.NotNull(back);
+        Assert.False(back!.CessbEnabled);
+        Assert.True(back.CompressorEnabled);
+    }
+
     // --- 2. Defaults round-trip faithfully -------------------------------
 
     [Fact]

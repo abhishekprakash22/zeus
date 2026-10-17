@@ -128,6 +128,7 @@ import { useMicUplink } from './audio/use-mic-uplink';
 import { disconnect, disconnectP2, disconnectP3, fetchState, fetchUpdateStatus, type RepoUpdateStatus } from './api/client';
 import { statePushIsFresh } from './state/connection-store';
 import { useConnectionStore } from './state/connection-store';
+import { isFreeDvEngaged } from './state/freedv-engaged';
 import { getReceiverMode } from './state/receiver-state';
 import { useFreeDvWindowStore } from './state/freedv-window-store';
 import { useRadioStore } from './state/radio-store';
@@ -353,6 +354,7 @@ export default function App() {
   const vfoHz = useConnectionStore((s) => s.vfoHz);
   const mode = useConnectionStore((s) => s.mode);
   const modeB = useConnectionStore((s) => getReceiverMode(s, 1));
+  const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
   const preampOn = useConnectionStore((s) => s.preampOn);
   const moxOn = useTxStore((s) => s.moxOn);
   const tunOn = useTxStore((s) => s.tunOn);
@@ -659,17 +661,18 @@ export default function App() {
   // VFO (tracked via a ref) so closing the window while still in FreeDV doesn't
   // immediately reopen it. The true→false edge (leaving FreeDV on both VFOs)
   // closes the popup automatically — the modem controls have nothing to act on
-  // once the mode is gone, so leaving the window up reads as stale.
+  // once the mode is gone, so leaving the window up reads as stale. VFO B only
+  // counts while RX2 is on: its stored mode outlives RX2 being switched off.
   const wasInFreeDv = useRef(false);
   useEffect(() => {
-    const inFreeDv = mode === 'FREEDV' || modeB === 'FREEDV';
+    const inFreeDv = isFreeDvEngaged(mode, modeB, rx2Enabled);
     if (inFreeDv && !wasInFreeDv.current) {
       useFreeDvWindowStore.getState().open();
     } else if (!inFreeDv && wasInFreeDv.current) {
       useFreeDvWindowStore.getState().close();
     }
     wasInFreeDv.current = inFreeDv;
-  }, [mode, modeB]);
+  }, [mode, modeB, rx2Enabled]);
 
   useEffect(() => {
     return useTxStore.subscribe((state, prev) => {

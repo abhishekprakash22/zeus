@@ -352,7 +352,10 @@ active port before keying.
 - **FT8/FT4** run natively on the radio — decode history, QSO logging with
   worked-before highlighting, WSJT-X-compatible UDP logging to N1MM+/JTAlert/
   GridTracker, TX macros.
-- **FreeDV 700D/E** is built into the core — no external apps.
+- **FreeDV 700D/E** is built into the core — no external apps. It decodes
+  on one receiver at a time — RX1 or RX2, whichever is in FreeDV (with both,
+  the first one keeps it) — and the other receiver keeps playing normally.
+  FreeDV transmit follows RX1.
 - **WSPR:** in-core decoding plus a transmit beacon slot.
 
 ---

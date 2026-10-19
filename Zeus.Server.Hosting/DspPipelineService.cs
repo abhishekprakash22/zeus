@@ -742,6 +742,9 @@ public class DspPipelineService : BackgroundService,
     private sealed class SecondaryRx
     {
         public int ChannelId = -1; // -1 = inactive; Volatile.Read/Write(ref ChannelId)
+        // FreeDV decoded-speech AF (linear, slewed) when this receiver owns the
+        // shared FreeDV modem — the secondary's analogue of _freeDvAfGainLinear.
+        public double FreeDvAfGainLinear = 1.0;
         // Hardware DDC centre (this receiver's analogue of RX1's RadioLoHz). Under
         // CTUN it stays frozen while the dial roams within the window; with CTUN off
         // it follows the dial. Recentres if the dial would leave the captured DDC
@@ -1000,6 +1003,23 @@ public class DspPipelineService : BackgroundService,
     // (AfGainSlewMaxDbPerTick) target across the block, mirroring the WDSP
     // panel-gain slew, so a slider drag fades click-free instead of stair-
     // stepping. Updates _freeDvAfGainLinear to the end-of-block gain.
+    // FreeDV decoded-speech AF for a secondary owner: same slewed ramp as RX1's
+    // ApplyFreeDvAfGain, with the per-receiver gain kept on its SecondaryRx.
+    private static void ApplySecondaryFreeDvAfGain(SecondaryRx sec, Span<float> block, double targetDb)
+    {
+        double startGain = sec.FreeDvAfGainLinear;
+        double startDb = 20.0 * Math.Log10(Math.Max(startGain, 1e-9));
+        double endDb = StepTowardCappedDb(startDb, targetDb, AfGainSlewMaxDbPerTick);
+        double endGain = Math.Pow(10.0, endDb / 20.0);
+        int n = block.Length;
+        for (int i = 0; i < n; i++)
+        {
+            double t = (i + 1) / (double)n;
+            block[i] = (float)(block[i] * (startGain + (endGain - startGain) * t));
+        }
+        sec.FreeDvAfGainLinear = endGain;
+    }
+
     private void ApplyFreeDvAfGain(Span<float> block, double targetDb)
     {
         double startGain = _freeDvAfGainLinear;
@@ -1546,7 +1566,20 @@ public class DspPipelineService : BackgroundService,
     /// <summary>True while FreeDV is the active TX modem. Used by
     /// <see cref="TxService"/> to skip the plain voice-mode TX tail delay
     /// (issue #1294) — FreeDV runs its own bounded end-of-over drain instead.</summary>
-    public bool IsFreeDvActive => _audioModem?.Current?.Active ?? false;
+    public bool IsFreeDvActive => FreeDvTxEngaged(_audioModem?.Current?.Active ?? false, FreeDvTxMode);
+
+    // The transmit side of FreeDV. The shared modem now ENGAGES for whichever
+    // receiver owns it (RX2 alone included), but the TXA modulator follows RX1's
+    // mode, so FreeDV is encoded on TX only while RX1 itself is in FreeDV —
+    // exactly the condition the modem used to engage on. Without this, an RX2
+    // FreeDV owner would turn an RX1 USB over into FreeDV tones.
+    private volatile bool _freeDvTxMode;
+
+    /// <summary>True while RX1 (whose mode drives the TXA modulator) is in FreeDV.</summary>
+    public bool FreeDvTxMode => _freeDvTxMode;
+
+    /// <summary>The modem encodes TX only when it is engaged AND TX is in FreeDV.</summary>
+    internal static bool FreeDvTxEngaged(bool modemActive, bool txIsFreeDv) => modemActive && txIsFreeDv;
 
     /// <summary>
     /// Old-school roger beep tail. Called by TxService on an accepted local
@@ -2160,6 +2193,64 @@ public class DspPipelineService : BackgroundService,
     internal static bool ShouldPublishNormalRxAudio(bool txMonitorOn, bool txAudioSuppressed) =>
         !txMonitorOn && !txAudioSuppressed;
 
+    // FreeDV owner: ONE shared modem decodes ONE receiver — whichever enabled
+    // receiver is in FreeDV, so FreeDV works on RX2 alone as well as on RX1.
+    // -1 = no owner.
+    private int _freeDvOwnerIndex = -1;
+
+    /// <summary>
+    /// The receiver the shared FreeDV modem should decode: -1 when no enabled
+    /// receiver is in FreeDV; the sole FreeDV receiver when there is one; with
+    /// several, the current owner holds on to it for as long as it stays enabled
+    /// and in FreeDV — a receiver entering FreeDV later never takes it over —
+    /// otherwise the lowest-numbered one.
+    /// </summary>
+    internal static int SelectFreeDvOwner(StateDto s, int currentOwner)
+    {
+        int lowest = -1;
+        bool currentHeld = false;
+        for (int ri = 0; ri < MaxReceivers; ri++)
+        {
+            if (!ReceiverIsFreeDv(s, ri)) continue;
+            if (lowest < 0) lowest = ri;
+            if (ri == currentOwner) currentHeld = true;
+        }
+        if (lowest < 0) return -1;
+        return currentHeld ? currentOwner : lowest;
+    }
+
+    // RX1 is always on; a secondary counts only while enabled, and only a local
+    // hardware receiver — named rows (the Kiwi slice) ride their own audio bus
+    // and are never decoded here.
+    internal static bool ReceiverIsFreeDv(StateDto s, int rxIndex) =>
+        rxIndex == 0
+            ? s.Mode == RxMode.FreeDv
+            : SecondaryReceiverEnabled(rxIndex, s)
+              && s.Receivers is { } rs && rxIndex < rs.Count && rs[rxIndex].Name is null
+              && SecondaryRxParams(s, rxIndex).mode == RxMode.FreeDv;
+
+    /// <summary>
+    /// Point the shared modem at this tick's owner. Entering FreeDV engages it;
+    /// leaving disengages it; moving between receivers flushes it so it re-syncs
+    /// on the new receiver instead of decoding a spliced stream.
+    /// </summary>
+    internal static int EngageFreeDvOwner(
+        Zeus.Plugins.Contracts.Extensions.IAudioModemPlugin? modem, StateDto s, int previousOwner)
+    {
+        int owner = SelectFreeDvOwner(s, previousOwner);
+        if (modem is null) return owner;
+        if (owner >= 0)
+        {
+            modem.SyncMode((byte)RxMode.FreeDv);
+            if (previousOwner >= 0 && previousOwner != owner) modem.FlushRx();
+        }
+        else
+        {
+            modem.SyncMode((byte)RxMode.USB);
+        }
+        return owner;
+    }
+
     /// <summary>
     /// FreeDV digital-voice decode for RX1 (the modem serves RX0 only, as on
     /// the Protocol-3 path). Keeps the modem's mode in step every tick; when
@@ -2177,9 +2268,22 @@ public class DspPipelineService : BackgroundService,
     {
         if (modem is null) return false;
         modem.SyncMode((byte)rx1Mode);
-        if (!publishingNormalRxAudio || !modem.Active || rx1Block.IsEmpty) return false;
-        SanitizeAudioBuffer(rx1Block);
-        modem.ProcessRx(rx1Block);
+        return DecodeFreeDvBlock(modem, rx1Block, publishingNormalRxAudio);
+    }
+
+    /// <summary>
+    /// Decode one receiver's own block in place (the owner's), before it is
+    /// mixed: sanitise, then ProcessRx replaces it with decoded speech. The
+    /// caller has already synced the modem's mode. Returns whether it decoded.
+    /// </summary>
+    internal static bool DecodeFreeDvBlock(
+        Zeus.Plugins.Contracts.Extensions.IAudioModemPlugin? modem,
+        Span<float> block,
+        bool publishingNormalRxAudio)
+    {
+        if (modem is null || !publishingNormalRxAudio || !modem.Active || block.IsEmpty) return false;
+        SanitizeAudioBuffer(block);
+        modem.ProcessRx(block);
         return true;
     }
 
@@ -4368,6 +4472,7 @@ public class DspPipelineService : BackgroundService,
         // gates those engine pushes to linear-friendly values while the operator's
         // stored config stays untouched for automatic restore on exit.
         bool freeDvMode = s.Mode == RxMode.FreeDv;
+        _freeDvTxMode = freeDvMode;
         // Forward VFO changes to the P2 client when it's active. RadioService
         // does this for P1 via ActiveClient?.SetVfoAHz() inside SetVfo, but
         // ActiveClient is null for P2 connections, so the radio never learns
@@ -5467,9 +5572,13 @@ public class DspPipelineService : BackgroundService,
         // (Receivers[i].AfGainDb) so the rate-cap state is per-SecondaryRx.
         // NaN sentinel = "no value applied yet" — snaps on the first push
         // after a fresh channel-open so we don't drag from a stale 0 dB.
+        // FreeDV: hold the WDSP panel at unity so the decoder sees a consistent
+        // level whatever the AF slider says; the receiver's AF is applied to the
+        // decoded speech instead (ApplySecondaryFreeDvAfGain) — as RX1 does.
+        double afTarget = mode == RxMode.FreeDv ? 0.0 : afGainDb;
         double afNext = double.IsNaN(rx.AppliedAfGainDb)
-            ? afGainDb
-            : StepTowardCappedDb(rx.AppliedAfGainDb, afGainDb, AfGainSlewMaxDbPerTick);
+            ? afTarget
+            : StepTowardCappedDb(rx.AppliedAfGainDb, afTarget, AfGainSlewMaxDbPerTick);
         if (rx.AppliedAfGainDb != afNext)
         {
             engine.SetRxAfGainDb(channelId, afNext);
@@ -7519,11 +7628,14 @@ public class DspPipelineService : BackgroundService,
         // Decoding before the per-RX mute keeps the modem in sync and its text
         // flowing while RX1 is muted; the mute below then silences the speech.
         bool suppressRxAudioForTx = ShouldSuppressRxAudioForCurrentTick();
-        if (DecodeFreeDvOnRx1(
-                _audioModem?.Current,
-                state.Mode,
+        var freeDvModem = _audioModem?.Current;
+        bool freeDvPublish = ShouldPublishNormalRxAudio(txMonitorOn, suppressRxAudioForTx);
+        // The shared modem follows the FreeDV owner — RX1 or a secondary.
+        _freeDvOwnerIndex = EngageFreeDvOwner(freeDvModem, state, _freeDvOwnerIndex);
+        if (_freeDvOwnerIndex == 0 && DecodeFreeDvBlock(
+                freeDvModem,
                 audioBuf.AsSpan(0, Math.Max(0, audioSampleCount)),
-                ShouldPublishNormalRxAudio(txMonitorOn, suppressRxAudioForTx)))
+                freeDvPublish))
         {
             // AF (listening) volume for FreeDV is applied to the decoded speech:
             // WDSP's panel gain ran on the pre-decode modem audio ProcessRx just
@@ -7609,6 +7721,16 @@ public class DspPipelineService : BackgroundService,
             }
 
             int n = want > 0 ? engine.ReadAudio(secChan, sec.AudioBuf.AsSpan(0, want)) : 0;
+            // FreeDV on a secondary: when this receiver owns the shared modem,
+            // decode its OWN block here, before the mix (and before the mute
+            // check, so the modem keeps sync while the receiver is muted), then
+            // apply its AF on the decoded speech — its WDSP panel gain is held
+            // at unity in FreeDV (ApplyStateToSecondaryRxChannel).
+            if (_freeDvOwnerIndex == ri && n > 0 &&
+                DecodeFreeDvBlock(freeDvModem, sec.AudioBuf.AsSpan(0, n), freeDvPublish))
+            {
+                ApplySecondaryFreeDvAfGain(sec, sec.AudioBuf.AsSpan(0, n), SecondaryRxParams(state, ri).afGainDb);
+            }
             // A muted secondary is still drained above (so its ring can't back up)
             // but excluded from the mix entirely — it must neither add signal nor
             // count toward the MixRxAudioN divisor (which would attenuate the

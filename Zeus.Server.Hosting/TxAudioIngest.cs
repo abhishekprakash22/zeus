@@ -291,7 +291,8 @@ public sealed class TxAudioIngest : IDisposable
                txOwnedByTuneDriver: () => tx.IsTunOn || tx.IsTwoToneOn,
                preKeyOpenAtTicks: () => tx.PreKeyOpenAtTicks,
                audioModem: audioModem,
-               modemSpeechGain: () => pipeline.FreeDvTxSpeechGainLinear)
+               modemSpeechGain: () => pipeline.FreeDvTxSpeechGainLinear,
+               freeDvTxMode: () => pipeline.FreeDvTxMode)
     {
     }
 
@@ -312,9 +313,13 @@ public sealed class TxAudioIngest : IDisposable
         Func<bool>? txOwnedByTuneDriver = null,
         Func<long>? preKeyOpenAtTicks = null,
         AudioModemPluginBridge? audioModem = null,
-        Func<float>? modemSpeechGain = null)
+        Func<float>? modemSpeechGain = null,
+        Func<bool>? freeDvTxMode = null)
     {
         _modemSpeechGain = modemSpeechGain;
+        // Default: every engaged modem is a TX modem (the pre-owner behaviour,
+        // and what tests without a pipeline expect).
+        _freeDvTxMode = freeDvTxMode ?? (static () => true);
         _ring = ring;
         _engineProvider = engineProvider;
         _isMoxOn = isMoxOn;
@@ -347,6 +352,13 @@ public sealed class TxAudioIngest : IDisposable
     /// in-flight mic block before the drain feeds the ring.
     /// </summary>
     private readonly Func<float>? _modemSpeechGain;
+    private readonly Func<bool> _freeDvTxMode;
+
+    // FreeDV encodes on TX only when the modem is engaged AND the transmit mode
+    // is FreeDV (the modem may be engaged for an RX2 FreeDV owner while RX1
+    // transmits USB). Every TX-side FreeDV decision goes through this.
+    private bool FreeDvTxOn(Zeus.Plugins.Contracts.Extensions.IAudioModemPlugin? modem) =>
+        modem is not null && modem.Active && _freeDvTxMode();
 
     /// <summary>Scale a speech block in place by the operator's mic gain, clamped
     /// to full scale. Unity is a no-op. Applied before an audio modem encodes it.</summary>
@@ -360,7 +372,7 @@ public sealed class TxAudioIngest : IDisposable
     public void DrainFreeDvTxTail()
     {
         var freeDv = _audioModem?.Current;
-        if (freeDv is null || !freeDv.Active) return;
+        if (freeDv is null || !FreeDvTxOn(freeDv)) return;
         if (_txOwnedByTuneDriver()) return;        // TUN/two-tone owns TX
         var engine = _engineProvider();
         int blockSize = engine?.TxBlockSamples ?? 0;
@@ -465,7 +477,7 @@ public sealed class TxAudioIngest : IDisposable
     /// </summary>
     public bool DrainRogerBeepTail()
     {
-        if (_audioModem?.Current?.Active == true) return false;
+        if (FreeDvTxOn(_audioModem?.Current)) return false;
         if (_txOwnedByTuneDriver()) return false;
 
         var engine = _engineProvider();
@@ -572,7 +584,7 @@ public sealed class TxAudioIngest : IDisposable
     /// </summary>
     public bool PrimeTxDspForKeyDown()
     {
-        if (_audioModem?.Current?.Active == true) return false;
+        if (FreeDvTxOn(_audioModem?.Current)) return false;
         if (_txOwnedByTuneDriver()) return false;
 
         var engine = _engineProvider();
@@ -958,7 +970,7 @@ public sealed class TxAudioIngest : IDisposable
                 // buffered). WDSP's USB TXA then SSB-modulates the modem audio.
                 // No-op unless FreeDV is the active mode.
                 var modem = _audioModem?.Current;
-                if (modem is not null && modem.Active)
+                if (modem is not null && FreeDvTxOn(modem))
                 {
                     // The operator's mic gain belongs on the SPEECH, before the
                     // vocoder — WDSP's panel gain (where SSB applies it) runs after

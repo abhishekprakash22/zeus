@@ -2160,6 +2160,29 @@ public class DspPipelineService : BackgroundService,
     internal static bool ShouldPublishNormalRxAudio(bool txMonitorOn, bool txAudioSuppressed) =>
         !txMonitorOn && !txAudioSuppressed;
 
+    /// <summary>
+    /// FreeDV digital-voice decode for RX1 (the modem serves RX0 only, as on
+    /// the Protocol-3 path). Keeps the modem's mode in step every tick; when
+    /// FreeDV is active and normal RX audio is being published it sanitises
+    /// RX1's block and replaces it IN PLACE with decoded speech (same sample
+    /// count; silence until sync). Must run on RX1's own samples, before
+    /// secondaries are mixed in. Returns whether the block now holds decoded
+    /// speech (so the caller applies FreeDV's AF gain).
+    /// </summary>
+    internal static bool DecodeFreeDvOnRx1(
+        Zeus.Plugins.Contracts.Extensions.IAudioModemPlugin? modem,
+        RxMode rx1Mode,
+        Span<float> rx1Block,
+        bool publishingNormalRxAudio)
+    {
+        if (modem is null) return false;
+        modem.SyncMode((byte)rx1Mode);
+        if (!publishingNormalRxAudio || !modem.Active || rx1Block.IsEmpty) return false;
+        SanitizeAudioBuffer(rx1Block);
+        modem.ProcessRx(rx1Block);
+        return true;
+    }
+
     private bool ShouldSuppressRxAudioForCurrentTick() =>
         _rxAudioSuppressedForTx || Volatile.Read(ref _rxPostTxMuteBlocksRemaining) > 0;
 
@@ -7487,6 +7510,27 @@ public class DspPipelineService : BackgroundService,
         // so RX-side plugins keep running even while monitor is on.
         bool txMonitorOn = engine.IsTxMonitorOn;
         int audioSampleCount = engine.ReadAudio(channel, audioBuf);
+
+        // FreeDV decodes RX1's OWN demodulated audio, here — before any
+        // secondary receiver or Kiwi slice is mixed in. The decoder REPLACES its
+        // block with decoded speech, so running it on the mixed bus (as before)
+        // fed RX2's audio into the FreeDV demodulator and then wiped RX2 from
+        // what the operator heard (field report: FreeDV on RX1 kills RX2 audio).
+        // Decoding before the per-RX mute keeps the modem in sync and its text
+        // flowing while RX1 is muted; the mute below then silences the speech.
+        bool suppressRxAudioForTx = ShouldSuppressRxAudioForCurrentTick();
+        if (DecodeFreeDvOnRx1(
+                _audioModem?.Current,
+                state.Mode,
+                audioBuf.AsSpan(0, Math.Max(0, audioSampleCount)),
+                ShouldPublishNormalRxAudio(txMonitorOn, suppressRxAudioForTx)))
+        {
+            // AF (listening) volume for FreeDV is applied to the decoded speech:
+            // WDSP's panel gain ran on the pre-decode modem audio ProcessRx just
+            // replaced, so without this RX1's AF slider would do nothing.
+            ApplyFreeDvAfGain(audioBuf.AsSpan(0, audioSampleCount), state.RxAfGainDb);
+        }
+
         // Per-RX mute (Thetis chkMUT): RX1 stays the audio clock-master so the
         // mix/output timing is unchanged, but its samples are zeroed so only the
         // other (unmuted) receivers are heard. TX monitor overrides RX audio
@@ -7602,7 +7646,6 @@ public class DspPipelineService : BackgroundService,
         // do NOT mix it into the RX frame here and instead route it, recorder-only,
         // through the mute-exempt lane after the RX-publish block (see below).
         bool rxAudioMuted = _rxAudioMute?.IsMuted ?? false;
-        bool suppressRxAudioForTx = ShouldSuppressRxAudioForCurrentTick();
 
         if (audioSampleCount > 0)
         {
@@ -7659,29 +7702,9 @@ public class DspPipelineService : BackgroundService,
                 // shapes received audio without distorting the clean local
                 // sidetone. Null handler (no RX plugin attached) is the common
                 // case and a no-op — the RX path stays bit-identical.
-                // FreeDV digital-voice insert (RX0 only). The radio runs USB
-                // underneath, so audioBuf currently holds the received FreeDV
-                // modem signal; when FreeDV is the active mode the modem
-                // demodulates+decodes it back to speech in place (same sample
-                // count, internally buffered, silence until sync). Runs BEFORE
-                // the RX audio plugin + squelch so those shape decoded speech.
-                var modem = _audioModem?.Current;
-                if (modem is not null)
-                {
-                    modem.SyncMode((byte)state.Mode);
-                    if (modem.Active && audioSampleCount > 0)
-                    {
-                        modem.ProcessRx(audioBuf.AsSpan(0, audioSampleCount));
-                        // AF (listening) volume for FreeDV is applied HERE, on the
-                        // decoded speech. WDSP's panel gain ran on the pre-decode
-                        // modem audio that ProcessRx just discarded, so without
-                        // this the AF slider has no effect on FreeDV volume. Placed
-                        // before the RX audio plugin + squelch to match normal-mode
-                        // ordering (WDSP applies AF before those managed inserts).
-                        ApplyFreeDvAfGain(
-                            audioBuf.AsSpan(0, audioSampleCount), state.RxAfGainDb);
-                    }
-                }
+                // FreeDV was decoded on RX1's own samples before the mix
+                // (DecodeFreeDvOnRx1 above), so the RX audio plugin + squelch
+                // below shape decoded speech, with every other receiver intact.
 
                 var rxAudioHandler = _rxAudioPluginHandler;
                 if (rxAudioHandler is not null && audioSampleCount > 0)

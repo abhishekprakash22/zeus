@@ -99,6 +99,22 @@ internal static class PacketParser
     private const double Int24Scale = 1.0 / 8_388_608.0; // 1 / 2^23
 
     /// <summary>
+    /// ADC-overload bits from one USB frame's C&amp;C echo (bit 0 = ADC0,
+    /// bit 1 = ADC1). Only two status slots carry them, per Thetis
+    /// networkproto1.c: C0=0x00 (C1[0] = ADC0) and C0=0x20 (C1[0] = ADC0,
+    /// C2[0] = ADC1). Every other slot carries AIN / firmware / register data
+    /// in C1..C4 whose low bit is not an overload flag. Masking with 0xF8
+    /// keeps the PTT/dot/dash bits out of the match and excludes HL2
+    /// RQST/ACK replies (C0[7] set).
+    /// </summary>
+    internal static byte ReadAdcOverloadBits(ReadOnlySpan<byte> usb) => (usb[3] & 0xF8) switch
+    {
+        0x00 => (byte)(usb[4] & 0x01),
+        0x20 => (byte)((usb[4] & 0x01) | ((usb[5] & 0x01) << 1)),
+        _ => 0,
+    };
+
+    /// <summary>
     /// Extract the hardware-PTT echo bit from a parsed EP6 packet — C0[0] of
     /// each USB frame OR'd together. The HL2 gateware sets this whenever the
     /// rear KEY tip is grounded or an external PTT line is asserted (HL2
@@ -270,8 +286,7 @@ internal static class PacketParser
                 else telemetry1 = reading;
             }
 
-            adcOverloadBits |= (byte)(usb[4] & 0x01);        // C1[0] → bit 0 (ADC0)
-            adcOverloadBits |= (byte)((usb[5] & 0x01) << 1); // C2[0] → bit 1 (ADC1)
+            adcOverloadBits |= ReadAdcOverloadBits(usb);
 
             ReadOnlySpan<byte> payload = usb[UsbHeaderLength..];
             for (int g = 0; g < ComplexSamplesPerUsbFrame; g++)
@@ -432,8 +447,7 @@ internal static class PacketParser
                 if (frame == 0) telemetry0 = reading;
                 else telemetry1 = reading;
             }
-            adcOverloadBits |= (byte)(usb[4] & 0x01);
-            adcOverloadBits |= (byte)((usb[5] & 0x01) << 1);
+            adcOverloadBits |= ReadAdcOverloadBits(usb);
 
             ReadOnlySpan<byte> payload = usb[UsbHeaderLength..];
             for (int g = 0; g < Hl2Ps4DdcSamplesPerUsbFrame; g++)
@@ -582,8 +596,7 @@ internal static class PacketParser
                 if (frame == 0) telemetry0 = reading;
                 else telemetry1 = reading;
             }
-            adcOverloadBits |= (byte)(usb[4] & 0x01);
-            adcOverloadBits |= (byte)((usb[5] & 0x01) << 1);
+            adcOverloadBits |= ReadAdcOverloadBits(usb);
 
             ReadOnlySpan<byte> payload = usb[UsbHeaderLength..];
             for (int g = 0; g < TwoDdcSamplesPerUsbFrame; g++)

@@ -98,6 +98,7 @@ import {
   sampleSpectrumAtHz,
 } from './miniPanMath';
 import { displayColormap } from '../../theme/paper-display';
+import { FilterDisplay } from '../../audio-views/FilterDisplay';
 
 const DEFAULT_SPAN_HZ = 12_000;       // initial visible window around VFO
 const MIN_SPAN_HZ = 3_000;            // wheel zoom-in floor
@@ -1769,12 +1770,11 @@ export function FilterMiniPan({ receiver }: { receiver?: SpectrumReceiver } = {}
   return (
     <div className={`filter-minipan-stack ${split ? 'filter-minipan-stack--split' : ''}`}>
       {keys.map((receiver) => (
-        <FilterMiniPanSurface
-          key={String(receiver)}
-          receiver={receiver}
-          split={split}
-          showReceiverLabel={split}
-        />
+        // Selectable view per receiver: the passband (this surface) or an
+        // audio view (audio-views/FilterDisplay.tsx).
+        <FilterDisplay key={String(receiver)} receiver={receiver}>
+          <FilterMiniPanSurface receiver={receiver} split={split} showReceiverLabel={split} />
+        </FilterDisplay>
       ))}
     </div>
   );

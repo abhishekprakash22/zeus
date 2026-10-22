@@ -647,6 +647,20 @@ public sealed class StreamingHub
         }
     }
 
+    /// <summary>
+    /// A pre-serialised frame (type byte first) to every client. For small
+    /// self-describing frames that have no record type of their own
+    /// (AF analysis, 0x3E). The array must not be mutated after the call.
+    /// </summary>
+    public void BroadcastRaw(byte[] payload)
+    {
+        if (_clients.IsEmpty || payload.Length == 0) return;
+        foreach (var client in _clients.Values)
+        {
+            if (!client.TryEnqueue(payload)) System.Threading.Interlocked.Increment(ref _dropsMeter);
+        }
+    }
+
     /// <summary>Per-receiver RX meters (0x27). Same shape as the 0x19 path;
     /// one frame per enabled secondary per meter tick.</summary>
     public void Broadcast(in RxMetersRxFrame frame)

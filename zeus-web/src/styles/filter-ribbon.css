@@ -698,3 +698,38 @@
     linear-gradient(180deg, rgba(74, 158, 255, 0.18) 0%, rgba(74, 158, 255, 0.04) 50%, transparent 100%),
     linear-gradient(180deg, var(--bg-2) 0%, var(--bg-3) 100%);
 }
+
+/* ── Filter display views (audio-views/FilterDisplay.tsx) ─────────────── */
+.fv-wrap { position: relative; width: 100%; height: 100%; min-height: 0; min-width: 0; }
+.fv-audio { position: absolute; inset: 0; touch-action: pan-y; background: var(--spec-bg, #151a20); }
+.fv-canvas { display: block; width: 100%; height: 100%; }
+.fv-chip {
+  position: absolute; top: 4px; right: 4px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 30px; padding: 3px 9px; border-radius: 7px;
+  border: 1px solid rgba(74, 163, 223, 0.55);
+  background: var(--disp-chip-bg, rgba(8, 10, 14, 0.78));
+  color: var(--disp-ink-0, #edeef1); font-size: 11.5px; cursor: pointer;
+}
+.fv-tx { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: var(--tx, #c62828); color: #fff; }
+.fv-grid {
+  position: absolute; top: 38px; right: 4px; z-index: 7; width: min(270px, 92%);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px;
+  background: var(--card-bg-solid, rgba(10, 14, 20, 0.96)); border: 1px solid rgba(74, 163, 223, 0.55);
+  border-radius: 10px; box-shadow: var(--card-shadow, 0 8px 24px rgba(0, 0, 0, 0.45));
+}
+.fv-item {
+  display: flex; align-items: center; gap: 7px; min-height: 52px; padding: 0 9px;
+  border-radius: 8px; border: 1px solid var(--line, #22384d); background: transparent;
+  color: var(--fg-1, #cfe8f8); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.fv-item--on { border-color: var(--accent, #4aa3df); background: color-mix(in srgb, var(--accent, #4aa3df) 14%, transparent); }
+.fv-item:disabled { opacity: 0.38; cursor: not-allowed; }
+.fv-ic { width: 18px; text-align: center; font-size: 15px; }
+.fv-note { font-size: 10px; opacity: 0.8; margin-left: auto; }
+.fv-dots {
+  position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%); z-index: 6;
+  display: flex; gap: 6px; padding: 3px 6px; border-radius: 6px; cursor: ns-resize;
+}
+.fv-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(160, 180, 200, 0.45); transition: all 0.18s; }
+.fv-dot--on { width: 16px; border-radius: 4px; background: var(--accent, #4aa3df); }

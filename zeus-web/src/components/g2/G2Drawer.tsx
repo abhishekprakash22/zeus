@@ -62,6 +62,7 @@ import { useVfoLockStore } from '../../state/vfo-lock-store';
 import { G2_THEMES, useG2ThemeStore } from '../../state/g2-theme-store';
 import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
 import { useAssistantStore } from '../../assistant/assistant-store';
+import { resetFocusedFilterView, stepFocusedFilterView } from '../../audio-views/FilterDisplay';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
 
@@ -172,6 +173,40 @@ function FullscreenKeyButton() {
       title={full ? 'Exit full screen (Esc also works)' : 'Full screen — hide the browser chrome'}
     >
       {full ? 'EXIT FS' : 'FULL SCR'}
+    </button>
+  );
+}
+
+// FILTER VIEW — steps the focused receiver's filter display (Passband → Audio
+// spectrum → Scope → …); hold ~0.6 s for Passband. Assignable via ✎.
+function FilterViewKeyButton() {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const held = useRef(false);
+  const clear = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  return (
+    <button
+      type="button"
+      className="btn ghost"
+      title="Filter display: press for the next view, hold for Passband"
+      onPointerDown={() => {
+        held.current = false;
+        clear();
+        timer.current = setTimeout(() => {
+          held.current = true;
+          resetFocusedFilterView();
+        }, 600);
+      }}
+      onPointerUp={() => {
+        clear();
+        if (!held.current) stepFocusedFilterView();
+      }}
+      onPointerLeave={clear}
+      onPointerCancel={clear}
+    >
+      FLT VIEW
     </button>
   );
 }
@@ -917,6 +952,7 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   nr: { node: <NrKeyButton /> },
   pre: { node: <PreampButton />, boardOnly: 'Metis' },
   ask: { node: <AskKeyButton /> },
+  fview: { node: <FilterViewKeyButton /> },
 };
 
 // Twelve default keys in twelve slots: no duplicates, no blanks, on every

@@ -506,6 +506,14 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Filter display views.** Each filter display can show Passband (classic),
+Audio spectrum, Scope, Audio waterfall, CW pitch (CW only — zero-beat aid)
+or Levels. Pick with the chip in its corner, swipe an audio view, wheel over
+the page dots, or the FLT VIEW deck key (press = next, hold = Passband). Per
+receiver, remembered on the radio; while keyed the audio views show TX audio
+(chip says TX). Computed on the radio only while shown, so they work on the
+G2, a PC and remote alike.
+
 **Light theme (paper) and display backgrounds.** Settings → Theme → Light
 turns the chassis and cards to one grey you pick (Silver to Graphite, a
 Lightness slider, cool / neutral / warm Tint; text darkens automatically

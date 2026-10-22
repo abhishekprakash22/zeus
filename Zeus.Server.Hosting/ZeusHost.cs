@@ -410,6 +410,8 @@ public static class ZeusHost
         // it over from the Connect panel. Stateless — opens its own socket.
         builder.Services.AddSingleton<RadioReclaimService>();
         builder.Services.AddSingleton<StreamingHub>();
+        // AF analysis for the filter card's audio views (leased, idle = free).
+        builder.Services.AddSingleton<AfAnalysisService>();
         // WebRTC remote-access data plane (docs/designs/remote-access-webrtc.md).
         // Phase-0 spike service; the dev-only /api/rtc/spike/offer endpoint that
         // uses it is gated behind ZEUS_RTC_SPIKE=1 in ZeusEndpoints.
@@ -1598,6 +1600,8 @@ public static class ZeusHost
                 // ---- XDMA TX plane (Phase 4c, COLD): DUC FIFO prober — this build
         // contains no MOX or TX-enable path; the probe writes zero samples
         // and reads FIFO depth. Nothing here can radiate.
+        app.Services.GetRequiredService<DspPipelineService>().AfAnalysis =
+            app.Services.GetRequiredService<AfAnalysisService>();
         app.Services.GetRequiredService<DspPipelineService>().NativeTxSink =
             app.Services.GetRequiredService<SaturnTxStream>();
         // The moment a native session releases the register plane — clean
@@ -1829,6 +1833,8 @@ public static class ZeusHost
         Zeus.Server.Hosting.FreeDv.FreeDvEndpoints.MapFreeDvEndpoints(app);
         // Window-chrome prefs the kiosk launcher reads (fullscreen marker).
         Zeus.Server.UiPrefsEndpoints.MapUiPrefsEndpoints(app);
+        // Filter card audio views: AF analysis lease.
+        Zeus.Server.AfAnalysisEndpoints.MapAfAnalysisEndpoints(app);
         // Built-in assistant: settings + ask (read-only tools).
         Zeus.Server.Assistant.AssistantEndpoints.MapAssistantEndpoints(app);
 

@@ -299,4 +299,16 @@ public enum MsgType : byte
     // [type:1][UTF-8 JSON MidiLearnFrame]. UI ignores unknown types so older
     // builds tolerate it cleanly.
     MidiLearn = 0x3B,
+
+    // Server → client (AF analysis for the filter card's audio views). A
+    // receiver's FINAL audio (after demod, NR, notch, FreeDV decode and its
+    // own mute) — or the TX mic when keyed — decimated to 8 kHz: a 128-bin
+    // spectrum (0..4 kHz) and a 512-sample scope snapshot, ~15 fps per source.
+    // Sent ONLY while a client holds a lease (POST /api/audio-analysis/
+    // subscribe), so idle radios emit nothing. Payload: [type:1][source:u8
+    // (rx index, 0xFF = TX)][flags:u8 (bit0 muted)][sampleRateHz:u16 LE]
+    // [binCount:u8][scopeCount:u16 LE][bins: u8 × binCount (0..255 = −120..0
+    // dBFS)][scope: i8 × scopeCount][rmsDbfs:i8][peakDbfs:i8]. See
+    // AfAnalysisService.cs. 0x3D skipped (used for one release, v1.97).
+    AfAnalysis = 0x3E,
 }

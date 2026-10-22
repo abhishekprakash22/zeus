@@ -292,7 +292,8 @@ public sealed class TxAudioIngest : IDisposable
                preKeyOpenAtTicks: () => tx.PreKeyOpenAtTicks,
                audioModem: audioModem,
                modemSpeechGain: () => pipeline.FreeDvTxSpeechGainLinear,
-               freeDvTxMode: () => pipeline.FreeDvTxMode)
+               freeDvTxMode: () => pipeline.FreeDvTxMode,
+               afAnalysis: () => pipeline.AfAnalysis)
     {
     }
 
@@ -314,8 +315,10 @@ public sealed class TxAudioIngest : IDisposable
         Func<long>? preKeyOpenAtTicks = null,
         AudioModemPluginBridge? audioModem = null,
         Func<float>? modemSpeechGain = null,
-        Func<bool>? freeDvTxMode = null)
+        Func<bool>? freeDvTxMode = null,
+        Func<AfAnalysisService?>? afAnalysis = null)
     {
+        _afAnalysis = afAnalysis;
         _modemSpeechGain = modemSpeechGain;
         // Default: every engaged modem is a TX modem (the pre-owner behaviour,
         // and what tests without a pipeline expect).
@@ -353,6 +356,8 @@ public sealed class TxAudioIngest : IDisposable
     /// </summary>
     private readonly Func<float>? _modemSpeechGain;
     private readonly Func<bool> _freeDvTxMode;
+    // Filter card audio views (TX): the mic block, while keyed.
+    private readonly Func<AfAnalysisService?>? _afAnalysis;
 
     // FreeDV encodes on TX only when the modem is engaged AND the transmit mode
     // is FreeDV (the modem may be engaged for an RX2 FreeDV owner while RX1
@@ -965,6 +970,9 @@ public sealed class TxAudioIngest : IDisposable
             while (_accumulatorFill >= blockSize)
             {
                 Array.Copy(_accumulator, 0, _scratchMic, 0, blockSize);
+                // Filter card audio views follow the TX mic while keyed (before
+                // any FreeDV insert replaces it with modem tones).
+                if (moxNow) _afAnalysis?.Invoke()?.FeedTx(new ReadOnlySpan<float>(_scratchMic, 0, blockSize));
                 // FreeDV TX insert: replace the mic-speech block with the
                 // FreeDV modem signal (in place, same count, internally
                 // buffered). WDSP's USB TXA then SSB-modulates the modem audio.

@@ -1,0 +1,188 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// ANAN Core — Protocol-2 SDR for the ANAN.
+// Copyright (C) 2026 Apache Labs.
+
+/** @vitest-environment jsdom */
+
+import { createElement } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, type RenderResult } from '../components/meters/__tests__/harness';
+import {
+  AF_TX_SOURCE,
+  acquireAfLease,
+  binDb,
+  parseAfFrame,
+  peakFrequencyHz,
+  type AfFrame,
+} from './af-analysis';
+import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
+import { audioEdges, scopeTrigger } from './AfView';
+import { FilterDisplay } from './FilterDisplay';
+import { useConnectionStore } from '../state/connection-store';
+import { useTxStore } from '../state/tx-store';
+
+function frameBytes(source: number, bins: number[], scope: number[], muted = false): ArrayBuffer {
+  const buf = new ArrayBuffer(8 + bins.length + scope.length + 2);
+  const dv = new DataView(buf);
+  dv.setUint8(0, 0x3e);
+  dv.setUint8(1, source);
+  dv.setUint8(2, muted ? 1 : 0);
+  dv.setUint16(3, 8000, true);
+  dv.setUint8(5, bins.length);
+  dv.setUint16(6, scope.length, true);
+  bins.forEach((b, i) => dv.setUint8(8 + i, b));
+  scope.forEach((v, i) => dv.setInt8(8 + bins.length + i, v));
+  dv.setInt8(8 + bins.length + scope.length, -9);
+  dv.setInt8(8 + bins.length + scope.length + 1, -6);
+  return buf;
+}
+
+describe('AF analysis frames', () => {
+  it('decode header, bins, scope and levels', () => {
+    const f = parseAfFrame(frameBytes(1, [0, 128, 255], [-127, 0, 127], true), 42)!;
+    expect(f.source).toBe(1);
+    expect(f.muted).toBe(true);
+    expect(f.rateHz).toBe(8000);
+    expect(Array.from(f.bins)).toEqual([0, 128, 255]);
+    expect(Array.from(f.scope)).toEqual([-127, 0, 127]);
+    expect(f.rmsDbfs).toBe(-9);
+    expect(f.peakDbfs).toBe(-6);
+    expect(f.at).toBe(42);
+  });
+
+  it('reject truncated or foreign frames', () => {
+    expect(parseAfFrame(new ArrayBuffer(4))).toBeNull();
+    const b = frameBytes(0, [1, 2], [0]);
+    new DataView(b).setUint8(0, 0x19);
+    expect(parseAfFrame(b)).toBeNull();
+  });
+
+  it('maps bytes back to dBFS', () => {
+    expect(binDb(0)).toBe(-120);
+    expect(binDb(255)).toBe(0);
+  });
+
+  it('finds a CW tone between bins and ignores noise', () => {
+    // 128 bins over 0..4 kHz = 31.25 Hz/bin; a tone at bin ~20.5 (≈640 Hz).
+    const bins = new Array(128).fill(40);
+    bins[20] = 220;
+    bins[21] = 220;
+    const f = { rateHz: 8000, bins: Uint8Array.from(bins) } as unknown as AfFrame;
+    const hz = peakFrequencyHz(f, 300, 900)!;
+    expect(hz).toBeGreaterThan(630);
+    expect(hz).toBeLessThan(660);
+    const flat = { rateHz: 8000, bins: Uint8Array.from(new Array(128).fill(40)) } as unknown as AfFrame;
+    expect(peakFrequencyHz(flat, 300, 900)).toBeNull();
+  });
+});
+
+describe('AF view helpers', () => {
+  it('audio edges come from the signed filter, clamped to 0..4 kHz', () => {
+    expect(audioEdges(-2900, -100)).toEqual([100, 2900]);
+    expect(audioEdges(150, 2850)).toEqual([150, 2850]);
+    expect(audioEdges(0, 6000)).toEqual([0, 4000]);
+  });
+
+  it('the scope triggers on a rising zero crossing', () => {
+    expect(scopeTrigger(Int8Array.from([5, 3, -2, -4, 1, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))).toBe(4);
+    expect(scopeTrigger(Int8Array.from([1, 1, 1, 1]))).toBe(0);
+  });
+});
+
+describe('view list per mode', () => {
+  it('CW pitch exists only in CW, and the choice falls back without being lost', () => {
+    expect(viewsFor('LSB')).not.toContain('cw');
+    expect(viewsFor('CWU')).toContain('cw');
+    expect(effectiveView('cw', 'LSB')).toBe('aspec');
+    expect(effectiveView('cw', 'CWL')).toBe('cw');
+    expect(stepView('lvl', 'USB', 1)).toBe('pass');
+    expect(stepView('pass', 'USB', -1)).toBe('lvl');
+    expect(stepView('awf', 'CWU', 1)).toBe('cw');
+  });
+});
+
+describe('lease and filter display', () => {
+  let mounted: RenderResult | null = null;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    void init;
+    if (url === '/api/ui/filter-view' && !init) return new Response('{}');
+    return new Response('{"leaseSeconds":6}');
+  });
+  const posts = (url: string) =>
+    fetchMock.mock.calls.filter(([u, i]) => u === url && (i as RequestInit | undefined)?.method === 'POST');
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockClear();
+    localStorage.clear();
+    useFilterViewStore.setState({ views: {}, hydrated: true });
+    useConnectionStore.setState({ mode: 'LSB', filterLowHz: -2900, filterHighHz: -100, cwPitchHz: 600 } as never);
+    useTxStore.setState({ moxOn: false } as never);
+  });
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = null;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('one renewal covers every source; the last release stops it', () => {
+    const a = acquireAfLease(0);
+    const b = acquireAfLease(0);
+    const c = acquireAfLease(1);
+    const last = JSON.parse(posts('/api/audio-analysis/subscribe').at(-1)![1]!.body as string);
+    expect(last.sources.sort()).toEqual([0, 1]);
+    a();
+    b();
+    c();
+    fetchMock.mockClear();
+    vi.advanceTimersByTime(5000);
+    expect(posts('/api/audio-analysis/subscribe')).toHaveLength(0);
+  });
+
+  it('shows the passband by default, and the chip switches to an audio view', async () => {
+    await act(async () => {
+      mounted = render(
+        createElement(FilterDisplay, { receiver: 'A', children: createElement('div', { 'data-testid': 'pan' }) }),
+      );
+    });
+    const q = (s: string) => mounted!.container.querySelector(s);
+    expect(q('[data-testid="pan"]')).not.toBeNull();
+    expect(posts('/api/audio-analysis/subscribe')).toHaveLength(0); // passband needs no feed
+
+    await act(async () => (q('.fv-chip') as HTMLButtonElement).click());
+    const items = Array.from(mounted!.container.querySelectorAll('.fv-item')) as HTMLButtonElement[];
+    expect(items.find((b) => b.textContent?.includes('CW pitch'))!.disabled).toBe(true); // LSB
+    await act(async () => items.find((b) => b.textContent?.includes('Audio spectrum'))!.click());
+
+    expect(q('[data-testid="af-view-aspec"]')).not.toBeNull();
+    expect(useFilterViewStore.getState().views[0]).toBe('aspec');
+    const body = JSON.parse(posts('/api/audio-analysis/subscribe').at(-1)![1]!.body as string);
+    expect(body.sources).toEqual([0]);
+    expect(posts('/api/ui/filter-view')).toHaveLength(1); // remembered on the radio
+  });
+
+  it('keyed, the audio view follows the TX mic and says so', async () => {
+    useFilterViewStore.setState({ views: { 0: 'scope' } });
+    useTxStore.setState({ moxOn: true } as never);
+    await act(async () => {
+      mounted = render(createElement(FilterDisplay, { receiver: 'A', children: null }));
+    });
+    expect(mounted!.container.querySelector('.fv-tx')?.textContent).toBe('TX');
+    const body = JSON.parse(posts('/api/audio-analysis/subscribe').at(-1)![1]!.body as string);
+    expect(body.sources).toEqual([AF_TX_SOURCE]);
+  });
+
+  it('the wheel over the page dots steps the view', async () => {
+    await act(async () => {
+      mounted = render(createElement(FilterDisplay, { receiver: 'A', children: null }));
+    });
+    const dots = mounted!.container.querySelector('.fv-dots')!;
+    await act(async () => {
+      dots.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
+    });
+    expect(useFilterViewStore.getState().views[0]).toBe('aspec');
+  });
+});

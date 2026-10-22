@@ -61,6 +61,18 @@ public static class UiPrefsEndpoints
     // hand-edited) reads back as ×1.
     internal static readonly double[] WfSpeedFactors = { 0.5, 1.0, 2.0, 4.0 };
 
+    private static string FilterViewPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-filter-view.json");
+    }
+
+    /// <summary>The filter card's display views; anything else reads as the passband.</summary>
+    internal static readonly string[] FilterViews = { "pass", "aspec", "scope", "awf", "cw", "lvl" };
+
+    internal static string NormalizeFilterView(string? view) =>
+        view is not null && Array.IndexOf(FilterViews, view) >= 0 ? view : "pass";
+
     internal static double NormalizeWfSpeedFactor(double factor)
     {
         foreach (var f in WfSpeedFactors)
@@ -192,6 +204,49 @@ public static class UiPrefsEndpoints
             }
         });
 
+        // Filter card display view, per receiver (Passband / Audio spectrum /
+        // Scope / Audio waterfall / CW pitch / Levels). Server-side for the same
+        // reason as wf-speed: the kiosk's browser profile is throwaway.
+        app.MapGet("/api/ui/filter-view", () =>
+        {
+            try
+            {
+                var path = FilterViewPath();
+                if (!File.Exists(path)) return Results.Ok(new Dictionary<string, string>());
+                var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+                    File.ReadAllText(path)) ?? new Dictionary<string, string>();
+                var clean = new Dictionary<string, string>();
+                foreach (var kv in map) clean[kv.Key] = NormalizeFilterView(kv.Value);
+                return Results.Ok(clean);
+            }
+            catch { return Results.Ok(new Dictionary<string, string>()); }
+        });
+        app.MapPost("/api/ui/filter-view", (FilterViewRequest req) =>
+        {
+            var view = NormalizeFilterView(req.View);
+            try
+            {
+                var path = FilterViewPath();
+                Dictionary<string, string> map;
+                try
+                {
+                    map = File.Exists(path)
+                        ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+                              File.ReadAllText(path)) ?? new()
+                        : new();
+                }
+                catch { map = new(); }
+                map[req.Rx.ToString()] = view;
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(map));
+                return Results.Ok(new { rx = req.Rx, view });
+            }
+            catch (Exception)
+            {
+                return Results.Ok(new { rx = req.Rx, view, persisted = false });
+            }
+        });
+
         // Display effects level, radio-wide. Server-side for the same reason
         // as spec-frac and wf-speed: the kiosk's browser profile is throwaway.
         // GET answers level:null until an operator has chosen one, so the
@@ -311,6 +366,8 @@ public sealed record SpecFracRequest(int Rx, double Frac);
 public sealed record FlagScaleRequest(double Scale);
 
 public sealed record WfSpeedRequest(int Rx, double Factor);
+
+public sealed record FilterViewRequest(int Rx, string? View);
 
 public sealed record EffectsRequest(string? Level);
 }

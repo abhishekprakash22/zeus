@@ -1575,6 +1575,13 @@ public class DspPipelineService : BackgroundService,
     // FreeDV owner would turn an RX1 USB over into FreeDV tones.
     private volatile bool _freeDvTxMode;
 
+    /// <summary>
+    /// AF analysis for the filter card's audio views (set after the host is
+    /// built). Fed each receiver's own final audio before the mix; a no-op
+    /// unless a client holds a lease.
+    /// </summary>
+    public AfAnalysisService? AfAnalysis { get; set; }
+
     /// <summary>True while RX1 (whose mode drives the TXA modulator) is in FreeDV.</summary>
     public bool FreeDvTxMode => _freeDvTxMode;
 
@@ -7650,6 +7657,10 @@ public class DspPipelineService : BackgroundService,
         if (IsReceiverMuted(state, 0) && audioSampleCount > 0)
             audioBuf.AsSpan(0, audioSampleCount).Clear();
 
+        // Filter card audio views: RX1's own final audio (decoded, muted as heard).
+        if (audioSampleCount > 0)
+            AfAnalysis?.Feed(0, audioBuf.AsSpan(0, audioSampleCount));
+
         // Secondary-receiver audio. Per-receiver mute is the sole audibility
         // control (Thetis chkMUT, the #894 model): every enabled secondary is
         // mixed into the RX1-clocked output bus, and muting a receiver — RX1
@@ -7735,7 +7746,10 @@ public class DspPipelineService : BackgroundService,
             // but excluded from the mix entirely — it must neither add signal nor
             // count toward the MixRxAudioN divisor (which would attenuate the
             // receivers you can still hear).
-            if (IsReceiverMuted(state, ri)) continue;
+            bool secMuted = IsReceiverMuted(state, ri);
+            // Filter card audio views: this receiver's own final audio.
+            if (n > 0) AfAnalysis?.Feed(ri, sec.AudioBuf.AsSpan(0, n), secMuted);
+            if (secMuted) continue;
             _mixSlices[mixSliceCount++] = new RxAudioSlice(sec.AudioBuf, n);
         }
 

@@ -143,6 +143,7 @@ export function FilterDisplay({ receiver, children }: { receiver: ReceiverKey; c
             filterHighHz={highHz}
             cwPitchHz={cwPitchHz}
             agcReferred={!tx && (mode ?? '').toUpperCase() !== 'FREEDV'}
+            mode={mode}
           />
         </div>
       ) : (

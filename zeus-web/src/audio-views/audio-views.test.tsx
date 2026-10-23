@@ -17,7 +17,7 @@ import {
   type AfFrame,
 } from './af-analysis';
 import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
-import { audioEdges, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
+import { audioAxis, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
 import { FilterDisplay } from './FilterDisplay';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -147,6 +147,29 @@ describe('scope gain and spectrum smoothing', () => {
     const f = parseAfFrame(buf)!;
     expect(f.bins.length).toBe(300);
     expect(f.scopeScale).toBeCloseTo(0.01, 5);
+  });
+});
+
+describe('audio axis follows the passband', () => {
+  it('lower-sideband modes are mirrored so traces line up with their stations', () => {
+    expect(audioAxis('LSB', -2850, -150, false).mirror).toBe(true);
+    expect(audioAxis('CWL', -850, -350, false).mirror).toBe(true);
+    expect(audioAxis('DIGL', -3000, -100, false).mirror).toBe(true);
+    expect(audioAxis('USB', 150, 2850, false).mirror).toBe(false);
+    expect(audioAxis('LSB', -2850, -150, true).mirror).toBe(false); // TX audio is plain
+  });
+
+  it('the span fits the filter with a margin instead of a fixed 4 kHz', () => {
+    expect(audioAxis('LSB', -2850, -150, false).spanHz).toBe(3100);
+    expect(audioAxis('CWU', 350, 850, false).spanHz).toBe(1100);
+    expect(audioAxis('USB', 0, 6000, false).spanHz).toBe(4000);
+    expect(audioAxis('USB', 0, 6000, true).spanHz).toBe(4000);
+  });
+
+  it('places 0 Hz on the right when mirrored (next to the dial in LSB)', () => {
+    expect(audioX(0, 300, 3000, true)).toBe(300);
+    expect(audioX(3000, 300, 3000, true)).toBe(0);
+    expect(audioX(1000, 300, 3000, false)).toBe(100);
   });
 });
 

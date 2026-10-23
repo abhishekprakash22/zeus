@@ -31,6 +31,8 @@ export type AfViewProps = {
   filterLowHz: number;
   filterHighHz: number;
   cwPitchHz: number;
+  /** The receiver's mode — lower-sideband modes draw the audio axis mirrored. */
+  mode?: string;
   /**
    * Draw the spectrum referred to the receiver INPUT — the audio bins minus the
    * receiver's live AGC gain — so the noise floor stays put instead of rising
@@ -131,6 +133,38 @@ export function audioEdges(lowHz: number, highHz: number): [number, number] {
   return [Math.max(0, Math.min(a, b)), Math.min(4000, Math.max(a, b))];
 }
 
+const LOWER_SIDEBAND = new Set(['LSB', 'CWL', 'DIGL']);
+
+/**
+ * The audio axis, laid out to sit beside the RF passband it came from:
+ * - span: the filter's audio width plus a small margin (not a fixed 0..4 kHz,
+ *   which left a 2.7 kHz filter in two thirds of the display);
+ * - mirror: in lower-sideband modes audio pitch runs OPPOSITE to RF (a station
+ *   near the dial is a low tone), so 0 Hz is drawn at the RIGHT — each trace
+ *   then lines up with its station in the panadapter's passband.
+ * TX audio keeps a plain 0..4 kHz. Pure; exported for tests.
+ */
+export function audioAxis(
+  mode: string | undefined,
+  filterLowHz: number,
+  filterHighHz: number,
+  tx: boolean,
+): { spanHz: number; mirror: boolean } {
+  if (tx) return { spanHz: 4000, mirror: false };
+  const [, hi] = audioEdges(filterLowHz, filterHighHz);
+  const span = Math.round(hi + Math.max(250, hi * 0.08));
+  return {
+    spanHz: Math.max(1000, Math.min(4000, span)),
+    mirror: LOWER_SIDEBAND.has((mode ?? '').toUpperCase()),
+  };
+}
+
+/** x (canvas px) of an audio frequency on that axis. */
+export function audioX(hz: number, width: number, spanHz: number, mirror: boolean): number {
+  const t = hz / spanHz;
+  return (mirror ? 1 - t : t) * width;
+}
+
 /** Rising zero crossing in the first half of the scope buffer (0 when none). */
 export function scopeTrigger(scope: Int8Array): number {
   const half = scope.length >> 1;
@@ -177,10 +211,14 @@ export function AfView(props: AfViewProps) {
         canvas.width = W;
         canvas.height = H;
       }
-      if (wf.width !== W || wf.height !== H || lastView !== p.view) {
+      // Old waterfall rows are drawn on the old axis: clear them when the view,
+      // the span or the mirroring changes (mode or filter change).
+      const axisNow = audioAxis(p.mode, p.filterLowHz, p.filterHighHz, p.tx);
+      const viewKey = `${p.view}|${axisNow.spanHz}|${axisNow.mirror ? 'm' : 'n'}`;
+      if (wf.width !== W || wf.height !== H || lastView !== viewKey) {
         wf.width = W;
         wf.height = H;
-        lastView = p.view;
+        lastView = viewKey;
         const wctx = wf.getContext('2d');
         if (wctx) {
           wctx.fillStyle = colours.bg;
@@ -227,26 +265,30 @@ export function AfView(props: AfViewProps) {
       const [dbLo, dbTop] = displayRangeDb(floorDb, strongest, topDb, TOP_DECAY_DB_PER_S * dt);
       topDb = dbTop;
       const RANGE_DB = Math.max(1, dbTop - dbLo);
-      const fx = (hz: number) => (hz / (f.rateHz / 2)) * W;
+      const axis = audioAxis(p.mode, p.filterLowHz, p.filterHighHz, p.tx);
+      const fx = (hz: number) => audioX(hz, W, axis.spanHz, axis.mirror);
+      const visibleBins = Math.min(f.bins.length, Math.ceil(axis.spanHz / hzPerBin) + 1);
       const yOf = (db: number) => H - ((db - dbLo) / RANGE_DB) * H;
+      const tickHz = axis.spanHz > 2000 ? 1000 : 500;
+      const tickLabel = (hz: number) => (hz % 1000 === 0 ? `${hz / 1000}k` : `${(hz / 1000).toFixed(1)}k`);
       const grid = () => {
         ctx.strokeStyle = colours.grid;
         ctx.lineWidth = 1;
-        for (let k = 1; k < 4; k++) {
-          const x = fx(k * 1000);
+        for (let hz = tickHz; hz < axis.spanHz; hz += tickHz) {
+          const x = fx(hz);
           ctx.beginPath();
           ctx.moveTo(x, 0);
           ctx.lineTo(x, H);
           ctx.stroke();
           ctx.fillStyle = colours.ink;
-          ctx.fillText(`${k}k`, x + 3 * dpr, H - 4 * dpr);
+          ctx.fillText(tickLabel(hz), x + 3 * dpr, H - 4 * dpr);
         }
       };
       const passband = () => {
         if (p.tx) return;
         const [lo, hi] = audioEdges(p.filterLowHz, p.filterHighHz);
         ctx.fillStyle = 'rgba(74,163,223,0.10)';
-        ctx.fillRect(fx(lo), 0, fx(hi) - fx(lo), H);
+        ctx.fillRect(Math.min(fx(lo), fx(hi)), 0, Math.abs(fx(hi) - fx(lo)), H);
         ctx.strokeStyle = 'rgba(74,163,223,0.8)';
         ctx.setLineDash([4 * dpr, 3 * dpr]);
         for (const e of [lo, hi]) {
@@ -261,19 +303,22 @@ export function AfView(props: AfViewProps) {
       if (p.view === 'aspec') {
         grid();
         passband();
-        const n = sm.length;
+        const n = visibleBins;
+        const x0 = fx(0);
+        let xLast = x0;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
-          const x = (i / n) * W;
+          const x = fx(i * hzPerBin);
           const y = yOf(sm[i]!);
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
+          xLast = x;
         }
         ctx.strokeStyle = traceColour;
         ctx.lineWidth = 1.3 * dpr;
         ctx.stroke();
-        ctx.lineTo(W, H);
-        ctx.lineTo(0, H);
+        ctx.lineTo(xLast, H);
+        ctx.lineTo(x0, H);
         ctx.closePath();
         ctx.globalAlpha = 0.16;
         ctx.fillStyle = traceColour;
@@ -336,20 +381,24 @@ export function AfView(props: AfViewProps) {
           const step = Math.max(1, Math.round(2 * dpr));
           wctx.drawImage(wf, 0, 0, W, H - step, 0, step, W, H - step);
           const lut = lutFor(displayColormap(useDisplaySettingsStore.getState().colormap));
-          const n = f.bins.length;
+          const n = visibleBins;
+          const binW = (W * hzPerBin) / axis.spanHz + 1;
           for (let i = 0; i < n; i++) {
             const t = Math.max(
               0,
               Math.min(255, Math.round(((binDb(f.bins[i]!) - agcOffset - dbLo) / RANGE_DB) * 255)),
             );
             wctx.fillStyle = `rgb(${lut[t * 4]},${lut[t * 4 + 1]},${lut[t * 4 + 2]})`;
-            wctx.fillRect((i / n) * W, 0, W / n + 1, step);
+            // Left edge of the bin on screen (its high-frequency side when mirrored).
+            const xa = fx(i * hzPerBin);
+            const xb = fx((i + 1) * hzPerBin);
+            wctx.fillRect(Math.min(xa, xb), 0, binW, step);
           }
         }
         ctx.drawImage(wf, 0, 0);
         passband();
         ctx.fillStyle = colours.ink0;
-        for (let k = 1; k < 4; k++) ctx.fillText(`${k}k`, fx(k * 1000) + 3 * dpr, H - 4 * dpr);
+        for (let hz = tickHz; hz < axis.spanHz; hz += tickHz) ctx.fillText(tickLabel(hz), fx(hz) + 3 * dpr, H - 4 * dpr);
       } else if (p.view === 'cw') {
         const pitch = p.cwPitchHz;
         const span = 200;

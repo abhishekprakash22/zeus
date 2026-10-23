@@ -85,6 +85,23 @@ export function displayRangeDb(floorDb: number, strongestDb: number, prevTopDb: 
   return [bottom, bottom + FIXED_SPAN_DB];
 }
 
+// Audio waterfall colour scale — its OWN, tighter than the spectrum's 70 dB
+// vertical span. Every palette keeps its bottom ~42 % at the noise colour
+// (the stretched foot that keeps a waterfall's floor dark), so mapping 70 dB
+// left an S5-S7 SSB station — 10-25 dB over the noise per 7.8 Hz bin — almost
+// black (field report). Here the floor sits just inside the foot and the
+// scale reaches full brightness AWF_SPAN_DB above it, so anything above the
+// noise starts to colour at once.
+const AWF_FLOOR_T = 0.4;
+const AWF_SPAN_DB = 30;
+
+/** Palette index (0..255) for an input-referred bin level against the tracked floor. Pure; exported for tests. */
+export function awfColourIndex(levelDb: number, floorDb: number): number {
+  if (!Number.isFinite(levelDb) || !Number.isFinite(floorDb)) return 0;
+  const t = AWF_FLOOR_T + ((levelDb - floorDb) / AWF_SPAN_DB) * (1 - AWF_FLOOR_T);
+  return Math.max(0, Math.min(255, Math.round(t * 255)));
+}
+
 /** Asymmetric floor tracking: fast down, slow up. Pure; exported for tests. */
 export function trackFloorDb(prev: number, now: number, dtS: number): number {
   if (Number.isNaN(prev)) return now;
@@ -404,10 +421,7 @@ export function AfView(props: AfViewProps) {
           const n = visibleBins;
           const binW = (W * hzPerBin) / axis.spanHz + 1;
           for (let i = 0; i < n; i++) {
-            const t = Math.max(
-              0,
-              Math.min(255, Math.round(((binDb(f.bins[i]!) - agcOffset - dbLo) / RANGE_DB) * 255)),
-            );
+            const t = awfColourIndex(binDb(f.bins[i]!) - agcOffset, floorDb);
             wctx.fillStyle = `rgb(${lut[t * 4]},${lut[t * 4 + 1]},${lut[t * 4 + 2]})`;
             // Left edge of the bin on screen (its high-frequency side when mirrored).
             const xa = fx(i * hzPerBin);

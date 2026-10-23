@@ -17,7 +17,7 @@ import {
   type AfFrame,
 } from './af-analysis';
 import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
-import { appliedAgcGainDb, audioAxis, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
+import { appliedAgcGainDb, audioAxis, awfColourIndex, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
 import { FilterDisplay } from './FilterDisplay';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -128,6 +128,19 @@ describe('scope gain and spectrum smoothing', () => {
   it('a strong signal does not move the scale (fixed span above the floor)', () => {
     expect(displayRangeDb(-90, -85, -200, 0)).toEqual([-98, -28]);
     expect(displayRangeDb(-90, -10, -200, 0)).toEqual([-98, -28]); // same noise, same place
+  });
+
+  it('the audio waterfall lights up anything above the noise', () => {
+    const floor = -120;
+    // Noise sits at the top of the palette's dark foot (index ~102 of 255)…
+    expect(awfColourIndex(floor, floor)).toBe(102);
+    // …so a modest SSB station, 15 dB over the noise per bin, is mid-palette
+    // (it used to be ~67, deep inside the dark foot), …
+    expect(awfColourIndex(floor + 15, floor)).toBeGreaterThan(170);
+    // …30 dB reaches the top, and below the floor fades to black.
+    expect(awfColourIndex(floor + 30, floor)).toBe(255);
+    expect(awfColourIndex(floor - 40, floor)).toBe(0);
+    expect(awfColourIndex(NaN, floor)).toBe(0);
   });
 
   it('turns the WDSP AGC meter into the gain actually applied', () => {

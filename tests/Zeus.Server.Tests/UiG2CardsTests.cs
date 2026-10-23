@@ -5,6 +5,10 @@
 
 using System.Text.Json;
 using Zeus.Server;
+// The request records live nested inside UiPrefsEndpoints (like the file's
+// other request records), so name them through the class.
+using G2CardBox = Zeus.Server.UiPrefsEndpoints.G2CardBox;
+using G2CardLayout = Zeus.Server.UiPrefsEndpoints.G2CardLayout;
 
 namespace Zeus.Server.Tests;
 

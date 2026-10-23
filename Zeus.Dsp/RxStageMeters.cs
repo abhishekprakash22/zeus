@@ -54,8 +54,12 @@ namespace Zeus.Dsp;
 /// <list type="bullet">
 ///   <item><c>SignalPk</c> / <c>SignalAv</c>: dBm, RXA_S_PK / RXA_S_AV</item>
 ///   <item><c>AdcPk</c> / <c>AdcAv</c>: dBFS, RXA_ADC_PK / RXA_ADC_AV</item>
-///   <item><c>AgcGain</c>: signed dB (positive = AGC is boosting),
-///         RXA_AGC_GAIN</item>
+///   <item><c>AgcGain</c>: signed dB, RXA_AGC_GAIN as WDSP reports it —
+///         20·log10(volts / out_target) (wcpAGC.c), which is the NEGATIVE of
+///         the gain applied to the audio (the audio is multiplied by
+///         out_target / volts). Quiet band noise boosted +80 dB reads −80.
+///         Consumers wanting the applied gain negate it (zeus-web
+///         audio-views/AfView.tsx appliedAgcGainDb).</item>
 ///   <item><c>AgcEnvPk</c> / <c>AgcEnvAv</c>: dBm, RXA_AGC_PK / RXA_AGC_AV</item>
 /// </list>
 ///

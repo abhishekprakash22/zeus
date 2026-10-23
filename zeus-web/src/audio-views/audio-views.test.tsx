@@ -17,7 +17,7 @@ import {
   type AfFrame,
 } from './af-analysis';
 import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
-import { audioAxis, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
+import { appliedAgcGainDb, audioAxis, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
 import { FilterDisplay } from './FilterDisplay';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -125,13 +125,27 @@ describe('scope gain and spectrum smoothing', () => {
     expect(f).toBeLessThan(-66);
   });
 
-  it('keeps the floor at the bottom and grows the top for a strong signal', () => {
-    const [lo, hi] = displayRangeDb(-90, -85, -200, 0);
-    expect(lo).toBe(-98);
-    expect(hi).toBe(-38); // at least 60 dB span
-    const [lo2, hi2] = displayRangeDb(-90, -10, -200, 0);
-    expect(lo2).toBe(-98);
-    expect(hi2).toBe(-4); // strongest + 6
+  it('a strong signal does not move the scale (fixed span above the floor)', () => {
+    expect(displayRangeDb(-90, -85, -200, 0)).toEqual([-98, -28]);
+    expect(displayRangeDb(-90, -10, -200, 0)).toEqual([-98, -28]); // same noise, same place
+  });
+
+  it('turns the WDSP AGC meter into the gain actually applied', () => {
+    expect(appliedAgcGainDb(-80)).toBe(80); // quiet band: AGC boosting hard
+    expect(appliedAgcGainDb(-20)).toBe(20); // under a signal: much less
+    expect(appliedAgcGainDb(-400)).toBe(0); // meter not run yet
+    expect(appliedAgcGainDb(NaN)).toBe(0);
+  });
+
+  it('with the right sign the floor holds still through the AGC swing', () => {
+    // Band noise of −120 dBFS-equivalent at the input, heard at two AGC states.
+    const heardQuiet = -120 + 80; // AGC +80 dB → −40 dBFS
+    const heardUnderSignal = -120 + 20; // AGC +20 dB → −100 dBFS
+    const toByte = (db: number) => Math.round(((db + 120) / 120) * 255);
+    const a = smoothBins(null, Uint8Array.from([toByte(heardQuiet)]), 0.35, appliedAgcGainDb(-80));
+    const b = smoothBins(null, Uint8Array.from([toByte(heardUnderSignal)]), 0.35, appliedAgcGainDb(-20));
+    expect(a[0]!).toBeCloseTo(-120, 0);
+    expect(b[0]!).toBeCloseTo(-120, 0);
   });
 
   it('reads the wide header and rebuilds the true scope scale', () => {

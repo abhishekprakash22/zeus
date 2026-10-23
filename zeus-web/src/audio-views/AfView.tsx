@@ -47,14 +47,14 @@ const STALE_MS = 1500;
 // (field report: ranging from the strongest bin drew a signal-free passband's
 // noise at the top). The floor — a low percentile of the bins inside the
 // passband, slowly tracked — sits FLOOR_MARGIN_DB above the bottom; the top is
-// at least MIN_SPAN_DB above the bottom and rises to clear the strongest bin.
+// a fixed FIXED_SPAN_DB above the bottom (a strong signal no longer rescales it).
 const FLOOR_PERCENTILE = 0.2;
 const FLOOR_MARGIN_DB = 8;
 // Floor tracker: follows a FALL quickly, a RISE only slowly (time constant),
 // so a voice filling the passband does not lift the floor estimate.
 const FLOOR_FALL_ALPHA = 0.3;
 const FLOOR_RISE_TC_S = 5;
-const MIN_SPAN_DB = 60;
+const FIXED_SPAN_DB = 70;
 const TOP_DECAY_DB_PER_S = 3;
 
 /**
@@ -73,11 +73,16 @@ export function noiseFloorDb(binsDb: ArrayLike<number>, hzPerBin: number, loHz: 
 
 /** The display's dB window [bottom, top] for a floor and strongest bin. Pure; exported for tests. */
 export function displayRangeDb(floorDb: number, strongestDb: number, prevTopDb: number, decayDb: number): [number, number] {
-  // Input-referred levels are not bounded by 0 dBFS, so the top is only capped
-  // well above anything real.
+  // A FIXED span above the floor. The top used to widen to clear the strongest
+  // bin, which squeezed the whole scale whenever a station appeared — the same
+  // noise then drew lower and darker, and crept back as the top decayed (field
+  // report: the floor "comes down with signals"). Stronger signals simply
+  // reach the top. (strongestDb / prevTopDb / decayDb kept for the call site.)
+  void strongestDb;
+  void prevTopDb;
+  void decayDb;
   const bottom = floorDb - FLOOR_MARGIN_DB;
-  const top = Math.max(bottom + MIN_SPAN_DB, strongestDb + 6, prevTopDb - decayDb);
-  return [bottom, Math.min(40, Math.max(top, bottom + MIN_SPAN_DB))];
+  return [bottom, bottom + FIXED_SPAN_DB];
 }
 
 /** Asymmetric floor tracking: fast down, slow up. Pure; exported for tests. */
@@ -112,12 +117,27 @@ export function smoothBins(
   return res;
 }
 
-/** The receiver's live AGC gain (dB, positive = boosting), 0 when unknown. */
+/**
+ * The gain the AGC is APPLYING to the audio (dB, positive = boosting) from
+ * WDSP's RXA_AGC_GAIN meter. That meter is 20·log10(volts / out_target)
+ * (wcpAGC.c: a->gain = a->volts * a->inv_out_target) while the audio is
+ * multiplied by out_target / volts — so the applied gain is the meter's
+ * NEGATIVE: quiet band noise boosted +80 dB reads −80 on the meter. (The
+ * first input-referred build used the meter as-is and doubled the AGC's
+ * breathing instead of removing it.) Pure; exported for tests.
+ */
+export function appliedAgcGainDb(meterDb: number): number {
+  // −400-ish = "meter has not run": treat as no compensation.
+  if (!Number.isFinite(meterDb) || meterDb < -300) return 0;
+  return -meterDb;
+}
+
+/** The receiver's applied AGC gain right now (dB), 0 when unknown. */
 function agcGainDbFor(rx: number): number {
   const m = useRxMetersStore.getState();
   const meters = rx === 0 ? m : m.byReceiver[rx];
   const g = meters?.agcGain;
-  return typeof g === 'number' && Number.isFinite(g) ? g : 0;
+  return typeof g === 'number' ? appliedAgcGainDb(g) : 0;
 }
 
 /** Scope display gain (linear) for a held peak (full-scale units). */

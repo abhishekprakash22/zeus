@@ -17,7 +17,7 @@ import {
   type AfFrame,
 } from './af-analysis';
 import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
-import { audioEdges, scopeGain, scopeTrigger, smoothBins } from './AfView';
+import { audioEdges, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
 import { FilterDisplay } from './FilterDisplay';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -103,6 +103,35 @@ describe('scope gain and spectrum smoothing', () => {
     s = smoothBins(s, Uint8Array.from([255, 255]), 0.5);
     expect(s[0]).toBeCloseTo(-60, 5);
     expect(smoothBins(s, Uint8Array.from([255, 255, 255])).length).toBe(3);
+  });
+
+  it('refers bins to the receiver input by taking the AGC gain back out', () => {
+    // Same band noise heard at two AGC gains: −40 dBFS at +40 dB, −70 at +10 dB.
+    const quietBand = smoothBins(null, Uint8Array.from([Math.round(((-40 + 120) / 120) * 255)]), 0.35, 40);
+    const underSignal = smoothBins(null, Uint8Array.from([Math.round(((-70 + 120) / 120) * 255)]), 0.35, 10);
+    expect(quietBand[0]!).toBeCloseTo(-80, 0);
+    expect(underSignal[0]!).toBeCloseTo(-80, 0); // the floor holds still
+  });
+
+  it('the floor falls fast and rises slowly', () => {
+    expect(trackFloorDb(NaN, -80, 0.016)).toBe(-80);
+    expect(trackFloorDb(-80, -100, 0.016)).toBeCloseTo(-86, 5); // 30 % of the way down at once
+    const up = trackFloorDb(-80, -60, 0.016);
+    expect(up).toBeGreaterThan(-80);
+    expect(up).toBeLessThan(-79.9); // a voice cannot lift it in one frame
+    let f = -80;
+    for (let i = 0; i < 60 * 5; i++) f = trackFloorDb(f, -60, 1 / 60);
+    expect(f).toBeGreaterThan(-74); // ~63 % after one 5 s time constant
+    expect(f).toBeLessThan(-66);
+  });
+
+  it('keeps the floor at the bottom and grows the top for a strong signal', () => {
+    const [lo, hi] = displayRangeDb(-90, -85, -200, 0);
+    expect(lo).toBe(-98);
+    expect(hi).toBe(-38); // at least 60 dB span
+    const [lo2, hi2] = displayRangeDb(-90, -10, -200, 0);
+    expect(lo2).toBe(-98);
+    expect(hi2).toBe(-4); // strongest + 6
   });
 
   it('reads the wide header and rebuilds the true scope scale', () => {

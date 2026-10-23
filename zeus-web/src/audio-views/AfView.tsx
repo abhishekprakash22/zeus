@@ -31,14 +31,60 @@ export type AfViewProps = {
   filterLowHz: number;
   filterHighHz: number;
   cwPitchHz: number;
+  /**
+   * Draw the spectrum referred to the receiver INPUT — the audio bins minus the
+   * receiver's live AGC gain — so the noise floor stays put instead of rising
+   * and falling 15-30 dB as the AGC works (it raises band noise between overs
+   * and drops it under a signal). Off for TX and FreeDV decoded speech.
+   */
+  agcReferred?: boolean;
 };
 
 const STALE_MS = 1500;
-// Spectrum / audio waterfall vertical range follows the signal: its top sits
-// a few dB over the (smoothed) strongest bin, falling slowly, and spans RANGE_DB.
-const RANGE_DB = 75;
-const TOP_MIN_DB = -60;
+// Spectrum / audio waterfall vertical range is anchored to the NOISE FLOOR
+// (field report: ranging from the strongest bin drew a signal-free passband's
+// noise at the top). The floor — a low percentile of the bins inside the
+// passband, slowly tracked — sits FLOOR_MARGIN_DB above the bottom; the top is
+// at least MIN_SPAN_DB above the bottom and rises to clear the strongest bin.
+const FLOOR_PERCENTILE = 0.2;
+const FLOOR_MARGIN_DB = 8;
+// Floor tracker: follows a FALL quickly, a RISE only slowly (time constant),
+// so a voice filling the passband does not lift the floor estimate.
+const FLOOR_FALL_ALPHA = 0.3;
+const FLOOR_RISE_TC_S = 5;
+const MIN_SPAN_DB = 60;
 const TOP_DECAY_DB_PER_S = 3;
+
+/**
+ * The noise floor of a spectrum: the given percentile of the bins between loHz
+ * and hiHz (dB). Pure; exported for tests.
+ */
+export function noiseFloorDb(binsDb: ArrayLike<number>, hzPerBin: number, loHz: number, hiHz: number, pct = FLOOR_PERCENTILE): number {
+  const lo = Math.max(0, Math.floor(loHz / hzPerBin));
+  const hi = Math.min(binsDb.length - 1, Math.ceil(hiHz / hzPerBin));
+  const vals: number[] = [];
+  for (let i = lo; i <= hi; i++) vals.push(binsDb[i]!);
+  if (vals.length === 0) return -120;
+  vals.sort((a, b) => a - b);
+  return vals[Math.min(vals.length - 1, Math.floor(vals.length * pct))]!;
+}
+
+/** The display's dB window [bottom, top] for a floor and strongest bin. Pure; exported for tests. */
+export function displayRangeDb(floorDb: number, strongestDb: number, prevTopDb: number, decayDb: number): [number, number] {
+  // Input-referred levels are not bounded by 0 dBFS, so the top is only capped
+  // well above anything real.
+  const bottom = floorDb - FLOOR_MARGIN_DB;
+  const top = Math.max(bottom + MIN_SPAN_DB, strongestDb + 6, prevTopDb - decayDb);
+  return [bottom, Math.min(40, Math.max(top, bottom + MIN_SPAN_DB))];
+}
+
+/** Asymmetric floor tracking: fast down, slow up. Pure; exported for tests. */
+export function trackFloorDb(prev: number, now: number, dtS: number): number {
+  if (Number.isNaN(prev)) return now;
+  if (now < prev) return prev + FLOOR_FALL_ALPHA * (now - prev);
+  const k = 1 - Math.exp(-Math.max(0, dtS) / FLOOR_RISE_TC_S);
+  return prev + k * (now - prev);
+}
 // Higher-resolution bins are noisier frame to frame: exponential average in dB.
 const SMOOTH_ALPHA = 0.35;
 // Scope auto-gain: the trace's peak lands at SCOPE_FILL of the half-height;
@@ -49,14 +95,27 @@ const SCOPE_DECAY_DB_PER_S = 6;
 const SCOPE_MAX_GAIN_DB = 60;
 
 /** Exponential average of a frame's bins (dB) into `prev` (new array when sizes differ). */
-export function smoothBins(prev: Float32Array | null, bins: Uint8Array, alpha = SMOOTH_ALPHA): Float32Array {
+export function smoothBins(
+  prev: Float32Array | null,
+  bins: Uint8Array,
+  alpha = SMOOTH_ALPHA,
+  offsetDb = 0,
+): Float32Array {
   const out = prev && prev.length === bins.length ? prev : null;
   const res = out ?? new Float32Array(bins.length);
   for (let i = 0; i < bins.length; i++) {
-    const db = binDb(bins[i]!);
+    const db = binDb(bins[i]!) - offsetDb;
     res[i] = out ? res[i]! + alpha * (db - res[i]!) : db;
   }
   return res;
+}
+
+/** The receiver's live AGC gain (dB, positive = boosting), 0 when unknown. */
+function agcGainDbFor(rx: number): number {
+  const m = useRxMetersStore.getState();
+  const meters = rx === 0 ? m : m.byReceiver[rx];
+  const g = meters?.agcGain;
+  return typeof g === 'number' && Number.isFinite(g) ? g : 0;
 }
 
 /** Scope display gain (linear) for a held peak (full-scale units). */
@@ -103,6 +162,7 @@ export function AfView(props: AfViewProps) {
     let smooth: Float32Array | null = null;
     let smoothAt = -1;
     let topDb = -30;
+    let floorDb = NaN;
     let hold = 0.01;
     let lastNow = 0;
 
@@ -150,15 +210,23 @@ export function AfView(props: AfViewProps) {
       }
       const dt = lastNow ? Math.min(0.25, (now - lastNow) / 1000) : 0;
       lastNow = now;
+      // Input-referred: subtract the live AGC gain so the floor holds still.
+      const agcOffset = p.agcReferred && !p.tx ? agcGainDbFor(p.rx) : 0;
       if (f.at !== smoothAt) {
         smoothAt = f.at;
-        smooth = smoothBins(smooth, f.bins);
+        smooth = smoothBins(smooth, f.bins, undefined, agcOffset);
       }
       const sm = smooth!;
       let strongest = -120;
       for (let i = 0; i < sm.length; i++) if (sm[i]! > strongest) strongest = sm[i]!;
-      topDb = Math.max(TOP_MIN_DB, Math.min(0, Math.max(strongest + 6, topDb - TOP_DECAY_DB_PER_S * dt)));
-      const dbLo = topDb - RANGE_DB;
+      // Floor from the receive passband (the whole voice band on TX).
+      const [edgeLo, edgeHi] = p.tx ? [150, 3500] : audioEdges(p.filterLowHz, p.filterHighHz);
+      const hzPerBin = f.rateHz / 2 / sm.length;
+      const floorNow = noiseFloorDb(sm, hzPerBin, edgeLo, edgeHi);
+      floorDb = trackFloorDb(floorDb, floorNow, dt);
+      const [dbLo, dbTop] = displayRangeDb(floorDb, strongest, topDb, TOP_DECAY_DB_PER_S * dt);
+      topDb = dbTop;
+      const RANGE_DB = Math.max(1, dbTop - dbLo);
       const fx = (hz: number) => (hz / (f.rateHz / 2)) * W;
       const yOf = (db: number) => H - ((db - dbLo) / RANGE_DB) * H;
       const grid = () => {
@@ -270,7 +338,10 @@ export function AfView(props: AfViewProps) {
           const lut = lutFor(displayColormap(useDisplaySettingsStore.getState().colormap));
           const n = f.bins.length;
           for (let i = 0; i < n; i++) {
-            const t = Math.max(0, Math.min(255, Math.round(((binDb(f.bins[i]!) - dbLo) / RANGE_DB) * 255)));
+            const t = Math.max(
+              0,
+              Math.min(255, Math.round(((binDb(f.bins[i]!) - agcOffset - dbLo) / RANGE_DB) * 255)),
+            );
             wctx.fillStyle = `rgb(${lut[t * 4]},${lut[t * 4 + 1]},${lut[t * 4 + 2]})`;
             wctx.fillRect((i / n) * W, 0, W / n + 1, step);
           }

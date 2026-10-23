@@ -20,7 +20,12 @@ import { useEffect } from 'react';
 
 export const MSG_TYPE_AF_ANALYSIS = 0x3e;
 export const AF_TX_SOURCE = 0xff;
-const HEADER_BYTES = 8;
+// Flags: bit0 muted, bit1 scope normalised to its peak, bit2 wide header
+// (u16 bin count; 9-byte header). Frames without bit2 use the original
+// 8-byte header (u8 bin count) — both are read.
+const FLAG_MUTED = 0x01;
+const FLAG_SCOPE_NORMALISED = 0x02;
+const FLAG_WIDE_HEADER = 0x04;
 
 export type AfFrame = {
   source: number;
@@ -28,8 +33,10 @@ export type AfFrame = {
   rateHz: number;
   /** 0..255 = −120..0 dBFS, bins evenly spaced over 0..rateHz/2. */
   bins: Uint8Array;
-  /** −127..127 = −1..+1, oldest first. */
+  /** −127..127, oldest first; multiply by scopeScale/127 for full-scale units. */
   scope: Int8Array;
+  /** Full-scale value of ±127 in the scope (the block peak when normalised, else 1). */
+  scopeScale: number;
   rmsDbfs: number;
   peakDbfs: number;
   /** performance.now() when received. */
@@ -38,21 +45,27 @@ export type AfFrame = {
 
 /** Decode one 0x3E frame (null when malformed). */
 export function parseAfFrame(buf: ArrayBuffer, now = performance.now()): AfFrame | null {
-  if (buf.byteLength < HEADER_BYTES) return null;
+  if (buf.byteLength < 8) return null;
   const dv = new DataView(buf);
   if (dv.getUint8(0) !== MSG_TYPE_AF_ANALYSIS) return null;
-  const binCount = dv.getUint8(5);
-  const scopeCount = dv.getUint16(6, true);
-  const need = HEADER_BYTES + binCount + scopeCount + 2;
+  const flags = dv.getUint8(2);
+  const wide = (flags & FLAG_WIDE_HEADER) !== 0;
+  const header = wide ? 9 : 8;
+  if (buf.byteLength < header) return null;
+  const binCount = wide ? dv.getUint16(5, true) : dv.getUint8(5);
+  const scopeCount = dv.getUint16(wide ? 7 : 6, true);
+  const need = header + binCount + scopeCount + 2;
   if (buf.byteLength < need) return null;
+  const peakDbfs = dv.getInt8(header + binCount + scopeCount + 1);
   return {
     source: dv.getUint8(1),
-    muted: (dv.getUint8(2) & 1) !== 0,
+    muted: (flags & FLAG_MUTED) !== 0,
     rateHz: dv.getUint16(3, true),
-    bins: new Uint8Array(buf.slice(HEADER_BYTES, HEADER_BYTES + binCount)),
-    scope: new Int8Array(buf.slice(HEADER_BYTES + binCount, HEADER_BYTES + binCount + scopeCount)),
-    rmsDbfs: dv.getInt8(HEADER_BYTES + binCount + scopeCount),
-    peakDbfs: dv.getInt8(HEADER_BYTES + binCount + scopeCount + 1),
+    bins: new Uint8Array(buf.slice(header, header + binCount)),
+    scope: new Int8Array(buf.slice(header + binCount, header + binCount + scopeCount)),
+    scopeScale: (flags & FLAG_SCOPE_NORMALISED) !== 0 ? Math.pow(10, peakDbfs / 20) : 1,
+    rmsDbfs: dv.getInt8(header + binCount + scopeCount),
+    peakDbfs,
     at: now,
   };
 }

@@ -15,7 +15,8 @@
 // audio view, the wheel over the page dots (Shift+wheel on the display), or
 // the G2 FILTER VIEW key. While keyed, the audio views follow the TX mic.
 
-import { useEffect, useRef, useState, type ReactNode, type WheelEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type WheelEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useConnectionStore } from '../state/connection-store';
 import {
   getReceiverFilterHighHz,
@@ -49,7 +50,42 @@ export function FilterDisplay({ receiver, children }: { receiver: ReceiverKey; c
   const hydrate = useFilterViewStore((s) => s.hydrate);
   const mox = useTxStore((s) => s.moxOn);
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const swipe = useRef<{ x: number; y: number } | null>(null);
+  const chipRef = useRef<HTMLButtonElement | null>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+
+  // The view strip floats in a portal under the chip (fixed position), so the
+  // card's own bounds can never clip it (a small filter card used to cut off
+  // CW pitch and Levels). It closes on any outside press, Escape, scroll or
+  // resize.
+  useLayoutEffect(() => {
+    if (!open || !chipRef.current) return;
+    const r = chipRef.current.getBoundingClientRect();
+    setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && (stripRef.current?.contains(t) || chipRef.current?.contains(t))) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    const dismiss = () => setOpen(false);
+    document.addEventListener('pointerdown', close, true);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      document.removeEventListener('pointerdown', close, true);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('scroll', dismiss, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     void hydrate();
@@ -113,43 +149,57 @@ export function FilterDisplay({ receiver, children }: { receiver: ReceiverKey; c
       )}
 
       <button
+        ref={chipRef}
         type="button"
         className={`fv-chip${tx ? ' fv-chip--tx' : ''}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Filter display: ${meta.label}`}
+        title={meta.label}
         onClick={() => setOpen((o) => !o)}
       >
         {tx && <span className="fv-tx">TX</span>}
         <span aria-hidden>{meta.icon}</span>
-        <span>{meta.label}</span>
-        <span aria-hidden>▾</span>
+        <span>{meta.short}</span>
+        <span aria-hidden className="fv-caret">
+          ▾
+        </span>
       </button>
 
-      {open && (
-        <div className="fv-grid" role="menu">
-          {FILTER_VIEWS.map((v) => {
-            const available = list.includes(v.id);
-            return (
-              <button
-                key={v.id}
-                type="button"
-                role="menuitemradio"
-                aria-checked={v.id === view}
-                disabled={!available}
-                className={`fv-item${v.id === view ? ' fv-item--on' : ''}`}
-                onClick={() => available && pick(v.id)}
-              >
-                <span aria-hidden className="fv-ic">
-                  {v.icon}
-                </span>
-                {v.label}
-                {!available && <span className="fv-note">CW only</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={stripRef}
+            className="fv-strip"
+            role="menu"
+            style={{ top: pos.top, right: pos.right }}
+            data-testid="filter-view-strip"
+          >
+            {FILTER_VIEWS.map((v) => {
+              const available = list.includes(v.id);
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={v.id === view}
+                  aria-label={available ? v.label : `${v.label} (CW only)`}
+                  title={available ? v.label : `${v.label} — CW modes only`}
+                  disabled={!available}
+                  className={`fv-item${v.id === view ? ' fv-item--on' : ''}`}
+                  onClick={() => available && pick(v.id)}
+                >
+                  <span aria-hidden className="fv-ic">
+                    {v.icon}
+                  </span>
+                  <span className="fv-short">{v.short}</span>
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
 
       <div className="fv-dots" onWheel={onWheelDots} aria-hidden>
         {list.map((id) => (

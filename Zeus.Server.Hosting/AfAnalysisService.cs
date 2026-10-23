@@ -17,9 +17,12 @@
 // Sources: each receiver's FINAL audio (after demod, NR, notch, FreeDV decode
 // and its own mute, before the mix) and, while keyed, the TX mic block.
 // Each is decimated 48 kHz → 8 kHz (0..4 kHz is the whole SSB/CW audio band)
-// into a 1024-sample ring; at most ~15 times a second a frame is built from
-// it — a 256-point Hann FFT (128 bins, 31.25 Hz each) and the last 512
-// samples for the scope — and broadcast as MsgType.AfAnalysis (0x3E).
+// into a 2048-sample ring; at most ~15 times a second a frame is built from
+// it — a 1024-point Hann FFT (512 bins, 7.8 Hz each — fine enough to see CW
+// pitch, carriers and voice harmonics) and the last 512 samples for the
+// scope, NORMALISED to their own peak so quiet audio still uses the full
+// 8-bit range (the true level travels as peak dBFS) — and broadcast as
+// MsgType.AfAnalysis (0x3E).
 //
 // Cost control: nothing is computed or sent unless a client holds a lease for
 // that source (POST /api/audio-analysis/subscribe, renewed every ~2 s while a
@@ -35,10 +38,10 @@ public sealed class AfAnalysisService
     public const byte TxSource = 0xFF;
     public const int OutputRateHz = 8000;
     public const int DecimationFactor = 6; // 48 kHz → 8 kHz
-    public const int FftSize = 256;
+    public const int FftSize = 1024;
     public const int BinCount = FftSize / 2;
     public const int ScopeCount = 512;
-    public const int RingSize = 1024;
+    public const int RingSize = 2048;
     public const double LeaseSeconds = 6.0;
     public const double MinIntervalMs = 66.0; // ~15 frames/s per source
     public const int MaxSources = 16;
@@ -122,8 +125,15 @@ public sealed class AfAnalysisService
         _hub?.BroadcastRaw(frame);
     }
 
-    /// <summary>Header bytes before the bins: type, source, flags, rate(2), bins(1), scope(2).</summary>
-    public const int HeaderBytes = 1 + 1 + 1 + 2 + 1 + 2;
+    // Flags byte: bit0 muted; bit1 scope normalised to its peak (scale back by
+    // peak dBFS); bit2 wide header (bin count is u16). A client that ignores
+    // bit2 would misread the frame, so it is always set from this format on.
+    public const byte FlagMuted = 0x01;
+    public const byte FlagScopeNormalised = 0x02;
+    public const byte FlagWideHeader = 0x04;
+
+    /// <summary>Header bytes before the bins: type, source, flags, rate(2), bins(2), scope(2).</summary>
+    public const int HeaderBytes = 1 + 1 + 1 + 2 + 2 + 2;
     public const int FrameBytes = HeaderBytes + BinCount + ScopeCount + 2;
 
     private static byte[] BuildFrame(byte source, SourceState st, bool muted)
@@ -131,12 +141,13 @@ public sealed class AfAnalysisService
         var f = new byte[FrameBytes];
         f[0] = (byte)Zeus.Contracts.MsgType.AfAnalysis;
         f[1] = source;
-        f[2] = (byte)(muted ? 1 : 0);
+        f[2] = (byte)((muted ? FlagMuted : 0) | FlagScopeNormalised | FlagWideHeader);
         f[3] = OutputRateHz & 0xFF;
         f[4] = OutputRateHz >> 8;
-        f[5] = BinCount;
-        f[6] = ScopeCount & 0xFF;
-        f[7] = ScopeCount >> 8;
+        f[5] = BinCount & 0xFF;
+        f[6] = BinCount >> 8;
+        f[7] = ScopeCount & 0xFF;
+        f[8] = ScopeCount >> 8;
 
         // Oldest-first copy of the newest ScopeCount samples.
         var recent = new float[ScopeCount];
@@ -157,14 +168,19 @@ public sealed class AfAnalysisService
         }
 
         double sumSq = 0, peak = 0;
+        for (int i = 0; i < ScopeCount; i++)
+        {
+            double a = Math.Abs(recent[i]);
+            sumSq += recent[i] * recent[i];
+            if (a > peak) peak = a;
+        }
+        // Scope normalised to its own peak: −60 dBFS audio still fills ±127
+        // instead of rounding to a couple of counts. Silence stays silence.
+        double norm = peak > 1e-6 ? 127.0 / peak : 0.0;
         int scopeAt = HeaderBytes + BinCount;
         for (int i = 0; i < ScopeCount; i++)
         {
-            float v = recent[i];
-            sumSq += v * v;
-            double a = Math.Abs(v);
-            if (a > peak) peak = a;
-            f[scopeAt + i] = unchecked((byte)(sbyte)Math.Clamp((int)Math.Round(v * 127.0), -127, 127));
+            f[scopeAt + i] = unchecked((byte)(sbyte)Math.Clamp((int)Math.Round(recent[i] * norm), -127, 127));
         }
         f[scopeAt + ScopeCount] = unchecked((byte)DbToSbyte(20.0 * Math.Log10(Math.Sqrt(sumSq / ScopeCount) + 1e-9)));
         f[scopeAt + ScopeCount + 1] = unchecked((byte)DbToSbyte(20.0 * Math.Log10(peak + 1e-9)));

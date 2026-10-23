@@ -34,8 +34,36 @@ export type AfViewProps = {
 };
 
 const STALE_MS = 1500;
-const DB_LO = -100;
-const DB_HI = -10;
+// Spectrum / audio waterfall vertical range follows the signal: its top sits
+// a few dB over the (smoothed) strongest bin, falling slowly, and spans RANGE_DB.
+const RANGE_DB = 75;
+const TOP_MIN_DB = -60;
+const TOP_DECAY_DB_PER_S = 3;
+// Higher-resolution bins are noisier frame to frame: exponential average in dB.
+const SMOOTH_ALPHA = 0.35;
+// Scope auto-gain: the trace's peak lands at SCOPE_FILL of the half-height;
+// the reference peak decays at SCOPE_DECAY_DB_PER_S so the gain recovers
+// after a loud burst, and never exceeds SCOPE_MAX_GAIN_DB on silence.
+const SCOPE_FILL = 0.85;
+const SCOPE_DECAY_DB_PER_S = 6;
+const SCOPE_MAX_GAIN_DB = 60;
+
+/** Exponential average of a frame's bins (dB) into `prev` (new array when sizes differ). */
+export function smoothBins(prev: Float32Array | null, bins: Uint8Array, alpha = SMOOTH_ALPHA): Float32Array {
+  const out = prev && prev.length === bins.length ? prev : null;
+  const res = out ?? new Float32Array(bins.length);
+  for (let i = 0; i < bins.length; i++) {
+    const db = binDb(bins[i]!);
+    res[i] = out ? res[i]! + alpha * (db - res[i]!) : db;
+  }
+  return res;
+}
+
+/** Scope display gain (linear) for a held peak (full-scale units). */
+export function scopeGain(holdPeak: number): number {
+  const minPeak = Math.pow(10, -SCOPE_MAX_GAIN_DB / 20) * SCOPE_FILL;
+  return SCOPE_FILL / Math.max(holdPeak, minPeak);
+}
 
 /** Audio passband edges in 0..4 kHz from a signed filter (LSB filters are negative). */
 export function audioEdges(lowHz: number, highHz: number): [number, number] {
@@ -72,6 +100,11 @@ export function AfView(props: AfViewProps) {
     const wf = document.createElement('canvas');
     let colours = { bg: '#0b1420', grid: 'rgba(255,255,255,0.08)', ink: '#9aa6b3', ink0: '#edeef1' };
     let coloursAt = 0;
+    let smooth: Float32Array | null = null;
+    let smoothAt = -1;
+    let topDb = -30;
+    let hold = 0.01;
+    let lastNow = 0;
 
     const draw = (now: number) => {
       raf = requestAnimationFrame(draw);
@@ -115,8 +148,19 @@ export function AfView(props: AfViewProps) {
         ctx.fillText('Waiting for audio…', 10 * dpr, H / 2);
         return;
       }
+      const dt = lastNow ? Math.min(0.25, (now - lastNow) / 1000) : 0;
+      lastNow = now;
+      if (f.at !== smoothAt) {
+        smoothAt = f.at;
+        smooth = smoothBins(smooth, f.bins);
+      }
+      const sm = smooth!;
+      let strongest = -120;
+      for (let i = 0; i < sm.length; i++) if (sm[i]! > strongest) strongest = sm[i]!;
+      topDb = Math.max(TOP_MIN_DB, Math.min(0, Math.max(strongest + 6, topDb - TOP_DECAY_DB_PER_S * dt)));
+      const dbLo = topDb - RANGE_DB;
       const fx = (hz: number) => (hz / (f.rateHz / 2)) * W;
-      const yOf = (db: number) => H - ((db - DB_LO) / (DB_HI - DB_LO)) * H;
+      const yOf = (db: number) => H - ((db - dbLo) / RANGE_DB) * H;
       const grid = () => {
         ctx.strokeStyle = colours.grid;
         ctx.lineWidth = 1;
@@ -149,11 +193,11 @@ export function AfView(props: AfViewProps) {
       if (p.view === 'aspec') {
         grid();
         passband();
-        const n = f.bins.length;
+        const n = sm.length;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
           const x = (i / n) * W;
-          const y = yOf(binDb(f.bins[i]!));
+          const y = yOf(sm[i]!);
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -176,21 +220,34 @@ export function AfView(props: AfViewProps) {
           ctx.lineTo(W, y);
           ctx.stroke();
         }
-        ctx.strokeStyle = 'rgba(224,80,80,0.6)';
-        ctx.setLineDash([4 * dpr, 4 * dpr]);
-        for (const fr of [0.07, 0.93]) {
-          ctx.beginPath();
-          ctx.moveTo(0, fr * H);
-          ctx.lineTo(W, fr * H);
-          ctx.stroke();
+        // Auto-gain: hold the recent peak (true full-scale units) with a slow
+        // decay, and scale so it fills SCOPE_FILL of the half-height.
+        const peakLin = Math.pow(10, f.peakDbfs / 20);
+        hold = Math.max(peakLin, hold * Math.pow(10, (-SCOPE_DECAY_DB_PER_S * dt) / 20));
+        const gain = scopeGain(hold);
+        const half = H / 2;
+        // Clip lines mark TRUE full scale (±1.0) — on screen only when the
+        // audio is loud enough for them to matter.
+        const clipY = gain * half;
+        if (clipY < half * 1.02) {
+          ctx.strokeStyle = 'rgba(224,80,80,0.6)';
+          ctx.setLineDash([4 * dpr, 4 * dpr]);
+          for (const y of [half - clipY, half + clipY]) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(W, y);
+            ctx.stroke();
+          }
+          ctx.setLineDash([]);
         }
-        ctx.setLineDash([]);
         const t0 = scopeTrigger(f.scope);
         const span = Math.min(256, f.scope.length - t0);
+        const unit = f.scopeScale / 127;
         ctx.beginPath();
         for (let i = 0; i < span; i++) {
           const x = (i / (span - 1)) * W;
-          const y = H / 2 - (f.scope[t0 + i]! / 127) * H * 0.43;
+          const v = f.scope[t0 + i]! * unit * gain;
+          const y = half - Math.max(-1.05, Math.min(1.05, v)) * half;
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -198,7 +255,12 @@ export function AfView(props: AfViewProps) {
         ctx.lineWidth = 1.4 * dpr;
         ctx.stroke();
         ctx.fillStyle = colours.ink;
-        ctx.fillText(`${Math.round((span / f.rateHz) * 1000)} ms`, 6 * dpr, 13 * dpr);
+        const gainDb = Math.round(20 * Math.log10(gain));
+        ctx.fillText(
+          `${Math.round((span / f.rateHz) * 1000)} ms · gain ${gainDb >= 0 ? '+' : ''}${gainDb} dB · peak ${f.peakDbfs} dBFS`,
+          6 * dpr,
+          13 * dpr,
+        );
       } else if (p.view === 'awf') {
         const wctx = wf.getContext('2d');
         if (wctx && f.at !== lastAt) {
@@ -208,7 +270,7 @@ export function AfView(props: AfViewProps) {
           const lut = lutFor(displayColormap(useDisplaySettingsStore.getState().colormap));
           const n = f.bins.length;
           for (let i = 0; i < n; i++) {
-            const t = Math.max(0, Math.min(255, Math.round(((binDb(f.bins[i]!) - DB_LO) / (DB_HI - DB_LO)) * 255)));
+            const t = Math.max(0, Math.min(255, Math.round(((binDb(f.bins[i]!) - dbLo) / RANGE_DB) * 255)));
             wctx.fillStyle = `rgb(${lut[t * 4]},${lut[t * 4 + 1]},${lut[t * 4 + 2]})`;
             wctx.fillRect((i / n) * W, 0, W / n + 1, step);
           }

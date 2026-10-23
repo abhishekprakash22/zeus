@@ -19,13 +19,20 @@ import { create } from 'zustand';
 
 export type FilterView = 'pass' | 'aspec' | 'scope' | 'awf' | 'cw' | 'lvl';
 
-export const FILTER_VIEWS: { id: FilterView; label: string; icon: string; cwOnly?: boolean; audio: boolean }[] = [
-  { id: 'pass', label: 'Passband', icon: '▭', audio: false },
-  { id: 'aspec', label: 'Audio spectrum', icon: '∿', audio: true },
-  { id: 'scope', label: 'Scope', icon: '⌇', audio: true },
-  { id: 'awf', label: 'Audio waterfall', icon: '▤', audio: true },
-  { id: 'cw', label: 'CW pitch', icon: '◎', cwOnly: true, audio: true },
-  { id: 'lvl', label: 'Levels', icon: '▮', audio: true },
+export const FILTER_VIEWS: {
+  id: FilterView;
+  label: string;
+  short: string;
+  icon: string;
+  cwOnly?: boolean;
+  audio: boolean;
+}[] = [
+  { id: 'pass', label: 'Passband', short: 'Pass', icon: '▭', audio: false },
+  { id: 'aspec', label: 'Audio spectrum', short: 'Spec', icon: '∿', audio: true },
+  { id: 'scope', label: 'Scope', short: 'Scope', icon: '⌇', audio: true },
+  { id: 'awf', label: 'Audio waterfall', short: 'A-WF', icon: '▤', audio: true },
+  { id: 'cw', label: 'CW pitch', short: 'CW', icon: '◎', cwOnly: true, audio: true },
+  { id: 'lvl', label: 'Levels', short: 'Lvl', icon: '▮', audio: true },
 ];
 
 const KEY = 'zeus.filterView';

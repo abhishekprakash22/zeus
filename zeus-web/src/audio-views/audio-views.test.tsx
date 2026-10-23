@@ -17,7 +17,7 @@ import {
   type AfFrame,
 } from './af-analysis';
 import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
-import { audioEdges, scopeTrigger } from './AfView';
+import { audioEdges, scopeGain, scopeTrigger, smoothBins } from './AfView';
 import { FilterDisplay } from './FilterDisplay';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -90,6 +90,37 @@ describe('AF view helpers', () => {
   });
 });
 
+describe('scope gain and spectrum smoothing', () => {
+  it('quiet audio gets gain, loud audio none, silence is capped', () => {
+    expect(20 * Math.log10(scopeGain(0.001))).toBeCloseTo(58.6, 0); // −60 dBFS peak → ~+59 dB
+    expect(scopeGain(0.85)).toBeCloseTo(1, 5);
+    expect(20 * Math.log10(scopeGain(0))).toBeCloseTo(60, 0); // capped at +60 dB
+  });
+
+  it('averages bins frame to frame and restarts on a size change', () => {
+    let s = smoothBins(null, Uint8Array.from([0, 255]));
+    expect(Array.from(s)).toEqual([-120, 0]);
+    s = smoothBins(s, Uint8Array.from([255, 255]), 0.5);
+    expect(s[0]).toBeCloseTo(-60, 5);
+    expect(smoothBins(s, Uint8Array.from([255, 255, 255])).length).toBe(3);
+  });
+
+  it('reads the wide header and rebuilds the true scope scale', () => {
+    const bins = 300;
+    const buf = new ArrayBuffer(9 + bins + 2 + 2);
+    const dv = new DataView(buf);
+    dv.setUint8(0, 0x3e);
+    dv.setUint8(2, 0x02 | 0x04);
+    dv.setUint16(3, 8000, true);
+    dv.setUint16(5, bins, true);
+    dv.setUint16(7, 2, true);
+    dv.setInt8(9 + bins + 2 + 1, -40);
+    const f = parseAfFrame(buf)!;
+    expect(f.bins.length).toBe(300);
+    expect(f.scopeScale).toBeCloseTo(0.01, 5);
+  });
+});
+
 describe('view list per mode', () => {
   it('CW pitch exists only in CW, and the choice falls back without being lost', () => {
     expect(viewsFor('LSB')).not.toContain('cw');
@@ -153,9 +184,13 @@ describe('lease and filter display', () => {
     expect(posts('/api/audio-analysis/subscribe')).toHaveLength(0); // passband needs no feed
 
     await act(async () => (q('.fv-chip') as HTMLButtonElement).click());
-    const items = Array.from(mounted!.container.querySelectorAll('.fv-item')) as HTMLButtonElement[];
-    expect(items.find((b) => b.textContent?.includes('CW pitch'))!.disabled).toBe(true); // LSB
-    await act(async () => items.find((b) => b.textContent?.includes('Audio spectrum'))!.click());
+    // The strip is portalled to <body> so the card cannot clip it — all six present.
+    const strip = document.querySelector('[data-testid="filter-view-strip"]')!;
+    const items = Array.from(strip.querySelectorAll('.fv-item')) as HTMLButtonElement[];
+    expect(items).toHaveLength(6);
+    expect(items.find((b) => b.getAttribute('aria-label')?.startsWith('CW pitch'))!.disabled).toBe(true); // LSB
+    await act(async () => items.find((b) => b.getAttribute('aria-label') === 'Audio spectrum')!.click());
+    expect(document.querySelector('[data-testid="filter-view-strip"]')).toBeNull(); // closes on pick
 
     expect(q('[data-testid="af-view-aspec"]')).not.toBeNull();
     expect(useFilterViewStore.getState().views[0]).toBe('aspec');

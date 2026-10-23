@@ -16,11 +16,11 @@
 
 ### Filter display views
 
-Each filter display (the filter card on the G2 and the ribbon's mini-panadapter) can show more than the passband. Pick a view with the **chip** in its top-right corner, which opens a grid of views; **swipe** left or right on an audio view; use the **mouse wheel over the page dots** under it (or **Shift+wheel** on the display); or put the **FLT VIEW** key on a G2 deck with ✎ (press for the next view, hold for Passband). Each receiver remembers its own view on the radio.
+Each filter display (the filter card on the G2 and the ribbon's mini-panadapter) can show more than the passband. Pick a view with the small **chip** in its top-right corner, which opens a compact row of the six views just under it; **swipe** left or right on an audio view; use the **mouse wheel over the page dots** under it (or **Shift+wheel** on the display); or put the **FLT VIEW** key on a G2 deck with ✎ (press for the next view, hold for Passband). Each receiver remembers its own view on the radio.
 
 - **Passband** — the RF spectrum around the dial with the filter edges (the classic view, and the only one where you drag filter edges).
-- **Audio spectrum** — what you actually hear, 0–4 kHz after demodulation, noise reduction and notches, with the filter's audio edges marked.
-- **Scope** — a triggered audio oscilloscope with clip lines: clipping, hum, AGC pumping and impulse noise at a glance.
+- **Audio spectrum** — what you actually hear, 0–4 kHz after demodulation, noise reduction and notches, at about 8 Hz resolution, lightly averaged and auto-ranged to the signal, with the filter's audio edges marked.
+- **Scope** — a triggered audio oscilloscope with automatic gain, so even quiet audio fills the display (the gain and true peak level are shown); the red clip lines mark real full scale and appear once the audio gets near it. Clipping, hum, AGC pumping and impulse noise show at a glance.
 - **Audio waterfall** — an audio spectrogram of the last few seconds in your waterfall palette: tones, heterodynes, CW pitch and speech energy.
 - **CW pitch** (CW modes only) — the received tone against your sidetone pitch; centre the bar to zero-beat. Leaving CW shows the audio spectrum and returning restores CW pitch.
 - **Levels** — AF level with peak hold, signal strength and AGC gain.

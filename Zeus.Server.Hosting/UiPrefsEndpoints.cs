@@ -61,6 +61,47 @@ public static class UiPrefsEndpoints
     // hand-edited) reads back as ×1.
     internal static readonly double[] WfSpeedFactors = { 0.5, 1.0, 2.0, 4.0 };
 
+    private static string G2CardsPath()
+    {
+        var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
+        return Path.Combine(dir, "ui-g2-cards.json");
+    }
+
+    internal const int MaxG2Cards = 16;
+
+    /// <summary>
+    /// Keep only sane entries: short ids, finite numbers, bounded counts. The
+    /// client clamps boxes on screen when it reads them; this only refuses junk.
+    /// </summary>
+    internal static G2CardLayout NormalizeG2Cards(G2CardLayout? layout)
+    {
+        static bool IdOk(string? id) =>
+            !string.IsNullOrWhiteSpace(id) && id.Length <= 40;
+        var boxes = new Dictionary<string, G2CardBox>();
+        if (layout?.Boxes is { } bs)
+        {
+            foreach (var kv in bs)
+            {
+                if (boxes.Count >= MaxG2Cards) break;
+                var b = kv.Value;
+                if (!IdOk(kv.Key) || b is null) continue;
+                if (!double.IsFinite(b.X) || !double.IsFinite(b.Y) || !double.IsFinite(b.W) || !double.IsFinite(b.H)) continue;
+                if (b.W <= 0 || b.H <= 0 || b.W > 20000 || b.H > 20000 || Math.Abs(b.X) > 20000 || Math.Abs(b.Y) > 20000) continue;
+                boxes[kv.Key] = b;
+            }
+        }
+        var hidden = new List<string>();
+        if (layout?.Hidden is { } hs)
+        {
+            foreach (var h in hs)
+            {
+                if (hidden.Count >= MaxG2Cards) break;
+                if (IdOk(h) && !hidden.Contains(h)) hidden.Add(h);
+            }
+        }
+        return new G2CardLayout(boxes, hidden);
+    }
+
     private static string FilterViewPath()
     {
         var dir = Path.GetDirectoryName(PrefsDbPath.Get()) ?? ".";
@@ -201,6 +242,36 @@ public static class UiPrefsEndpoints
             catch (Exception)
             {
                 return Results.Ok(new { rx = req.Rx, factor, persisted = false });
+            }
+        });
+
+        // G2 floating cards (filter, S-meter): position + size per card and the
+        // list of closed cards. Server-side: the kiosk's browser profile is
+        // throwaway, so localStorage alone forgot them on every launch.
+        app.MapGet("/api/ui/g2-cards", () =>
+        {
+            try
+            {
+                var path = G2CardsPath();
+                if (!File.Exists(path)) return Results.Ok(new G2CardLayout(new(), new()));
+                var layout = System.Text.Json.JsonSerializer.Deserialize<G2CardLayout>(File.ReadAllText(path));
+                return Results.Ok(NormalizeG2Cards(layout));
+            }
+            catch { return Results.Ok(new G2CardLayout(new(), new())); }
+        });
+        app.MapPost("/api/ui/g2-cards", (G2CardLayout req) =>
+        {
+            var layout = NormalizeG2Cards(req);
+            try
+            {
+                var path = G2CardsPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(layout));
+                return Results.Ok(layout);
+            }
+            catch (Exception)
+            {
+                return Results.Ok(layout);
             }
         });
 
@@ -368,6 +439,10 @@ public sealed record FlagScaleRequest(double Scale);
 public sealed record WfSpeedRequest(int Rx, double Factor);
 
 public sealed record FilterViewRequest(int Rx, string? View);
+
+public sealed record G2CardBox(double X, double Y, double W, double H);
+
+public sealed record G2CardLayout(Dictionary<string, G2CardBox>? Boxes, List<string>? Hidden);
 
 public sealed record EffectsRequest(string? Level);
 }

@@ -54,6 +54,15 @@ import { setReceiverMuted, setReceiver } from '../../api/client';
 import { useToolbarFavoritesStore } from '../../state/toolbar-favorites-store';
 import { useG2FlagScaleStore } from '../../state/g2-flag-scale-store';
 import { fetchServerWfSpeed, nextWfSpeed, readLocalWfSpeed, saveWfSpeed, type WfSpeedFactor } from './wf-speed';
+import {
+  G2_CARDS_EVENT,
+  getCardBox,
+  getHiddenCards,
+  hydrateCardLayout,
+  resetCardBoxes,
+  setCardBox,
+  setHiddenCards as storeHiddenCards,
+} from './g2-card-layout';
 
 const RATIO_H = 10;
 
@@ -118,22 +127,17 @@ export function G2RxStack() {
   // lives INSIDE each pane (spectrum/waterfall ratio), not between panes.
   const rx2Enabled = useConnectionStore((s) => s.rx2Enabled);
   // Removable instrument cards (field request): ✕ hides a card; a restore
-  // pill row appears top-right while anything is hidden. Session-local.
-  const [hiddenCards, setHiddenCards] = useState<string[]>(() => {
-    try {
-      const raw = localStorage.getItem('zeus.g2.hiddenCards');
-      const v = raw ? JSON.parse(raw) : [];
-      return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
-    } catch {
-      return [];
-    }
-  });
+  // pill row appears top-right while anything is hidden. Kept on the radio
+  // (g2-card-layout.ts) so a closed card stays closed across launches.
+  const [hiddenCards, setHiddenCards] = useState<string[]>(() => getHiddenCards());
+  useEffect(() => {
+    const adopt = () => setHiddenCards(getHiddenCards());
+    window.addEventListener(G2_CARDS_EVENT, adopt);
+    void hydrateCardLayout();
+    return () => window.removeEventListener(G2_CARDS_EVENT, adopt);
+  }, []);
   const persistHidden = (h: string[]) => {
-    try {
-      localStorage.setItem('zeus.g2.hiddenCards', JSON.stringify(h));
-    } catch {
-      /* best-effort */
-    }
+    storeHiddenCards(h);
     return h;
   };
   const hideCard = (id: string) =>
@@ -719,7 +723,6 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
 /** Draggable + resizable floating card. x negative = anchored from the
  *  right edge (so defaults hug top-right like the approved frame). Drag by
  *  the title strip, resize by the corner handle; session-only positions. */
-const CARD_STORE = 'zeus.g2.cards';
 
 /** Pull a stored box back into view. Finite numbers are not enough: a card
  *  dragged off the edge — or saved when the window was larger, which the 8"
@@ -746,37 +749,18 @@ function clampCardBox(
 }
 
 function readCardBox(id: string): { x: number; y: number; w: number; h: number } | null {
-  try {
-    const raw = localStorage.getItem(CARD_STORE);
-    if (!raw) return null;
-    const all = JSON.parse(raw);
-    const b = all?.[id];
-    if (!b || ![b.x, b.y, b.w, b.h].every((n: unknown) => Number.isFinite(n))) return null;
-    return clampCardBox(b);
-  } catch {
-    return null;
-  }
+  const b = getCardBox(id);
+  return b ? clampCardBox(b) : null;
 }
 
-/** Forget every stored card position. Exported so the UI can offer a way out
- *  that doesn't involve a browser console. */
+/** Forget every stored card position — here and on the radio. Exported so the
+ *  UI can offer a way out that doesn't involve a browser console. */
 export function resetCardPositions(): void {
-  try {
-    localStorage.removeItem(CARD_STORE);
-  } catch {
-    /* private mode or storage disabled — nothing to reset */
-  }
+  resetCardBoxes();
 }
 
 function writeCardBox(id: string, box: { x: number; y: number; w: number; h: number }): void {
-  try {
-    const raw = localStorage.getItem(CARD_STORE);
-    const all = raw ? JSON.parse(raw) : {};
-    all[id] = box;
-    localStorage.setItem(CARD_STORE, JSON.stringify(all));
-  } catch {
-    // best-effort
-  }
+  setCardBox(id, box);
 }
 
 function G2Card({
@@ -794,10 +778,24 @@ function G2Card({
 }) {
   const [box, setBox] = useState(() => readCardBox(storageId) ?? initial);
   const mode = useRef<null | 'move' | 'size'>(null);
+  // The radio's saved box arrives after first paint on a fresh G2 launch:
+  // adopt it unless this card was already moved in this session.
+  const touched = useRef(false);
+  useEffect(() => {
+    const adopt = () => {
+      if (touched.current || mode.current) return;
+      const b = readCardBox(storageId);
+      if (b) setBox(b);
+    };
+    window.addEventListener(G2_CARDS_EVENT, adopt);
+    void hydrateCardLayout();
+    return () => window.removeEventListener(G2_CARDS_EVENT, adopt);
+  }, [storageId]);
   const start = useRef({ px: 0, py: 0, x: 0, y: 0, w: 0, h: 0 });
 
   const begin = (m: 'move' | 'size') => (e: ReactPointerEvent) => {
     mode.current = m;
+    touched.current = true;
     start.current = { px: e.clientX, py: e.clientY, ...box };
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();

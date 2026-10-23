@@ -6068,6 +6068,52 @@ export function postUpdateApply(): Promise<{ ok: boolean; status: UpdateApplySta
   );
 }
 
+// ---- Earlier versions (RepoUpdateService.Releases.cs) ----------------------
+
+export interface ReleaseEntryDto {
+  tag: string;
+  version: string;
+  name: string | null;
+  publishedAt: string | null;
+  manifestUrl: string | null;
+  pageUrl: string | null;
+  isInstalled: boolean;
+  isOlder: boolean;
+}
+
+export interface ReleaseListDto {
+  installedVersion: string;
+  /** In-place install possible (an AppImage to replace). */
+  canInstall: boolean;
+  /** The version kept as .bak by the last update, when recorded. */
+  previousVersion: string | null;
+  canRollBack: boolean;
+  releases: ReleaseEntryDto[];
+  error: string | null;
+}
+
+export function fetchReleaseList(signal?: AbortSignal): Promise<ReleaseListDto> {
+  return jsonFetch('/api/system/update/releases', { signal }, (raw) => raw as ReleaseListDto);
+}
+
+/** Install a chosen release in place (older or newer); progress as an update. */
+export function postInstallRelease(tag: string): Promise<{ ok: boolean; status: UpdateApplyStatusDto }> {
+  return jsonFetch(
+    '/api/system/update/install',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tag }) },
+    (raw) => raw as { ok: boolean; status: UpdateApplyStatusDto },
+  );
+}
+
+/** Swap back to the version the last update replaced (no download). */
+export function postRollBack(): Promise<{ ok: boolean; status: UpdateApplyStatusDto }> {
+  return jsonFetch(
+    '/api/system/update/rollback',
+    { method: 'POST' },
+    (raw) => raw as { ok: boolean; status: UpdateApplyStatusDto },
+  );
+}
+
 export function getUpdateApplyStatus(signal?: AbortSignal): Promise<UpdateApplyStatusDto> {
   return jsonFetch('/api/system/update/apply', { signal }, (raw) => raw as UpdateApplyStatusDto);
 }

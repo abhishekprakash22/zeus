@@ -259,6 +259,10 @@ public sealed class RemoteWebRtcSession
         // able to see and smell the consequences.
         "/api/prefs/databases",
         "/api/system/update/apply",
+        // Installing an earlier release / rolling back restarts the radio on a
+        // different build — the same local-only rule as apply.
+        "/api/system/update/install",
+        "/api/system/update/rollback",
         "/api/p2app",
         "/api/fpga",
         "/api/xdma",

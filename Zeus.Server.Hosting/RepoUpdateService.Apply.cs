@@ -294,241 +294,270 @@ public sealed partial class RepoUpdateService
                 SetApply("failed", 0, version, "manifest has no downloadable asset for this platform");
                 return;
             }
-            SetApply("downloading", 0, version);
-
-            string tmpPath = appImagePath + ".next";
-            long expected = status.ReleaseAssetSizeBytes ?? -1;
-
-            // Disk-space gate BEFORE the first byte: the download needs the
-            // asset's size plus headroom (the .bak costs nothing — it's a
-            // same-filesystem rename of the existing file).
-            try
-            {
-                long need = (expected > 0 ? expected : 300L * 1024 * 1024) + 64L * 1024 * 1024;
-                var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(appImagePath)) ?? "/");
-                long free = drive.AvailableFreeSpace;
-                if (free < need)
-                {
-                    SetApply("failed", 0, version,
-                        $"not enough disk space: {free / (1024 * 1024)} MB free, " +
-                        $"{need / (1024 * 1024)} MB needed for the download");
-                    return;
-                }
-            }
-            catch
-            {
-                // If the platform can't answer, proceed — the write will fail
-                // loudly on a genuinely full disk.
-            }
-
-            var http = _httpClientFactory.CreateClient("ZeusUpdates");
-            using (var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead)
-                .ConfigureAwait(false))
-            {
-                resp.EnsureSuccessStatusCode();
-                long total = resp.Content.Headers.ContentLength ?? expected;
-                await using var src = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                await using var dst = new FileStream(
-                    tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
-                var buf = new byte[1 << 16];
-                long done = 0;
-                int n;
-                while ((n = await src.ReadAsync(buf).ConfigureAwait(false)) > 0)
-                {
-                    await dst.WriteAsync(buf.AsMemory(0, n)).ConfigureAwait(false);
-                    done += n;
-                    if (total > 0) SetApply("downloading", Math.Min(99.0, done * 100.0 / total), version);
-                }
-            }
-
-            // Digest check against the manifest (format 'sha256:<hex>' or bare hex).
-            SetApply("verifying", 100, version);
-            string? digest = status.ReleaseAssetDigest;
-            if (!string.IsNullOrWhiteSpace(digest))
-            {
-                string want = digest.Split(':').Last().Trim().ToLowerInvariant();
-                await using var f = File.OpenRead(tmpPath);
-                byte[] got = await SHA256.HashDataAsync(f).ConfigureAwait(false);
-                string gotHex = Convert.ToHexString(got).ToLowerInvariant();
-                if (!string.Equals(want, gotHex, StringComparison.Ordinal))
-                {
-                    File.Delete(tmpPath);
-                    SetApply("failed", 100, version, $"sha256 mismatch (expected {want[..12]}…, got {gotHex[..12]}…)");
-                    return;
-                }
-            }
-
-            // Exec bit, then the atomic swap — same directory, same filesystem.
-            SetApply("swapping", 100, version);
-            // CA1416: the whole apply path is Linux-only in practice (it exists
-            // because $APPIMAGE does), but the analyzer wants the platform
-            // stated in a guard it can verify.
-            if (!OperatingSystem.IsWindows())
-            {
-                File.SetUnixFileMode(tmpPath,
-                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-            }
-            // Keep the previous image as .bak (same-directory rename — free,
-            // atomic, and the running process keeps its open handle), then
-            // promote the verified download.
-            string bakPath = appImagePath + ".bak";
-            File.Move(appImagePath, bakPath, overwrite: true);
-            File.Move(tmpPath, appImagePath, overwrite: true);
-
-            // Arm the rollback: sentinel present = new instance not yet
-            // confirmed. The new build's startup deletes it (proof of life);
-            // the handoff shell rolls back if it survives the timeout.
-            string sentinel = PendingSentinelFile();
-            Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
-            File.WriteAllText(sentinel, (version ?? "") + "\n");
-
-            EnsureDesktopShortcut();
-
-            // Hand off: a detached shell waits for THIS process to release the
-            // listen port, then execs the new image with the same working dir.
-            SetApply("restarting", 100, version);
-            _log.LogInformation("self-update: swapped {Path} to v{Version}; restarting", appImagePath, version);
-
-            // ---- Twin prevention (field incident 2026-09-10) -----------------
-            // When we are a systemd unit, the new build MUST come up as the
-            // unit's main process. The plain shell below launched it as a shell
-            // child instead: this process exited 0, systemd marked the unit
-            // inactive, the real radio lived on as an orphan — and the next
-            // `systemctl restart` started a SECOND radio beside it. Two hosts,
-            // one broker room, one log. So under systemd the handoff waits for
-            // the unit to go inactive, then `systemctl start`s it; rollback
-            // stops/starts the unit the same way. (InstanceGuard is the belt to
-            // this brace: it kills any twin that still slips through.)
-            var (unit, userUnit) = DetectSystemdUnit();
-            if (unit is null)
-            {
-                // cgroup came up empty (an orphan's cgroup can lose its unit
-                // after systemd marks the unit inactive — seen 2026-09-10 on
-                // the 1.53→1.54 handoff). The installer's unit file names the
-                // AppImage in ExecStart; if it names OURS, that unit is ours.
-                (unit, userUnit) = DetectSystemdUnitFromInstaller(appImagePath);
-                if (unit is not null)
-                    _log.LogInformation("self-update: unit {Unit} found via installer unit file (cgroup gave nothing)", unit);
-                else
-                    _log.LogInformation("self-update: not under a systemd unit — cgroup: {Cgroup}", ReadCgroupRaw());
-            }
-            // Handoff transcript: the user journal is not persisted on the
-            // kiosk Pi, so a detached shell's stderr vanishes and a silent
-            // systemctl failure is undiagnosable after the fact (field
-            // incident 2026-09-11). Every step — each systemctl invocation
-            // with its exit code and output, the sentinel verdict, any
-            // fallback — is appended to a plain file beside the sentinel,
-            // one handoff per file (truncated at start).
-            string handoffLog = Path.Combine(Path.GetDirectoryName(sentinel)!, "handoff.log");
-            _log.LogInformation("self-update: handoff transcript → {Path}", handoffLog);
-
-            string supervise;
-            var argList = new List<string>();
-            if (unit is not null)
-            {
-                string ctl = userUnit ? "systemctl --user" : "systemctl";
-                _log.LogInformation("self-update: running as systemd unit {Unit} ({Scope}) — restarting through systemd", unit, userUnit ? "user" : "system");
-                // $0=image $1=sentinel $2=bak $3=unit $4=log
-                //
-                // Env bridge (field incident 2026-09-11): this shell is
-                // detached, and when the updating process is itself an orphan
-                // (prior old-style handoff) its environment lacks
-                // XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS. Then
-                // `systemctl --user` cannot reach the user manager, its
-                // `start` does nothing, the unit stays inactive(dead) while a
-                // fallback relaunch churns the radio — broker sessions flap
-                // and the remote room reads offline. Derive both from
-                // `id -u` when unset so the user bus is always reachable; the
-                // start is then VERIFIED via is-active, and only a start that
-                // provably failed falls back to a direct (orphan) launch —
-                // loudly, in the transcript — because a headless kiosk with
-                // no radio is worse than one awaiting re-supervision.
-                supervise =
-                    "LOG=\"$4\"\n" +
-                    ": > \"$LOG\"\n" +
-                    "log() { echo \"$(date '+%F %T') $*\" >> \"$LOG\"; }\n" +
-                    "[ -n \"$XDG_RUNTIME_DIR\" ] || XDG_RUNTIME_DIR=\"/run/user/$(id -u)\"\n" +
-                    "export XDG_RUNTIME_DIR\n" +
-                    "[ -n \"$DBUS_SESSION_BUS_ADDRESS\" ] || DBUS_SESSION_BUS_ADDRESS=\"unix:path=$XDG_RUNTIME_DIR/bus\"\n" +
-                    "export DBUS_SESSION_BUS_ADDRESS\n" +
-                    "log \"handoff: unit=$3 image=$0 XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR\"\n" +
-                    "i=0\n" +
-                    "while " + ctl + " is-active --quiet \"$3\" && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done\n" +
-                    "log \"old unit inactive after ${i}s\"\n" +
-                    "out=$(" + ctl + " start \"$3\" 2>&1); rc=$?\n" +
-                    "log \"start rc=$rc $out\"\n" +
-                    "j=0\n" +
-                    "while [ $j -lt 10 ] && ! " + ctl + " is-active --quiet \"$3\"; do sleep 1; j=$((j+1)); done\n" +
-                    "if " + ctl + " is-active --quiet \"$3\"; then\n" +
-                    "  log \"unit active after ${j}s — supervised start confirmed\"\n" +
-                    "else\n" +
-                    "  log \"unit NOT active — ORPHAN FALLBACK direct launch; re-supervise later with: pkill -f OpenhpsdrZeus; systemctl restart\"\n" +
-                    "  \"$0\" &\n" +
-                    "fi\n" +
-                    "i=0\n" +
-                    "while [ $i -lt 120 ]; do\n" +
-                    "  if [ ! -e \"$1\" ]; then log \"sentinel cleared after ${i}s — update confirmed\"; exit 0; fi\n" +
-                    "  sleep 1\n" +
-                    "  i=$((i+1))\n" +
-                    "done\n" +
-                    "log \"sentinel still present after 120s — ROLLBACK\"\n" +
-                    "out=$(" + ctl + " stop \"$3\" 2>&1); log \"rollback stop rc=$? $out\"\n" +
-                    "sleep 2\n" +
-                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\" && log \"bak restored\"\n" +
-                    "rm -f \"$1\"\n" +
-                    "out=$(" + ctl + " start \"$3\" 2>&1); log \"rollback start rc=$? $out\"\n";
-                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, unit, handoffLog });
-            }
-            else
-            {
-                // Supervising handoff ($0=image, $1=sentinel, $2=bak, $3=log):
-                // wait for this process to free the port, start the new image,
-                // then watch the sentinel. Removed within the timeout -> new
-                // build confirmed, supervisor exits. Still present -> the new
-                // build never came up: kill it, restore the .bak, relaunch the
-                // previous version. Same transcript as the systemd branch.
-                supervise =
-                    "LOG=\"$3\"\n" +
-                    ": > \"$LOG\"\n" +
-                    "log() { echo \"$(date '+%F %T') $*\" >> \"$LOG\"; }\n" +
-                    "log \"handoff (no systemd unit): image=$0\"\n" +
-                    "sleep 2\n" +
-                    "\"$0\" &\n" +
-                    "NEW=$!\n" +
-                    "log \"launched pid $NEW\"\n" +
-                    "i=0\n" +
-                    "while [ $i -lt 120 ]; do\n" +
-                    "  if [ ! -e \"$1\" ]; then log \"sentinel cleared after ${i}s — update confirmed\"; exit 0; fi\n" +
-                    "  sleep 1\n" +
-                    "  i=$((i+1))\n" +
-                    "done\n" +
-                    "log \"sentinel still present after 120s — ROLLBACK\"\n" +
-                    "kill $NEW 2>/dev/null\n" +
-                    "sleep 2\n" +
-                    "[ -e \"$2\" ] && mv -f \"$2\" \"$0\" && log \"bak restored\"\n" +
-                    "rm -f \"$1\"\n" +
-                    "log \"relaunching previous version\"\n" +
-                    "exec \"$0\"\n";
-                argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, handoffLog });
-            }
-            var psi = new ProcessStartInfo
-            {
-                FileName = "/bin/sh",
-                UseShellExecute = false,
-                WorkingDirectory = Path.GetDirectoryName(appImagePath) ?? "/",
-            };
-            foreach (var a in argList) psi.ArgumentList.Add(a);
-            Process.Start(psi);
-            await Task.Delay(600).ConfigureAwait(false);
-            Environment.Exit(0);
+            await InstallTargetAsync(
+                appImagePath, url, version, status.ReleaseAssetSizeBytes ?? -1,
+                status.ReleaseAssetDigest, lowerVersionFloor: false).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "self-update apply failed");
             SetApply("failed", 0, error: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Download <paramref name="url"/>, verify size/digest, swap it in as the
+    /// AppImage (the running image becomes .bak), and hand off to it under the
+    /// watchdog. Shared by update, install-a-release and (via HandOffAsync)
+    /// roll-back. Throws on failure; callers report it.
+    /// </summary>
+    private async Task InstallTargetAsync(
+        string appImagePath, string url, string? version, long expected, string? digest, bool lowerVersionFloor)
+    {
+        SetApply("downloading", 0, version);
+
+        string tmpPath = appImagePath + ".next";
+
+        // Disk-space gate BEFORE the first byte: the download needs the
+        // asset's size plus headroom (the .bak costs nothing — it's a
+        // same-filesystem rename of the existing file).
+        try
+        {
+            long need = (expected > 0 ? expected : 300L * 1024 * 1024) + 64L * 1024 * 1024;
+            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(appImagePath)) ?? "/");
+            long free = drive.AvailableFreeSpace;
+            if (free < need)
+            {
+                SetApply("failed", 0, version,
+                    $"not enough disk space: {free / (1024 * 1024)} MB free, " +
+                    $"{need / (1024 * 1024)} MB needed for the download");
+                return;
+            }
+        }
+        catch
+        {
+            // If the platform can't answer, proceed — the write will fail
+            // loudly on a genuinely full disk.
+        }
+
+        var http = _httpClientFactory.CreateClient("ZeusUpdates");
+        using (var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead)
+            .ConfigureAwait(false))
+        {
+            resp.EnsureSuccessStatusCode();
+            long total = resp.Content.Headers.ContentLength ?? expected;
+            await using var src = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            await using var dst = new FileStream(
+                tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
+            var buf = new byte[1 << 16];
+            long done = 0;
+            int n;
+            while ((n = await src.ReadAsync(buf).ConfigureAwait(false)) > 0)
+            {
+                await dst.WriteAsync(buf.AsMemory(0, n)).ConfigureAwait(false);
+                done += n;
+                if (total > 0) SetApply("downloading", Math.Min(99.0, done * 100.0 / total), version);
+            }
+        }
+
+        // Digest check against the manifest (format 'sha256:<hex>' or bare hex).
+        SetApply("verifying", 100, version);
+        if (!string.IsNullOrWhiteSpace(digest))
+        {
+            string want = digest.Split(':').Last().Trim().ToLowerInvariant();
+            await using var f = File.OpenRead(tmpPath);
+            byte[] got = await SHA256.HashDataAsync(f).ConfigureAwait(false);
+            string gotHex = Convert.ToHexString(got).ToLowerInvariant();
+            if (!string.Equals(want, gotHex, StringComparison.Ordinal))
+            {
+                File.Delete(tmpPath);
+                SetApply("failed", 100, version, $"sha256 mismatch (expected {want[..12]}…, got {gotHex[..12]}…)");
+                return;
+            }
+        }
+
+        // Exec bit, then the atomic swap — same directory, same filesystem.
+        SetApply("swapping", 100, version);
+        // CA1416: the whole apply path is Linux-only in practice (it exists
+        // because $APPIMAGE does), but the analyzer wants the platform
+        // stated in a guard it can verify.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(tmpPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+        // Keep the previous image as .bak (same-directory rename — free,
+        // atomic, and the running process keeps its open handle), then
+        // promote the verified download.
+        string bakPath = appImagePath + ".bak";
+        // The version now going into .bak — what "roll back to previous"
+        // will restore — is the one running right now.
+        string? runningVersion = NullIfEmpty(InstalledVersion());
+        File.Move(appImagePath, bakPath, overwrite: true);
+        File.Move(tmpPath, appImagePath, overwrite: true);
+        WriteBakVersion(appImagePath, runningVersion);
+        // An operator-chosen older release must not come up behind the
+        // version-floor "downgrade" wall: lower the floor to it.
+        if (lowerVersionFloor) WriteVersionFloor(version);
+
+        await HandOffAsync(appImagePath, bakPath, version).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Arm the watchdog and restart into the image now at
+    /// <paramref name="appImagePath"/>; if it never confirms, the handoff shell
+    /// restores <paramref name="bakPath"/>. Does not return (exits the process).
+    /// </summary>
+    private async Task HandOffAsync(string appImagePath, string bakPath, string? version)
+    {
+        // Arm the rollback: sentinel present = new instance not yet
+        // confirmed. The new build's startup deletes it (proof of life);
+        // the handoff shell rolls back if it survives the timeout.
+        string sentinel = PendingSentinelFile();
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        File.WriteAllText(sentinel, (version ?? "") + "\n");
+
+        EnsureDesktopShortcut();
+
+        // Hand off: a detached shell waits for THIS process to release the
+        // listen port, then execs the new image with the same working dir.
+        SetApply("restarting", 100, version);
+        _log.LogInformation("self-update: swapped {Path} to v{Version}; restarting", appImagePath, version);
+
+        // ---- Twin prevention (field incident 2026-09-10) -----------------
+        // When we are a systemd unit, the new build MUST come up as the
+        // unit's main process. The plain shell below launched it as a shell
+        // child instead: this process exited 0, systemd marked the unit
+        // inactive, the real radio lived on as an orphan — and the next
+        // `systemctl restart` started a SECOND radio beside it. Two hosts,
+        // one broker room, one log. So under systemd the handoff waits for
+        // the unit to go inactive, then `systemctl start`s it; rollback
+        // stops/starts the unit the same way. (InstanceGuard is the belt to
+        // this brace: it kills any twin that still slips through.)
+        var (unit, userUnit) = DetectSystemdUnit();
+        if (unit is null)
+        {
+            // cgroup came up empty (an orphan's cgroup can lose its unit
+            // after systemd marks the unit inactive — seen 2026-09-10 on
+            // the 1.53→1.54 handoff). The installer's unit file names the
+            // AppImage in ExecStart; if it names OURS, that unit is ours.
+            (unit, userUnit) = DetectSystemdUnitFromInstaller(appImagePath);
+            if (unit is not null)
+                _log.LogInformation("self-update: unit {Unit} found via installer unit file (cgroup gave nothing)", unit);
+            else
+                _log.LogInformation("self-update: not under a systemd unit — cgroup: {Cgroup}", ReadCgroupRaw());
+        }
+        // Handoff transcript: the user journal is not persisted on the
+        // kiosk Pi, so a detached shell's stderr vanishes and a silent
+        // systemctl failure is undiagnosable after the fact (field
+        // incident 2026-09-11). Every step — each systemctl invocation
+        // with its exit code and output, the sentinel verdict, any
+        // fallback — is appended to a plain file beside the sentinel,
+        // one handoff per file (truncated at start).
+        string handoffLog = Path.Combine(Path.GetDirectoryName(sentinel)!, "handoff.log");
+        _log.LogInformation("self-update: handoff transcript → {Path}", handoffLog);
+
+        string supervise;
+        var argList = new List<string>();
+        if (unit is not null)
+        {
+            string ctl = userUnit ? "systemctl --user" : "systemctl";
+            _log.LogInformation("self-update: running as systemd unit {Unit} ({Scope}) — restarting through systemd", unit, userUnit ? "user" : "system");
+            // $0=image $1=sentinel $2=bak $3=unit $4=log
+            //
+            // Env bridge (field incident 2026-09-11): this shell is
+            // detached, and when the updating process is itself an orphan
+            // (prior old-style handoff) its environment lacks
+            // XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS. Then
+            // `systemctl --user` cannot reach the user manager, its
+            // `start` does nothing, the unit stays inactive(dead) while a
+            // fallback relaunch churns the radio — broker sessions flap
+            // and the remote room reads offline. Derive both from
+            // `id -u` when unset so the user bus is always reachable; the
+            // start is then VERIFIED via is-active, and only a start that
+            // provably failed falls back to a direct (orphan) launch —
+            // loudly, in the transcript — because a headless kiosk with
+            // no radio is worse than one awaiting re-supervision.
+            supervise =
+                "LOG=\"$4\"\n" +
+                ": > \"$LOG\"\n" +
+                "log() { echo \"$(date '+%F %T') $*\" >> \"$LOG\"; }\n" +
+                "[ -n \"$XDG_RUNTIME_DIR\" ] || XDG_RUNTIME_DIR=\"/run/user/$(id -u)\"\n" +
+                "export XDG_RUNTIME_DIR\n" +
+                "[ -n \"$DBUS_SESSION_BUS_ADDRESS\" ] || DBUS_SESSION_BUS_ADDRESS=\"unix:path=$XDG_RUNTIME_DIR/bus\"\n" +
+                "export DBUS_SESSION_BUS_ADDRESS\n" +
+                "log \"handoff: unit=$3 image=$0 XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR\"\n" +
+                "i=0\n" +
+                "while " + ctl + " is-active --quiet \"$3\" && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done\n" +
+                "log \"old unit inactive after ${i}s\"\n" +
+                "out=$(" + ctl + " start \"$3\" 2>&1); rc=$?\n" +
+                "log \"start rc=$rc $out\"\n" +
+                "j=0\n" +
+                "while [ $j -lt 10 ] && ! " + ctl + " is-active --quiet \"$3\"; do sleep 1; j=$((j+1)); done\n" +
+                "if " + ctl + " is-active --quiet \"$3\"; then\n" +
+                "  log \"unit active after ${j}s — supervised start confirmed\"\n" +
+                "else\n" +
+                "  log \"unit NOT active — ORPHAN FALLBACK direct launch; re-supervise later with: pkill -f OpenhpsdrZeus; systemctl restart\"\n" +
+                "  \"$0\" &\n" +
+                "fi\n" +
+                "i=0\n" +
+                "while [ $i -lt 120 ]; do\n" +
+                "  if [ ! -e \"$1\" ]; then log \"sentinel cleared after ${i}s — update confirmed\"; exit 0; fi\n" +
+                "  sleep 1\n" +
+                "  i=$((i+1))\n" +
+                "done\n" +
+                "log \"sentinel still present after 120s — ROLLBACK\"\n" +
+                "out=$(" + ctl + " stop \"$3\" 2>&1); log \"rollback stop rc=$? $out\"\n" +
+                "sleep 2\n" +
+                "[ -e \"$2\" ] && mv -f \"$2\" \"$0\" && log \"bak restored\"\n" +
+                "rm -f \"$1\"\n" +
+                "out=$(" + ctl + " start \"$3\" 2>&1); log \"rollback start rc=$? $out\"\n";
+            argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, unit, handoffLog });
+        }
+        else
+        {
+            // Supervising handoff ($0=image, $1=sentinel, $2=bak, $3=log):
+            // wait for this process to free the port, start the new image,
+            // then watch the sentinel. Removed within the timeout -> new
+            // build confirmed, supervisor exits. Still present -> the new
+            // build never came up: kill it, restore the .bak, relaunch the
+            // previous version. Same transcript as the systemd branch.
+            supervise =
+                "LOG=\"$3\"\n" +
+                ": > \"$LOG\"\n" +
+                "log() { echo \"$(date '+%F %T') $*\" >> \"$LOG\"; }\n" +
+                "log \"handoff (no systemd unit): image=$0\"\n" +
+                "sleep 2\n" +
+                "\"$0\" &\n" +
+                "NEW=$!\n" +
+                "log \"launched pid $NEW\"\n" +
+                "i=0\n" +
+                "while [ $i -lt 120 ]; do\n" +
+                "  if [ ! -e \"$1\" ]; then log \"sentinel cleared after ${i}s — update confirmed\"; exit 0; fi\n" +
+                "  sleep 1\n" +
+                "  i=$((i+1))\n" +
+                "done\n" +
+                "log \"sentinel still present after 120s — ROLLBACK\"\n" +
+                "kill $NEW 2>/dev/null\n" +
+                "sleep 2\n" +
+                "[ -e \"$2\" ] && mv -f \"$2\" \"$0\" && log \"bak restored\"\n" +
+                "rm -f \"$1\"\n" +
+                "log \"relaunching previous version\"\n" +
+                "exec \"$0\"\n";
+            argList.AddRange(new[] { "-c", supervise, appImagePath, sentinel, bakPath, handoffLog });
+        }
+        var psi = new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(appImagePath) ?? "/",
+        };
+        foreach (var a in argList) psi.ArgumentList.Add(a);
+        Process.Start(psi);
+        await Task.Delay(600).ConfigureAwait(false);
+        Environment.Exit(0);
     }
 
     /// <summary>

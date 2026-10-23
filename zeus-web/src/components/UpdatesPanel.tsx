@@ -19,6 +19,7 @@ import { FpgaFlashSection } from './FpgaFlashSection';
 import { Hl2FlashSection } from './Hl2FlashSection';
 import { isRemoteMode } from '../remote/remote-client';
 import { P2AppUpdateSection } from './P2AppUpdateSection';
+import { EarlierVersionsSection } from './EarlierVersionsSection';
 import {
   fetchUpdateStatus,
   getUpdateApplyStatus,
@@ -382,6 +383,8 @@ export function UpdatesPanel() {
             Update now opens the latest installer or package for this platform. Run the downloaded
             update and restart ANAN Core to apply it.
           </div>
+
+          <EarlierVersionsSection />
         </div>
       )}
 

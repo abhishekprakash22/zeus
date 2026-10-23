@@ -342,6 +342,22 @@ public static class ZeusEndpoints
         app.MapGet("/api/system/update/apply", (RepoUpdateService svc) =>
             Results.Ok(svc.GetApplyStatus()));
 
+        // Going back: list recent releases (+ the kept previous version), install
+        // a chosen one, or swap back to the previous image. Progress is the same
+        // apply status as an update. Install/rollback are local-only.
+        app.MapGet("/api/system/update/releases", async (RepoUpdateService svc, CancellationToken ct) =>
+            Results.Ok(await svc.GetReleasesAsync(ct)));
+        app.MapPost("/api/system/update/install", (UpdateInstallRequest req, RepoUpdateService svc) =>
+        {
+            bool ok = svc.BeginInstallRelease(req.Tag);
+            return Results.Ok(new { ok, status = svc.GetApplyStatus() });
+        });
+        app.MapPost("/api/system/update/rollback", (RepoUpdateService svc) =>
+        {
+            bool ok = svc.BeginRollBackToPrevious();
+            return Results.Ok(new { ok, status = svc.GetApplyStatus() });
+        });
+
         // Native RX audio (miniaudio) — desktop-mode mute control. The
         // Mute/Unmute button in the Photino window POSTs here to silence
         // the OS playback device. NativeAudioSink is only registered in

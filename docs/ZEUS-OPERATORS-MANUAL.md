@@ -506,6 +506,13 @@ your transmitter.
 session password re-typed under an explicit warning — powering off remotely
 means nobody without physical access can switch the radio back on.
 
+**Earlier versions.** Settings → UPDATES → EARLIER VERSIONS (at the
+radio): ROLL BACK TO the version the last update replaced (kept on the
+radio — instant, offline), or SHOW EARLIER VERSIONS and INSTALL any recent
+release. Confirmed first; same verified install and watchdog as an update
+(a build that doesn't come up returns you to the previous one); no
+"newer version" lock-out afterwards.
+
 **Filter display views.** Each filter display can show Passband (classic),
 Audio spectrum, Scope, Audio waterfall, CW pitch (CW only — zero-beat aid)
 or Levels. Pick with the chip in its corner, swipe an audio view, wheel over

@@ -111,6 +111,25 @@ public class AfAnalysisServiceTests
         Assert.Equal(AfAnalysisService.TxSource, svc.LastFrame![1]);
     }
 
+    [Fact]
+    public void Long_runs_never_fault_and_the_ring_wraps_cleanly()
+    {
+        // Several ring wraps (2048 decimated samples each) with frames emitted
+        // throughout: no frame may be dropped to an exception.
+        var svc = Make();
+        svc.Subscribe(new[] { 0, 1, 255 });
+        for (int i = 0; i < 40; i++)
+        {
+            _now += TimeSpan.FromMilliseconds(100).Ticks;
+            svc.Feed(0, Sine(1000, 0.5, 4800));
+            svc.Feed(1, Sine(600, 0.2, 4800), muted: i % 2 == 0);
+            svc.FeedTx(Sine(300, 0.4, 4800));
+        }
+        Assert.Equal(0, svc.BuildFaults);
+        Assert.NotNull(svc.LastFrame);
+        Assert.Equal(AfAnalysisService.FrameBytes, svc.LastFrame!.Length);
+    }
+
     [Theory]
     [InlineData(-120.0, 0)]
     [InlineData(-60.0, 128)]

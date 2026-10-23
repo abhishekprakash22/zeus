@@ -46,6 +46,13 @@ public sealed class AfAnalysisService
     public const double MinIntervalMs = 66.0; // ~15 frames/s per source
     public const int MaxSources = 16;
 
+    // The ring must hold a whole FFT window and a whole scope snapshot.
+    static AfAnalysisService()
+    {
+        if (RingSize < FftSize || RingSize < ScopeCount)
+            throw new InvalidOperationException("AF analysis ring smaller than its FFT or scope window.");
+    }
+
     private readonly StreamingHub? _hub;
     private readonly ConcurrentDictionary<byte, long> _leaseUntilTicks = new();
     private readonly ConcurrentDictionary<byte, SourceState> _sources = new();
@@ -68,6 +75,9 @@ public sealed class AfAnalysisService
 
     /// <summary>The last frame built (tests read it; production broadcasts it).</summary>
     internal byte[]? LastFrame { get; private set; }
+
+    /// <summary>Frames dropped because building one threw (should stay 0).</summary>
+    internal int BuildFaults { get; private set; }
 
     /// <summary>Renew leases for these sources (rx indices, 0xFF = TX). Unknown values are ignored.</summary>
     public void Subscribe(IEnumerable<int> sources)
@@ -117,7 +127,17 @@ public sealed class AfAnalysisService
             if (st.Filled >= FftSize && now - st.LastEmitTicks >= TimeSpan.FromMilliseconds(MinIntervalMs).Ticks)
             {
                 st.LastEmitTicks = now;
-                frame = BuildFrame(source, st, muted);
+                // The analyser runs inside the audio tick: a fault here must
+                // never reach the audio path. Drop the frame instead.
+                try
+                {
+                    frame = BuildFrame(source, st, muted);
+                }
+                catch (Exception)
+                {
+                    frame = null;
+                    BuildFaults++;
+                }
             }
         }
         if (frame is null) return;
@@ -154,10 +174,13 @@ public sealed class AfAnalysisService
         int start = (st.Write - ScopeCount + RingSize) % RingSize;
         for (int i = 0; i < ScopeCount; i++) recent[i] = st.Ring[(start + i) % RingSize];
 
-        // Spectrum over the newest FftSize samples.
+        // Spectrum over the newest FftSize samples, read from the RING: the FFT
+        // (1024) is longer than the scope snapshot (512), so it cannot come
+        // from `recent`.
         var re = new float[FftSize];
         var im = new float[FftSize];
-        for (int i = 0; i < FftSize; i++) re[i] = recent[ScopeCount - FftSize + i] * Window[i];
+        int fftStart = (st.Write - FftSize + RingSize) % RingSize;
+        for (int i = 0; i < FftSize; i++) re[i] = st.Ring[(fftStart + i) % RingSize] * Window[i];
         Fft(re, im);
         for (int k = 0; k < BinCount; k++)
         {

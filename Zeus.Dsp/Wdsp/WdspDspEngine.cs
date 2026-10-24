@@ -2654,11 +2654,22 @@ public sealed class WdspDspEngine : IDspEngine, ITxAudioPluginHost
             if (_txaChannelId is not int txa) return;
             txaId = txa;
 
-            // v0.1 always has exactly one RXA open; take the first key. If
-            // there's no RXA (shouldn't happen in practice) the SetMox call is
-            // meaningless — bail without touching TXA so we don't desync state.
+            // The receive channel to damp for TX: the first key that is not
+            // the TX-monitor RXA. The monitor channel lives in _channels too;
+            // when it enumerated first, MOX damped the MONITOR instead of the
+            // receiver and MON went silent the moment the operator keyed
+            // (field: audioSource=tx-monitor, rms null, setMox rxa == monitor
+            // id). If there's no RXA (shouldn't happen in practice) the SetMox
+            // call is meaningless — bail without touching TXA so we don't
+            // desync state.
+            int? monitorId = _monitorChannelId;
             int? rxa = null;
-            foreach (var key in _channels.Keys) { rxa = key; break; }
+            foreach (var key in _channels.Keys)
+            {
+                if (key == monitorId) continue;
+                rxa = key;
+                break;
+            }
             if (rxa is not int r) return;
             rxaId = r;
         }

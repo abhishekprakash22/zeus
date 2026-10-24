@@ -145,6 +145,7 @@ internal sealed class SaturnSpeakerAudioSink : IRxAudioSink, IHostedService, IDi
     // state when it acts on them so there's nothing to atomicise.
     private volatile bool _refreshRequested;
     private volatile bool _drainRequested;
+    private volatile bool _monitorToRadioJack;
 
     // Set first thing in Dispose so the cross-thread signallers stop touching
     // _wake before it is disposed. See SignalWake.
@@ -169,6 +170,7 @@ internal sealed class SaturnSpeakerAudioSink : IRxAudioSink, IHostedService, IDi
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        _monitorToRadioJack = MonitorReachesRadioJack(_radio.Snapshot());
         _radio.StateChanged += OnRadioStateChanged;
         _settings.Changed += OnSettingsChanged;
         _muteState.Changed += OnMuteChanged;
@@ -218,11 +220,13 @@ internal sealed class SaturnSpeakerAudioSink : IRxAudioSink, IHostedService, IDi
             return;
         }
 
-        // Mirror the P1 sink's MOX mute: while transmitting, don't carry the
-        // operator's TX-monitor / CW sidetone out to the radio's speaker jack.
+        // While transmitting, the radio's jack carries the TX monitor when the
+        // operator has MON on (outside CW — the FPGA makes the CW sidetone on
+        // the codec itself, a second host copy would double it). With MON off,
+        // nothing goes out keyed: the frames are host CW sidetone or silence.
         // Ask the worker to drop the buffered tail (and the partial packet) so
         // RX resumes clean on unkey instead of replaying the pre-key tail.
-        if (_radio.IsMox)
+        if (_radio.IsMox && !_monitorToRadioJack)
         {
             _drainRequested = true;
             SignalWake();
@@ -252,8 +256,14 @@ internal sealed class SaturnSpeakerAudioSink : IRxAudioSink, IHostedService, IDi
         catch (ObjectDisposedException) { /* raced Dispose — nothing to wake */ }
     }
 
+    // True when keyed audio for the radio's jack is the TX monitor: MON on, not
+    // CW. Cached from state events so Publish (DSP tick thread) reads one flag.
+    internal static bool MonitorReachesRadioJack(StateDto state) =>
+        state.TxMonitorEnabled && state.Mode is not (RxMode.CWU or RxMode.CWL);
+
     private void OnRadioStateChanged(StateDto state)
     {
+        _monitorToRadioJack = MonitorReachesRadioJack(state);
         _refreshRequested = true;
         SignalWake();
     }

@@ -1,6 +1,6 @@
 ## Transmitting
 
-- **MOX** keys the radio; **TUN** emits a low-drive carrier at its own TUN power setting. **DRV** sets drive 0–100%. **MON** (amber, between TUN and PS) monitors your own processed TX audio — with MOX *off* it is a safe preview that transmits nothing; it also works over a remote link.
+- **MOX** keys the radio; **TUN** emits a low-drive carrier at its own TUN power setting. **DRV** sets drive 0–100%. **MON** (amber, between TUN and PS) monitors your own processed TX audio while you transmit — on the PC output, over a remote link, and on the radio's own headphone jack (except in CW, where the radio makes its own sidetone). With MOX *off* you hear the band as usual; to hear your TX chain without keying, use **Preview** in the Audio Suite.
 - **PA settings** (Settings → PA SETTINGS, §21): rated PA output, per-band PA gain, SWR protection, TX timeout, TX tail delay. This is the one *staged* tab — press APPLY.
 - **PA guards:** TX drops automatically when SWR reads above 2.5:1 on MOX (6:1 on TUN) for half a second, and when a transmission runs past **TX Timeout** (default 120 s). **SWR Protection** can be switched off for a bridge reading you distrust or a rough load you match through an external tuner — with it off nothing but the timeout protects the PA, and a red "PA unguarded" tag reminds you. It is a desk-only control: a remote session cannot change it.
 - **TX bandpass filter:** set your transmitted low/high edges in the TX filter panel.

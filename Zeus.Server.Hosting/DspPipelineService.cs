@@ -157,6 +157,12 @@ public class DspPipelineService : BackgroundService,
     /// safe from the request thread.</summary>
     public void SetTxMonitorMeterOnly(bool on) => _txMonitorMeterOnly = on;
 
+    /// <summary>Audible unkeyed preview (Audio Suite Preview). The MON button
+    /// is heard only while keyed; Preview is the explicit request to hear the
+    /// TX chain without keying. Single volatile write; safe from the request
+    /// thread. Self-clears whenever the monitor latch turns off.</summary>
+    public void SetTxMonitorPreview(bool on) => _txMonitorPreview = on;
+
     internal struct RxAudioLevelerState
     {
         public double GainDb;
@@ -1134,6 +1140,9 @@ public class DspPipelineService : BackgroundService,
     // request thread, read on the pipeline tick thread. Self-clears whenever the
     // monitor latch turns off (below).
     private volatile bool _txMonitorMeterOnly;
+    // Audible unkeyed preview (Audio Suite Preview). Without it a requested
+    // monitor is heard only while keyed. Same lifecycle as meter-only.
+    private volatile bool _txMonitorPreview;
     // Set by DisconnectP2Async so the next OnRadioStateChanged after a
     // fresh ConnectP2Async re-pushes every PS field regardless of equality
     // — necessary because the new WdspDspEngine instance starts with field
@@ -5002,7 +5011,10 @@ public class DspPipelineService : BackgroundService,
             // monitor turns off so a later audible Preview is never silenced by
             // a stale Auto Tune sample that ended abnormally.
             if (!s.TxMonitorEnabled)
+            {
                 _txMonitorMeterOnly = false;
+                _txMonitorPreview = false;
+            }
         }
 
         // Resync done — clear the flag so subsequent state changes use
@@ -7615,16 +7627,26 @@ public class DspPipelineService : BackgroundService,
         if (displayOnly)
             return true;
 
-        // Audio broadcast — when TX monitor is on, replace RX audio with the
-        // monitor channel's demodulated TX audio so the operator hears the
-        // chain output (post-bandpass / post-CFIR, demodulated back to mono)
-        // instead of band RX. This unifies "monitor while keyed" (Thetis MON
-        // semantics) and "preview without keying" (audio passes through the
-        // chain so VST plugins receive samples and their meters animate). RX
-        // is drained anyway so the WDSP audio ring doesn't back up — we just
-        // don't broadcast it. The VST RX seam still fires on the drained RX
-        // so RX-side plugins keep running even while monitor is on.
-        bool txMonitorOn = engine.IsTxMonitorOn;
+        // Audio broadcast — while keyed with TX monitor on, replace RX audio
+        // with the monitor channel's demodulated TX audio so the operator hears
+        // the chain output (post-bandpass / post-CFIR, demodulated back to
+        // mono) instead of band RX — Thetis MON semantics. RX is drained anyway
+        // so the WDSP audio ring doesn't back up — we just don't broadcast it.
+        // The VST RX seam still fires on the drained RX so RX-side plugins keep
+        // running even while monitor is on.
+        //
+        // Unkeyed, the MON button keeps the chain running (stage meters, VST
+        // meters) but is not heard: the operator hears the band. An audible
+        // unkeyed MON played a live mic into the headphone jack on the same
+        // codec, and any output→mic coupling closed a delayed loop (field:
+        // echo on an older-codec Saturn above about −16 dB mic gain, MON on,
+        // not transmitting). Two explicit requests still take over unkeyed:
+        // Audio Suite Preview (audible) and Auto Tune's meter-only capture
+        // (band RX silent so open speakers don't feed the mic it measures;
+        // nothing published).
+        bool txMonitorRequested = engine.IsTxMonitorOn;
+        bool txMonitorOn = txMonitorRequested
+            && (_rxAudioSuppressedForTx || _txMonitorPreview || _txMonitorMeterOnly);
         int audioSampleCount = engine.ReadAudio(channel, audioBuf);
 
         // FreeDV decodes RX1's OWN demodulated audio, here — before any
@@ -7999,10 +8021,11 @@ public class DspPipelineService : BackgroundService,
             PublishExemptAudio(in exemptFrame);
         }
 
-        if (txMonitorOn)
+        if (txMonitorRequested)
         {
-            // Drain whatever the monitor RXA produced this tick. The buffer
-            // shape matches the RX path (mono float32 @ 48 kHz) so it slots
+            // Drain whatever the monitor RXA produced this tick — always, so
+            // the ring never backs up while unkeyed (it is only HEARD when
+            // txMonitorOn: keyed, or Preview). The buffer shape matches the RX path (mono float32 @ 48 kHz) so it slots
             // into the same AudioFrame format with no front-end change. When
             // the chain is idle (no MOX, no mic) the monitor channel produces
             // silence, which is the correct behaviour for "preview mode but
@@ -8022,19 +8045,22 @@ public class DspPipelineService : BackgroundService,
                     SampleRateHz: (uint)AudioOutputRateHz,
                     SampleCount: (ushort)monCount,
                     Samples: new ReadOnlyMemory<float>(audioBuf, 0, monCount));
-                CaptureAudioDiagnostics(
-                    _txMonitorMeterOnly ? "tx-monitor-meter-only"
-                        : rxAudioMuted ? "tx-monitor-exempt" : "tx-monitor",
-                    in monFrame,
-                    finalAudioRms,
-                    finalAudioPeak,
-                    txMonitorOn,
-                    state.Squelch ?? new SquelchConfig());
+                // Unkeyed and not meter-only, the RX frame captured above stays
+                // the tick's audio diagnostic.
+                if (txMonitorOn)
+                    CaptureAudioDiagnostics(
+                        _txMonitorMeterOnly ? "tx-monitor-meter-only"
+                            : rxAudioMuted ? "tx-monitor-exempt" : "tx-monitor",
+                        in monFrame,
+                        finalAudioRms,
+                        finalAudioPeak,
+                        txMonitorOn,
+                        state.Squelch ?? new SquelchConfig());
                 // Meter-only monitor (Auto Tune): the chain ran and the stage
                 // meters animated above, but suppress the broadcast so the
                 // operator hears nothing while the sample is captured in the
                 // background. The TX-air tap below still fires (read-only).
-                if (!_txMonitorMeterOnly)
+                if (txMonitorOn && !_txMonitorMeterOnly)
                 {
                     if (rxAudioMuted)
                         PublishExemptAudio(in monFrame);

@@ -410,6 +410,9 @@ public static class ZeusEndpoints
             // monitor latch in DspPipelineService.
             bool meterOnly = body.Enabled && (body.MeterOnly ?? false);
             pipe.SetTxMonitorMeterOnly(meterOnly);
+            // Preview is the explicit unkeyed listen; the MON button is heard
+            // only while keyed (see DspPipelineService audio broadcast).
+            pipe.SetTxMonitorPreview(body.Enabled && !meterOnly);
             var state = radio.SetTxMonitor(new TxMonitorSetRequest(body.Enabled));
             return Results.Ok(new { supported = true, enabled = state.TxMonitorEnabled, meterOnly });
         }
@@ -2640,16 +2643,20 @@ public static class ZeusEndpoints
             return Results.Ok(new { reset = true });
         });
 
-        // TX Monitor — preview-path toggle (issue #106 follow-up). Engages a
+        // TX Monitor — the MON button (issue #106 follow-up). Engages a
         // parallel demod of the post-CFIR TX IQ so the operator hears the
-        // chain output at the actual TX bandwidth, with or without keying.
-        // RX audio is suppressed in the broadcast while monitor is on. The
+        // chain output at the actual TX bandwidth while keyed; unkeyed the
+        // band is heard (Audio Suite Preview is the unkeyed listen). RX audio
+        // is suppressed in the broadcast while the monitor is heard. The
         // engine call lives in DspPipelineService.UpdateState so it lands
         // alongside the rest of the TX-side seam plumbing on the next tick.
         app.MapPost("/api/tx/monitor",
-            (TxMonitorSetRequest req, RadioService r) =>
+            (TxMonitorSetRequest req, RadioService r, DspPipelineService pipe) =>
         {
             log.LogInformation("api.tx.monitor enabled={Enabled}", req.Enabled);
+            // MON is heard while keyed only — drop any audible-preview request
+            // left by Audio Suite Preview so the button means one thing.
+            pipe.SetTxMonitorPreview(false);
             return Results.Ok(r.SetTxMonitor(req));
         });
 

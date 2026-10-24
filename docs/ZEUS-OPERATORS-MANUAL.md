@@ -292,8 +292,10 @@ receiver panes, on-glass filter displays) arrives in the next releases.
 
 - **MOX** keys the radio; **TUN** emits a low-drive carrier for tuning.
 - **DRV** sets drive. **MON** (amber, between TUN and PS) lets you hear your
-  own processed TX audio — with MOX *off* it's a safe preview that transmits
-  nothing.
+  own processed TX audio while you transmit — on the PC output, over a remote
+  link, and on the radio's own headphone jack (except in CW, where the radio
+  makes its own sidetone). With MOX *off* you hear the band as usual; to hear
+  your TX chain without keying, use **Preview** in the Audio Suite.
 - **PureSignal (PS)** linearizes the PA; calibrate into a dummy load first.
   Zeus remembers whether you had PS engaged and restores it next session.
   The calibrator (PureSignal 3, WDSP 2.1) reports its own verdicts: the PS

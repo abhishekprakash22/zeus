@@ -17,7 +17,7 @@ import {
   type AfFrame,
 } from './af-analysis';
 import { effectiveView, stepView, useFilterViewStore, viewsFor } from './filter-view-store';
-import { appliedAgcGainDb, audioAxis, awfColourIndex, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
+import { FloorMemory, appliedAgcGainDb, audioAxis, awfColourIndex, audioEdges, audioX, displayRangeDb, scopeGain, scopeTrigger, smoothBins, trackFloorDb } from './AfView';
 import { FilterDisplay } from './FilterDisplay';
 import { useConnectionStore } from '../state/connection-store';
 import { useTxStore } from '../state/tx-store';
@@ -128,6 +128,21 @@ describe('scope gain and spectrum smoothing', () => {
   it('a strong signal does not move the scale (fixed span above the floor)', () => {
     expect(displayRangeDb(-90, -85, -200, 0)).toEqual([-98, -28]);
     expect(displayRangeDb(-90, -10, -200, 0)).toEqual([-98, -28]); // same noise, same place
+  });
+
+  it('each audio source keeps its own floor across key-up and unkey', () => {
+    const m = new FloorMemory();
+    let floor = m.switchTo('rx:0:ref', Number.NaN); // first view: nothing stored
+    expect(Number.isNaN(floor)).toBe(true);
+    floor = trackFloorDb(floor, -135, 0.016); // RX settles at -135
+    // Key up: the TX mic starts fresh (snaps to its own level), not at -135.
+    floor = m.switchTo('tx:255:abs', floor);
+    expect(Number.isNaN(floor)).toBe(true);
+    expect(trackFloorDb(floor, -60, 0.016)).toBe(-60);
+    // Unkey: RX gets its own floor back exactly.
+    expect(m.switchTo('rx:0:ref', -60)).toBe(-135);
+    // Next key-up: TX resumes where it was.
+    expect(m.switchTo('tx:255:abs', -135)).toBe(-60);
   });
 
   it('the audio waterfall lights up anything above the noise', () => {

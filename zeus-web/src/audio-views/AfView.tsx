@@ -102,6 +102,25 @@ export function awfColourIndex(levelDb: number, floorDb: number): number {
   return Math.max(0, Math.min(255, Math.round(t * 255)));
 }
 
+/**
+ * The tracked noise floor per audio source. switchTo stores the floor of the
+ * source being left and returns the one being entered — NaN the first time,
+ * so trackFloorDb snaps straight to the new source's level. Field report: on
+ * key-up the views moved from the input-referred RX floor (~-135) to the TX
+ * mic (~-60 dBFS), and the slow-rise tracker took seconds to climb, drawing
+ * the mic noise far too high and sinking. Exported for tests.
+ */
+export class FloorMemory {
+  key: string | null = null;
+  private readonly floors = new Map<string, number>();
+
+  switchTo(key: string, currentFloorDb: number): number {
+    if (this.key !== null && Number.isFinite(currentFloorDb)) this.floors.set(this.key, currentFloorDb);
+    this.key = key;
+    return this.floors.get(key) ?? Number.NaN;
+  }
+}
+
 /** Asymmetric floor tracking: fast down, slow up. Pure; exported for tests. */
 export function trackFloorDb(prev: number, now: number, dtS: number): number {
   if (Number.isNaN(prev)) return now;
@@ -234,6 +253,10 @@ export function AfView(props: AfViewProps) {
     let smoothAt = -1;
     let topDb = -30;
     let floorDb = NaN;
+    // One floor per audio source (RX input-referred vs TX mic dBFS sit ~70 dB
+    // apart): switching source restores that source's own floor instead of
+    // dragging the other one there through the slow rise.
+    const floors = new FloorMemory();
     let hold = 0.01;
     let lastNow = 0;
 
@@ -287,6 +310,12 @@ export function AfView(props: AfViewProps) {
       lastNow = now;
       // Input-referred: subtract the live AGC gain so the floor holds still.
       const agcOffset = p.agcReferred && !p.tx ? agcGainDbFor(p.rx) : 0;
+      const sourceKey = `${p.tx ? 'tx' : 'rx'}:${p.source}:${p.agcReferred && !p.tx ? 'ref' : 'abs'}`;
+      if (floors.key !== sourceKey) {
+        floorDb = floors.switchTo(sourceKey, floorDb);
+        smooth = null; // levels on the new source are unrelated: restart the average
+        smoothAt = -1; // and rebuild from this frame even if it is not new
+      }
       if (f.at !== smoothAt) {
         smoothAt = f.at;
         smooth = smoothBins(smooth, f.bins, undefined, agcOffset);

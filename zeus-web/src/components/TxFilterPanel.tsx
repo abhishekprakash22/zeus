@@ -26,6 +26,7 @@ import { useConnectionStore } from '../state/connection-store';
 import { DriveSlider } from './DriveSlider';
 import { TunePowerSlider } from './TunePowerSlider';
 import { MicGainSlider } from './MicGainSlider';
+import { MonLevelSlider } from './MonLevelSlider';
 import { LevelerMaxGainSlider } from './LevelerMaxGainSlider';
 
 const CUSTOM_MIN = 0;
@@ -128,6 +129,7 @@ export function TxFilterPanel() {
       <div className="tx-slider-stack">
         <MicGainSlider />
         <LevelerMaxGainSlider />
+        <MonLevelSlider />
       </div>
       {/* FILTER section — labeled explicitly now that the panel header is just
           "TX". Top border separates the bandpass row from the sliders above so

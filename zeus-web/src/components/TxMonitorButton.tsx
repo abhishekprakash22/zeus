@@ -4,13 +4,14 @@
 // Copyright (C) 2025-2026 Brian Keating (EI6LF),
 //                         Douglas J. Cerrato (KB2UKA), and contributors.
 //
-// MON — the front-panel switch for the TX monitor that has existed, fully
-// plumbed and headless, since issue #106's follow-up: POST /api/tx/monitor
-// makes the engine demodulate the post-CFIR TX IQ back to audio, so the
-// operator hears the WHOLE chain (mic → EQ → Leveler → VST → CFC → ALC →
-// bandpass) at the true TX bandwidth — with MOX on, or as a silent-key
-// preview with MOX off (VST fed, meters live). RX audio is suppressed while
-// monitoring. Session-only by discipline: resets off each connect, like MOX.
+// MON — the front-panel switch for the TX monitor, plumbed headless since
+// issue #106's follow-up: POST /api/tx/monitor makes the engine demodulate
+// the post-CFIR TX IQ back to audio, so the operator hears the WHOLE chain
+// (mic → EQ → Leveler → VST → CFC → ALC → bandpass) at the true TX bandwidth.
+// It is a RECEIVE-side preview: heard only while not transmitting (RX audio
+// muted while monitoring), so the operator can tailor TX audio with no RF on
+// the air. While keyed the monitor is not heard. Listening level = MON level.
+// Session-only by discipline: resets off each connect, like MOX.
 
 import { useState } from 'react';
 import { setTxMonitor } from '../api/client';
@@ -38,8 +39,8 @@ export function TxMonitorButton() {
       className={`btn ghost mon-toggle ${enabled ? 'engaged' : ''}`}
       title={
         enabled
-          ? 'TX monitor ON — you are hearing your own transmit chain (RX audio suppressed). Press to return to receive audio.'
-          : 'TX monitor: hear your own transmit audio through the full chain at true TX bandwidth. Works with MOX off as a preview — meters and VST run without keying.'
+          ? 'TX monitor ON — you are hearing your own transmit chain instead of receive audio (not while transmitting). Press to return to receive audio.'
+          : 'TX monitor: hear your own transmit audio through the full chain at true TX bandwidth without transmitting — receive audio is muted while it is on. Set the listening level with MON level.'
       }
       aria-pressed={enabled}
       onClick={toggle}

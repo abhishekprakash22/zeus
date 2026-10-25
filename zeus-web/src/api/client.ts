@@ -7726,11 +7726,11 @@ export async function setPsMonitor(
   );
 }
 
-// TX Monitor toggle — engages the engine's preview path. The server
-// demodulates the post-CFIR TX IQ back to mono baseband audio at the actual
-// TX bandwidth profile and substitutes it for RX audio in the AudioFrame
-// stream while monitor is on. Operator preference, not persisted across
-// sessions; defaults off on connect.
+// TX Monitor toggle — engages the engine's receive-side preview. While NOT
+// transmitting, the server demodulates the post-CFIR TX IQ back to mono
+// baseband audio at the actual TX bandwidth profile and substitutes it for RX
+// audio in the AudioFrame stream; while keyed the monitor is not heard.
+// Operator preference, not persisted across sessions; defaults off on connect.
 export async function setTxMonitor(
   enabled: boolean,
   signal?: AbortSignal,
@@ -7744,6 +7744,44 @@ export async function setTxMonitor(
       signal,
     },
     (raw) => raw as RadioStateDto,
+  );
+}
+
+// MON level — listening level for the TX monitor, attenuation only (−40..0
+// dB, default 0). Persisted on the radio; scales the heard monitor, never the
+// TX audio. GET returns the stored value + range; POST clamps server-side.
+export interface TxMonitorLevelDto {
+  db: number;
+  minDb: number;
+  maxDb: number;
+}
+
+function normalizeTxMonitorLevel(raw: unknown): TxMonitorLevelDto {
+  const r = (raw ?? {}) as { db?: unknown; minDb?: unknown; maxDb?: unknown };
+  return {
+    db: typeof r.db === 'number' ? r.db : 0,
+    minDb: typeof r.minDb === 'number' ? r.minDb : -40,
+    maxDb: typeof r.maxDb === 'number' ? r.maxDb : 0,
+  };
+}
+
+export function fetchTxMonitorLevel(signal?: AbortSignal): Promise<TxMonitorLevelDto> {
+  return jsonFetch('/api/tx/monitor-level', { signal }, normalizeTxMonitorLevel);
+}
+
+export function setTxMonitorLevel(
+  db: number,
+  signal?: AbortSignal,
+): Promise<TxMonitorLevelDto> {
+  return jsonFetch(
+    '/api/tx/monitor-level',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ db: Math.round(db) }),
+      signal,
+    },
+    normalizeTxMonitorLevel,
   );
 }
 

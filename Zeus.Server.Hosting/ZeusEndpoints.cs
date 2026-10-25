@@ -410,9 +410,6 @@ public static class ZeusEndpoints
             // monitor latch in DspPipelineService.
             bool meterOnly = body.Enabled && (body.MeterOnly ?? false);
             pipe.SetTxMonitorMeterOnly(meterOnly);
-            // Preview is the explicit unkeyed listen; the MON button is heard
-            // only while keyed (see DspPipelineService audio broadcast).
-            pipe.SetTxMonitorPreview(body.Enabled && !meterOnly);
             var state = radio.SetTxMonitor(new TxMonitorSetRequest(body.Enabled));
             return Results.Ok(new { supported = true, enabled = state.TxMonitorEnabled, meterOnly });
         }
@@ -2643,20 +2640,31 @@ public static class ZeusEndpoints
             return Results.Ok(new { reset = true });
         });
 
-        // TX Monitor — the MON button (issue #106 follow-up). Engages a
+        // MON level — listening level for the TX monitor (attenuation only).
+        // Persisted on the radio; applied to the heard monitor, never to TX.
+        app.MapGet("/api/tx/monitor-level", (TxMonitorLevelStore store) =>
+            Results.Ok(new TxMonitorLevelDto(store.LevelDb, DspPipelineService.MinTxMonitorLevelDb, 0.0)));
+
+        app.MapPost("/api/tx/monitor-level", (TxMonitorLevelSetRequest req, TxMonitorLevelStore store) =>
+        {
+            if (req is null)
+                return Results.BadRequest(new { error = "body required" });
+            double db = store.Set(req.Db);
+            log.LogInformation("api.tx.monitorLevel db={Db}", db);
+            return Results.Ok(new TxMonitorLevelDto(db, DspPipelineService.MinTxMonitorLevelDb, 0.0));
+        });
+
+        // TX Monitor — receive-side preview (issue #106 follow-up). Engages a
         // parallel demod of the post-CFIR TX IQ so the operator hears the
-        // chain output at the actual TX bandwidth while keyed; unkeyed the
-        // band is heard (Audio Suite Preview is the unkeyed listen). RX audio
-        // is suppressed in the broadcast while the monitor is heard. The
+        // chain output at the actual TX bandwidth WITHOUT keying; RX audio is
+        // suppressed in the broadcast while monitoring. While keyed the
+        // monitor is not heard (no RF while listening to the chain). The
         // engine call lives in DspPipelineService.UpdateState so it lands
         // alongside the rest of the TX-side seam plumbing on the next tick.
         app.MapPost("/api/tx/monitor",
-            (TxMonitorSetRequest req, RadioService r, DspPipelineService pipe) =>
+            (TxMonitorSetRequest req, RadioService r) =>
         {
             log.LogInformation("api.tx.monitor enabled={Enabled}", req.Enabled);
-            // MON is heard while keyed only — drop any audible-preview request
-            // left by Audio Suite Preview so the button means one thing.
-            pipe.SetTxMonitorPreview(false);
             return Results.Ok(r.SetTxMonitor(req));
         });
 

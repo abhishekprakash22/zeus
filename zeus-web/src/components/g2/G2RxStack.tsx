@@ -24,6 +24,7 @@
 import { usePanadapterRenderStore } from '../../state/panadapter-render-store';
 import { useTxStore } from '../../state/tx-store';
 import { setDrive, setMicGain } from '../../api/client';
+import { MonLevelRow } from '../MonLevelSlider';
 import { useCallback, useRef, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
@@ -687,6 +688,7 @@ function RxPane({ receiver, heightPct }: { receiver: ReceiverKey; heightPct: num
               />
               <span style={popVal}>{micGainDb} dB</span>
             </label>
+            <MonLevelRow rowStyle={popRow} labelStyle={popLabel} valueStyle={popVal} />
             <label style={popRow}>
               <span style={popLabel}>DRV</span>
               <input

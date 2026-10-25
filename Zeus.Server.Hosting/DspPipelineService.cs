@@ -157,11 +157,18 @@ public class DspPipelineService : BackgroundService,
     /// safe from the request thread.</summary>
     public void SetTxMonitorMeterOnly(bool on) => _txMonitorMeterOnly = on;
 
-    /// <summary>Audible unkeyed preview (Audio Suite Preview). The MON button
-    /// is heard only while keyed; Preview is the explicit request to hear the
-    /// TX chain without keying. Single volatile write; safe from the request
-    /// thread. Self-clears whenever the monitor latch turns off.</summary>
-    public void SetTxMonitorPreview(bool on) => _txMonitorPreview = on;
+    /// <summary>MON level — gain applied to the HEARD monitor only (never to
+    /// TX audio or the TX-air tap). Clamped to MinTxMonitorLevelDb..0 dB:
+    /// attenuation only, so lowering it lowers the loop gain on a board whose
+    /// headphone output couples into the mic input. Single volatile write;
+    /// safe from the request thread.</summary>
+    public void SetTxMonitorLevelDb(double db)
+    {
+        double clamped = Math.Clamp(db, MinTxMonitorLevelDb, 0.0);
+        _txMonitorGain = (float)Math.Pow(10.0, clamped / 20.0);
+    }
+
+    public const double MinTxMonitorLevelDb = -40.0;
 
     internal struct RxAudioLevelerState
     {
@@ -1140,9 +1147,7 @@ public class DspPipelineService : BackgroundService,
     // request thread, read on the pipeline tick thread. Self-clears whenever the
     // monitor latch turns off (below).
     private volatile bool _txMonitorMeterOnly;
-    // Audible unkeyed preview (Audio Suite Preview). Without it a requested
-    // monitor is heard only while keyed. Same lifecycle as meter-only.
-    private volatile bool _txMonitorPreview;
+    private volatile float _txMonitorGain = 1f;
     // Set by DisconnectP2Async so the next OnRadioStateChanged after a
     // fresh ConnectP2Async re-pushes every PS field regardless of equality
     // — necessary because the new WdspDspEngine instance starts with field
@@ -5011,10 +5016,7 @@ public class DspPipelineService : BackgroundService,
             // monitor turns off so a later audible Preview is never silenced by
             // a stale Auto Tune sample that ended abnormally.
             if (!s.TxMonitorEnabled)
-            {
                 _txMonitorMeterOnly = false;
-                _txMonitorPreview = false;
-            }
         }
 
         // Resync done — clear the flag so subsequent state changes use
@@ -7627,26 +7629,23 @@ public class DspPipelineService : BackgroundService,
         if (displayOnly)
             return true;
 
-        // Audio broadcast — while keyed with TX monitor on, replace RX audio
-        // with the monitor channel's demodulated TX audio so the operator hears
-        // the chain output (post-bandpass / post-CFIR, demodulated back to
-        // mono) instead of band RX — Thetis MON semantics. RX is drained anyway
-        // so the WDSP audio ring doesn't back up — we just don't broadcast it.
-        // The VST RX seam still fires on the drained RX so RX-side plugins keep
+        // Audio broadcast — MON is a receive-side preview. While the operator
+        // is NOT transmitting and the TX monitor is on, replace RX audio with
+        // the monitor channel's demodulated TX audio, so the operator hears
+        // the whole chain (post-bandpass / post-CFIR, demodulated back to
+        // mono) without putting RF on the air. RX is drained anyway so the
+        // WDSP audio ring doesn't back up — we just don't broadcast it. The
+        // VST RX seam still fires on the drained RX so RX-side plugins keep
         // running even while monitor is on.
         //
-        // Unkeyed, the MON button keeps the chain running (stage meters, VST
-        // meters) but is not heard: the operator hears the band. An audible
-        // unkeyed MON played a live mic into the headphone jack on the same
-        // codec, and any output→mic coupling closed a delayed loop (field:
-        // echo on an older-codec Saturn above about −16 dB mic gain, MON on,
-        // not transmitting). Two explicit requests still take over unkeyed:
-        // Audio Suite Preview (audible) and Auto Tune's meter-only capture
-        // (band RX silent so open speakers don't feed the mic it measures;
-        // nothing published).
+        // While keyed the monitor is not heard: TX behaves exactly as with MON
+        // off (RX suppressed, host CW sidetone or silence). Auto Tune's
+        // meter-only capture keeps its old behaviour in either state (band RX
+        // silent, nothing published). The heard monitor is scaled by the MON
+        // level (SetTxMonitorLevelDb) — the TX audio itself is untouched.
         bool txMonitorRequested = engine.IsTxMonitorOn;
         bool txMonitorOn = txMonitorRequested
-            && (_rxAudioSuppressedForTx || _txMonitorPreview || _txMonitorMeterOnly);
+            && (!_rxAudioSuppressedForTx || _txMonitorMeterOnly);
         int audioSampleCount = engine.ReadAudio(channel, audioBuf);
 
         // FreeDV decodes RX1's OWN demodulated audio, here — before any
@@ -8023,31 +8022,41 @@ public class DspPipelineService : BackgroundService,
 
         if (txMonitorRequested)
         {
-            // Drain whatever the monitor RXA produced this tick — always, so
-            // the ring never backs up while unkeyed (it is only HEARD when
-            // txMonitorOn: keyed, or Preview). The buffer shape matches the RX path (mono float32 @ 48 kHz) so it slots
-            // into the same AudioFrame format with no front-end change. When
-            // the chain is idle (no MOX, no mic) the monitor channel produces
-            // silence, which is the correct behaviour for "preview mode but
-            // operator isn't talking".
+            // Drain whatever the monitor RXA produced this tick — always while
+            // requested, so the ring never backs up while keyed (when it is
+            // not heard). The buffer shape matches the RX path (mono float32 @
+            // 48 kHz) so it slots into the same AudioFrame format with no
+            // front-end change. When the operator isn't talking the monitor
+            // channel produces silence, the correct "preview, quiet" result.
             int monCount = engine.ReadTxMonitorAudio(audioBuf.AsSpan());
             if (monCount > 0)
             {
                 SanitizeAudioBuffer(audioBuf.AsSpan(0, monCount));
-                double finalAudioRms = Rms(audioBuf.AsSpan(0, monCount));
-                double finalAudioPeak = PeakAbs(audioBuf.AsSpan(0, monCount));
+                // TX-air tap source: the processed transmit audio, before the
+                // MON level (the level is a listening control, not TX audio).
+                // Read-only fan-out to IRxAudioTapPlugin/ITxAudioTapPlugin
+                // taps; null subscriber list = no cost.
+                TxMonitorAudioAvailable?.Invoke(0, AudioOutputRateHz, new ReadOnlyMemory<float>(audioBuf, 0, monCount));
 
-                var monFrame = new AudioFrame(
-                    Seq: ++_audioSeq,
-                    TsUnixMs: nowMs,
-                    RxId: 0,
-                    Channels: 1,
-                    SampleRateHz: (uint)AudioOutputRateHz,
-                    SampleCount: (ushort)monCount,
-                    Samples: new ReadOnlyMemory<float>(audioBuf, 0, monCount));
-                // Unkeyed and not meter-only, the RX frame captured above stays
-                // the tick's audio diagnostic.
                 if (txMonitorOn)
+                {
+                    float monGain = _txMonitorGain;
+                    if (monGain != 1f)
+                    {
+                        var mon = audioBuf.AsSpan(0, monCount);
+                        for (int i = 0; i < mon.Length; i++) mon[i] *= monGain;
+                    }
+                    double finalAudioRms = Rms(audioBuf.AsSpan(0, monCount));
+                    double finalAudioPeak = PeakAbs(audioBuf.AsSpan(0, monCount));
+
+                    var monFrame = new AudioFrame(
+                        Seq: ++_audioSeq,
+                        TsUnixMs: nowMs,
+                        RxId: 0,
+                        Channels: 1,
+                        SampleRateHz: (uint)AudioOutputRateHz,
+                        SampleCount: (ushort)monCount,
+                        Samples: new ReadOnlyMemory<float>(audioBuf, 0, monCount));
                     CaptureAudioDiagnostics(
                         _txMonitorMeterOnly ? "tx-monitor-meter-only"
                             : rxAudioMuted ? "tx-monitor-exempt" : "tx-monitor",
@@ -8056,21 +8065,18 @@ public class DspPipelineService : BackgroundService,
                         finalAudioPeak,
                         txMonitorOn,
                         state.Squelch ?? new SquelchConfig());
-                // Meter-only monitor (Auto Tune): the chain ran and the stage
-                // meters animated above, but suppress the broadcast so the
-                // operator hears nothing while the sample is captured in the
-                // background. The TX-air tap below still fires (read-only).
-                if (txMonitorOn && !_txMonitorMeterOnly)
-                {
-                    if (rxAudioMuted)
-                        PublishExemptAudio(in monFrame);
-                    else
-                        PublishAudio(in monFrame);
+                    // Meter-only monitor (Auto Tune): the chain ran and the
+                    // stage meters animated above, but suppress the broadcast
+                    // so the operator hears nothing while the sample is
+                    // captured in the background.
+                    if (!_txMonitorMeterOnly)
+                    {
+                        if (rxAudioMuted)
+                            PublishExemptAudio(in monFrame);
+                        else
+                            PublishAudio(in monFrame);
+                    }
                 }
-                // TX-air tap source: the processed transmit audio (what goes on
-                // the air). Read-only fan-out to IRxAudioTapPlugin/ITxAudioTapPlugin
-                // taps; null subscriber list = no cost.
-                TxMonitorAudioAvailable?.Invoke(0, AudioOutputRateHz, new ReadOnlyMemory<float>(audioBuf, 0, monCount));
             }
         }
 

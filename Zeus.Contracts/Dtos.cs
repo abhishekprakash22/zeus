@@ -2667,6 +2667,11 @@ public sealed record PsMonitorSetRequest(bool Enabled);
 // .TxMonitorEnabled for the discipline notes.
 public sealed record TxMonitorSetRequest(bool Enabled);
 
+/// <summary>MON level in dB (attenuation only, −40..0; default 0). Scales the
+/// heard TX monitor, never the TX audio.</summary>
+public sealed record TxMonitorLevelSetRequest(double Db);
+public sealed record TxMonitorLevelDto(double Db, double MinDb, double MaxDb);
+
 // Two-tone test generator (used as PS calibration excitation but works
 // standalone too). Protocol-agnostic.
 public sealed record TwoToneSetRequest(

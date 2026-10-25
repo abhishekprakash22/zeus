@@ -163,6 +163,13 @@ export type TxState = {
   // WDSP SetTXAPanelGain1(TXA, 10^(db/20)). Kept as int dB on the wire.
   micGainDb: number;
   setMicGainDb: (db: number) => void;
+  // MON level −40..0 dB (default 0): listening level for the TX monitor,
+  // stored on the radio (/api/tx/monitor-level) and hydrated by the slider on
+  // first mount. Never scales TX audio. txMonitorLevelLoaded gates that
+  // one-time fetch.
+  txMonitorLevelDb: number;
+  txMonitorLevelLoaded: boolean;
+  setTxMonitorLevelDb: (db: number, loaded?: boolean) => void;
   // Leveler max-gain slider 0..+15 dB (default +5 — matches backend default
   // and HL2 community starting point). Higher = more aggressive voice
   // leveling; can push ALC into hard limiting. Persisted — a user preference
@@ -390,6 +397,10 @@ export const useTxStore = create<TxState>()(
       setTunePercent: (p) => set({ tunePercent: p }),
       micGainDb: 0,
       setMicGainDb: (db) => set({ micGainDb: db }),
+      txMonitorLevelDb: 0,
+      txMonitorLevelLoaded: false,
+      setTxMonitorLevelDb: (db, loaded) =>
+        set(loaded ? { txMonitorLevelDb: db, txMonitorLevelLoaded: true } : { txMonitorLevelDb: db }),
       // 8 dB matches the server-authoritative default everywhere else —
       // StateDto.LevelerMaxGainDb, RadioStateStore, RadioService restore, and
       // the client.ts parseState fallback all open at 8.0 (WdspDspEngine

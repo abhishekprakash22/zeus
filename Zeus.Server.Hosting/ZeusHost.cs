@@ -628,6 +628,11 @@ public static class ZeusHost
                 .CreateInstance<DspPipelineService>(sp, txIngestFactory);
         });
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DspPipelineService>());
+        // MON level: persisted listening level for the TX monitor, pushed into
+        // the pipeline at start and on change (no store dependency in the
+        // pipeline itself).
+        builder.Services.AddSingleton<TxMonitorLevelStore>();
+        builder.Services.AddHostedService<TxMonitorLevelApplier>();
         // Per-radio frequency calibration (issue #325). Stateless coordinator —
         // owns no resources, just a SemaphoreSlim to prevent re-entry.
         builder.Services.AddSingleton<FrequencyCalibrationService>();

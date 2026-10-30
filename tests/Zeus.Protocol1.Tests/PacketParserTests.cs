@@ -155,6 +155,7 @@ public class PacketParserTests
     {
         byte[] packet = FramingTests.BuildValidPacket(1, new (int, int)[PacketParser.ComplexSamplesPerPacket]);
         int f1 = 8 + 512;
+        packet[f1 + 3] = 0x20; // C0=0x20 — the only slot that carries ADC1
         packet[f1 + 5] = 0x01; // C2[0] — ADC1 overload
         var outBuf = new double[2 * PacketParser.ComplexSamplesPerPacket];
 
@@ -168,6 +169,8 @@ public class PacketParserTests
         byte[] packet = FramingTests.BuildValidPacket(1, new (int, int)[PacketParser.ComplexSamplesPerPacket]);
         int f0 = 8;
         int f1 = 8 + 512;
+        packet[f0 + 3] = 0x20; // C0=0x20 — the only slot that carries ADC1
+        packet[f1 + 3] = 0x20;
         packet[f0 + 4] = 0x01;
         packet[f0 + 5] = 0x01;
         packet[f1 + 4] = 0x01;
@@ -187,6 +190,7 @@ public class PacketParserTests
         int f0 = 8;
         int f1 = 8 + 512;
         packet[f0 + 4] = 0x01;
+        packet[f1 + 3] = 0x20; // C0=0x20 — the only slot that carries ADC1
         packet[f1 + 5] = 0x01;
         var outBuf = new double[2 * PacketParser.ComplexSamplesPerPacket];
 
@@ -369,6 +373,7 @@ public class PacketParserTests
         int f0 = 8;
         int f1 = 8 + 512;
         packet[f0 + 4] = 0x01; // C1[0] — ADC0 overload, frame 0
+        packet[f1 + 3] = 0x20; // C0=0x20 — the only slot that carries ADC1
         packet[f1 + 5] = 0x01; // C2[0] — ADC1 overload, frame 1
         var (d0, d1, d2, d3) = Allocate4DdcBuffers();
 

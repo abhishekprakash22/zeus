@@ -58,7 +58,14 @@ import {
   rxIndexOf,
   type ReceiverKey,
 } from '../state/receiver-state';
-import { computeSnapToLineHz, getSnapHistorySpectrum, useSignalEnhanceStore } from '../dsp/signal-estimator';
+import {
+  computeSnapToLineHz,
+  findNearestPeakHz,
+  getSnapHistorySpectrum,
+  registerEstimatorConsumer,
+  useSignalEnhanceStore,
+} from '../dsp/signal-estimator';
+import { openSpectrumRadial } from '../state/radial-menu-store';
 import { useVfoLockStore } from '../state/vfo-lock-store';
 
 // VFO lock — when the operator pins the dial, every tune and every pan freezes
@@ -127,6 +134,11 @@ const NOTCH_CLICK_WIDTH_HZ = 150;
 // deltas to one discrete tick per this many pixels of deltaY.
 const WHEEL_NOTCH_PX = 40;
 const SPECTRUM_TUNE_CURSOR = 'var(--spectrum-tune-cursor, default)';
+// Radial menu on touch: a two-finger TAP (both fingers down and up within this
+// window, neither moving more than TWO_TAP_SLOP_PX) — a pinch that never
+// changed the zoom. Long-press stays the tuning loupe.
+const TWO_TAP_MAX_MS = 350;
+const TWO_TAP_SLOP_PX = 14;
 
 // Shared "a spectrum pan/tune drag is in progress" signal. filter-autopan reads
 // this so it never recentres the view mid-drag — a CTUN-sweep drag maps the
@@ -203,6 +215,9 @@ export function resolvePanTuneTarget(
   includeHistory = true,
   receiver: SpectrumReceiver = 'A',
   tuneReceiver: SpectrumReceiver = receiver,
+  // One-shot snap (the radial menu): resolve even with the SNAP toggle off,
+  // without hysteresis and without disturbing the hover/click sticky anchor.
+  force = false,
 ): PanTuneTarget {
   const fallbackHz = snapHz(lineHz);
   const fallback = {
@@ -214,9 +229,12 @@ export function resolvePanTuneTarget(
   if (!Number.isFinite(lineHz)) return fallback;
 
   const rxIdx = rxIndexOf(receiver);
+  const remember = (hz: number | null) => {
+    if (!force) lastSnapHz.set(rxIdx, hz);
+  };
   const enhance = useSignalEnhanceStore.getState();
-  if (!enhance.snapEnabled) {
-    lastSnapHz.set(rxIdx, null);
+  if (!enhance.snapEnabled && !force) {
+    remember(null);
     return fallback;
   }
 
@@ -235,7 +253,7 @@ export function resolvePanTuneTarget(
   const radiusHzPerPixel = viewport?.hzPerPixel ?? ds.hzPerPixel;
   const maxRadiusHz = Math.min(radiusHzPerPixel * SNAP_RADIUS_PX, enhance.snapRadiusHz);
   const hysteresisHz = radiusHzPerPixel * SNAP_HYSTERESIS_PX;
-  const sticky = lastSnapHz.get(rxIdx) ?? null;
+  const sticky = force ? null : lastSnapHz.get(rxIdx) ?? null;
   const mode = getReceiverMode(useConnectionStore.getState(), tuneReceiver);
   const centerHz = Number(ds.centerHz);
   const stepHz = useToolbarFavoritesStore.getState().stepHz;
@@ -251,7 +269,7 @@ export function resolvePanTuneTarget(
     rxIdx,
   );
   if (liveHz != null) {
-    lastSnapHz.set(rxIdx, liveHz);
+    remember(liveHz);
     return {
       tuneHz: quantizeToStepHz(liveHz, stepHz),
       snappedToSignal: true,
@@ -274,7 +292,7 @@ export function resolvePanTuneTarget(
         hysteresisHz,
       );
       if (historyHz != null) {
-        lastSnapHz.set(rxIdx, historyHz);
+        remember(historyHz);
         return {
           tuneHz: quantizeToStepHz(historyHz, stepHz),
           snappedToSignal: true,
@@ -285,8 +303,41 @@ export function resolvePanTuneTarget(
     }
   }
 
-  lastSnapHz.set(rxIdx, null);
+  remember(null);
   return fallback;
+}
+
+/** The radial menu's snap: the mode-aware tuning frequency of the signal near
+ *  `lineHz` whether or not the SNAP toggle is on (falls back to the click grid
+ *  over bare noise). */
+export function resolveSnapTargetOnce(
+  lineHz: number,
+  receiver: SpectrumReceiver = 'A',
+  tuneReceiver: SpectrumReceiver = receiver,
+): PanTuneTarget {
+  return resolvePanTuneTarget(lineHz, true, receiver, tuneReceiver, true);
+}
+
+// Carrier search reach for "Notch here": the strongest peak within this many
+// screen pixels of the pointer.
+const CARRIER_RADIUS_PX = 24;
+
+/** The spectral peak (carrier / tone) nearest `lineHz`, for placing a notch on
+ *  it; null when nothing clears the floor within reach. */
+export function resolveCarrierHz(lineHz: number, receiver: SpectrumReceiver = 'A'): number | null {
+  if (!Number.isFinite(lineHz)) return null;
+  const ds = selectDisplaySlice(useDisplayStore.getState(), receiver);
+  if (!ds.panDb || ds.hzPerPixel <= 0) return null;
+  const vc = viewCenter.viewCenterFor(receiver);
+  const viewport = resolveSpectrumViewport({
+    width: ds.width || ds.panDb.length,
+    sourceCenterHz: Number(ds.centerHz),
+    sourceHzPerPixel: ds.hzPerPixel,
+    viewCenterHz: vc.isInitialized() ? vc.getTargetCenterHz() : undefined,
+    viewHzPerPixel: viewZoom.targetViewHzPerPixelFor(receiver),
+  });
+  const hzPerPx = viewport?.hzPerPixel ?? ds.hzPerPixel;
+  return findNearestPeakHz(ds.panDb, Number(ds.centerHz), ds.hzPerPixel, lineHz, hzPerPx * CARRIER_RADIUS_PX);
 }
 
 type VfoNudgeController = {
@@ -474,6 +525,9 @@ export function usePanTuneGesture(
     const pointers = new Map<number, { x: number; y: number }>();
     const pointerDownY = new Map<number, number>();
     let pinch: Pinch | null = null;
+    // Candidate two-finger tap (radial menu on touch). Armed when the second
+    // finger lands, killed by movement, a zoom step, or taking too long.
+    let twoTap: { at: number; starts: Map<number, { x: number; y: number }> } | null = null;
     let pendingHz: number | null = null;
     let pendingAbort: AbortController | null = null;
     let pendingRaf = 0;
@@ -496,6 +550,9 @@ export function usePanTuneGesture(
     // On touch-first glass (the G2) record waterfall rows from mount, so the
     // very first loupe already has history to magnify.
     if (touchFirst && dragMode === 'tune') ensureLoupeHistory(receiver);
+    // The radial menu snaps even with the SNAP toggle off, which needs the
+    // noise-floor estimate running for this surface's frames.
+    const releaseEstimator = dragMode === 'tune' ? registerEstimatorConsumer() : null;
     const cancelHold = () => {
       if (holdTimer !== 0) {
         clearTimeout(holdTimer);
@@ -556,6 +613,54 @@ export function usePanTuneGesture(
       } else {
         tuneDebugLog('LOUPE-CANCEL', {});
       }
+    };
+
+    // Radial menu: resolve everything the menu needs at the press point now
+    // (the spectrum keeps moving under it), and hand it the tune action so a
+    // "Tune" from the menu takes exactly the same path as a click.
+    const openRadialAt = (clientX: number, clientY: number) => {
+      const at = aimHzAt(clientX);
+      const rect = canvas.getBoundingClientRect();
+      if (!at || rect.width <= 0) return;
+      const target = resolveSnapTargetOnce(at.hz, receiver, tuneReceiver);
+      const tuneIdx = rxIndexOf(tuneReceiver);
+      const panIdx = rxIndexOf(receiver);
+      openSpectrumRadial({
+        clientX,
+        clientY,
+        rawHz: at.hz,
+        tuneHz: target.tuneHz,
+        snapped: target.snappedToSignal,
+        carrierHz: resolveCarrierHz(at.hz, receiver),
+        hzPerPx: at.spanHz / rect.width,
+        rxIndex: tuneIdx,
+        panRxIndex: panIdx,
+        mode: getReceiverMode(useConnectionStore.getState(), tuneReceiver),
+        tune: () => {
+          if (vfoLocked()) return;
+          commitFinal(target.tuneHz, true);
+          if (target.snappedToSignal && target.fromLive && tuneIdx === 0 && panIdx === 0) {
+            armSnapLock({
+              dialHz: target.tuneHz,
+              anchorBodyHz: target.anchorBodyHz,
+              mode: useConnectionStore.getState().mode,
+            });
+          }
+        },
+      });
+    };
+
+    // Right mouse button / pen barrel button. The browser's own menu is never
+    // useful over the spectrum, so it is always suppressed here. A touch
+    // long-press also raises contextmenu in Chromium — that press belongs to
+    // the loupe, so anything arriving while a pointer is down is ignored.
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      if (dragMode !== 'tune') return;
+      const pt = (e as Partial<PointerEvent>).pointerType;
+      if (pt === 'touch') return;
+      if (pointers.size > 0 || loupe || notchDrag || pinch || mapDrag) return;
+      openRadialAt(e.clientX, e.clientY);
     };
 
     const pinchDistance = (): number => {
@@ -860,6 +965,12 @@ export function usePanTuneGesture(
             pendingZoom: null,
             raf: 0,
           };
+          twoTap =
+            pointers.size === 2 && dragMode === 'tune'
+              ? { at: performance.now(), starts: new Map(Array.from(pointers, ([id, q]) => [id, { ...q }])) }
+              : null;
+        } else {
+          twoTap = null; // a third finger is not a two-finger tap
         }
         try { canvas.setPointerCapture(e.pointerId); } catch { /* ok */ }
         e.preventDefault();
@@ -967,6 +1078,10 @@ export function usePanTuneGesture(
         return;
       }
       if (pinch) {
+        if (twoTap) {
+          const s0 = twoTap.starts.get(e.pointerId);
+          if (s0 && Math.hypot(e.clientX - s0.x, e.clientY - s0.y) > TWO_TAP_SLOP_PX) twoTap = null;
+        }
         const d = pinchDistance();
         if (d > 0 && pinch.baseDist > 0) {
           const ratio = d / pinch.baseDist;
@@ -983,7 +1098,10 @@ export function usePanTuneGesture(
                 const next = pinch.pendingZoom;
                 if (next == null) return;
                 const cur = useConnectionStore.getState().zoomLevel;
-                if (next !== cur) nudgeZoom(next - cur);
+                if (next !== cur) {
+                  twoTap = null;
+                  nudgeZoom(next - cur);
+                }
               });
             }
           }
@@ -1129,6 +1247,18 @@ export function usePanTuneGesture(
           cancelPinchRaf();
           pinch = null;
           canvas.style.cursor = idleCursor();
+          const tap = twoTap;
+          twoTap = null;
+          if (
+            tap &&
+            e.type !== 'pointercancel' &&
+            performance.now() - tap.at <= TWO_TAP_MAX_MS
+          ) {
+            const pts = Array.from(tap.starts.values());
+            const mx = pts.reduce((a, q) => a + q.x, 0) / pts.length;
+            const my = pts.reduce((a, q) => a + q.y, 0) / pts.length;
+            openRadialAt(mx, my);
+          }
         }
         return;
       }
@@ -1277,6 +1407,7 @@ export function usePanTuneGesture(
       if ((holdTimer !== 0 || loupe) && e.cancelable) e.preventDefault();
     };
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('contextmenu', onContextMenu);
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
@@ -1287,6 +1418,7 @@ export function usePanTuneGesture(
     return () => {
       // Release any drag depth this instance still holds (unmount mid-drag).
       setDrag(null);
+      releaseEstimator?.();
       cancelHold();
       loupe = null;
       loupeOverlay?.destroy();
@@ -1297,6 +1429,7 @@ export function usePanTuneGesture(
       pendingAbort?.abort();
       pendingPanAbort?.abort();
       zoomInflight?.abort();
+      canvas.removeEventListener('contextmenu', onContextMenu);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);

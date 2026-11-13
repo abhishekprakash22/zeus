@@ -1838,6 +1838,7 @@ public static class ZeusHost
         Zeus.Server.Hosting.FreeDv.FreeDvEndpoints.MapFreeDvEndpoints(app);
         // Window-chrome prefs the kiosk launcher reads (fullscreen marker).
         Zeus.Server.UiPrefsEndpoints.MapUiPrefsEndpoints(app);
+        Zeus.Server.MemoryChannelEndpoints.MapMemoryChannelEndpoints(app);
         // Filter card audio views: AF analysis lease.
         Zeus.Server.AfAnalysisEndpoints.MapAfAnalysisEndpoints(app);
         // Built-in assistant: settings + ask (read-only tools).

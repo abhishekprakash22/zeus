@@ -32,10 +32,12 @@ import { useToolbarFavoritesStore } from '../state/toolbar-favorites-store';
 import {
   _resetPanSnapStickyForTest,
   resolvePanTuneTarget,
+  resolveSnapTargetOnce,
   usePanTuneGesture,
   type PanTuneGestureOptions,
 } from './use-pan-tune-gesture';
 import { useVfoLockStore } from '../state/vfo-lock-store';
+import { useRadialMenuStore } from '../state/radial-menu-store';
 import type { RadioStateDto, RxMode } from '../api/client';
 
 const SNAP_WIDTH = 256;
@@ -893,6 +895,121 @@ describe('usePanTuneGesture mobile touch mode', () => {
   // change the operating frequency, not just the digit display. These prove the
   // gesture is swallowed at the source (no setVfo/setRadioLo POST AND no
   // optimistic store write), while display-only zoom/pan stay live.
+  describe('radial menu triggers', () => {
+    function contextMenu(target: HTMLCanvasElement, clientX: number, pointerType = 'mouse'): boolean {
+      const ev = new Event('contextmenu', { bubbles: true, cancelable: true });
+      Object.defineProperties(ev, {
+        clientX: { value: clientX },
+        clientY: { value: 40 },
+        pointerType: { value: pointerType },
+      });
+      target.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    }
+
+    afterEach(() => {
+      useRadialMenuStore.setState({ open: null });
+    });
+
+    it('one-shot snap resolves a signal with the SNAP toggle off and leaves the toggle path untouched', () => {
+      useConnectionStore.setState({ mode: 'USB' });
+      useSignalEnhanceStore.setState({ snapEnabled: true, snapRadiusHz: 3000, snapMinSnrDb: 5 });
+      useToolbarFavoritesStore.setState({ stepHz: 100 });
+      for (let k = 0; k < 5; k++) pushSnapFrame(voiceBlock(), k + 1);
+      useSignalEnhanceStore.setState({ snapEnabled: false });
+
+      expect(resolvePanTuneTarget(binHz(152)).snappedToSignal).toBe(false);
+      const once = resolveSnapTargetOnce(binHz(152));
+      expect(once.snappedToSignal).toBe(true);
+      expect(once.tuneHz).toBe(Math.round(binHz(140) / 100) * 100);
+    });
+
+    it('right-click opens the menu at the snapped target and suppresses the browser menu', async () => {
+      useConnectionStore.setState({ mode: 'USB' });
+      useSignalEnhanceStore.setState({ snapEnabled: true, snapRadiusHz: 3000, snapMinSnrDb: 5 });
+      useToolbarFavoritesStore.setState({ stepHz: 100 });
+      for (let k = 0; k < 5; k++) pushSnapFrame(voiceBlock(), k + 1);
+      useSignalEnhanceStore.setState({ snapEnabled: false });
+      const expected = resolveSnapTargetOnce(binHz(152));
+
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      let prevented = false;
+      await act(async () => {
+        prevented = contextMenu(canvas, (152 / SNAP_WIDTH) * 200);
+        await flush();
+      });
+
+      expect(prevented).toBe(true);
+      const open = useRadialMenuStore.getState().open;
+      expect(open).not.toBeNull();
+      expect(open!.snapped).toBe(true);
+      expect(open!.tuneHz).toBe(expected.tuneHz);
+      expect(open!.rxIndex).toBe(0);
+      expect(open!.mode).toBe('USB');
+      // Opening the menu never tunes by itself.
+      expect(setVfoMock).not.toHaveBeenCalled();
+
+      await act(async () => {
+        open!.tune();
+        await flush();
+      });
+      expect(setVfoMock).toHaveBeenCalledWith(expected.tuneHz, undefined);
+
+      unmount();
+    });
+
+    it('ignores the contextmenu a touch long-press raises (that press is the loupe)', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 100, pointerType: 'touch' });
+        contextMenu(canvas, 100, 'touch');
+        pointer(canvas, 'pointercancel', { pointerId: 1, clientX: 100, pointerType: 'touch' });
+        await flush();
+      });
+      expect(useRadialMenuStore.getState().open).toBeNull();
+      unmount();
+    });
+
+    it('a two-finger tap opens the menu between the fingers', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 80, clientY: 30 });
+        pointer(canvas, 'pointerdown', { pointerId: 2, clientX: 120, clientY: 30 });
+        pointer(canvas, 'pointerup', { pointerId: 2, clientX: 120, clientY: 30 });
+        pointer(canvas, 'pointerup', { pointerId: 1, clientX: 80, clientY: 30 });
+        await flush();
+      });
+      const open = useRadialMenuStore.getState().open;
+      expect(open).not.toBeNull();
+      expect(open!.clientX).toBe(100);
+      // Centre of the 200 px canvas = view centre.
+      expect(Math.abs(open!.rawHz - 14_200_000)).toBeLessThan(1);
+      expect(setVfoMock).not.toHaveBeenCalled();
+      expect(setZoomMock).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    it('a two-finger pinch that moves is a zoom, not a menu', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 0 });
+        pointer(canvas, 'pointerdown', { pointerId: 2, clientX: 140, clientY: 0 });
+        pointer(canvas, 'pointermove', { pointerId: 2, clientX: 180, clientY: 0 });
+        await flush();
+        pointer(canvas, 'pointerup', { pointerId: 2, clientX: 180, clientY: 0 });
+        pointer(canvas, 'pointerup', { pointerId: 1, clientX: 100, clientY: 0 });
+        await flush();
+      });
+      expect(useRadialMenuStore.getState().open).toBeNull();
+      expect(setZoomMock).toHaveBeenCalled();
+      unmount();
+    });
+  });
+
   describe('tuning loupe (touch press-and-hold)', () => {
     // View: 200 px canvas, 200 bins x 100 Hz around 14.2 MHz -> 100 Hz per px.
     const LOUPE_HOLD = 300;

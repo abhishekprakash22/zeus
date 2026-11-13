@@ -141,6 +141,53 @@ public sealed class DxClusterManagementService : IHostedService, IDisposable
         return GetStatus();
     }
 
+    // Spot command: the near-universal node syntax "DX <kHz> <call> <comment>"
+    // (DXSpider, AR-Cluster, CC Cluster all accept it). The comment is capped
+    // at the 30 characters nodes keep, and anything non-printable is dropped
+    // so an operator's text can never inject a second command line.
+    internal const int MaxSpotCommentLength = 30;
+
+    internal static bool TryBuildSpotCommand(
+        long freqHz, string? call, string? comment, out string command, out string? error)
+    {
+        command = "";
+        error = null;
+        // 100 kHz .. 10 GHz: LF through the transverter bands the dial allows.
+        if (freqHz < 100_000 || freqHz > 10_000_000_000)
+        {
+            error = "frequency out of range";
+            return false;
+        }
+        var c = (call ?? "").Trim().ToUpperInvariant();
+        if (c.Length is < 3 or > 15 || !c.All(ch => ch is (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '/')
+            || !c.Any(char.IsDigit))
+        {
+            error = "callsign looks wrong";
+            return false;
+        }
+        var text = new string((comment ?? "").Where(ch => ch >= ' ' && ch <= '~').ToArray()).Trim();
+        if (text.Length > MaxSpotCommentLength)
+            text = text[..MaxSpotCommentLength].TrimEnd();
+        var khz = (freqHz / 1000.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+        command = text.Length > 0 ? $"DX {khz} {c} {text}" : $"DX {khz} {c}";
+        return true;
+    }
+
+    /// <summary>
+    /// Post a spot to the connected cluster node. Fails (without sending) when
+    /// the input is invalid or there is no logged-in session.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> SendSpotAsync(
+        long freqHz, string? call, string? comment, CancellationToken ct)
+    {
+        if (!TryBuildSpotCommand(freqHz, call, comment, out var cmd, out var error))
+            return (false, error);
+        if (!_client.CanSend)
+            return (false, "cluster not connected");
+        var sent = await _client.SendLineAsync(cmd, ct).ConfigureAwait(false);
+        return sent ? (true, null) : (false, "cluster not connected");
+    }
+
     private async Task RestartAsync(DxClusterConfig cfg)
     {
         try

@@ -4948,6 +4948,17 @@ public static class ZeusEndpoints
 
         app.MapPost("/api/dxcluster/disconnect", (DxClusterManagementService dx) => Results.Ok(dx.Disconnect()));
 
+        // Operator spot from the spectrum radial menu: "DX <kHz> <call> <comment>"
+        // on the live session. 409 when no node is connected, 400 on bad input.
+        app.MapPost("/api/dxcluster/spot", async (DxSpotRequest req, DxClusterManagementService dx, CancellationToken ct) =>
+        {
+            var (ok, error) = await dx.SendSpotAsync(req.FreqHz, req.Call, req.Comment, ct);
+            if (ok) return Results.Ok(new { sent = true });
+            return error == "cluster not connected"
+                ? Results.Conflict(new { error })
+                : Results.BadRequest(new { error });
+        });
+
         app.MapGet("/api/cat/status", (CatManagementService cat) => cat.GetStatus());
 
         app.MapPost("/api/cat/config", (CatRuntimeConfig req, CatManagementService cat, HttpContext ctx) =>

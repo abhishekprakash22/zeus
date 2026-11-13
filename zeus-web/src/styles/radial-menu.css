@@ -1,0 +1,159 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * ANAN Core — Protocol-2 SDR for the ANAN. Copyright (C) 2026 Apache Labs.
+ *
+ * Spectrum radial menu + memory channel markers. */
+
+.srm {
+  position: fixed;
+  z-index: 1400;
+  width: 0;
+  height: 0;
+  /* The ring is absolutely placed around this zero-size anchor. */
+}
+.srm::before {
+  content: '';
+  position: absolute;
+  left: -112px;
+  top: -112px;
+  width: 224px;
+  height: 224px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(6, 10, 16, 0.55) 0%, rgba(6, 10, 16, 0.35) 58%, transparent 72%);
+  pointer-events: none;
+}
+.srm-item,
+.srm-center {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(74, 163, 223, 0.55);
+  background: var(--card-bg-solid, rgba(10, 14, 20, 0.96));
+  color: var(--fg-1, #cfe8f8);
+  box-shadow: var(--card-shadow, 0 6px 18px rgba(0, 0, 0, 0.45));
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+.srm-item {
+  animation: srm-pop 140ms ease-out both;
+}
+@keyframes srm-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .srm-item { animation: none; }
+}
+.srm-item:hover:not(:disabled),
+.srm-item:focus-visible {
+  border-color: var(--accent, #4aa3df);
+  background: color-mix(in srgb, var(--accent, #4aa3df) 18%, var(--card-bg-solid, #0a0e14));
+  outline: none;
+}
+.srm-item:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.srm-item--warn:hover:not(:disabled) {
+  border-color: #e0605a;
+  background: color-mix(in srgb, #e0605a 18%, var(--card-bg-solid, #0a0e14));
+}
+.srm-ic { font-size: 17px; line-height: 1; }
+.srm-lbl { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+.srm-center {
+  border-width: 2px;
+  border-color: rgba(207, 232, 248, 0.45);
+}
+.srm-center--snap {
+  border-color: var(--accent, #4aa3df);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #4aa3df) 25%, transparent),
+    var(--card-shadow, 0 6px 18px rgba(0, 0, 0, 0.45));
+}
+.srm-center:hover:not(:disabled),
+.srm-center:focus-visible {
+  background: color-mix(in srgb, var(--accent, #4aa3df) 14%, var(--card-bg-solid, #0a0e14));
+  outline: none;
+}
+.srm-center:disabled { cursor: not-allowed; opacity: 0.8; }
+.srm-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent, #4aa3df);
+}
+.srm-center:not(.srm-center--snap) .srm-tag { color: var(--fg-2, #8fb3c9); }
+.srm-hz {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.srm-rx { font-size: 9px; color: var(--fg-2, #8fb3c9); }
+.srm-flash { font-size: 11px; font-weight: 700; color: var(--accent, #4aa3df); }
+
+.srm-spot {
+  position: absolute;
+  left: -110px;
+  top: -78px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(74, 163, 223, 0.55);
+  background: var(--card-bg-solid, rgba(10, 14, 20, 0.97));
+  box-shadow: var(--card-shadow, 0 6px 18px rgba(0, 0, 0, 0.45));
+  color: var(--fg-1, #cfe8f8);
+}
+.srm-spot-head { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.srm-spot-hz { font-family: var(--font-mono, ui-monospace, monospace); color: var(--accent, #4aa3df); margin-left: 6px; }
+.srm-spot-in {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(207, 232, 248, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font-size: 13px;
+}
+.srm-spot-in:focus { outline: none; border-color: var(--accent, #4aa3df); }
+.srm-spot-err { font-size: 11px; color: #f08a84; }
+.srm-spot-row { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* Memory channel markers on the RX1 panadapter. */
+.mem-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed rgba(240, 196, 92, 0.55);
+  pointer-events: none;
+  z-index: 6;
+}
+.mem-flag {
+  position: absolute;
+  top: 64px;
+  transform: translateX(-50%);
+  max-width: 120px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(240, 196, 92, 0.7);
+  background: rgba(20, 16, 6, 0.85);
+  color: #f0c45c;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 26;
+}
+.mem-flag:hover { background: rgba(60, 46, 12, 0.95); }

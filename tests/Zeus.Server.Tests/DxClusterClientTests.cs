@@ -123,6 +123,31 @@ public class DxClusterClientTests
         Assert.Empty(spots.GetAll());
     }
 
+    [Fact]
+    public async Task Session_SendLine_GoesOutOnlyAfterLogin()
+    {
+        var spots = new SpotManager();
+        var client = new DxClusterClient(NullLogger<DxClusterClient>.Instance, spots, connector: null);
+        var stream = new FakeDuplexStream();
+        var cfg = new DxClusterConfig(Enabled: true, Host: "fake", Port: 7373, Callsign: "K1ABC");
+
+        // No session yet: nothing to send on.
+        Assert.False(client.CanSend);
+        Assert.False(await client.SendLineAsync("DX 14025.0 W1AW", CancellationToken.None));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var session = client.RunSessionAsync(cfg, stream, cts.Token);
+        stream.ServerSend("login: \r\n");
+        await WaitForAsync(() => client.CanSend, TimeSpan.FromSeconds(5));
+
+        Assert.True(await client.SendLineAsync("DX 14025.0 W1AW tnx", CancellationToken.None));
+        Assert.Contains("DX 14025.0 W1AW tnx\r\n", stream.WrittenText());
+
+        stream.ServerClose();
+        await session;
+        Assert.False(client.CanSend);
+    }
+
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();

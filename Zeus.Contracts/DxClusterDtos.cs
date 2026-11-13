@@ -61,3 +61,6 @@ public sealed record DxClusterStatus(
     int SpotsReceived,
     string? LastSpotCallsign,
     string? Error);
+
+/// <summary>Operator spot posted to the connected cluster node.</summary>
+public sealed record DxSpotRequest(long FreqHz, string? Call, string? Comment);

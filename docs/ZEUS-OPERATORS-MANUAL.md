@@ -102,6 +102,17 @@ Connect, then operate from the workspace:
   always; the loupe never opens with a mouse or while the VFO is locked.
   It is drawn in your own panadapter trace colour and waterfall palette,
   on the same dB ranges as the display under it.
+- **Spectrum radial menu:** right-click the panadapter or waterfall (pen
+  barrel button, or a two-finger tap on touch) for a ring of actions at that
+  spot. The centre tunes there — snapped to the nearby signal's tuning point
+  for your mode when there is one (**SNAP**), even with the SNAP toggle off.
+  Around it: **Split** (transmit there on VFO B), **RX2** (listen there on
+  RX2), **Notch** (on the nearest carrier), **Store** (memory channel) and
+  **Spot** (post to the connected DX cluster; CW on the carrier). LOCK greys
+  out anything that moves a dial.
+- **Memory channels:** kept on the radio and shared by every client. They
+  show on RX1's panadapter as gold ★ flags — click to recall (mode, filter,
+  frequency); open the radial menu on one and choose **Forget** to delete it.
 - **Display effects (Settings → Display → EFFECTS):** Off / **Subtle**
   (default) / Full, remembered by the radio. Subtle: the trace and fill take
   the waterfall palette's colour per signal (noise keeps your trace colour),

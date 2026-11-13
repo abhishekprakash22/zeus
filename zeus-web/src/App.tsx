@@ -166,6 +166,7 @@ import {
 import { useDigitalPluginStore } from './state/digital-plugin-store';
 import { useFreeDvPluginStore } from './state/freedv-plugin-store';
 import { AssistantDrawer } from './assistant/AssistantDrawer';
+import { SpectrumRadialMenu } from './components/radial/SpectrumRadialMenu';
 
 const SettingsView = lazy(async () => {
   const module = await import('./components/SettingsMenu');
@@ -1776,6 +1777,8 @@ export default function App() {
       )}
       {/* Built-in assistant (read-only): opened by the ASK key or Settings → Assistant. */}
       <AssistantDrawer />
+      {/* Spectrum radial menu: right-click / pen barrel / two-finger tap on the pan or waterfall. */}
+      <SpectrumRadialMenu />
       <StartupUpdatePrompt
         status={
           // ANAN Core updates are installed at the radio; a remote client

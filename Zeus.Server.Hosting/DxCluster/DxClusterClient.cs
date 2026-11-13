@@ -53,6 +53,13 @@ public sealed class DxClusterClient : IDisposable
     private string? _lastSpotCallsign;
     private volatile string? _lastError;
 
+    // The live session's stream, published once the login handshake has sent
+    // the callsign, so an operator-initiated command (a spot) can go out on the
+    // same connection. Every write — handshake replies and commands — goes
+    // through _writeGate so two writers never interleave bytes on the socket.
+    private volatile Stream? _activeStream;
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+
     public DxClusterClient(ILogger<DxClusterClient> log, SpotManager spots)
         : this(log, spots, connector: null)
     {
@@ -74,6 +81,33 @@ public sealed class DxClusterClient : IDisposable
     public string? LastSpotCallsign => Volatile.Read(ref _lastSpotCallsign);
     public string? LastError => _lastError;
     public bool IsRunning { get { lock (_sync) return _loop is { IsCompleted: false }; } }
+
+    /// <summary>True while a session is up and logged in (callsign sent), i.e.
+    /// a command sent now reaches the node.</summary>
+    public bool CanSend => _activeStream is not null;
+
+    /// <summary>
+    /// Send one command line on the live session (e.g. a DX spot). Returns false
+    /// when there is no logged-in session. The line is written as Latin-1 with
+    /// CRLF, serialised against the handshake's own replies.
+    /// </summary>
+    public async Task<bool> SendLineAsync(string line, CancellationToken ct)
+    {
+        var stream = _activeStream;
+        if (stream is null)
+            return false;
+        try
+        {
+            await WriteLinesAsync(new[] { line }, stream, ct).ConfigureAwait(false);
+            _log.LogInformation("dxcluster.send {Line}", line);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            _log.LogWarning("dxcluster.send failed: {Msg}", ex.Message);
+            return false;
+        }
+    }
 
     /// <summary>Start the connect/backoff loop for the given config. Idempotent —
     /// a second Start while running is a no-op.</summary>
@@ -178,6 +212,25 @@ public sealed class DxClusterClient : IDisposable
         var filtered = new List<byte>(4096);
         var lineBuf = new List<byte>(256);
 
+        try
+        {
+            await ReadSessionAsync(handshake, filter, readBuf, filtered, lineBuf, stream, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _activeStream = null;
+        }
+    }
+
+    private async Task ReadSessionAsync(
+        DxClusterHandshake handshake,
+        TelnetByteFilter filter,
+        byte[] readBuf,
+        List<byte> filtered,
+        List<byte> lineBuf,
+        Stream stream,
+        CancellationToken ct)
+    {
         while (!ct.IsCancellationRequested)
         {
             int n = await stream.ReadAsync(readBuf.AsMemory(0, readBuf.Length), ct).ConfigureAwait(false);
@@ -221,7 +274,9 @@ public sealed class DxClusterClient : IDisposable
             return;
 
         var replies = handshake.OnLine(line);
-        await SendRepliesAsync(replies, stream, ct).ConfigureAwait(false);
+        await WriteLinesAsync(replies, stream, ct).ConfigureAwait(false);
+        if (handshake.CallsignSent)
+            _activeStream = stream;
 
         if (DxSpotLineParser.TryParse(line, out var spot))
         {
@@ -248,21 +303,31 @@ public sealed class DxClusterClient : IDisposable
         var replies = handshake.OnLine(partial.Trim());
         if (replies.Count > 0)
         {
-            await SendRepliesAsync(replies, stream, ct).ConfigureAwait(false);
+            await WriteLinesAsync(replies, stream, ct).ConfigureAwait(false);
             lineBytes.Clear(); // consumed as a prompt; don't double-feed at LF
+            if (handshake.CallsignSent)
+                _activeStream = stream;
         }
     }
 
-    private static async Task SendRepliesAsync(IReadOnlyList<string> replies, Stream stream, CancellationToken ct)
+    private async Task WriteLinesAsync(IReadOnlyList<string> lines, Stream stream, CancellationToken ct)
     {
-        if (replies.Count == 0)
+        if (lines.Count == 0)
             return;
-        foreach (var r in replies)
+        await _writeGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            var bytes = Latin1.GetBytes(r + "\r\n");
-            await stream.WriteAsync(bytes.AsMemory(), ct).ConfigureAwait(false);
+            foreach (var r in lines)
+            {
+                var bytes = Latin1.GetBytes(r + "\r\n");
+                await stream.WriteAsync(bytes.AsMemory(), ct).ConfigureAwait(false);
+            }
+            await stream.FlushAsync(ct).ConfigureAwait(false);
         }
-        await stream.FlushAsync(ct).ConfigureAwait(false);
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     /// <summary>Split the newline-separated login-commands blob into trimmed,
@@ -297,6 +362,7 @@ public sealed class DxClusterClient : IDisposable
     public void Dispose()
     {
         try { StopAsync().GetAwaiter().GetResult(); } catch { /* best effort */ }
+        _writeGate.Dispose();
     }
 
     // Wraps a TcpClient's NetworkStream so disposing the stream also disposes the

@@ -78,6 +78,7 @@ import { CwDecodeWaterfallOverlay } from './CwDecodeWaterfallOverlay';
 import { SstvTuneOverlay } from './SstvTuneOverlay';
 import { CwSkimmerLanes } from './CwSkimmerLanes';
 import { NotchOverlay } from './NotchOverlay';
+import { MemoryMarkerOverlay } from './radial/MemoryMarkerOverlay';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
 import { WidebandViewportControls } from './WidebandViewportControls';
 import { useThemeStore } from '../state/theme-store';
@@ -610,6 +611,7 @@ export function Panadapter({
       {rxIndex === 0 && !widebandDisplay && (!stitched || foreground) && (
         <>
           <SpotOverlay />
+          <MemoryMarkerOverlay />
           <ChatRosterOverlay />
           <PeakMarkerOverlay />
           <CwDecodeWaterfallOverlay />

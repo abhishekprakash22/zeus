@@ -147,6 +147,7 @@ public class Protocol1Client_AdcOverloadEventTests
         {
             int fs = 8 + f * 512;
             packet[fs + 0] = 0x7F; packet[fs + 1] = 0x7F; packet[fs + 2] = 0x7F;
+            packet[fs + 3] = 0x20; // C0=0x20: the slot carrying both ADC overload flags
             packet[fs + 4] = adc0Overload ? (byte)0x01 : (byte)0x00; // C1[0] = ADC0 overload
             packet[fs + 5] = adc1Overload ? (byte)0x01 : (byte)0x00; // C2[0] = ADC1 overload
         }

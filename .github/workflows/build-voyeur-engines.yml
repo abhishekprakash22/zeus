@@ -51,15 +51,15 @@ jobs:
       matrix:
         include:
           - rid: osx-arm64
-            arch: arm64    # Apple Silicon — native on the macos-14 runner
+            arch: arm64    # Apple Silicon — native on the macos-15 runner
           - rid: osx-x64
-            arch: x86_64   # Intel — cross-compiled on the SAME macos-14 runner.
+            arch: x86_64   # Intel — cross-compiled on the SAME macos-15 runner.
                            # GitHub's macos-13 (Intel) hosted pool is being wound
                            # down (jobs queued 14h+). GGML_NATIVE=OFF means no
                            # -march=native, so the x86_64 slice builds portably
                            # here; CMAKE_OSX_ARCHITECTURES picks the slice and the
                            # otool self-containment check below is arch-agnostic.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Install build tools
         run: brew install cmake git

@@ -47,7 +47,7 @@ jobs:
           - { os: ubuntu-22.04, rid: linux-x64,  lib: libzeus_rade.so }
           - { os: ubuntu-22.04, rid: linux-arm64, lib: libzeus_rade.so, cross: arm64 }
           - { os: windows-2022, rid: win-x64,    lib: zeus_rade.dll }
-          - { os: macos-14,     rid: osx-arm64,  lib: libzeus_rade.dylib }
+          - { os: macos-15,     rid: osx-arm64,  lib: libzeus_rade.dylib }
     steps:
       - name: Checkout Zeus
         uses: actions/checkout@v5

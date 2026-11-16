@@ -526,7 +526,7 @@ jobs:
 
   build-macos:
     name: Build macOS Native Libraries
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
 
@@ -534,7 +534,7 @@ jobs:
         run: |
           # fftw bottle ships both fftw3 (double, for WDSP) and fftw3f
           # (single, for libspecbleach / NR4). cmake is preinstalled on
-          # macos-14 but brew keeps this aligned with release.yml.
+          # macos-15 but brew keeps this aligned with release.yml.
           brew install fftw cmake
 
       - name: Configure CMake
@@ -595,7 +595,7 @@ jobs:
       #
       # Pure C, CoreAudio backend. macOS frameworks (CoreAudio /
       # AudioToolbox / AudioUnit / CoreFoundation) come from the SDK that
-      # ships with Xcode CLT on macos-14.
+      # ships with Xcode CLT on macos-15.
       - name: Build & stage miniaudio
         run: |
           set -eux

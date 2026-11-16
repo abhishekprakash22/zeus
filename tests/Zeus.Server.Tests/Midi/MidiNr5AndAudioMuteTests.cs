@@ -165,8 +165,8 @@ public sealed class MidiNr5AndAudioMuteTests : IDisposable
         // Saved bindings store the enum ordinal. ESCFormOnOff was the last
         // Thetis-parity value; the ANAN Core additions must follow it.
         int esc = (int)ZeusMidiCommand.ESCFormOnOff;
-        Assert.Equal(esc + 1, (int)ZeusMidiCommand.Nr5OnOff);
-        Assert.Equal(esc + 2, (int)ZeusMidiCommand.Nr5Amount);
-        Assert.Equal(esc + 3, (int)ZeusMidiCommand.AudioMuteOnOff);
+        Assert.Equal((int)ZeusMidiCommand.Nr5OnOff, esc + 1);
+        Assert.Equal((int)ZeusMidiCommand.Nr5Amount, esc + 2);
+        Assert.Equal((int)ZeusMidiCommand.AudioMuteOnOff, esc + 3);
     }
 }

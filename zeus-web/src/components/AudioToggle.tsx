@@ -52,6 +52,7 @@ import {
   subscribeRemoteRxAudioMuted,
 } from '../remote/remote-client';
 import { useCapabilitiesStore } from '../state/capabilities-store';
+import { browserMuteAction, useAudioMuteSyncStore } from '../audio/audio-mute-sync';
 
 // Radio-speaker mute (RxAudioMuteState on the host): in server mode the
 // audible path on a Pi/G2 is the radio's own codec, which the in-browser
@@ -109,6 +110,27 @@ export function AudioToggle() {
       setState(s);
     });
   }, []);
+
+  // The radio announces every master-mute change (0x3F), including ones made
+  // from a MIDI control. Desktop host: the button IS the radio's mute, so it
+  // mirrors every announcement. Browser: the page owns its own decoder, so it
+  // follows MIDI-sourced changes only (another browser's button must not
+  // silence this one). Remote: the mute is this device's media element —
+  // a radio-side change doesn't apply.
+  const muteEvent = useAudioMuteSyncStore((s) => s.last);
+  useEffect(() => {
+    if (!muteEvent || remote) return;
+    if (nativeAudio) {
+      setNativeMuted(muteEvent.muted);
+      return;
+    }
+    const client = getAudioClient();
+    const action = browserMuteAction(muteEvent, state.kind);
+    if (action === 'stop') void client.stop();
+    else if (action === 'start') void client.start();
+    // Only a new announcement should act — not a later change of local state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muteEvent]);
 
   useEffect(() => {
     if (!nativeAudio) return;

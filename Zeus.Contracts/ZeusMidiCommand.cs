@@ -249,4 +249,8 @@ public enum ZeusMidiCommand
     MidiMessagesPerTuneStepDown,
     MidiMessagesPerTuneStepToggle,
     ESCFormOnOff,
+    // ANAN Core additions (appended — ordinals above are load-bearing).
+    Nr5OnOff,
+    Nr5Amount,
+    AudioMuteOnOff,
 }

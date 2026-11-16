@@ -29,7 +29,10 @@ public sealed record MidiCommandInfo(
     bool Supported);
 
 /// <summary>The static, generated MIDI command catalogue (full Thetis
-/// parity). Order matches the <see cref="ZeusMidiCommand"/> enum.</summary>
+/// parity). This is the order the settings panel lists commands in; it
+/// follows the <see cref="ZeusMidiCommand"/> enum except that commands
+/// appended to the enum later are listed beside their siblings (NR5 after
+/// NR4, the transport-bar mute after the receiver mutes).</summary>
 public static class MidiCommandCatalog
 {
     public static readonly IReadOnlyList<MidiCommandInfo> All = new MidiCommandInfo[]
@@ -142,6 +145,8 @@ public static class MidiCommandCatalog
         new(ZeusMidiCommand.Nr3OnOff, "Noise Reduction 3 On Off", MidiControlType.Button, true, true),
         new(ZeusMidiCommand.Nr4OnOff, "Noise Reduction 4 On Off", MidiControlType.Button, true, true),
         new(ZeusMidiCommand.Nr4Amount, "Noise Reduction 4 Amount", MidiControlType.KnobOrSlider, false, true),
+        new(ZeusMidiCommand.Nr5OnOff, "Noise Reduction 5 On Off", MidiControlType.Button, true, true),
+        new(ZeusMidiCommand.Nr5Amount, "Noise Reduction 5 Amount", MidiControlType.KnobOrSlider, false, true),
         new(ZeusMidiCommand.Rx2Nr1OnOff, "Rx2 Noise Reduction1 On Off", MidiControlType.Button, true, false),
         new(ZeusMidiCommand.Rx2Nr2OnOff, "Rx2 Noise Reduction2 On Off", MidiControlType.Button, true, false),
         new(ZeusMidiCommand.Rx2Nr3OnOff, "Rx2 Noise Reduction 3 On Off", MidiControlType.Button, true, false),
@@ -168,8 +173,9 @@ public static class MidiCommandCatalog
         new(ZeusMidiCommand.VolumeVfoAIncr, "Volume VfoA Incr", MidiControlType.Wheel, false, true),
         new(ZeusMidiCommand.VolumeVfoBIncr, "Volume VfoB Incr", MidiControlType.Wheel, false, true),
         new(ZeusMidiCommand.Rx2Volume, "RX2 Volume", MidiControlType.KnobOrSlider, false, true),
-        new(ZeusMidiCommand.MuteOnOff, "Mute On Off", MidiControlType.Button, true, true),
+        new(ZeusMidiCommand.MuteOnOff, "RX1 Mute On Off", MidiControlType.Button, true, true),
         new(ZeusMidiCommand.Rx2MuteOnOff, "RX2 Mute On Off", MidiControlType.Button, true, true),
+        new(ZeusMidiCommand.AudioMuteOnOff, "Audio Mute On Off (transport bar)", MidiControlType.Button, true, true),
         new(ZeusMidiCommand.MonOnOff, "MON On Off", MidiControlType.Button, true, true),
         new(ZeusMidiCommand.MicGain, "MicGain", MidiControlType.KnobOrSlider, false, true),
         new(ZeusMidiCommand.PreAmpSettingsKnob, "PreAmp Setting", MidiControlType.KnobOrSlider, false, true),

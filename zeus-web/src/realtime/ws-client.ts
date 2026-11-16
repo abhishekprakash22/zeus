@@ -72,6 +72,7 @@ import { warnOnce } from '../util/logger';
 import { clampFinite } from '../util/number';
 import { wsUrl as buildWsUrl } from '../serverUrl';
 import { MSG_TYPE_AF_ANALYSIS, handleAfAnalysisFrame } from '../audio-views/af-analysis';
+import { MSG_TYPE_AUDIO_MUTE, handleAudioMuteFrame } from '../audio/audio-mute-sync';
 
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 8000;
@@ -556,6 +557,12 @@ export function dispatchServerFrame(data: ArrayBuffer): void {
         outPk: dv.getFloat32(73, true),
         outAv: dv.getFloat32(77, true),
       });
+      return;
+    }
+    if (peekType === MSG_TYPE_AUDIO_MUTE) {
+      // Master audio mute changed on the radio (0x3F) — the transport bar's
+      // Mute button follows it.
+      handleAudioMuteFrame(ev.data);
       return;
     }
     if (peekType === MSG_TYPE_AF_ANALYSIS) {

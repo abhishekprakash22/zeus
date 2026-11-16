@@ -311,4 +311,12 @@ public enum MsgType : byte
     // dBFS)][scope: i8 × scopeCount][rmsDbfs:i8][peakDbfs:i8]. See
     // AfAnalysisService.cs. 0x3D skipped (used for one release, v1.97).
     AfAnalysis = 0x3E,
+
+    // Server → client (master audio mute changed — the transport bar's Mute).
+    // Sent whenever RxAudioMuteState flips, from the REST button or a MIDI
+    // control. Payload: [type:1][muted:u8 0|1][source:u8 (0 = UI, 1 = MIDI)].
+    // Desktop-host clients mirror every change; browser clients (which own
+    // their in-page decoder) follow MIDI-sourced changes only, so one browser's
+    // button never silences another listener.
+    AudioMute = 0x3F,
 }

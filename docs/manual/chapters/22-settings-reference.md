@@ -52,6 +52,9 @@ Hamlib `rotctld` client: Enabled, host, port (default 127.0.0.1), test. Drives t
 
 MIDI controller / Stream Deck mapping — bind hardware knobs and keys to radio controls.
 
+- **Noise Reduction 5 On Off** (button) turns the neural noise reduction on and off, exactly as NR1–NR4 do: a press while another NR is on switches to NR5, and a press while NR5 is on turns NR off. **Noise Reduction 5 Amount** (knob or slider) sets how much noise NR5 removes — turned down it passes the most noise (mask floor −10 dB), turned up it removes the most (−50 dB); the model choice (Standard / Premium) is left as set.
+- **Audio Mute On Off (transport bar)** (button) is the same switch as the Mute button on the transport bar: it mutes the radio's audio output (the radio's speaker and headphone jack, or the PC's output on a Windows host) and the button follows. Browsers listening on the network follow it too. It is separate from **RX1 Mute On Off** and **RX2 Mute On Off**, which mute one receiver inside the mix (RX1 Mute On Off was listed as "Mute On Off" before).
+
 ### NETWORK
 
 External-software integration: **TCI** (ExpertSDR3 Transceiver Control Interface) and **CAT** (Kenwood TS-2000 emulation over TCP, default port **19090**), each with bind address, port, and test; **CAT serial ports** for software that only speaks COM ports; the direct **DX-cluster** Telnet client; **WSJT-X UDP** (logging broadcasts to N1MM+/JTAlert/GridTracker); and **spotting** options. Both TCI and CAT are unauthenticated and CAT grants full transmit control — bind `0.0.0.0` only on a trusted network.

@@ -1607,6 +1607,14 @@ public static class ZeusHost
         // and reads FIFO depth. Nothing here can radiate.
         app.Services.GetRequiredService<DspPipelineService>().AfAnalysis =
             app.Services.GetRequiredService<AfAnalysisService>();
+        // Master audio mute (transport bar Mute): MIDI can flip it, and every
+        // change is announced (0x3F) so each client's Mute button follows.
+        {
+            var audioMute = app.Services.GetRequiredService<RxAudioMuteState>();
+            var muteHub = app.Services.GetRequiredService<StreamingHub>();
+            audioMute.Changed += () => muteHub.BroadcastRaw(audioMute.ToFrame());
+            app.Services.GetRequiredService<Midi.MidiService>().AudioMute = audioMute;
+        }
         app.Services.GetRequiredService<DspPipelineService>().NativeTxSink =
             app.Services.GetRequiredService<SaturnTxStream>();
         // The moment a native session releases the register plane — clean

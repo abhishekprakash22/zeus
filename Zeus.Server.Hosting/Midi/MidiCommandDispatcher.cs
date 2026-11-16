@@ -56,6 +56,17 @@ public sealed class MidiCommandDispatcher
     /// <summary>The engine-local dispatch state (toggles, wheel sensitivity).</summary>
     public MidiDispatchState DispatchState => _state;
 
+    /// <summary>The radio's master audio mute — the transport bar's Mute button.
+    /// Set by the host after the container is built; null (tests, early boot)
+    /// makes <see cref="ZeusMidiCommand.AudioMuteOnOff"/> a logged no-op.</summary>
+    public RxAudioMuteState? AudioMute { get; set; }
+
+    // NR5 "amount": the knob runs from least suppression (mask floor -10 dB,
+    // most noise passed) at 0 to most (-50 dB) at full scale, so turning it up
+    // means more reduction, as NR4 Amount does.
+    internal const double Nr5FloorLeastDb = -10.0;
+    internal const double Nr5FloorMostDb = -50.0;
+
     /// <summary>Route one resolved command. Never throws — a faulty seam call is
     /// logged and swallowed so one bad mapping can't take down the MIDI thread.</summary>
     public void Dispatch(ZeusMidiCommand cmd, int value, int delta)
@@ -472,6 +483,17 @@ public sealed class MidiCommandDispatcher
                 var cur = st.Snapshot().Nr ?? new NrConfig(); r.SetNr(cur with { Nr4ReductionAmount = st.Scale(value, 0.0, 20.0) });
                 break;
             }
+            case ZeusMidiCommand.Nr5OnOff:
+            {
+                if (value > 0) { var cur = st.Snapshot().Nr ?? new NrConfig(); r.SetNr(cur with { NrMode = cur.NrMode == NrMode.Nnr ? NrMode.Off : NrMode.Nnr }); }
+                break;
+            }
+            case ZeusMidiCommand.Nr5Amount:
+            {
+                var floor = Math.Round(st.Scale(value, Nr5FloorLeastDb, Nr5FloorMostDb), 1);
+                r.SetNnr(new NnrConfigSetRequest(MaskFloorDb: floor));
+                break;
+            }
             case ZeusMidiCommand.Rx1Nb1OnOff:
             {
                 if (value > 0) { var cur = st.Snapshot().Nr ?? new NrConfig(); r.SetNr(cur with { NbMode = cur.NbMode == NbMode.Nb1 ? NbMode.Off : NbMode.Nb1 }); }
@@ -540,6 +562,16 @@ public sealed class MidiCommandDispatcher
             case ZeusMidiCommand.MuteOnOff:
             {
                 if (value > 0) r.SetReceiverMuted(0, !st.Snapshot().Rx1Muted);
+                break;
+            }
+            case ZeusMidiCommand.AudioMuteOnOff:
+            {
+                if (value > 0)
+                {
+                    var mute = AudioMute;
+                    if (mute is null) _log.LogDebug("midi.audioMute no mute state wired");
+                    else mute.SetMuted(!mute.IsMuted, MuteChangeSource.Midi);
+                }
                 break;
             }
             case ZeusMidiCommand.Rx2MuteOnOff:

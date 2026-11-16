@@ -178,6 +178,15 @@ public sealed class MidiService : IHostedService, IDisposable
         return GetStatus();
     }
 
+    /// <summary>The radio's master audio mute, for the "Audio Mute On Off
+    /// (transport bar)" command. Set once by the host after the container is
+    /// built (keeps the DI constructors unchanged).</summary>
+    public RxAudioMuteState? AudioMute
+    {
+        get => _dispatcher.AudioMute;
+        set => _dispatcher.AudioMute = value;
+    }
+
     /// <summary>Enter Learn mode: inbound control events are forwarded to the UI
     /// and NOT dispatched to the radio. Starts the engines if they were idle so
     /// the operator can learn controls even with MIDI globally disabled.</summary>

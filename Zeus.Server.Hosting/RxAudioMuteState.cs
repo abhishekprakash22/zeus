@@ -23,9 +23,23 @@ namespace Zeus.Server;
 /// fine because server-mode operators mute via their browser AudioContext.
 /// </para>
 /// </summary>
+/// <summary>Who flipped the master mute last — lets clients that keep their
+/// own playback state (a browser's audio decoder) follow a hardware control
+/// without following each other's buttons.</summary>
+public enum MuteChangeSource : byte
+{
+    Ui = 0,
+    Midi = 1,
+}
+
 public sealed class RxAudioMuteState
 {
     private volatile bool _muted;
+    private volatile MuteChangeSource _lastSource;
+
+    /// <summary>Source of the most recent change (valid inside a
+    /// <see cref="Changed"/> handler).</summary>
+    public MuteChangeSource LastSource => _lastSource;
 
     /// <summary>Current mute flag. Cheap volatile read — safe from any thread.</summary>
     public bool IsMuted => _muted;
@@ -38,10 +52,16 @@ public sealed class RxAudioMuteState
 
     /// <summary>Set the mute flag. Idempotent: no event fires when the value
     /// is unchanged.</summary>
-    public void SetMuted(bool muted)
+    public void SetMuted(bool muted, MuteChangeSource source = MuteChangeSource.Ui)
     {
         if (_muted == muted) return;
+        _lastSource = source;
         _muted = muted;
         Changed?.Invoke();
     }
+
+    /// <summary>The 0x3F wire frame announcing the current state:
+    /// [type][muted u8][source u8].</summary>
+    public byte[] ToFrame() =>
+        new[] { (byte)Zeus.Contracts.MsgType.AudioMute, _muted ? (byte)1 : (byte)0, (byte)_lastSource };
 }

@@ -113,6 +113,13 @@ Connect, then operate from the workspace:
 - **Memory channels:** kept on the radio and shared by every client. They
   show on RX1's panadapter as gold ★ flags — click to recall (mode, filter,
   frequency); open the radial menu on one and choose **Forget** to delete it.
+- **Decodes on the spectrum (TAGS):** FT8/FT4 senders, CW-skimmer calls and
+  cluster/TCI spots are tagged on RX1's panadapter at their frequency,
+  coloured by your log for the band you are on: magenta new DXCC, orange new
+  on this band, green needed, grey worked, yellow calling you. Unnamed
+  signals get a dashed guess (CW, SSB, Carrier, AM, FT8, Wide). Click a CW or
+  spot tag to tune. TAGS beside SNAP, or Settings → Display → Panadapter
+  Overlays per source; kept on the radio.
 - **Display effects (Settings → Display → EFFECTS):** Off / **Subtle**
   (default) / Full, remembered by the radio. Subtle: the trace and fill take
   the waterfall palette's colour per signal (noise keeps your trace colour),

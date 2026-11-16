@@ -412,6 +412,7 @@ public static class ZeusHost
         builder.Services.AddSingleton<StreamingHub>();
         // AF analysis for the filter card's audio views (leased, idle = free).
         builder.Services.AddSingleton<AfAnalysisService>();
+        builder.Services.AddSingleton<CallStatusService>();
         // WebRTC remote-access data plane (docs/designs/remote-access-webrtc.md).
         // Phase-0 spike service; the dev-only /api/rtc/spike/offer endpoint that
         // uses it is gated behind ZEUS_RTC_SPIKE=1 in ZeusEndpoints.
@@ -1847,6 +1848,7 @@ public static class ZeusHost
         // Window-chrome prefs the kiosk launcher reads (fullscreen marker).
         Zeus.Server.UiPrefsEndpoints.MapUiPrefsEndpoints(app);
         Zeus.Server.MemoryChannelEndpoints.MapMemoryChannelEndpoints(app);
+        Zeus.Server.DecodeTagEndpoints.MapDecodeTagEndpoints(app);
         // Filter card audio views: AF analysis lease.
         Zeus.Server.AfAnalysisEndpoints.MapAfAnalysisEndpoints(app);
         // Built-in assistant: settings + ask (read-only tools).

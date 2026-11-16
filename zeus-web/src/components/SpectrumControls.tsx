@@ -18,6 +18,7 @@ import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useSignalEnhanceStore } from '../dsp/signal-estimator';
 import { useNotchStore } from '../state/notch-store';
 import { usePanadapterRenderStore } from '../state/panadapter-render-store';
+import { useDecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
 
 // Panadapter display toggles — dB auto/fixed range, Signal Pop, Snap-to-signal,
 // and the Notch arm/clear. These used to overlay the panadapter top-right, where
@@ -33,6 +34,8 @@ export function SpectrumControls() {
   const togglePop = useSignalEnhanceStore((s) => s.togglePop);
   const snapEnabled = useSignalEnhanceStore((s) => s.snapEnabled);
   const toggleSnap = useSignalEnhanceStore((s) => s.toggleSnap);
+  const tagsEnabled = useDecodeTagPrefs((s) => s.enabled);
+  const setTagPrefs = useDecodeTagPrefs((s) => s.set);
   const notchArmed = useNotchStore((s) => s.armed);
   const toggleNotchArmed = useNotchStore((s) => s.toggleArmed);
   const notchCount = useNotchStore((s) => s.notches.length);
@@ -91,6 +94,19 @@ export function SpectrumControls() {
         className={`btn sm ${snapEnabled ? 'active' : ''}`}
       >
         SNAP
+      </button>
+      <button
+        type="button"
+        onClick={() => setTagPrefs({ enabled: !tagsEnabled })}
+        aria-pressed={tagsEnabled}
+        title={
+          tagsEnabled
+            ? 'Decodes on spectrum ON: FT8, CW-skimmer and cluster calls tagged at their frequency, coloured by log status'
+            : 'Decodes on spectrum: tag heard calls on the panadapter'
+        }
+        className={`btn sm ${tagsEnabled ? 'active' : ''}`}
+      >
+        TAGS
       </button>
       <button
         type="button"

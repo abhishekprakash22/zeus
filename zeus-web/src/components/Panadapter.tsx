@@ -79,6 +79,7 @@ import { SstvTuneOverlay } from './SstvTuneOverlay';
 import { CwSkimmerLanes } from './CwSkimmerLanes';
 import { NotchOverlay } from './NotchOverlay';
 import { MemoryMarkerOverlay } from './radial/MemoryMarkerOverlay';
+import { DecodeTagOverlay } from '../decode-tags/DecodeTagOverlay';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
 import { WidebandViewportControls } from './WidebandViewportControls';
 import { useThemeStore } from '../state/theme-store';
@@ -612,6 +613,7 @@ export function Panadapter({
         <>
           <SpotOverlay />
           <MemoryMarkerOverlay />
+          <DecodeTagOverlay />
           <ChatRosterOverlay />
           <PeakMarkerOverlay />
           <CwDecodeWaterfallOverlay />

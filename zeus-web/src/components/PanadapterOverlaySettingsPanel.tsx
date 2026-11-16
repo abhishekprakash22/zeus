@@ -21,12 +21,33 @@ import {
   SPOT_LABEL_FONT_PX_MIN,
   useDisplaySettingsStore,
 } from '../state/display-settings-store';
+import { useDecodeTagPrefs, type DecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
+import { useEffect } from 'react';
 
 export function PanadapterOverlaySettingsPanel() {
   const showChatRoster = useDisplaySettingsStore((s) => s.showChatRosterOverlay);
   const setShowChatRoster = useDisplaySettingsStore((s) => s.setShowChatRosterOverlay);
   const spotLabelFontPx = useDisplaySettingsStore((s) => s.spotLabelFontPx);
   const setSpotLabelFontPx = useDisplaySettingsStore((s) => s.setSpotLabelFontPx);
+  const tags = useDecodeTagPrefs();
+  useEffect(() => {
+    void useDecodeTagPrefs.getState().hydrate();
+  }, []);
+  const tagSwitch = (key: keyof DecodeTagPrefs, label: string, hint: string, disabled = false) => (
+    <div style={autoRow}>
+      <label style={{ ...switchLabel, opacity: disabled ? 0.5 : 1 }}>
+        <input
+          type="checkbox"
+          checked={tags[key]}
+          disabled={disabled}
+          onChange={(event) => tags.set({ [key]: event.currentTarget.checked })}
+          style={{ accentColor: 'var(--accent)' }}
+        />
+        {label}
+      </label>
+      <span style={autoHint}>{hint}</span>
+    </div>
+  );
 
   return (
     <section>
@@ -38,6 +59,21 @@ export function PanadapterOverlaySettingsPanel() {
       </div>
 
       <div style={card}>
+        {tagSwitch(
+          'enabled',
+          'Decodes on Spectrum',
+          'Tags every call the radio hears at its frequency on RX1’s panadapter, coloured by your log: magenta new DXCC, orange new on this band, green needed, grey worked, yellow calling you. Also the TAGS button beside SNAP. Kept on the radio.',
+        )}
+        {tagSwitch('ft8', '— FT8 / FT4 decodes', 'Senders from the last two slots, at dial + audio offset.', !tags.enabled)}
+        {tagSwitch('cw', '— CW skimmer calls', 'Calls the skimmer copies (after DE or CQ, or sent twice). Needs SKIM on in the CW decoder.', !tags.enabled)}
+        {tagSwitch('spots', '— Cluster and TCI spots', 'Drawn as status-coloured tags instead of the plain spot labels.', !tags.enabled)}
+        {tagSwitch(
+          'classifier',
+          '— Signal type hints',
+          'A best guess for signals nobody has named — CW, SSB, Carrier, FT8, AM, Wide (radar / broadband) — from width, steadiness and keying. Hints, not decodes.',
+          !tags.enabled,
+        )}
+
         <div style={autoRow}>
           <label style={switchLabel}>
             <input

@@ -157,3 +157,60 @@
   z-index: 26;
 }
 .mem-flag:hover { background: rgba(60, 46, 12, 0.95); }
+
+/* Decodes on the spectrum. Status colours: magenta new DXCC, orange new on
+ * band, green needed, grey worked, yellow calling you. */
+.dtag-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 24;
+  overflow: hidden;
+}
+.dtag {
+  position: absolute;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  background: var(--disp-chip-bg, rgba(4, 8, 12, 0.78));
+  color: #cfe8f8;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  line-height: 12px;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+}
+.dtag::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 5px;
+  background: currentColor;
+  opacity: 0.7;
+}
+.dtag--static { cursor: default; }
+.dtag--unknown { color: #cfe8f8; border-color: rgba(207, 232, 248, 0.45); }
+.dtag--newdxcc { color: #ff5cdc; font-weight: 700; }
+.dtag--newband { color: #ffa53a; font-weight: 700; }
+.dtag--needed { color: #52d985; }
+.dtag--worked { color: #8a96a3; border-color: rgba(138, 150, 163, 0.5); opacity: 0.85; }
+.dtag--me { color: #ffe14d; font-weight: 700; box-shadow: 0 0 0 1px rgba(255, 225, 77, 0.35); }
+.dtag-cq { font-size: 0.8em; opacity: 0.85; }
+.dtag-src { font-size: 0.75em; opacity: 0.7; }
+.dtag--sig {
+  color: #8fb7d6;
+  border-style: dashed;
+  border-color: rgba(143, 183, 214, 0.5);
+  font-style: italic;
+  pointer-events: auto;
+  cursor: help;
+}
+.dtag--sig::after { display: none; }

@@ -17,6 +17,7 @@ import { useConnectionStore } from '../state/connection-store';
 import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useDisplayStore } from '../state/display-store';
 import { useSpotStore } from '../state/spot-store';
+import { decodeTagsOwnSpots, useDecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
 
 // Top inset for the callsign label. The licence-class band chips painted by
 // BandOverlay sit at top=24 with ~16 px of chip height, so their bottom edge
@@ -46,6 +47,8 @@ export function SpotOverlay() {
   const spots = useSpotStore((s) => s.spots);
   const vfoHz = useConnectionStore((s) => s.vfoHz);
   const fontPx = useDisplaySettingsStore((s) => s.spotLabelFontPx);
+  // Decodes on the spectrum draws spots itself (status-coloured, laned).
+  const tagsOwnSpots = useDecodeTagPrefs((s) => decodeTagsOwnSpots(s));
 
   const handleSpotClick = useCallback(
     (freqHz: number) => {
@@ -57,7 +60,7 @@ export function SpotOverlay() {
     [],
   );
 
-  if (!width || hzPerPixel <= 0 || spots.length === 0) return null;
+  if (tagsOwnSpots || !width || hzPerPixel <= 0 || spots.length === 0) return null;
 
   const spanHz = width * hzPerPixel;
   const center = Number(centerHz);

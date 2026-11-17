@@ -537,14 +537,31 @@ function Nr2Panel() {
 // in CW the engine swaps to the CW model of that grade (WDSP 2.11), and a
 // build without the Premium models silently stays on Standard.
 
+/**
+ * A tunable that lives on the radio. While the operator is moving the control
+ * the panel shows their own value; once the debounced write has landed (or
+ * failed) it shows the radio's value again, so a change made elsewhere — a
+ * MIDI knob, another client — appears straight away instead of only after the
+ * panel is reopened. `gen` is the panel's settle counter: bumping it drops
+ * every local edit at once.
+ */
+function useRadioValue<T>(server: T, gen: number): [T, (v: T) => void] {
+  const [edit, setEdit] = useState<{ v: T; gen: number } | null>(null);
+  const value = edit != null && edit.gen === gen ? edit.v : server;
+  const setLocal = useCallback((v: T) => setEdit({ v, gen }), [gen]);
+  return [value, setLocal];
+}
+
 function NnrPanel() {
   const nr = useConnectionStore((s) => s.nr);
   const applyState = useConnectionStore((s) => s.applyState);
   const premiumAvailable = useConnectionStore((s) => s.nnrPremiumModelAvailable);
   const slotInUse = useConnectionStore((s) => s.nnrModelSlotInUse);
 
-  const [floor, setFloor] = useState<number>(nr.nnrMaskFloorDb ?? NNR_DEFAULTS.maskFloorDb);
-  const [slot, setSlot] = useState<number>(nr.nnrModelSlot ?? NNR_DEFAULTS.modelSlot);
+  // Local edits show while a write is pending, then the radio's value wins.
+  const [syncGen, setSyncGen] = useState(0);
+  const [floor, setFloor] = useRadioValue<number>(nr.nnrMaskFloorDb ?? NNR_DEFAULTS.maskFloorDb, syncGen);
+  const [slot, setSlot] = useRadioValue<number>(nr.nnrModelSlot ?? NNR_DEFAULTS.modelSlot, syncGen);
 
   const inflight = useRef<AbortController | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -561,15 +578,23 @@ function NnrPanel() {
     (body: NnrPatchBody) => {
       if (debounce.current != null) clearTimeout(debounce.current);
       debounce.current = setTimeout(() => {
+        debounce.current = null;
         inflight.current?.abort();
         const ac = new AbortController();
         inflight.current = ac;
+        // Hand the display back to the radio once this write has landed and
+        // no newer edit is waiting.
+        const settle = () => {
+          if (!ac.signal.aborted && debounce.current == null) setSyncGen((g) => g + 1);
+        };
         setNnr(body, ac.signal)
           .then((s: RadioStateDto) => {
             if (!ac.signal.aborted) applyState(s);
+            settle();
           })
           .catch(() => {
             /* state poll will reconcile */
+            settle();
           });
       }, PERSIST_DEBOUNCE_MS);
     },
@@ -662,23 +687,32 @@ function Nr4Panel() {
   const nr = useConnectionStore((s) => s.nr);
   const applyState = useConnectionStore((s) => s.applyState);
 
-  const [reduction, setReduction] = useState<number>(
+  // Local edits show while a write is pending, then the radio's value wins
+  // (so a MIDI "Noise Reduction 4 Amount" knob moves the gauge live).
+  const [syncGen, setSyncGen] = useState(0);
+  const [reduction, setReduction] = useRadioValue<number>(
     nr.nr4ReductionAmount ?? NR4_DEFAULTS.reductionAmount,
+    syncGen,
   );
-  const [smoothing, setSmoothing] = useState<number>(
+  const [smoothing, setSmoothing] = useRadioValue<number>(
     nr.nr4SmoothingFactor ?? NR4_DEFAULTS.smoothingFactor,
+    syncGen,
   );
-  const [whitening, setWhitening] = useState<number>(
+  const [whitening, setWhitening] = useRadioValue<number>(
     nr.nr4WhiteningFactor ?? NR4_DEFAULTS.whiteningFactor,
+    syncGen,
   );
-  const [rescale, setRescale] = useState<number>(
+  const [rescale, setRescale] = useRadioValue<number>(
     nr.nr4NoiseRescale ?? NR4_DEFAULTS.noiseRescale,
+    syncGen,
   );
-  const [snrThr, setSnrThr] = useState<number>(
+  const [snrThr, setSnrThr] = useRadioValue<number>(
     nr.nr4PostFilterThreshold ?? NR4_DEFAULTS.postFilterThreshold,
+    syncGen,
   );
-  const [algo, setAlgo] = useState<number>(
+  const [algo, setAlgo] = useRadioValue<number>(
     nr.nr4NoiseScalingType ?? NR4_DEFAULTS.noiseScalingType,
+    syncGen,
   );
 
   const inflight = useRef<AbortController | null>(null);
@@ -696,15 +730,23 @@ function Nr4Panel() {
     (body: Nr4PatchBody) => {
       if (debounce.current != null) clearTimeout(debounce.current);
       debounce.current = setTimeout(() => {
+        debounce.current = null;
         inflight.current?.abort();
         const ac = new AbortController();
         inflight.current = ac;
+        // Hand the display back to the radio once this write has landed and
+        // no newer edit is waiting.
+        const settle = () => {
+          if (!ac.signal.aborted && debounce.current == null) setSyncGen((g) => g + 1);
+        };
         setNr4(body, ac.signal)
           .then((s: RadioStateDto) => {
             if (!ac.signal.aborted) applyState(s);
+            settle();
           })
           .catch(() => {
             /* state poll will reconcile */
+            settle();
           });
       }, PERSIST_DEBOUNCE_MS);
     },

@@ -4489,6 +4489,9 @@ public partial class DspPipelineService : BackgroundService,
     {
         lock (_engineLock)
         {
+        // Rewind: track the hardware centre for the I/Q ring, and keep a
+        // running replay on RX1's dial / mode / filter.
+        TimeShiftOnStateChangedLocked(s);
         // FreeDV spec-profile override (see the AGC/TX-leveling/CFC pushes below):
         // gates those engine pushes to linear-friendly values while the operator's
         // stored config stays untouched for automatic restore on exit.
@@ -6706,6 +6709,7 @@ public partial class DspPipelineService : BackgroundService,
                     Volatile.Read(ref _secondaryRx[1].ChannelId),
                     frame.InterleavedSamples.Span);
                 FeedHoverPreview(engine, frame.InterleavedSamples.Span);
+                TimeShiftOnRx1Iq(engine, frame.InterleavedSamples.Span);
                 RxIqAvailable?.Invoke(0, frame.SampleRateHz, frame.InterleavedSamples);
             }
             MaybeTickInline();
@@ -6784,6 +6788,7 @@ public partial class DspPipelineService : BackgroundService,
             LogRxIqRms(0, frame.InterleavedSamples.Span, ref _rx1IqRmsLogMs);
             FeedRx0WithOptionalDiversity(engine, channel, frame.InterleavedSamples.Span, frame.DiversitySourceSamples.Span);
             FeedHoverPreview(engine, frame.InterleavedSamples.Span);
+            TimeShiftOnRx1Iq(engine, frame.InterleavedSamples.Span);
             RxIqAvailable?.Invoke(0, frame.SampleRateHz, frame.InterleavedSamples);
         }
         MaybeTickInline();

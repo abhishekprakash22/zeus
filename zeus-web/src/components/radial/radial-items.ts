@@ -15,7 +15,7 @@
 import type { RadialContext } from '../../state/radial-menu-store';
 import type { MemoryChannel } from '../../api/memories';
 
-export type RadialItemId = 'split' | 'rx2' | 'notch' | 'memory' | 'forget' | 'spot';
+export type RadialItemId = 'split' | 'rx2' | 'notch' | 'memory' | 'forget' | 'spot' | 'rewind';
 
 export type RadialItem = {
   id: RadialItemId;
@@ -34,7 +34,12 @@ export type RadialEnv = {
   clusterConnected: boolean;
   /** A stored memory channel sits under the press. */
   memoryHit: MemoryChannel | null;
+  /** Seconds of spectrum the rewind buffer holds (0 = rewind off / empty). */
+  rewindSeconds?: number;
 };
+
+/** How far back the radial menu's Rewind item goes. */
+export const RADIAL_REWIND_SECONDS = 10;
 
 /** Memory markers are hit within this many screen pixels. */
 export const MEMORY_HIT_PX = 8;
@@ -80,6 +85,16 @@ export function radialItems(ctx: Pick<RadialContext, 'rxIndex' | 'panRxIndex' | 
         }
       : { id: 'memory', label: 'Store', icon: '★', hint: 'Store as a memory channel', disabled: false },
   );
+  if (onRx1 && (env.rewindSeconds ?? 0) >= 1) {
+    const back = Math.min(RADIAL_REWIND_SECONDS, Math.floor(env.rewindSeconds ?? 0));
+    items.push({
+      id: 'rewind',
+      label: `−${back} s`,
+      icon: '⏪',
+      hint: env.locked ? 'VFO locked' : `Tune here and replay the last ${back} seconds`,
+      disabled: env.locked,
+    });
+  }
   items.push({
     id: 'spot',
     label: 'Spot',

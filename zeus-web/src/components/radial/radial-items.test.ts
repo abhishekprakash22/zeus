@@ -48,6 +48,18 @@ describe('radialItems', () => {
     expect(items.map((i) => i.id)).not.toContain('memory');
   });
 
+  it('offers a rewind step only while the rewind buffer holds something', () => {
+    expect(radialItems(rx1, env).map((i) => i.id)).not.toContain('rewind');
+    const item = radialItems(rx1, { ...env, rewindSeconds: 42 }).find((i) => i.id === 'rewind');
+    expect(item?.label).toBe('−10 s');
+    // Less than 10 s held: go back as far as there is.
+    expect(radialItems(rx1, { ...env, rewindSeconds: 4.6 }).find((i) => i.id === 'rewind')?.label).toBe('−4 s');
+    // Not on a secondary receiver's pane (the buffer is RX1's).
+    expect(
+      radialItems({ rxIndex: 1, panRxIndex: 1, carrierHz: null }, { ...env, rewindSeconds: 42 }).map((i) => i.id),
+    ).not.toContain('rewind');
+  });
+
   it('disables Spot without a cluster connection', () => {
     expect(radialItems(rx1, { ...env, clusterConnected: false }).find((i) => i.id === 'spot')?.disabled).toBe(true);
   });

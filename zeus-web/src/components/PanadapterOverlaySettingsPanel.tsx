@@ -23,6 +23,7 @@ import {
 } from '../state/display-settings-store';
 import { useDecodeTagPrefs, type DecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
 import { useHoverListenStore } from '../hover-listen/hover-listen';
+import { TIME_SHIFT_LENGTHS, useTimeShiftStore } from '../time-shift/time-shift';
 import { useEffect } from 'react';
 
 export function PanadapterOverlaySettingsPanel() {
@@ -36,7 +37,10 @@ export function PanadapterOverlaySettingsPanel() {
   useEffect(() => {
     void useDecodeTagPrefs.getState().hydrate();
     void useHoverListenStore.getState().hydrate();
+    void useTimeShiftStore.getState().hydrate();
   }, []);
+  const rewind = useTimeShiftStore((s) => s.status);
+  const configureRewind = useTimeShiftStore((s) => s.configure);
   const tagSwitch = (key: keyof DecodeTagPrefs, label: string, hint: string, disabled = false) => (
     <div style={autoRow}>
       <label style={{ ...switchLabel, opacity: disabled ? 0.5 : 1 }}>
@@ -79,6 +83,46 @@ export function PanadapterOverlaySettingsPanel() {
             it, without moving the dial. Click (or release the loupe) to tune there. Works across the
             spectrum RX1 is receiving; silent while transmitting. Also the LISTEN button beside TAGS.
             Kept on the radio.
+          </span>
+        </div>
+
+        <div style={autoRow}>
+          <label style={switchLabel}>
+            <input
+              type="checkbox"
+              checked={rewind.enabled}
+              onChange={(event) => void configureRewind(event.currentTarget.checked)}
+              style={{ accentColor: 'var(--accent)' }}
+            />
+            Rewind
+          </label>
+          <span style={autoHint}>
+            The radio keeps the last stretch of everything RX1 is receiving. A bar on RX1’s panadapter
+            lets you go back and hear it again — and tune around inside it, so you can hear what was
+            said on a frequency you were not on. Replays replace RX1’s audio and say so; LIVE, or
+            keying up, returns to the present. Also the REWIND button beside LISTEN. Kept on the radio.{' '}
+            <label style={{ whiteSpace: 'nowrap' }}>
+              Keep{' '}
+              <select
+                value={rewind.requestedSeconds}
+                disabled={!rewind.enabled}
+                onChange={(event) => void configureRewind(true, Number(event.currentTarget.value))}
+              >
+                {TIME_SHIFT_LENGTHS.map((s) => (
+                  <option key={s} value={s}>
+                    {s >= 60 ? `${s / 60} min` : `${s} s`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {rewind.enabled && rewind.rateHz > 0 && (
+              <>
+                {' '}
+                — holding up to {rewind.capacitySeconds.toFixed(0)} s at {(rewind.rateHz / 1000).toFixed(0)} kHz (
+                {(rewind.memoryBytes / (1024 * 1024)).toFixed(0)} MB
+                {rewind.capacitySeconds + 0.5 < rewind.requestedSeconds ? '; limited by the 128 MB ceiling' : ''})
+              </>
+            )}
           </span>
         </div>
 

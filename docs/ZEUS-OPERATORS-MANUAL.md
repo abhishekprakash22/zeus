@@ -127,6 +127,14 @@ Connect, then operate from the workspace:
   signals get a dashed guess (CW, SSB, Carrier, AM, FT8, Wide). Click a CW or
   spot tag to tune. TAGS beside SNAP, or Settings → Display → Panadapter
   Overlays per source; kept on the radio.
+- **Rewind (REWIND):** the radio keeps the last stretch of everything RX1
+  receives (30 s to 5 min, at most 128 MB, in memory only). A bar on RX1's
+  panadapter goes back in time — ⏪ 10, slider, ⏸, LIVE — and RX1's dial,
+  mode and filter still work, so you can hear what was said on a frequency
+  you were not on. A REPLAY badge shows the delay; the audio is the past,
+  not a mix, and the displays stay live. Keying up returns to live. Off by
+  default; REWIND beside LISTEN, a G2 deck key, or Settings → DISPLAY →
+  Panadapter Overlays.
 - **Display effects (Settings → Display → EFFECTS):** Off / **Subtle**
   (default) / Full, remembered by the radio. Subtle: the trace and fill take
   the waterfall palette's colour per signal (noise keeps your trace colour),

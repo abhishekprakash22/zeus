@@ -25,12 +25,14 @@ import { memoryNear, useMemoryStore } from '../../state/memory-store';
 import { useNotchStore } from '../../state/notch-store';
 import { useRadialMenuStore, type RadialContext } from '../../state/radial-menu-store';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
+import { useTimeShiftStore } from '../../time-shift/time-shift';
 import {
   CENTER_SIZE_PX,
   clampCenter,
   formatDialHz,
   ITEM_SIZE_PX,
   MEMORY_HIT_PX,
+  RADIAL_REWIND_SECONDS,
   radialItems,
   ringOffsets,
   spotFrequencyHz,
@@ -67,6 +69,7 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
   const maxReceivers = useConnectionStore((s) => s.maxReceivers);
   const clusterState = useDxClusterStore((s) => s.status?.state);
   const channels = useMemoryStore((s) => s.channels);
+  const rewind = useTimeShiftStore((s) => s.status);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const centerRef = useRef<HTMLButtonElement | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -112,6 +115,7 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
     hasRx2: maxReceivers >= 2,
     clusterConnected: clusterState === 'Connected',
     memoryHit,
+    rewindSeconds: rewind.enabled ? rewind.bufferedSeconds : 0,
   });
   const offsets = ringOffsets(items.length);
   const center = clampCenter(
@@ -156,6 +160,14 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
           .getState()
           .remove(memoryHit.id)
           .then((ok) => flashThenClose(ok ? 'Deleted' : 'Not deleted'));
+        return;
+      case 'rewind':
+        close();
+        // Tune RX1 here (the replay follows RX1's dial), then go back.
+        ctx.tune();
+        void useTimeShiftStore
+          .getState()
+          .replay(Math.min(RADIAL_REWIND_SECONDS, Math.floor(rewind.bufferedSeconds)));
         return;
       case 'spot':
         setSpotForm(true);

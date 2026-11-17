@@ -1616,6 +1616,9 @@ public static class ZeusHost
             audioMute.Changed += () => muteHub.BroadcastRaw(audioMute.ToFrame());
             app.Services.GetRequiredService<Midi.MidiService>().AudioMute = audioMute;
         }
+        // Rewind: apply the operator's saved setting (off unless they turned it on).
+        app.Services.GetRequiredService<DspPipelineService>()
+            .ConfigureTimeShift(Zeus.Server.TimeShiftEndpoints.Load());
         app.Services.GetRequiredService<DspPipelineService>().NativeTxSink =
             app.Services.GetRequiredService<SaturnTxStream>();
         // The moment a native session releases the register plane — clean
@@ -1850,6 +1853,7 @@ public static class ZeusHost
         Zeus.Server.MemoryChannelEndpoints.MapMemoryChannelEndpoints(app);
         Zeus.Server.DecodeTagEndpoints.MapDecodeTagEndpoints(app);
         Zeus.Server.HoverListenEndpoints.MapHoverListenEndpoints(app);
+        Zeus.Server.TimeShiftEndpoints.MapTimeShiftEndpoints(app);
         // Filter card audio views: AF analysis lease.
         Zeus.Server.AfAnalysisEndpoints.MapAfAnalysisEndpoints(app);
         // Built-in assistant: settings + ask (read-only tools).

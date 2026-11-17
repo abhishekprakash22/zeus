@@ -105,69 +105,15 @@ public partial class DspPipelineService
                 return new HoverPreviewResult(false, plan.Reason);
             }
 
-            int chan = Volatile.Read(ref _hoverChannelId);
-            bool stale = chan >= 0 && (!ReferenceEquals(engine, _hoverEngine) || rate != _hoverChannelRateHz);
-            if (stale)
-            {
-                // Engine swapped (its channels went with it) or the DDC rate
-                // changed: the old channel is wrong either way.
-                CloseHoverChannelLocked(closeOnEngine: ReferenceEquals(engine, _hoverEngine));
-                chan = -1;
-            }
-            if (chan < 0)
-            {
-                chan = engine.OpenChannel(rate, Width);
-                _hoverEngine = engine;
-                _hoverChannelRateHz = rate;
-                ResetHoverApplied();
-                _hoverResyncAtMs = Environment.TickCount64 + HoverOpenResyncDelayMs;
-                _log.LogInformation("dsp.hover opened channel={Channel} rate={Rate}", chan, rate);
-            }
-            else if (_hoverResyncAtMs >= 0 && Environment.TickCount64 >= _hoverResyncAtMs)
-            {
-                _hoverResyncAtMs = -1;
-                ResetHoverApplied();
-            }
+            if (_tsReplay)
+                return new HoverPreviewResult(false, "rewind is playing");
 
-            if (_hoverAppliedMode != plan.EngineMode)
-            {
-                engine.SetMode(chan, plan.EngineMode);
-                _hoverAppliedMode = plan.EngineMode;
-            }
-            if (_hoverAppliedLow != plan.Low || _hoverAppliedHigh != plan.High)
-            {
-                engine.SetFilter(chan, plan.Low, plan.High);
-                _hoverAppliedLow = plan.Low;
-                _hoverAppliedHigh = plan.High;
-            }
-            if (_hoverAppliedWindow != s.RxFilterWindow)
-            {
-                engine.SetRxBandpassWindow(chan, s.RxFilterWindow);
-                _hoverAppliedWindow = s.RxFilterWindow;
-            }
+            int chan = EnsureAuxChannelLocked(engine, rate);
+            ApplyAuxConfigLocked(engine, chan, s, plan.EngineMode, plan.Low, plan.High);
             if (_hoverAppliedShiftHz != plan.ShiftHz)
             {
                 engine.SetCtunShift(chan, plan.ShiftHz);
                 _hoverAppliedShiftHz = plan.ShiftHz;
-            }
-            var agc = s.Agc ?? new AgcConfig(AgcMode.Med);
-            if (_hoverAppliedAgc != agc)
-            {
-                engine.SetAgc(chan, agc);
-                _hoverAppliedAgc = agc;
-            }
-            double agcTop = s.AgcTopDb + s.AgcOffsetDb;
-            if (_hoverAppliedAgcTop != agcTop)
-            {
-                engine.SetAgcTop(chan, agcTop);
-                _hoverAppliedAgcTop = agcTop;
-            }
-            // FreeDV holds RX1's panel gain at unity; the preview is plain SSB,
-            // so it takes the operator's AF setting directly.
-            if (_hoverAppliedAfDb != s.RxAfGainDb)
-            {
-                engine.SetRxAfGainDb(chan, s.RxAfGainDb);
-                _hoverAppliedAfDb = s.RxAfGainDb;
             }
 
             if (!_hoverFeeding) _hoverFlushPending = true; // drop audio left from the last preview
@@ -178,6 +124,82 @@ public partial class DspPipelineService
             _hoverIdleTimer ??= new Timer(_ => CloseIdleHoverChannel(), null, Timeout.Infinite, Timeout.Infinite);
             _hoverIdleTimer.Change(HoverIdleCloseMs, Timeout.Infinite);
             return new HoverPreviewResult(true, null);
+        }
+    }
+
+    /// <summary>
+    /// The auxiliary RXA channel shared by hover-to-listen and rewind (only one
+    /// of them plays at a time): open it if needed, replacing one left over
+    /// from a swapped engine or a different DDC rate. Caller holds _engineLock.
+    /// </summary>
+    private int EnsureAuxChannelLocked(IDspEngine engine, int rate)
+    {
+        int chan = Volatile.Read(ref _hoverChannelId);
+        bool stale = chan >= 0 && (!ReferenceEquals(engine, _hoverEngine) || rate != _hoverChannelRateHz);
+        if (stale)
+        {
+            // Engine swapped (its channels went with it) or the DDC rate
+            // changed: the old channel is wrong either way.
+            CloseHoverChannelLocked(closeOnEngine: ReferenceEquals(engine, _hoverEngine));
+            chan = -1;
+        }
+        if (chan < 0)
+        {
+            chan = engine.OpenChannel(rate, Width);
+            _hoverEngine = engine;
+            _hoverChannelRateHz = rate;
+            ResetHoverApplied();
+            _hoverResyncAtMs = Environment.TickCount64 + HoverOpenResyncDelayMs;
+            Volatile.Write(ref _hoverChannelId, chan);
+            _log.LogInformation("dsp.aux opened channel={Channel} rate={Rate}", chan, rate);
+        }
+        else if (_hoverResyncAtMs >= 0 && Environment.TickCount64 >= _hoverResyncAtMs)
+        {
+            _hoverResyncAtMs = -1;
+            ResetHoverApplied();
+        }
+        return chan;
+    }
+
+    /// <summary>Give the auxiliary channel RX1's demodulator settings (mode,
+    /// signed filter, filter window, AGC, AF gain), pushing only what changed.
+    /// The frequency shift is the caller's. Caller holds _engineLock.</summary>
+    private void ApplyAuxConfigLocked(IDspEngine engine, int chan, StateDto s, RxMode engineMode, int low, int high)
+    {
+        if (_hoverAppliedMode != engineMode)
+        {
+            engine.SetMode(chan, engineMode);
+            _hoverAppliedMode = engineMode;
+        }
+        if (_hoverAppliedLow != low || _hoverAppliedHigh != high)
+        {
+            engine.SetFilter(chan, low, high);
+            _hoverAppliedLow = low;
+            _hoverAppliedHigh = high;
+        }
+        if (_hoverAppliedWindow != s.RxFilterWindow)
+        {
+            engine.SetRxBandpassWindow(chan, s.RxFilterWindow);
+            _hoverAppliedWindow = s.RxFilterWindow;
+        }
+        var agc = s.Agc ?? new AgcConfig(AgcMode.Med);
+        if (_hoverAppliedAgc != agc)
+        {
+            engine.SetAgc(chan, agc);
+            _hoverAppliedAgc = agc;
+        }
+        double agcTop = s.AgcTopDb + s.AgcOffsetDb;
+        if (_hoverAppliedAgcTop != agcTop)
+        {
+            engine.SetAgcTop(chan, agcTop);
+            _hoverAppliedAgcTop = agcTop;
+        }
+        // FreeDV holds RX1's panel gain at unity; this channel is plain
+        // SSB/CW/AM, so it takes the operator's AF setting directly.
+        if (_hoverAppliedAfDb != s.RxAfGainDb)
+        {
+            engine.SetRxAfGainDb(chan, s.RxAfGainDb);
+            _hoverAppliedAfDb = s.RxAfGainDb;
         }
     }
 
@@ -216,6 +238,12 @@ public partial class DspPipelineService
         lock (_engineLock)
         {
             if (Volatile.Read(ref _hoverChannelId) < 0) return;
+            if (_tsReplay)
+            {
+                // Rewind is using the channel; look again later.
+                _hoverIdleTimer?.Change(HoverIdleCloseMs, Timeout.Infinite);
+                return;
+            }
             // Renewed since the timer was armed: its own re-arm will come back.
             if (Environment.TickCount64 < Volatile.Read(ref _hoverLeaseUntilMs) + HoverIdleCloseMs - 500) return;
             CloseHoverChannelLocked(closeOnEngine: ReferenceEquals(_engine, _hoverEngine));
@@ -226,7 +254,7 @@ public partial class DspPipelineService
     /// preview is live or fading. One volatile read when there is none.</summary>
     private void FeedHoverPreview(IDspEngine engine, ReadOnlySpan<double> rx1Iq)
     {
-        if (!_hoverFeeding) return;
+        if (!_hoverFeeding || _tsReplay) return; // during a rewind the channel is fed from the ring
         int chan = Volatile.Read(ref _hoverChannelId);
         if (chan < 0 || !ReferenceEquals(engine, Volatile.Read(ref _hoverEngine))) return;
         engine.FeedIq(chan, rx1Iq);
@@ -242,7 +270,8 @@ public partial class DspPipelineService
             return;
         }
         if (count <= 0) return;
-        bool live = !keyed && Environment.TickCount64 < Volatile.Read(ref _hoverLeaseUntilMs);
+        bool replay = TimeShiftReplayForTick(keyed);
+        bool live = replay || (!keyed && Environment.TickCount64 < Volatile.Read(ref _hoverLeaseUntilMs));
         if (!live && _hoverMix <= 0f)
         {
             // Fully faded out: stop paying for the channel until the next preview.
@@ -264,12 +293,15 @@ public partial class DspPipelineService
             if (buffered > want * 6) DiscardHoverAudio(engine, chan, buffered - want * 2);
         }
         int n = engine.ReadAudio(chan, _hoverAudioBuf.AsSpan(0, want));
-        // Duck only once preview audio is actually flowing, so opening the
-        // channel never punches a hole in the main audio.
-        float target = live && n > 0 ? 1f : 0f;
+        // Hover: duck only once preview audio is actually flowing, so opening
+        // the channel never punches a hole in the main audio. Rewind: the past
+        // REPLACES the present outright — and stays silent, not live, while
+        // paused or aimed outside the recorded window, so what is heard is
+        // never ambiguous.
+        float target = replay || (live && n > 0) ? 1f : 0f;
         _hoverMix = MixHoverPreview(
             audioBuf.AsSpan(0, count), _hoverAudioBuf.AsSpan(0, Math.Max(0, n)),
-            _hoverMix, target, HoverRampStep, HoverDuckGain);
+            _hoverMix, target, HoverRampStep, replay ? 0f : HoverDuckGain);
     }
 
     private void DiscardHoverAudio(IDspEngine engine, int chan, int samples)

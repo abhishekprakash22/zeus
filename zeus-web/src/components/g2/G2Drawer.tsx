@@ -64,6 +64,7 @@ import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticRe
 import { useAssistantStore } from '../../assistant/assistant-store';
 import { useDecodeTagPrefs } from '../../decode-tags/decode-tag-prefs';
 import { useHoverListenStore } from '../../hover-listen/hover-listen';
+import { useTimeShiftStore } from '../../time-shift/time-shift';
 import { resetFocusedFilterView, stepFocusedFilterView } from '../../audio-views/FilterDisplay';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
@@ -252,6 +253,28 @@ function HoverListenKeyButton() {
       title="Hover to listen: hold the tuning loupe (or rest the mouse) on the spectrum to hear that frequency without moving the dial"
     >
       LISTEN
+    </button>
+  );
+}
+
+// REWIND — keep the last stretch of RX1's spectrum for replay (the bar on
+// the panadapter drives it). Assignable via ✎.
+function RewindKeyButton() {
+  const on = useTimeShiftStore((s) => s.status.enabled);
+  const replaying = useTimeShiftStore((s) => s.status.replaying);
+  const configure = useTimeShiftStore((s) => s.configure);
+  useEffect(() => {
+    void useTimeShiftStore.getState().hydrate();
+  }, []);
+  return (
+    <button
+      type="button"
+      className={`btn ghost${on ? ' active' : ''}`}
+      onClick={() => void configure(!on)}
+      aria-pressed={on}
+      title="Rewind: keep the last minute of RX1's spectrum and listen to it again from the bar on the panadapter"
+    >
+      {replaying ? 'REPLAY' : 'REWIND'}
     </button>
   );
 }
@@ -1000,6 +1023,7 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   fview: { node: <FilterViewKeyButton /> },
   tags: { node: <DecodeTagsKeyButton /> },
   listen: { node: <HoverListenKeyButton /> },
+  rewind: { node: <RewindKeyButton /> },
 };
 
 // Twelve default keys in twelve slots: no duplicates, no blanks, on every

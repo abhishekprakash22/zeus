@@ -20,6 +20,7 @@ import { useNotchStore } from '../state/notch-store';
 import { usePanadapterRenderStore } from '../state/panadapter-render-store';
 import { useDecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
 import { useHoverListenStore } from '../hover-listen/hover-listen';
+import { useTimeShiftStore } from '../time-shift/time-shift';
 
 // Panadapter display toggles — dB auto/fixed range, Signal Pop, Snap-to-signal,
 // and the Notch arm/clear. These used to overlay the panadapter top-right, where
@@ -39,6 +40,8 @@ export function SpectrumControls() {
   const setTagPrefs = useDecodeTagPrefs((s) => s.set);
   const hoverListen = useHoverListenStore((s) => s.enabled);
   const setHoverListen = useHoverListenStore((s) => s.setEnabled);
+  const rewindOn = useTimeShiftStore((s) => s.status.enabled);
+  const configureRewind = useTimeShiftStore((s) => s.configure);
   const notchArmed = useNotchStore((s) => s.armed);
   const toggleNotchArmed = useNotchStore((s) => s.toggleArmed);
   const notchCount = useNotchStore((s) => s.notches.length);
@@ -123,6 +126,19 @@ export function SpectrumControls() {
         className={`btn sm ${hoverListen ? 'active' : ''}`}
       >
         LISTEN
+      </button>
+      <button
+        type="button"
+        onClick={() => void configureRewind(!rewindOn)}
+        aria-pressed={rewindOn}
+        title={
+          rewindOn
+            ? 'Rewind ON: the radio keeps the last stretch of RX1’s spectrum — use the bar on the panadapter to hear it again, on any frequency in it'
+            : 'Rewind: keep the last minute of RX1’s spectrum so you can listen to it again'
+        }
+        className={`btn sm ${rewindOn ? 'active' : ''}`}
+      >
+        REWIND
       </button>
       <button
         type="button"

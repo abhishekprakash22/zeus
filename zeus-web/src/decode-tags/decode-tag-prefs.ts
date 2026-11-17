@@ -15,6 +15,15 @@
 
 import { create } from 'zustand';
 
+/**
+ * Master availability of "decodes on the spectrum". OFF: the feature is
+ * withheld from the product until it is mature — no TAGS button or deck key,
+ * no settings switches, nothing drawn, and the plain spot labels stay as they
+ * were. The overlay, model and radio endpoints remain in the tree so that
+ * flipping this back on is the whole job of restoring it.
+ */
+export const DECODE_TAGS_AVAILABLE: boolean = false;
+
 export type DecodeTagPrefs = {
   enabled: boolean;
   ft8: boolean;
@@ -76,7 +85,11 @@ function pickPrefs(s: DecodeTagPrefs): DecodeTagPrefs {
   return { enabled: s.enabled, ft8: s.ft8, cw: s.cw, spots: s.spots, classifier: s.classifier };
 }
 
-/** The spot overlay steps aside while decode tags draw the spots. */
-export function decodeTagsOwnSpots(p: Pick<DecodeTagPrefs, 'enabled' | 'spots'>): boolean {
-  return p.enabled && p.spots;
+/** The spot overlay steps aside while decode tags draw the spots — which they
+ *  only do when the feature is available at all. */
+export function decodeTagsOwnSpots(
+  p: Pick<DecodeTagPrefs, 'enabled' | 'spots'>,
+  available: boolean = DECODE_TAGS_AVAILABLE,
+): boolean {
+  return available && p.enabled && p.spots;
 }

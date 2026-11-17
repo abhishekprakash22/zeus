@@ -116,17 +116,10 @@ Connect, then operate from the workspace:
   it, without moving the dial. A cyan line and a LISTENING badge show what
   is playing; click (or release the loupe) to tune there. Works across the
   spectrum RX1 is receiving; silent while keyed. Off by default; LISTEN
-  beside TAGS or Settings → DISPLAY → Panadapter Overlays.
+  beside SNAP or Settings → DISPLAY → Panadapter Overlays.
 - **Memory channels:** kept on the radio and shared by every client. They
   show on RX1's panadapter as gold ★ flags — click to recall (mode, filter,
   frequency); open the radial menu on one and choose **Forget** to delete it.
-- **Decodes on the spectrum (TAGS):** FT8/FT4 senders, CW-skimmer calls and
-  cluster/TCI spots are tagged on RX1's panadapter at their frequency,
-  coloured by your log for the band you are on: magenta new DXCC, orange new
-  on this band, green needed, grey worked, yellow calling you. Unnamed
-  signals get a dashed guess (CW, SSB, Carrier, AM, FT8, Wide). Click a CW or
-  spot tag to tune. TAGS beside SNAP, or Settings → Display → Panadapter
-  Overlays per source; kept on the radio.
 - **Rewind (REWIND):** the radio keeps the last stretch of everything RX1
   receives (30 s to 5 min, at most 128 MB, in memory only). A bar on RX1's
   panadapter goes back in time — ⏪ 10, slider, ⏸, LIVE — and RX1's dial,

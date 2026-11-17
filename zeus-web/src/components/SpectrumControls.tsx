@@ -18,7 +18,7 @@ import { useDisplaySettingsStore } from '../state/display-settings-store';
 import { useSignalEnhanceStore } from '../dsp/signal-estimator';
 import { useNotchStore } from '../state/notch-store';
 import { usePanadapterRenderStore } from '../state/panadapter-render-store';
-import { useDecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
+import { DECODE_TAGS_AVAILABLE, useDecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
 import { useHoverListenStore } from '../hover-listen/hover-listen';
 import { useTimeShiftStore } from '../time-shift/time-shift';
 
@@ -101,6 +101,7 @@ export function SpectrumControls() {
       >
         SNAP
       </button>
+      {DECODE_TAGS_AVAILABLE && (
       <button
         type="button"
         onClick={() => setTagPrefs({ enabled: !tagsEnabled })}
@@ -114,6 +115,7 @@ export function SpectrumControls() {
       >
         TAGS
       </button>
+      )}
       <button
         type="button"
         onClick={() => setHoverListen(!hoverListen)}

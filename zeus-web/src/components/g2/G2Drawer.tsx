@@ -62,7 +62,7 @@ import { useVfoLockStore } from '../../state/vfo-lock-store';
 import { G2_THEMES, useG2ThemeStore } from '../../state/g2-theme-store';
 import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
 import { useAssistantStore } from '../../assistant/assistant-store';
-import { useDecodeTagPrefs } from '../../decode-tags/decode-tag-prefs';
+import { DECODE_TAGS_AVAILABLE, useDecodeTagPrefs } from '../../decode-tags/decode-tag-prefs';
 import { useHoverListenStore } from '../../hover-listen/hover-listen';
 import { useTimeShiftStore } from '../../time-shift/time-shift';
 import { resetFocusedFilterView, stepFocusedFilterView } from '../../audio-views/FilterDisplay';
@@ -226,7 +226,7 @@ function DecodeTagsKeyButton() {
   return (
     <button
       type="button"
-      className={`btn ghost${enabled ? ' engaged' : ''}`}
+      className={`btn ghost${enabled ? ' active' : ''}`}
       onClick={() => set({ enabled: !enabled })}
       aria-pressed={enabled}
       title="Decodes on spectrum: tag FT8, CW-skimmer and cluster calls at their frequency"
@@ -247,7 +247,7 @@ function HoverListenKeyButton() {
   return (
     <button
       type="button"
-      className={`btn ghost${enabled ? ' engaged' : ''}`}
+      className={`btn ghost${enabled ? ' active' : ''}`}
       onClick={() => setEnabled(!enabled)}
       aria-pressed={enabled}
       title="Hover to listen: hold the tuning loupe (or rest the mouse) on the spectrum to hear that frequency without moving the dial"
@@ -1021,7 +1021,9 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   pre: { node: <PreampButton />, boardOnly: 'Metis' },
   ask: { node: <AskKeyButton /> },
   fview: { node: <FilterViewKeyButton /> },
-  tags: { node: <DecodeTagsKeyButton /> },
+  // Withheld with the feature (see DECODE_TAGS_AVAILABLE); a saved deck that
+  // carries it falls back to a default key through sanitizeDecks.
+  ...(DECODE_TAGS_AVAILABLE ? { tags: { node: <DecodeTagsKeyButton /> } } : {}),
   listen: { node: <HoverListenKeyButton /> },
   rewind: { node: <RewindKeyButton /> },
 };

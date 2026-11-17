@@ -80,6 +80,7 @@ import { CwSkimmerLanes } from './CwSkimmerLanes';
 import { NotchOverlay } from './NotchOverlay';
 import { MemoryMarkerOverlay } from './radial/MemoryMarkerOverlay';
 import { DecodeTagOverlay } from '../decode-tags/DecodeTagOverlay';
+import { DECODE_TAGS_AVAILABLE } from '../decode-tags/decode-tag-prefs';
 import { HoverListenBadge } from '../hover-listen/HoverListenBadge';
 import { RewindBar } from '../time-shift/RewindBar';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
@@ -615,7 +616,7 @@ export function Panadapter({
         <>
           <SpotOverlay />
           <MemoryMarkerOverlay />
-          <DecodeTagOverlay />
+          {DECODE_TAGS_AVAILABLE && <DecodeTagOverlay />}
           <HoverListenBadge />
           <RewindBar />
           <ChatRosterOverlay />

@@ -21,7 +21,7 @@ import {
   SPOT_LABEL_FONT_PX_MIN,
   useDisplaySettingsStore,
 } from '../state/display-settings-store';
-import { useDecodeTagPrefs, type DecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
+import { DECODE_TAGS_AVAILABLE, useDecodeTagPrefs, type DecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
 import { useHoverListenStore } from '../hover-listen/hover-listen';
 import { TIME_SHIFT_LENGTHS, useTimeShiftStore } from '../time-shift/time-shift';
 import { useEffect } from 'react';
@@ -35,7 +35,7 @@ export function PanadapterOverlaySettingsPanel() {
   const hoverListen = useHoverListenStore((s) => s.enabled);
   const setHoverListen = useHoverListenStore((s) => s.setEnabled);
   useEffect(() => {
-    void useDecodeTagPrefs.getState().hydrate();
+    if (DECODE_TAGS_AVAILABLE) void useDecodeTagPrefs.getState().hydrate();
     void useHoverListenStore.getState().hydrate();
     void useTimeShiftStore.getState().hydrate();
   }, []);
@@ -81,7 +81,7 @@ export function PanadapterOverlaySettingsPanel() {
             Rest the pointer on RX1’s panadapter or waterfall — or hold the touch tuning loupe — and
             you hear that frequency in RX1’s mode and filter, with the normal audio turned down under
             it, without moving the dial. Click (or release the loupe) to tune there. Works across the
-            spectrum RX1 is receiving; silent while transmitting. Also the LISTEN button beside TAGS.
+            spectrum RX1 is receiving; silent while transmitting. Also the LISTEN button beside SNAP.
             Kept on the radio.
           </span>
         </div>
@@ -126,6 +126,8 @@ export function PanadapterOverlaySettingsPanel() {
           </span>
         </div>
 
+        {DECODE_TAGS_AVAILABLE && (
+          <>
         {tagSwitch(
           'enabled',
           'Decodes on Spectrum',
@@ -139,6 +141,8 @@ export function PanadapterOverlaySettingsPanel() {
           '— Signal type hints',
           'A best guess for signals nobody has named — CW, SSB, Carrier, FT8, AM, Wide (radar / broadband) — from width, steadiness and keying. Hints, not decodes.',
           !tags.enabled,
+        )}
+          </>
         )}
 
         <div style={autoRow}>

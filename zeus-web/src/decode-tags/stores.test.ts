@@ -11,7 +11,7 @@ import {
   statusFor,
   useCallStatusStore,
 } from './call-status-store';
-import { decodeTagsOwnSpots, normalizePrefs } from './decode-tag-prefs';
+import { DECODE_TAGS_AVAILABLE, decodeTagsOwnSpots, normalizePrefs } from './decode-tag-prefs';
 
 describe('call status cache', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -66,9 +66,16 @@ describe('decode tag prefs', () => {
     });
     expect(normalizePrefs(null).enabled).toBe(true);
   });
-  it('owns spot drawing only when enabled with spots on', () => {
-    expect(decodeTagsOwnSpots({ enabled: true, spots: true })).toBe(true);
-    expect(decodeTagsOwnSpots({ enabled: false, spots: true })).toBe(false);
-    expect(decodeTagsOwnSpots({ enabled: true, spots: false })).toBe(false);
+  it('owns spot drawing only when available, enabled, and with spots on', () => {
+    expect(decodeTagsOwnSpots({ enabled: true, spots: true }, true)).toBe(true);
+    expect(decodeTagsOwnSpots({ enabled: false, spots: true }, true)).toBe(false);
+    expect(decodeTagsOwnSpots({ enabled: true, spots: false }, true)).toBe(false);
+    // Withheld: the plain spot labels are never displaced, whatever was saved.
+    expect(decodeTagsOwnSpots({ enabled: true, spots: true }, false)).toBe(false);
+  });
+
+  it('is withheld from the product for now', () => {
+    expect(DECODE_TAGS_AVAILABLE).toBe(false);
+    expect(decodeTagsOwnSpots({ enabled: true, spots: true })).toBe(false);
   });
 });

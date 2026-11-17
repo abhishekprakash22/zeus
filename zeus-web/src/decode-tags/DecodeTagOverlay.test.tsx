@@ -75,13 +75,11 @@ describe('DecodeTagOverlay', () => {
     unmount();
   });
 
-  it('takes over spot drawing from the plain spot labels', async () => {
+  it('while the feature is withheld, the plain spot labels are untouched', async () => {
+    // Saved prefs say "tags on, spots on" — the spot labels still draw,
+    // because nothing else is drawing them.
     const a = render(createElement(SpotOverlay));
-    expect(document.body.textContent).not.toContain('VK2ABC');
-    a.unmount();
-    useDecodeTagPrefs.setState({ spots: false });
-    const b = render(createElement(SpotOverlay));
     expect(document.body.textContent).toContain('VK2ABC');
-    b.unmount();
+    a.unmount();
   });
 });

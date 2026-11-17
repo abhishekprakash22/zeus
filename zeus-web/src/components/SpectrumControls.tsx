@@ -19,6 +19,7 @@ import { useSignalEnhanceStore } from '../dsp/signal-estimator';
 import { useNotchStore } from '../state/notch-store';
 import { usePanadapterRenderStore } from '../state/panadapter-render-store';
 import { useDecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
+import { useHoverListenStore } from '../hover-listen/hover-listen';
 
 // Panadapter display toggles — dB auto/fixed range, Signal Pop, Snap-to-signal,
 // and the Notch arm/clear. These used to overlay the panadapter top-right, where
@@ -36,6 +37,8 @@ export function SpectrumControls() {
   const toggleSnap = useSignalEnhanceStore((s) => s.toggleSnap);
   const tagsEnabled = useDecodeTagPrefs((s) => s.enabled);
   const setTagPrefs = useDecodeTagPrefs((s) => s.set);
+  const hoverListen = useHoverListenStore((s) => s.enabled);
+  const setHoverListen = useHoverListenStore((s) => s.setEnabled);
   const notchArmed = useNotchStore((s) => s.armed);
   const toggleNotchArmed = useNotchStore((s) => s.toggleArmed);
   const notchCount = useNotchStore((s) => s.notches.length);
@@ -107,6 +110,19 @@ export function SpectrumControls() {
         className={`btn sm ${tagsEnabled ? 'active' : ''}`}
       >
         TAGS
+      </button>
+      <button
+        type="button"
+        onClick={() => setHoverListen(!hoverListen)}
+        aria-pressed={hoverListen}
+        title={
+          hoverListen
+            ? 'Hover to listen ON: rest the pointer on RX1’s spectrum (or hold the touch loupe) to hear that frequency without moving the dial; click to tune there'
+            : 'Hover to listen: hear a frequency by pointing at it, without retuning'
+        }
+        className={`btn sm ${hoverListen ? 'active' : ''}`}
+      >
+        LISTEN
       </button>
       <button
         type="button"

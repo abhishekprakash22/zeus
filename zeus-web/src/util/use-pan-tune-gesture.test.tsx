@@ -38,6 +38,7 @@ import {
 } from './use-pan-tune-gesture';
 import { useVfoLockStore } from '../state/vfo-lock-store';
 import { useRadialMenuStore } from '../state/radial-menu-store';
+import { _resetHoverListenForTest, useHoverListenStore } from '../hover-listen/hover-listen';
 import type { RadioStateDto, RxMode } from '../api/client';
 
 const SNAP_WIDTH = 256;
@@ -120,6 +121,7 @@ function pointer(
     clientY?: number;
     pointerType?: string;
     button?: number;
+    buttons?: number;
   },
 ): void {
   const ev = new Event(type, { bubbles: true, cancelable: true });
@@ -129,6 +131,7 @@ function pointer(
     clientY: { value: init.clientY ?? 0 },
     pointerType: { value: init.pointerType ?? 'touch' },
     button: { value: init.button ?? 0 },
+    buttons: { value: init.buttons ?? 0 },
   });
   target.dispatchEvent(ev);
 }
@@ -1006,6 +1009,88 @@ describe('usePanTuneGesture mobile touch mode', () => {
       });
       expect(useRadialMenuStore.getState().open).toBeNull();
       expect(setZoomMock).toHaveBeenCalled();
+      unmount();
+    });
+  });
+
+  describe('hover to listen', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+    const previewHz = () =>
+      fetchMock.mock.calls
+        .filter((c) => c[0] === '/api/hover-preview')
+        .map((c) => (JSON.parse((c[1] as RequestInit).body as string) as { hz: number }).hz);
+    const stops = () => fetchMock.mock.calls.filter((c) => c[0] === '/api/hover-preview/stop').length;
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    beforeEach(() => {
+      _resetHoverListenForTest();
+      fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ active: true, reason: null }) }) as Response);
+      vi.stubGlobal('fetch', fetchMock);
+      useHoverListenStore.setState({ enabled: true, hydrated: true });
+    });
+    afterEach(() => {
+      _resetHoverListenForTest();
+      vi.unstubAllGlobals();
+    });
+
+    it('a resting mouse previews the frequency a click there would tune', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointermove', { pointerId: 1, clientX: 150, pointerType: 'mouse', buttons: 0 });
+        await wait(320);
+      });
+      const sent = previewHz();
+      expect(sent.length).toBeGreaterThanOrEqual(1);
+      expect(sent[0]).toBeGreaterThan(14_200_000);
+      expect(setVfoMock).not.toHaveBeenCalled(); // hovering never tunes
+
+      await act(async () => {
+        canvas.dispatchEvent(new Event('pointerleave'));
+        await flush();
+      });
+      expect(stops()).toBe(1);
+      unmount();
+    });
+
+    it('does not preview the frequency RX1 is already on', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointermove', { pointerId: 1, clientX: 100, pointerType: 'mouse', buttons: 0 });
+        await wait(320);
+      });
+      expect(previewHz()).toEqual([]);
+      unmount();
+    });
+
+    it('stays silent when switched off, and for a touch move', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointermove', { pointerId: 1, clientX: 150, pointerType: 'touch', buttons: 0 });
+        await wait(320);
+      });
+      expect(previewHz()).toEqual([]);
+      useHoverListenStore.setState({ enabled: false });
+      await act(async () => {
+        pointer(canvas, 'pointermove', { pointerId: 1, clientX: 150, pointerType: 'mouse', buttons: 0 });
+        await wait(320);
+      });
+      expect(previewHz()).toEqual([]);
+      unmount();
+    });
+
+    it('a press ends the preview', async () => {
+      const { container, unmount } = render(createElement(GestureProbe, { touchMode: 'normal' }));
+      const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+      await act(async () => {
+        pointer(canvas, 'pointermove', { pointerId: 1, clientX: 150, pointerType: 'mouse', buttons: 0 });
+        await wait(320);
+        pointer(canvas, 'pointerdown', { pointerId: 1, clientX: 150, pointerType: 'mouse' });
+        await flush();
+      });
+      expect(stops()).toBe(1);
       unmount();
     });
   });

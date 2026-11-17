@@ -110,6 +110,13 @@ Connect, then operate from the workspace:
   RX2), **Notch** (on the nearest carrier), **Store** (memory channel) and
   **Spot** (post to the connected DX cluster; CW on the carrier). LOCK greys
   out anything that moves a dial.
+- **Hover to listen (LISTEN):** rest the pointer on RX1's panadapter or
+  waterfall — or hold the touch tuning loupe — and you hear that frequency
+  in RX1's mode and filter, with the normal audio turned down 15 dB under
+  it, without moving the dial. A cyan line and a LISTENING badge show what
+  is playing; click (or release the loupe) to tune there. Works across the
+  spectrum RX1 is receiving; silent while keyed. Off by default; LISTEN
+  beside TAGS or Settings → DISPLAY → Panadapter Overlays.
 - **Memory channels:** kept on the radio and shared by every client. They
   show on RX1's panadapter as gold ★ flags — click to recall (mode, filter,
   frequency); open the radial menu on one and choose **Forget** to delete it.

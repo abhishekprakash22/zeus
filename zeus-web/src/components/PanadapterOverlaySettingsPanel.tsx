@@ -22,6 +22,7 @@ import {
   useDisplaySettingsStore,
 } from '../state/display-settings-store';
 import { useDecodeTagPrefs, type DecodeTagPrefs } from '../decode-tags/decode-tag-prefs';
+import { useHoverListenStore } from '../hover-listen/hover-listen';
 import { useEffect } from 'react';
 
 export function PanadapterOverlaySettingsPanel() {
@@ -30,8 +31,11 @@ export function PanadapterOverlaySettingsPanel() {
   const spotLabelFontPx = useDisplaySettingsStore((s) => s.spotLabelFontPx);
   const setSpotLabelFontPx = useDisplaySettingsStore((s) => s.setSpotLabelFontPx);
   const tags = useDecodeTagPrefs();
+  const hoverListen = useHoverListenStore((s) => s.enabled);
+  const setHoverListen = useHoverListenStore((s) => s.setEnabled);
   useEffect(() => {
     void useDecodeTagPrefs.getState().hydrate();
+    void useHoverListenStore.getState().hydrate();
   }, []);
   const tagSwitch = (key: keyof DecodeTagPrefs, label: string, hint: string, disabled = false) => (
     <div style={autoRow}>
@@ -59,6 +63,25 @@ export function PanadapterOverlaySettingsPanel() {
       </div>
 
       <div style={card}>
+        <div style={autoRow}>
+          <label style={switchLabel}>
+            <input
+              type="checkbox"
+              checked={hoverListen}
+              onChange={(event) => setHoverListen(event.currentTarget.checked)}
+              style={{ accentColor: 'var(--accent)' }}
+            />
+            Hover to Listen
+          </label>
+          <span style={autoHint}>
+            Rest the pointer on RX1’s panadapter or waterfall — or hold the touch tuning loupe — and
+            you hear that frequency in RX1’s mode and filter, with the normal audio turned down under
+            it, without moving the dial. Click (or release the loupe) to tune there. Works across the
+            spectrum RX1 is receiving; silent while transmitting. Also the LISTEN button beside TAGS.
+            Kept on the radio.
+          </span>
+        </div>
+
         {tagSwitch(
           'enabled',
           'Decodes on Spectrum',

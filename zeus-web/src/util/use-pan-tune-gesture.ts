@@ -66,6 +66,7 @@ import {
   useSignalEnhanceStore,
 } from '../dsp/signal-estimator';
 import { openSpectrumRadial } from '../state/radial-menu-store';
+import { hoverListenAim, hoverListenStop, useHoverListenStore } from '../hover-listen/hover-listen';
 import { useVfoLockStore } from '../state/vfo-lock-store';
 
 // VFO lock — when the operator pins the dial, every tune and every pan freezes
@@ -137,6 +138,8 @@ const SPECTRUM_TUNE_CURSOR = 'var(--spectrum-tune-cursor, default)';
 // Radial menu on touch: a two-finger TAP (both fingers down and up within this
 // window, neither moving more than TWO_TAP_SLOP_PX) — a pinch that never
 // changed the zoom. Long-press stays the tuning loupe.
+// Hover to listen ignores an aim this close to RX1's own dial.
+const HOVER_LISTEN_SAME_HZ = 50;
 const TWO_TAP_MAX_MS = 350;
 const TWO_TAP_SLOP_PX = 14;
 
@@ -566,6 +569,33 @@ export function usePanTuneGesture(
       const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
       return { hz: view.centerHz + (frac - 0.5) * view.spanHz, spanHz: view.spanHz };
     };
+    // Hover to listen is RX1 audio previewed from RX1's own I/Q, so only a
+    // surface that shows and tunes RX1 can aim it.
+    const hoverListenHere =
+      dragMode === 'tune' && rxIndexOf(receiver) === 0 && rxIndexOf(tuneReceiver) === 0;
+    // Mouse / pen hover: preview exactly what a click here would tune to
+    // (snapped when SNAP is on), so a click commits what was just heard.
+    const aimHoverListenFromPointer = (e: PointerEvent) => {
+      if (!hoverListenHere || !useHoverListenStore.getState().enabled) return;
+      if (e.pointerType === 'touch' || e.buttons !== 0 || vfoLocked()) return;
+      const at = aimHzAt(e.clientX);
+      if (!at) return;
+      const hz = resolvePanTuneTarget(at.hz, true, receiver, tuneReceiver).tuneHz;
+      // Pointing at where the dial already is would only double RX1's audio.
+      if (Math.abs(hz - useConnectionStore.getState().vfoHz) < HOVER_LISTEN_SAME_HZ) {
+        hoverListenStop();
+        return;
+      }
+      hoverListenAim(hz);
+    };
+    // Touch: the tuning loupe is the hover — preview where a release would land.
+    const aimHoverListenFromLoupe = () => {
+      if (!hoverListenHere || !useHoverListenStore.getState().enabled) return;
+      const aim = loupeAim();
+      if (!aim) return;
+      if (aim.cancel) hoverListenStop();
+      else hoverListenAim(aim.commitHz, true);
+    };
     const loupeAim = (): LoupeAim | null => {
       if (!loupe) return null;
       const at = aimHzAt(loupe.x);
@@ -595,6 +625,7 @@ export function usePanTuneGesture(
       setDrag(null);
       loupeOverlay ??= new LoupeOverlay(receiver, tuneReceiver);
       loupeOverlay.open(loupeAim);
+      aimHoverListenFromLoupe();
       try {
         navigator.vibrate?.(8);
       } catch {
@@ -606,6 +637,7 @@ export function usePanTuneGesture(
       const aim = commit ? loupeAim() : null;
       loupe = null;
       loupeOverlay?.close();
+      if (hoverListenHere) hoverListenStop();
       canvas.style.cursor = idleCursor();
       if (aim && !aim.cancel) {
         tuneDebugLog('LOUPE-TUNE', { hz: aim.commitHz });
@@ -945,7 +977,13 @@ export function usePanTuneGesture(
         .catch(() => {});
     };
 
+    const onPointerLeave = () => {
+      if (hoverListenHere && !loupe) hoverListenStop();
+    };
+
     const onPointerDown = (e: PointerEvent) => {
+      // Any press ends a hover preview: the click that follows tunes there.
+      if (hoverListenHere) hoverListenStop();
       if (e.button !== 0) return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       pointerDownY.set(e.pointerId, e.clientY);
@@ -1061,6 +1099,7 @@ export function usePanTuneGesture(
         if (e.pointerId === loupe.pointerId) {
           loupe.x = e.clientX;
           loupe.y = e.clientY;
+          aimHoverListenFromLoupe();
         }
         e.preventDefault();
         return;
@@ -1120,7 +1159,10 @@ export function usePanTuneGesture(
         wheelActions.onMapPan?.(-dx, -dy);
         return;
       }
-      if (!drag) return;
+      if (!drag) {
+        aimHoverListenFromPointer(e);
+        return;
+      }
       const dx = e.clientX - drag.startX;
       // While the loupe hold is pending, small finger wobble is not a drag.
       if (holdTimer !== 0 && !drag.moved) {
@@ -1412,6 +1454,7 @@ export function usePanTuneGesture(
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('pointerleave', onPointerLeave);
     // passive:false so preventDefault() can stop page scrolling.
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
@@ -1434,6 +1477,8 @@ export function usePanTuneGesture(
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
+      canvas.removeEventListener('pointerleave', onPointerLeave);
+      if (hoverListenHere) hoverListenStop();
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('touchmove', onTouchMove);
       if (!touchPinchOnly) {

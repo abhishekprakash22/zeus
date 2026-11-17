@@ -56,7 +56,7 @@ using Zeus.Protocol1;
 
 namespace Zeus.Server;
 
-public class DspPipelineService : BackgroundService,
+public partial class DspPipelineService : BackgroundService,
     Zeus.Protocol1.IRxPacketSink,
     Zeus.Protocol2.IRxPacketSink
 {
@@ -6705,6 +6705,7 @@ public class DspPipelineService : BackgroundService,
                     channel,
                     Volatile.Read(ref _secondaryRx[1].ChannelId),
                     frame.InterleavedSamples.Span);
+                FeedHoverPreview(engine, frame.InterleavedSamples.Span);
                 RxIqAvailable?.Invoke(0, frame.SampleRateHz, frame.InterleavedSamples);
             }
             MaybeTickInline();
@@ -6782,6 +6783,7 @@ public class DspPipelineService : BackgroundService,
             int channel = Volatile.Read(ref _channelId);
             LogRxIqRms(0, frame.InterleavedSamples.Span, ref _rx1IqRmsLogMs);
             FeedRx0WithOptionalDiversity(engine, channel, frame.InterleavedSamples.Span, frame.DiversitySourceSamples.Span);
+            FeedHoverPreview(engine, frame.InterleavedSamples.Span);
             RxIqAvailable?.Invoke(0, frame.SampleRateHz, frame.InterleavedSamples);
         }
         MaybeTickInline();
@@ -7795,6 +7797,9 @@ public class DspPipelineService : BackgroundService,
         audioSampleCount = MixRxAudioN(
             audioBuf, audioSampleCount, _mixSlices.AsSpan(0, mixSliceCount),
             rx1Muted: IsReceiverMuted(state, 0));
+
+        // Hover to listen: the preview channel over the (ducked) mix.
+        MixHoverPreviewTick(engine, audioBuf, audioSampleCount, suppressRxAudioForTx);
 
         // Operator RX master mute, read ONCE this tick so every branch below agrees.
         // While muted, real RX audio (and CW sidetone) is published normally and the

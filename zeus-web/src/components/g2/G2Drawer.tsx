@@ -62,6 +62,8 @@ import { useVfoLockStore } from '../../state/vfo-lock-store';
 import { G2_THEMES, useG2ThemeStore } from '../../state/g2-theme-store';
 import { useBallisticReadingById, type AxisSpan } from '../meters/useBallisticReading';
 import { useAssistantStore } from '../../assistant/assistant-store';
+import { useDecodeTagPrefs } from '../../decode-tags/decode-tag-prefs';
+import { useHoverListenStore } from '../../hover-listen/hover-listen';
 import { resetFocusedFilterView, stepFocusedFilterView } from '../../audio-views/FilterDisplay';
 
 type SheetId = 'band' | 'mode' | 'filter' | 'dsp' | 'ant' | 'setup' | 'tx' | null;
@@ -207,6 +209,49 @@ function FilterViewKeyButton() {
       onPointerCancel={clear}
     >
       FLT VIEW
+    </button>
+  );
+}
+
+// TAGS — decodes on the spectrum (calls tagged at frequency, coloured by the
+// log). Assignable via ✎. The desktop workspace has the same toggle beside
+// SNAP; the G2 layout has no such strip, so it is a deck key here.
+function DecodeTagsKeyButton() {
+  const enabled = useDecodeTagPrefs((s) => s.enabled);
+  const set = useDecodeTagPrefs((s) => s.set);
+  useEffect(() => {
+    void useDecodeTagPrefs.getState().hydrate();
+  }, []);
+  return (
+    <button
+      type="button"
+      className={`btn ghost${enabled ? ' engaged' : ''}`}
+      onClick={() => set({ enabled: !enabled })}
+      aria-pressed={enabled}
+      title="Decodes on spectrum: tag FT8, CW-skimmer and cluster calls at their frequency"
+    >
+      TAGS
+    </button>
+  );
+}
+
+// LISTEN — hover to listen (hold the tuning loupe, or rest the mouse, to hear
+// a frequency without retuning). Assignable via ✎.
+function HoverListenKeyButton() {
+  const enabled = useHoverListenStore((s) => s.enabled);
+  const setEnabled = useHoverListenStore((s) => s.setEnabled);
+  useEffect(() => {
+    void useHoverListenStore.getState().hydrate();
+  }, []);
+  return (
+    <button
+      type="button"
+      className={`btn ghost${enabled ? ' engaged' : ''}`}
+      onClick={() => setEnabled(!enabled)}
+      aria-pressed={enabled}
+      title="Hover to listen: hold the tuning loupe (or rest the mouse) on the spectrum to hear that frequency without moving the dial"
+    >
+      LISTEN
     </button>
   );
 }
@@ -953,6 +998,8 @@ const KEY_REGISTRY: Record<string, KeyDef> = {
   pre: { node: <PreampButton />, boardOnly: 'Metis' },
   ask: { node: <AskKeyButton /> },
   fview: { node: <FilterViewKeyButton /> },
+  tags: { node: <DecodeTagsKeyButton /> },
+  listen: { node: <HoverListenKeyButton /> },
 };
 
 // Twelve default keys in twelve slots: no duplicates, no blanks, on every

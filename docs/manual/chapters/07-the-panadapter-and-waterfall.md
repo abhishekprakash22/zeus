@@ -16,7 +16,7 @@
 
 ### Decodes on the spectrum
 
-Every call the radio hears is tagged on RX1's panadapter at its frequency, so you can see who is where without opening a decode window. Toggle it with **TAGS** beside SNAP, or in Settings → DISPLAY → Panadapter Overlays, where each source can be switched separately. The choice is kept on the radio.
+Every call the radio hears is tagged on RX1's panadapter at its frequency, so you can see who is where without opening a decode window. Toggle it with **TAGS** beside SNAP in the desktop workspace, with a **TAGS** deck key in the G2 layout (assign it with ✎), or in Settings → DISPLAY → Panadapter Overlays, where each source can be switched separately. The choice is kept on the radio.
 
 - **Where tags come from:**
   - **FT8 / FT4:** the sender of each decode from the last two slots (one for FT4), at the dial plus its audio offset. A **CQ** prefix marks a station calling CQ.
@@ -25,7 +25,7 @@ Every call the radio hears is tagged on RX1's panadapter at its frequency, so yo
   - A call heard by more than one source within 1 kHz is one tag; small marks after the call show its sources (▪ FT8, ∿ CW, ⚑ spot), and a decoded frequency wins over a spotted one.
 - **Colours — your log against the band you are on:** **magenta** a new DXCC entity (not in the log on any band); **orange** an entity worked, but not on this band; **green** a call not yet worked on this band; **grey** already worked on this band; **yellow** a station calling *you* (FT8, addressed to your call). White means the log hasn't answered yet, or there is no logbook. The radio reads the log itself and notices a new QSO within a few seconds.
 - **Crowded bands:** tags sit in three lanes; when they still don't fit, the least useful give way first — calling-you, then new DXCC, new on band, needed CQs, needed, and worked last.
-- **Signal type hints:** signals nobody has named get a dashed, italic guess — **CW** (narrow and keyed), **Carrier** (narrow and steady), **SSB** (voice width), **AM** (a steady 4–8 kHz body), **FT8** / **FT4** (narrow, in the FT8 or FT4 window) or **Wide** (8 kHz or more: over-the-horizon radar, broadband noise). They come from the display's own measurements — width, how steady the level is, how the signal comes and goes over ~12 s — and appear only once the guess has held. Hints, not decodes; turn them off separately.
+- **Signal type hints:** signals nobody has named get a dashed, italic guess — **CW** (narrow and keyed), **Carrier** (narrow and steady), **SSB** (voice width), **AM** (a steady 4–8 kHz body), **FT8** / **FT4** (narrow, in the FT8 or FT4 window) or **Wide** (8 kHz or more: over-the-horizon radar, broadband noise). They come from the display's own measurements — width, how steady the level is, how the signal comes and goes over ~12 s — and appear only once the guess has held. A signal must stand well clear of the noise (13 dB) to be considered, a narrow one must hold its frequency and be present a good part of the last few seconds to be called CW, and a label goes within a couple of seconds of its signal stopping. Hints, not decodes; turn them off separately.
 - **Clicking:** a CW or spot tag tunes RX1 to it (not while LOCK is on). FT8 tags don't tune — the dial stays on the FT8 frequency; hover for the message, SNR and entity.
 
 ### Filter display views

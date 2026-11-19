@@ -35,6 +35,7 @@ import { ImdReadings } from './ImdReadings';
 import { DbScale } from './DbScale';
 import { SpotOverlay } from './SpotOverlay';
 import { ChatRosterOverlay } from './ChatRosterOverlay';
+import { CHAT_AVAILABLE } from '../withheld-features';
 import { PeakMarkerOverlay } from './PeakMarkerOverlay';
 import { NotchOverlay } from './NotchOverlay';
 import { spectrumReceiverFilterColor } from './spectrumReceiverColor';
@@ -541,7 +542,7 @@ export function Panadapter3D({
       {rxIndex === 0 && !widebandDisplay && (!stitched || foreground) && (
         <>
           <SpotOverlay />
-          <ChatRosterOverlay />
+          {CHAT_AVAILABLE && <ChatRosterOverlay />}
           <PeakMarkerOverlay />
           <NotchOverlay interactive resizable containerRef={containerRef} />
           <ImdReadings />

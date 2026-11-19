@@ -79,6 +79,7 @@ import { MoxButton } from './components/MoxButton';
 import { PreampButton } from './components/PreampButton';
 import { FullscreenButton } from './components/FullscreenButton';
 import { ProfileOverlayHost } from './components/ProfileOverlay';
+import { PLUGINS_TAB_AVAILABLE } from './withheld-features';
 import { PsToggleButton } from './components/PsToggleButton';
 import { TxMonitorButton } from './components/TxMonitorButton';
 import { RecorderButton } from './components/RecorderButton';
@@ -1791,7 +1792,9 @@ export default function App() {
       <PluginUpdatePrompt
         updates={
           // Plugins install on the radio too; a remote client never prompts.
-          !remoteMode && !startupUpdateVisible && !pluginUpdateDismissed ? pluginUpdates : []
+          PLUGINS_TAB_AVAILABLE && !remoteMode && !startupUpdateVisible && !pluginUpdateDismissed
+            ? pluginUpdates
+            : []
         }
         onDismiss={dismissPluginUpdates}
         onOpenPlugins={() => {

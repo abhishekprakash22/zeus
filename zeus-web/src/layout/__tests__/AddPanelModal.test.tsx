@@ -10,6 +10,7 @@ import { createElement } from 'react';
 import { render, act } from '../../components/meters/__tests__/harness';
 import { AddPanelModal } from '../AddPanelModal';
 import { PANELS } from '../panels';
+import { isPanelWithheld } from '../../withheld-features';
 
 function setup(existingPanels: Set<string> = new Set()) {
   const onAdd = vi.fn();
@@ -117,7 +118,9 @@ describe('AddPanelModal', () => {
     const cards = container.querySelectorAll(
       '[data-testid="add-panel-cards"] .add-panel-card',
     );
-    expect(cards.length).toBe(Object.values(PANELS).length);
+    expect(cards.length).toBe(
+      Object.values(PANELS).filter((p) => !isPanelWithheld(p.id)).length,
+    );
     unmount();
   });
 

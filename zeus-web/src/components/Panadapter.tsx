@@ -73,6 +73,7 @@ import { ImdReadings } from './ImdReadings';
 import { DbScale } from './DbScale';
 import { SpotOverlay } from './SpotOverlay';
 import { ChatRosterOverlay } from './ChatRosterOverlay';
+import { CHAT_AVAILABLE } from '../withheld-features';
 import { PeakMarkerOverlay } from './PeakMarkerOverlay';
 import { CwDecodeWaterfallOverlay } from './CwDecodeWaterfallOverlay';
 import { SstvTuneOverlay } from './SstvTuneOverlay';
@@ -619,7 +620,7 @@ export function Panadapter({
           {DECODE_TAGS_AVAILABLE && <DecodeTagOverlay />}
           <HoverListenBadge />
           <RewindBar />
-          <ChatRosterOverlay />
+          {CHAT_AVAILABLE && <ChatRosterOverlay />}
           <PeakMarkerOverlay />
           <CwDecodeWaterfallOverlay />
           <SstvTuneOverlay />

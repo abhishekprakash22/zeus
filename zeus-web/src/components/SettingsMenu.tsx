@@ -45,6 +45,7 @@ import { TxAudioToolsPanel } from './TxAudioToolsPanel';
 import { DspSettingsPanel } from './DspSettingsPanel';
 import { CwSettingsPanel } from './CwSettingsPanel';
 import { PluginsPanel } from '../plugins/components/PluginsPanel';
+import { PLUGINS_TAB_AVAILABLE } from '../withheld-features';
 import { HamClockSettingsPanel } from './HamClockSettingsPanel';
 import { KiwiSettingsPanel } from './KiwiSettingsPanel';
 import { SpotsSettingsPanel } from './SpotsSettingsPanel';
@@ -139,7 +140,12 @@ export function SettingsView({ initialTab, onClose }: Props) {
   // so a fresh session never lists it.
   const hardwareUnlocked = useEasterEggStore((s) => s.hardwareUnlocked);
   const visibleTabs = useMemo(
-    () => TABS.filter((t) => t.id !== 'hardware' || hardwareUnlocked),
+    () =>
+      TABS.filter(
+        (t) =>
+          (t.id !== 'hardware' || hardwareUnlocked) &&
+          (t.id !== 'plugins' || PLUGINS_TAB_AVAILABLE),
+      ),
     [hardwareUnlocked],
   );
 
@@ -229,7 +235,7 @@ export function SettingsView({ initialTab, onClose }: Props) {
           {activeTab === 'midi' && <MidiSettingsPanel />}
           {activeTab === 'network' && <NetworkSettingsPanel />}
           {activeTab === 'display' && <DisplayPanel />}
-          {activeTab === 'plugins' && <PluginsPanel />}
+          {activeTab === 'plugins' && PLUGINS_TAB_AVAILABLE && <PluginsPanel />}
           {activeTab === 'hamclock' && <HamClockSettingsPanel />}
           {activeTab === 'kiwi' && <KiwiSettingsPanel />}
           {activeTab === 'spots' && <SpotsSettingsPanel />}

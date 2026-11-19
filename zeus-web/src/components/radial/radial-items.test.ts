@@ -60,6 +60,20 @@ describe('radialItems', () => {
     ).not.toContain('rewind');
   });
 
+  it('offers the hover-to-listen toggle on RX1, lit when on', () => {
+    expect(radialItems(rx1, env).map((i) => i.id)).not.toContain('listen'); // not offered unless the state is known
+    const off = radialItems(rx1, { ...env, hoverListen: false }).find((i) => i.id === 'listen');
+    expect(off).toMatchObject({ label: 'Listen', on: false, disabled: false });
+    expect(radialItems(rx1, { ...env, hoverListen: true }).find((i) => i.id === 'listen')?.on).toBe(true);
+    // It stays available under VFO lock (it moves no dial), and sits before Spot.
+    const ids = radialItems(rx1, { ...env, hoverListen: true, locked: true }).map((i) => i.id);
+    expect(ids.indexOf('listen')).toBe(ids.indexOf('spot') - 1);
+    // Not on a secondary receiver's pane.
+    expect(
+      radialItems({ rxIndex: 1, panRxIndex: 1, carrierHz: null }, { ...env, hoverListen: true }).map((i) => i.id),
+    ).not.toContain('listen');
+  });
+
   it('disables Spot without a cluster connection', () => {
     expect(radialItems(rx1, { ...env, clusterConnected: false }).find((i) => i.id === 'spot')?.disabled).toBe(true);
   });

@@ -69,10 +69,6 @@ External-software integration: **TCI** (ExpertSDR3 Transceiver Control Interface
 - **Performance** — the RX display **FFT size** (8k/16k/32k/64k, §6) and display-rate options.
 - **G2 touch layout** — the switch for §17, plus the five G2 themes.
 
-### PLUGINS
-
-Install and manage backend/UI/audio plugins from the registry or by URL — Recorder, Voyeur, RF2K-S, and more.
-
 ### HAMCLOCK
 
 One-click local install of OpenHamClock (downloads and builds on demand; fetches a private Node.js if needed, ~30 MB), then add/remove it as a workspace panel and stop its server.

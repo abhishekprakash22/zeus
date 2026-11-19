@@ -610,6 +610,7 @@ export const PANELS: Record<string, PanelDef> = {
 // PANELS directly so plugin panels show up in both surfaces.
 
 import { listRegisteredPanels } from '../plugins/runtime/pluginRuntime';
+import { isPanelWithheld } from '../withheld-features';
 
 function pluginPanelDef(p: import('../plugins/runtime/pluginRuntime').RegisteredPluginPanel): PanelDef {
   const category = (VALID_PANEL_CATEGORIES.has(p.category)
@@ -625,6 +626,7 @@ function pluginPanelDef(p: import('../plugins/runtime/pluginRuntime').Registered
 }
 
 export function getPanelDef(id: string): PanelDef | undefined {
+  if (isPanelWithheld(id)) return undefined;
   const builtIn = PANELS[id];
   if (builtIn) return builtIn;
   const plugin = listRegisteredPanels().find((p) => p.panelId === id);
@@ -633,7 +635,8 @@ export function getPanelDef(id: string): PanelDef | undefined {
 
 export function getAllPanels(): PanelDef[] {
   return [
-    ...Object.values(PANELS),
+    // Withheld panels (see withheld-features.ts) are never offered in Add Panel.
+    ...Object.values(PANELS).filter((p) => !isPanelWithheld(p.id)),
     // Scanned VST3 / Audio Unit effects belong ONLY in the Audio Suite (the
     // in-process VST/AU host) rack — never as standalone workspace tiles in the
     // Add Panel ("+") menu. Those are editor-backed synthetic panels (no

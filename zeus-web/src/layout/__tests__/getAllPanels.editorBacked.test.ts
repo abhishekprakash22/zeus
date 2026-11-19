@@ -18,8 +18,10 @@ vi.mock('../../plugins/runtime/pluginRuntime', () => ({
 }));
 
 import { getAllPanels, PANELS } from '../panels';
+import { isPanelWithheld } from '../../withheld-features';
 
-const builtInCount = Object.values(PANELS).length;
+// Built-ins on offer — withheld panels (chat) are never listed.
+const builtInCount = Object.values(PANELS).filter((p) => !isPanelWithheld(p.id)).length;
 
 function panel(over: Record<string, unknown>) {
   return {

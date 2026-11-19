@@ -81,6 +81,7 @@ import { useWorkspaceZoom } from '../util/use-workspace-zoom';
 import { HeroPanel } from './panels/HeroPanel';
 import { UrlEmbedPanel } from './panels/UrlEmbedPanel';
 import { LanBrowserPanel } from './panels/LanBrowserPanel';
+import { PLUGINS_TAB_AVAILABLE } from '../withheld-features';
 import {
   parseUrlEmbedConfig,
   type UrlEmbedConfig,
@@ -1360,16 +1361,20 @@ function UnavailablePanelTile({
             Panel unavailable
           </div>
           <p>
-            Zeus preserved this saved tile, but its panel is not registered.
-            Install or enable the plugin, or remove the tile.
+            This saved tile is kept, but its panel is not registered.
+            {PLUGINS_TAB_AVAILABLE
+              ? ' Install or enable the plugin, or remove the tile.'
+              : ' Remove the tile to clear it.'}
           </p>
           <code>{tile.panelId}</code>
         </div>
         <div className="workspace-unavailable-panel-actions">
-          <button type="button" className="btn sm" onClick={openPlugins}>
-            <Settings size={12} aria-hidden />
-            Plugins
-          </button>
+          {PLUGINS_TAB_AVAILABLE && (
+            <button type="button" className="btn sm" onClick={openPlugins}>
+              <Settings size={12} aria-hidden />
+              Plugins
+            </button>
+          )}
           <button type="button" className="btn ghost sm" onClick={handleRemove}>
             Remove
           </button>

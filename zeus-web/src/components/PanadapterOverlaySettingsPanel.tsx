@@ -25,6 +25,7 @@ import { DECODE_TAGS_AVAILABLE, useDecodeTagPrefs, type DecodeTagPrefs } from '.
 import { useHoverListenStore } from '../hover-listen/hover-listen';
 import { TIME_SHIFT_LENGTHS, useTimeShiftStore } from '../time-shift/time-shift';
 import { useEffect } from 'react';
+import { CHAT_AVAILABLE } from '../withheld-features';
 
 export function PanadapterOverlaySettingsPanel() {
   const showChatRoster = useDisplaySettingsStore((s) => s.showChatRosterOverlay);
@@ -145,6 +146,7 @@ export function PanadapterOverlaySettingsPanel() {
           </>
         )}
 
+        {CHAT_AVAILABLE && (
         <div style={autoRow}>
           <label style={switchLabel}>
             <input
@@ -162,6 +164,7 @@ export function PanadapterOverlaySettingsPanel() {
             panel header.
           </span>
         </div>
+        )}
 
         <div style={autoRow}>
           <label style={switchLabel}>

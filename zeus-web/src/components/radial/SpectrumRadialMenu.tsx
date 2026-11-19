@@ -26,6 +26,7 @@ import { useNotchStore } from '../../state/notch-store';
 import { useRadialMenuStore, type RadialContext } from '../../state/radial-menu-store';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
 import { useTimeShiftStore } from '../../time-shift/time-shift';
+import { useHoverListenStore } from '../../hover-listen/hover-listen';
 import {
   CENTER_SIZE_PX,
   clampCenter,
@@ -70,6 +71,7 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
   const clusterState = useDxClusterStore((s) => s.status?.state);
   const channels = useMemoryStore((s) => s.channels);
   const rewind = useTimeShiftStore((s) => s.status);
+  const hoverListen = useHoverListenStore((s) => s.enabled);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const centerRef = useRef<HTMLButtonElement | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -77,6 +79,7 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
 
   useEffect(() => {
     void useMemoryStore.getState().hydrate();
+    void useHoverListenStore.getState().hydrate();
     centerRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -116,6 +119,7 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
     clusterConnected: clusterState === 'Connected',
     memoryHit,
     rewindSeconds: rewind.enabled ? rewind.bufferedSeconds : 0,
+    hoverListen,
   });
   const offsets = ringOffsets(items.length);
   const center = clampCenter(
@@ -169,6 +173,12 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
           .getState()
           .replay(Math.min(RADIAL_REWIND_SECONDS, Math.floor(rewind.bufferedSeconds)));
         return;
+      case 'listen': {
+        const next = !hoverListen;
+        useHoverListenStore.getState().setEnabled(next);
+        flashThenClose(next ? 'Listen ON' : 'Listen OFF');
+        return;
+      }
       case 'spot':
         setSpotForm(true);
         return;
@@ -197,7 +207,8 @@ function RadialMenuBody({ ctx }: { ctx: RadialContext }) {
                 key={it.id}
                 type="button"
                 role="menuitem"
-                className={`srm-item${it.id === 'forget' ? ' srm-item--warn' : ''}`}
+                className={`srm-item${it.id === 'forget' ? ' srm-item--warn' : ''}${it.on ? ' srm-item--on' : ''}`}
+                aria-pressed={it.on === undefined ? undefined : it.on}
                 style={{
                   left: o.dx - ITEM_SIZE_PX / 2,
                   top: o.dy - ITEM_SIZE_PX / 2,

@@ -45,6 +45,7 @@ import { useN1mmStore } from '../state/n1mm-store';
 import { useCloudLogStore } from '../state/cloud-log-store';
 import type { WsjtxConfig } from '../api/wsjtx';
 import type { N1mmConfig } from '../api/n1mm';
+import { PLUGINS_TAB_AVAILABLE } from '../withheld-features';
 import {
   DIGITAL_MODES,
   WF_PALETTES,
@@ -158,7 +159,7 @@ export function ZeusDigitalSettingsPanel({
               ? 'The Zeus Digital plugin is installed but not active yet — restart Zeus to activate it. FT8/FT4 stay greyed out until then.'
               : 'FT8/FT4 decode, TX and spotting are provided by the Zeus Digital plugin, which is not installed. Settings edited here are kept and apply once it is running.'}
           </p>
-          {!pluginInstalled && (
+          {!pluginInstalled && PLUGINS_TAB_AVAILABLE && (
             <button type="button" className="btn sm" onClick={openPluginSettings}>
               Open Plugins →
             </button>

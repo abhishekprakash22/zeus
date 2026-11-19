@@ -10,6 +10,8 @@
 // existing layout-store debounced PUT path.
 
 
+import { isPanelWithheld } from '../withheld-features';
+
 /** Outer-grid column count. The grid runs at 2× the legacy resolution
  *  (was 12 cols × 24 rows) so panels can be sized precisely to their content
  *  instead of snapping to coarse ~30 px steps — the difference between
@@ -312,6 +314,9 @@ export function parseWorkspaceLayout(raw: unknown): WorkspaceLayout {
     const tile = t as Partial<WorkspaceTile>;
     if (typeof tile.uid !== 'string' || tile.uid.length === 0) continue;
     if (typeof tile.panelId !== 'string') continue;
+    // A withheld panel (withheld-features.ts) would otherwise sit in a saved layout as
+    // a dead "Panel unavailable" tile.
+    if (isPanelWithheld(tile.panelId)) continue;
     if (
       !Number.isFinite(tile.x) ||
       !Number.isFinite(tile.y) ||

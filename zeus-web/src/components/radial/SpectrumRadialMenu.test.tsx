@@ -25,6 +25,7 @@ import { useDxClusterStore } from '../../state/dxcluster-store';
 import { useMemoryStore } from '../../state/memory-store';
 import { useNotchStore } from '../../state/notch-store';
 import { useVfoLockStore } from '../../state/vfo-lock-store';
+import { _resetHoverListenForTest, useHoverListenStore } from '../../hover-listen/hover-listen';
 import type { DxClusterStatus } from '../../api/dxcluster';
 
 const tune = vi.fn();
@@ -69,6 +70,8 @@ beforeEach(() => {
   useMemoryStore.setState({ channels: [], hydrated: true });
   useNotchStore.setState({ notches: [] });
   useVfoLockStore.setState({ locked: false });
+  _resetHoverListenForTest();
+  useHoverListenStore.setState({ enabled: false, hydrated: true });
   setVfoBMock.mockImplementation(async () => ({ ...useConnectionStore.getState() }));
   setTxVfoMock.mockImplementation(async () => ({ ...useConnectionStore.getState() }));
   setRx2Mock.mockImplementation(async () => ({ ...useConnectionStore.getState() }));
@@ -138,6 +141,26 @@ describe('SpectrumRadialMenu', () => {
     const body = JSON.parse((call![1] as RequestInit).body as string);
     expect(body).toMatchObject({ hz: 14_074_000, mode: 'USB', filterLowHz: 100, filterHighHz: 2800 });
     unmount();
+  });
+
+  it('Listen toggles hover to listen and shows its state', async () => {
+    const { unmount } = await openMenu(ctx());
+    expect(btn('Listen').getAttribute('aria-pressed')).toBe('false');
+    await act(async () => btn('Listen').click());
+    expect(useHoverListenStore.getState().enabled).toBe(true);
+    expect(document.querySelector('.srm-flash')?.textContent).toBe('Listen ON');
+    const saved = fetchMock.mock.calls.find((c) => c[0] === '/api/ui/hover-listen' && (c[1] as RequestInit | undefined)?.method === 'POST');
+    expect(JSON.parse((saved![1] as RequestInit).body as string)).toEqual({ enabled: true });
+    unmount();
+
+    // Reopened while on: the item is lit, and a press turns it off.
+    useRadialMenuStore.setState({ open: null });
+    const again = await openMenu(ctx({ clientX: 410 }));
+    expect(btn('Listen').className).toContain('srm-item--on');
+    expect(btn('Listen').getAttribute('aria-pressed')).toBe('true');
+    await act(async () => btn('Listen').click());
+    expect(useHoverListenStore.getState().enabled).toBe(false);
+    again.unmount();
   });
 
   it('closes on Escape', async () => {

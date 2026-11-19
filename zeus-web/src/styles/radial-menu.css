@@ -63,6 +63,12 @@
   border-color: #e0605a;
   background: color-mix(in srgb, #e0605a 18%, var(--card-bg-solid, #0a0e14));
 }
+.srm-item--on {
+  border-color: var(--accent, #4aa3df);
+  background: color-mix(in srgb, var(--accent, #4aa3df) 30%, var(--card-bg-solid, #0a0e14));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #4aa3df) 35%, transparent),
+    var(--card-shadow, 0 6px 18px rgba(0, 0, 0, 0.45));
+}
 .srm-ic { font-size: 17px; line-height: 1; }
 .srm-lbl { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
 

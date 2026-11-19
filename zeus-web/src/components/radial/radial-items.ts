@@ -15,7 +15,7 @@
 import type { RadialContext } from '../../state/radial-menu-store';
 import type { MemoryChannel } from '../../api/memories';
 
-export type RadialItemId = 'split' | 'rx2' | 'notch' | 'memory' | 'forget' | 'spot' | 'rewind';
+export type RadialItemId = 'split' | 'rx2' | 'notch' | 'memory' | 'forget' | 'spot' | 'rewind' | 'listen';
 
 export type RadialItem = {
   id: RadialItemId;
@@ -23,6 +23,8 @@ export type RadialItem = {
   icon: string;
   hint: string;
   disabled: boolean;
+  /** A toggle that is currently on (drawn lit). */
+  on?: boolean;
 };
 
 export type RadialEnv = {
@@ -36,6 +38,8 @@ export type RadialEnv = {
   memoryHit: MemoryChannel | null;
   /** Seconds of spectrum the rewind buffer holds (0 = rewind off / empty). */
   rewindSeconds?: number;
+  /** Hover to listen is switched on. Leave undefined to not offer the toggle. */
+  hoverListen?: boolean;
 };
 
 /** How far back the radial menu's Rewind item goes. */
@@ -93,6 +97,19 @@ export function radialItems(ctx: Pick<RadialContext, 'rxIndex' | 'panRxIndex' | 
       icon: '⏪',
       hint: env.locked ? 'VFO locked' : `Tune here and replay the last ${back} seconds`,
       disabled: env.locked,
+    });
+  }
+  // Hover to listen previews RX1's spectrum, so the toggle lives on RX1's display.
+  if (onRx1 && ctx.panRxIndex === 0 && env.hoverListen !== undefined) {
+    items.push({
+      id: 'listen',
+      label: 'Listen',
+      icon: '♪',
+      hint: env.hoverListen
+        ? 'Hover to listen is ON — press to turn it off'
+        : 'Turn on hover to listen: point at a signal to hear it without retuning',
+      disabled: false,
+      on: env.hoverListen,
     });
   }
   items.push({

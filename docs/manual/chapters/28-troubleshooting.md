@@ -24,6 +24,7 @@ The thresholds behind the verdicts are conservative defaults; a **CHECK** means 
 |---|---|---|
 | No Saturn row on Discover | p2app not running yet | Wait one 10 s cycle; check Settings → UPDATES → P2APP. `NoBinary` → run UPDATE P2APP once |
 | Row shows 127.0.0.1 instead of LAN address | No Ethernet cable | Normal — same radio, connect anyway |
+| macOS desktop app: Connect fails at once (HTTP 500), log shows `No route to host` | macOS Local Network permission is off for the app | System Settings → Privacy & Security → Local Network → turn on **OpenHPSDR Zeus**, then quit and reopen the app. macOS asks once on first launch; answering "Don't Allow" causes this |
 | P2APP status "found already running" (Adopted) | A p2app you (or a service) started | Fine for normal use; kill it yourself + press START if you want it supervised, or for native sessions |
 | STOP button refuses with "running outside ANAN Core's management" | Adopted p2app — never killed by design | Kill the pid yourself, then START |
 | "UDP 1024 is owned by another process" starting a native session | Externally-managed p2app | Stop it, retry |

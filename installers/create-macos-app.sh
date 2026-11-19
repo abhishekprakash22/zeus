@@ -173,6 +173,10 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << EOF
     <string>Zeus uses the microphone for SSB / digital-mode TX uplink to your radio when you key MOX.</string>
     <key>NSCameraUsageDescription</key>
     <string>Zeus does not record video. The OS asks because the embedded webview lists media devices.</string>
+    <!-- Local Network privacy (macOS 15+): the radio is a device on the LAN.
+         Without this string macOS denies the UDP to it without asking. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Zeus finds and controls your radio over the local network.</string>
 </dict>
 </plist>
 EOF
@@ -180,13 +184,79 @@ EOF
 # Make the binary executable (cp -r usually preserves mode but be defensive)
 chmod +x "${APP_PAYLOAD}/OpenhpsdrZeus"
 
+# --- The apphost runs from Contents/MacOS (Local Network privacy) --------
+#
+# macOS decides which app a process belongs to from where its executable
+# sits: only an executable in <App>/Contents/MacOS/ resolves to the bundle
+# and its Info.plist. With the apphost in Contents/Resources/app/ the running
+# process (zeus-launch exec's it, so it IS the app's process) belonged to no
+# bundle. Local Network privacy (macOS 15+) then found no
+# NSLocalNetworkUsageDescription, never prompted, and silently denied every
+# send to the LAN: discovery and Connect failed with
+# SocketException (65) "No route to host", while the same binary started
+# from Terminal worked because Terminal was the responsible app.
+#
+# So the apphost moves to Contents/MacOS/OpenhpsdrZeus and the payload stays
+# in Contents/Resources/app/ (which keeps the bundle signable without --deep:
+# Contents/MacOS/ holds two Mach-O files and nothing else). An apphost finds
+# its managed entry point through a path embedded in the binary, relative to
+# the apphost's own directory; the .NET host supports a path with directory
+# parts and takes the app root (hostfxr, runtimes/, AppContext.BaseDirectory)
+# from the dll's directory. Publish writes "OpenhpsdrZeus.dll" into that
+# 1024-byte zero-padded slot; we rewrite it to
+# "../Resources/app/OpenhpsdrZeus.dll". The build fails here, loudly, if the
+# slot is not found exactly once.
+APPHOST="${APP_BUNDLE}/Contents/MacOS/OpenhpsdrZeus"
+/usr/bin/perl -e '
+    use strict; use warnings;
+    my ($src, $dst, $old, $new) = @ARGV;
+    open(my $in, "<:raw", $src) or die "apphost relocate: cannot read $src: $!\n";
+    my $bin = do { local $/; <$in> }; close $in;
+    my $pad = 64;                                # zero padding that must follow
+    die "apphost relocate: new path too long\n" if length($new) >= length($old) + $pad;
+    my $needle = $old . ("\0" x $pad);
+    my @hits; my $at = 0;
+    while (($at = index($bin, $needle, $at)) >= 0) { push @hits, $at; $at++; }
+    die "apphost relocate: expected the embedded app path once, found " . scalar(@hits) . "\n"
+        unless @hits == 1;
+    substr($bin, $hits[0], length($new)) = $new; # rest of the slot stays NUL
+    open(my $out, ">:raw", $dst) or die "apphost relocate: cannot write $dst: $!\n";
+    print $out $bin; close $out or die "apphost relocate: write failed: $!\n";
+' "${APP_PAYLOAD}/OpenhpsdrZeus" "${APPHOST}" \
+  "OpenhpsdrZeus.dll" "../Resources/app/OpenhpsdrZeus.dll"
+rm -f "${APP_PAYLOAD}/OpenhpsdrZeus"
+chmod +x "${APPHOST}"
+# Rewriting the file invalidates the ad-hoc signature the .NET SDK put on the
+# apphost, and Apple Silicon kills a Mach-O whose signature does not match.
+# Re-sign ad hoc now; a Developer ID build re-signs it again below.
+codesign --force --sign - "${APPHOST}"
+
+# Prove the relocated apphost still reaches managed code, on a runner that can
+# execute this architecture. --verify-vst-bridge returns before any window or
+# server starts and always prints a "VST bridge ..." line from Main; a host
+# that cannot find the dll or the runtime prints its own error instead.
+HOST_ARCH="$(uname -m)"; [ "${HOST_ARCH}" = "x86_64" ] && HOST_ARCH="x64"
+if [ "${HOST_ARCH}" = "${ARCH}" ]; then
+    SMOKE_OUT="$( cd "${APP_PAYLOAD}" && \
+        DYLD_LIBRARY_PATH="${APP_PAYLOAD}/runtimes/osx-${ARCH}/native" \
+        "${APPHOST}" --verify-vst-bridge 2>&1 || true )"
+    if ! printf '%s' "${SMOKE_OUT}" | grep -q "VST bridge"; then
+        echo "ERROR: relocated apphost did not start the app:" >&2
+        printf '%s\n' "${SMOKE_OUT}" >&2
+        exit 1
+    fi
+    echo "Relocated apphost starts the app from Contents/MacOS."
+else
+    echo "(apphost start check skipped: building ${ARCH} on ${HOST_ARCH})"
+fi
+
 # Launcher (Contents/MacOS/zeus-launch): a COMPILED Mach-O, NOT a shell script.
 # A /bin/sh CFBundleExecutable makes macOS TCC attribute the microphone request
 # to the shell interpreter, so the permission prompt never appears and native
 # TX-mic capture is silently denied on signed builds — the long-standing Mac
 # "can't use the mic" bug. A compiled launcher carries the app bundle's code
-# identity, so TCC prompts and grants correctly, then exec's the apphost (which
-# is itself signed with the audio-input entitlement). The launcher still pins
+# identity, so TCC prompts and grants correctly, then exec's the apphost beside
+# it in Contents/MacOS (which is itself signed with the audio-input entitlement). The launcher still pins
 # DYLD_LIBRARY_PATH (bundled libwdsp.dylib must win over any /usr/local or
 # Homebrew copy) and cd's into Contents/Resources/app (the payload lives there so
 # the bundle codesigns without --deep; cwd = app dir so AppContext.BaseDirectory
@@ -221,7 +291,10 @@ int main(int argc, char *argv[]) {
     snprintf(p, sizeof(p), "%s/wwwroot", app);   setenv("ZEUS_WEBROOT", p, 1);
     snprintf(p, sizeof(p), "%s/BandPlans", app); setenv("ZEUS_BANDPLANS_DIR", p, 1);
 
-    char bin[PATH_MAX]; snprintf(bin, sizeof(bin), "%s/OpenhpsdrZeus", app);
+    /* The apphost sits beside this launcher in Contents/MacOS so the process
+       it becomes belongs to the bundle (Local Network privacy). Its payload
+       stays in Contents/Resources/app, which is the cwd set above. */
+    char bin[PATH_MAX]; snprintf(bin, sizeof(bin), "%s/OpenhpsdrZeus", macos);
     char **av = (char **)calloc((size_t)argc + 2, sizeof(char *));
     av[0] = bin; av[1] = "--desktop";
     for (int i = 1; i < argc; i++) av[i + 1] = argv[i];
@@ -251,7 +324,8 @@ cd "${APP_DIR}"
 export DYLD_LIBRARY_PATH="${APP_DIR}/runtimes/osx-arm64/native:${APP_DIR}/runtimes/osx-x64/native:${DYLD_LIBRARY_PATH}"
 export ZEUS_WEBROOT="${APP_DIR}/wwwroot"
 export ZEUS_BANDPLANS_DIR="${APP_DIR}/BandPlans"
-exec ./OpenhpsdrZeus "$@"
+# The apphost lives in Contents/MacOS (see create-macos-app.sh).
+exec "${APP_DIR}/../../MacOS/OpenhpsdrZeus" "$@"
 EOF
 chmod +x "${APP_BUNDLE}/Contents/Resources/openhpsdr-zeus-server"
 
@@ -323,6 +397,10 @@ cat > "${SERVER_APP_BUNDLE}/Contents/Info.plist" << EOF
     <string>Zeus uses the microphone for SSB / digital-mode TX uplink to your radio when you key MOX.</string>
     <key>NSCameraUsageDescription</key>
     <string>Zeus does not record video. The OS asks because the embedded webview lists media devices.</string>
+    <!-- Local Network privacy (macOS 15+): the radio is a device on the LAN.
+         Without this string macOS denies the UDP to it without asking. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Zeus finds and controls your radio over the local network.</string>
 </dict>
 </plist>
 EOF
@@ -343,7 +421,9 @@ cd "${APP_DIR}"
 export DYLD_LIBRARY_PATH="${APP_DIR}/runtimes/osx-arm64/native:${APP_DIR}/runtimes/osx-x64/native:${DYLD_LIBRARY_PATH}"
 export ZEUS_WEBROOT="${APP_DIR}/wwwroot"
 export ZEUS_BANDPLANS_DIR="${APP_DIR}/BandPlans"
-exec ./OpenhpsdrZeus --server
+# The apphost lives in Zeus.app's Contents/MacOS, so the server process
+# belongs to Zeus.app and shares its Local Network permission.
+exec "${ZEUS_APP}/Contents/MacOS/OpenhpsdrZeus" --server
 EOF
 chmod +x "${SERVER_APP_BUNDLE}/Contents/MacOS/launch.sh"
 
@@ -455,9 +535,9 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
         # 2. The apphost carries the entitlements (hardened runtime + mic).
         #    The wrapper Server.app has no apphost of its own — it exec's the
         #    main app's binary — so only sign it when present.
-        if [ -f "${bundle}/Contents/Resources/app/OpenhpsdrZeus" ]; then
+        if [ -f "${bundle}/Contents/MacOS/OpenhpsdrZeus" ]; then
             echo "      sign OpenhpsdrZeus (entitlements)"
-            sign_one "${bundle}/Contents/Resources/app/OpenhpsdrZeus" \
+            sign_one "${bundle}/Contents/MacOS/OpenhpsdrZeus" \
                 --entitlements "${ENTITLEMENTS_PATH}"
         fi
 
@@ -474,6 +554,14 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     WILL_SIGN=1
 else
     echo "(unsigned — set CODESIGN_IDENTITY to enable codesigning)"
+    # Still seal each bundle ad hoc. That binds the Info.plist (bundle ID and
+    # the privacy usage strings) to the code, which gives macOS a stable
+    # identity to hang the microphone and Local Network grants on. Best
+    # effort: an unsealed bundle still runs, so a failure only warns.
+    for adhoc in "${APP_BUNDLE}" "${SERVER_APP_BUNDLE}"; do
+        codesign --force --sign - "${adhoc}" \
+            || echo "WARNING: ad-hoc seal of ${adhoc} failed — continuing unsealed" >&2
+    done
     WILL_SIGN=0
 fi
 

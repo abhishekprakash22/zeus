@@ -6,6 +6,7 @@
 // checkout, and allow the operator to remove it instead.
 
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { PLUGINS_TAB_AVAILABLE } from '../src/withheld-features';
 
 const pluginId = 'com.openhpsdr.zeus.e2e.paidgate';
 const pluginName = 'Paid Gate Demo';
@@ -253,6 +254,10 @@ async function stubZeusApi(page: Page): Promise<PluginSubscriptionWorld> {
 
   return world;
 }
+
+// This flow lives entirely in Settings -> PLUGINS, which is withheld
+// (src/withheld-features.ts). It runs again as soon as the tab is restored.
+test.skip(!PLUGINS_TAB_AVAILABLE, 'the PLUGINS settings tab is withheld');
 
 test('admin plugin price streams into the Zeus plugin store and gates installed access', async ({ page }) => {
   const pageErrors: string[] = [];
